@@ -1,11 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc, query, where, getDocs } from 'firebase/firestore';
-import { Users, Shield, ShieldAlert, UserCog } from 'lucide-react';
+import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { UserCog, ShieldAlert, Check, Sliders } from 'lucide-react';
 
 export default function UserManagement() {
     const [users, setUsers] = useState([]);
     const [error, setError] = useState('');
+
+    // Color Picker State
+    const [editingColorUser, setEditingColorUser] = useState(null);
+    const [tempColor, setTempColor] = useState({ r: 59, g: 130, b: 246 }); // Default blue
 
     useEffect(() => {
         let unsubscribe = () => { };
@@ -17,7 +21,6 @@ export default function UserManagement() {
                     ...doc.data()
                 }));
                 setUsers(usersData);
-                // Clear error if successful
                 if (error && error.includes('užkrauti vartotojų')) {
                     setError('');
                 }
@@ -40,7 +43,6 @@ export default function UserManagement() {
     const handleRoleChange = async (userId, newRole) => {
         setError('');
         try {
-            // Check admin limit constraint
             if (newRole === 'admin') {
                 const adminCount = countAdmins();
                 if (adminCount >= 2) {
@@ -59,15 +61,56 @@ export default function UserManagement() {
         }
     };
 
+    // Helper: Hex to RGB
+    const hexToRgb = (hex) => {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? {
+            r: parseInt(result[1], 16),
+            g: parseInt(result[2], 16),
+            b: parseInt(result[3], 16)
+        } : { r: 59, g: 130, b: 246 };
+    };
+
+    // Helper: RGB to Hex
+    const rgbToHex = (r, g, b) => {
+        return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+    };
+
+    const startEditingColor = (user) => {
+        setEditingColorUser(user.id);
+        setTempColor(hexToRgb(user.color || '#3b82f6'));
+    };
+
+    const saveColor = async () => {
+        if (!editingColorUser) return;
+
+        const hexColor = rgbToHex(tempColor.r, tempColor.g, tempColor.b);
+
+        try {
+            const userRef = doc(db, 'users', editingColorUser);
+            await updateDoc(userRef, {
+                color: hexColor
+            });
+            setEditingColorUser(null);
+        } catch (err) {
+            console.error("Error updating color:", err);
+            setError("Nepavyko išsaugoti spalvos.");
+        }
+    };
+
+    const cancelEditingColor = () => {
+        setEditingColorUser(null);
+    };
+
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-8">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-8 relative">
             <div className="p-6 border-b border-gray-200 bg-gray-50">
                 <div className="flex items-center gap-2">
                     <UserCog className="w-6 h-6 text-blue-600" />
                     <h2 className="text-lg font-semibold text-gray-900">Vartotojų valdymas</h2>
                 </div>
                 <p className="text-sm text-gray-500 mt-1">
-                    Valdykite vartotojų roles. Maksimalus administratorių skaičius: 2.
+                    Valdykite vartotojų roles ir spalvas.
                 </p>
             </div>
 
@@ -92,7 +135,10 @@ export default function UserManagement() {
                                 Vartotojas
                             </th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Dabartinė rolė
+                                Rolė
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Spalva
                             </th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Veiksmai
@@ -130,6 +176,16 @@ export default function UserManagement() {
                                             user.role === 'manager' ? 'Vadovas' : 'Darbuotojas'}
                                     </span>
                                 </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                    <button
+                                        onClick={() => startEditingColor(user)}
+                                        className="w-10 h-10 rounded-full border-2 border-gray-300 shadow-sm hover:ring-2 hover:ring-offset-2 hover:ring-blue-500 transition-all flex items-center justify-center"
+                                        style={{ backgroundColor: user.color || '#3b82f6' }}
+                                        title="Keisti spalvą"
+                                    >
+                                        <Sliders className="w-4 h-4 text-white drop-shadow-md opacity-75" />
+                                    </button>
+                                </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     <select
                                         value={user.role}
@@ -146,6 +202,101 @@ export default function UserManagement() {
                     </tbody>
                 </table>
             </div>
+
+            {/* RGB Color Picker Modal */}
+            {editingColorUser && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={cancelEditingColor}>
+                    <div
+                        className="bg-white rounded-xl shadow-2xl border border-gray-200 p-6 max-w-md w-full"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-lg font-semibold text-gray-900">Pasirinkite spalvą</h3>
+                        </div>
+
+                        {/* RGB Sliders */}
+                        <div className="space-y-4 mb-6">
+                            {/* Red Slider */}
+                            <div>
+                                <div className="flex justify-between text-sm mb-2">
+                                    <span className="text-red-600 font-medium">Raudona (R)</span>
+                                    <span className="text-gray-500 font-mono">{tempColor.r}</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="255"
+                                    value={tempColor.r}
+                                    onChange={(e) => setTempColor({ ...tempColor, r: parseInt(e.target.value) })}
+                                    className="w-full h-2 bg-red-100 rounded-lg appearance-none cursor-pointer accent-red-600"
+                                />
+                            </div>
+
+                            {/* Green Slider */}
+                            <div>
+                                <div className="flex justify-between text-sm mb-2">
+                                    <span className="text-green-600 font-medium">Žalia (G)</span>
+                                    <span className="text-gray-500 font-mono">{tempColor.g}</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="255"
+                                    value={tempColor.g}
+                                    onChange={(e) => setTempColor({ ...tempColor, g: parseInt(e.target.value) })}
+                                    className="w-full h-2 bg-green-100 rounded-lg appearance-none cursor-pointer accent-green-600"
+                                />
+                            </div>
+
+                            {/* Blue Slider */}
+                            <div>
+                                <div className="flex justify-between text-sm mb-2">
+                                    <span className="text-blue-600 font-medium">Mėlyna (B)</span>
+                                    <span className="text-gray-500 font-mono">{tempColor.b}</span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="0"
+                                    max="255"
+                                    value={tempColor.b}
+                                    onChange={(e) => setTempColor({ ...tempColor, b: parseInt(e.target.value) })}
+                                    className="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                />
+                            </div>
+                        </div>
+
+                        {/* Preview */}
+                        <div className="mb-6">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Peržiūra</label>
+                            <div
+                                className="w-full h-16 rounded-lg border border-gray-200 shadow-inner flex items-center justify-center"
+                                style={{ backgroundColor: `rgb(${tempColor.r}, ${tempColor.g}, ${tempColor.b})` }}
+                            >
+                                <span className="bg-white/90 px-2 py-1 rounded text-xs font-mono text-gray-600 shadow-sm">
+                                    rgb({tempColor.r}, {tempColor.g}, {tempColor.b})
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex gap-3">
+                            <button
+                                onClick={cancelEditingColor}
+                                className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 font-medium transition-colors"
+                            >
+                                Atšaukti
+                            </button>
+                            <button
+                                onClick={saveColor}
+                                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium shadow-sm transition-colors flex items-center justify-center gap-2"
+                            >
+                                <Check className="w-4 h-4" />
+                                Išsaugoti
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -122,9 +122,14 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         {task.assignedWorkerName && (
-                                            <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-md bg-purple-50 text-purple-700">
-                                                {task.assignedWorkerName}
-                                            </span>
+                                            <div
+                                                className="inline-flex items-center justify-center p-[4px] rounded-full"
+                                                style={{ backgroundColor: task.assignedWorkerColor || '#3b82f6' }}
+                                            >
+                                                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white text-gray-800 border border-white/50">
+                                                    {task.assignedWorkerName}
+                                                </span>
+                                            </div>
                                         )}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">

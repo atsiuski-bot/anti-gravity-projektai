@@ -7,9 +7,10 @@ import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import UserManagement from '../components/UserManagement';
 import AllUsersHoursSummary from '../components/AllUsersHoursSummary';
-import AllWorkersCalendars from '../components/AllWorkersCalendars';
+import AllUsersCalendar from '../components/AllUsersCalendar';
 import WorkPlanner from '../components/WorkPlanner';
 import { useAuth } from '../context/AuthContext';
+import { Layout, Calendar as CalendarIcon, Users as UsersIcon, ListTodo } from 'lucide-react';
 
 export default function ManagerView() {
     const { userRole } = useAuth();
@@ -17,6 +18,7 @@ export default function ManagerView() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     const [viewMode, setViewMode] = useState('desktop'); // 'mobile' or 'desktop'
+    const [activeTab, setActiveTab] = useState('tasks'); // 'tasks', 'my-calendar', 'team-calendar', 'users'
 
     const [error, setError] = useState(null);
 
@@ -39,11 +41,14 @@ export default function ManagerView() {
                         usersMap[doc.id] = doc.data();
                     });
 
-                    // Enrich tasks with worker names
+                    // Enrich tasks with worker names and colors
                     tasksData = tasksData.map(task => ({
                         ...task,
                         assignedWorkerName: task.assignedWorkerId && usersMap[task.assignedWorkerId]
                             ? usersMap[task.assignedWorkerId].displayName || usersMap[task.assignedWorkerId].email
+                            : null,
+                        assignedWorkerColor: task.assignedWorkerId && usersMap[task.assignedWorkerId]
+                            ? usersMap[task.assignedWorkerId].color
                             : null
                     }));
                 } catch (err) {
@@ -104,34 +109,90 @@ export default function ManagerView() {
                 </div>
             )}
 
-            <AllUsersHoursSummary />
-
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Mano darbo kalendorius</h3>
-                <WorkPlanner />
+            {/* Tab Navigation */}
+            <div className="flex border-b border-gray-200 mb-6 overflow-x-auto">
+                <button
+                    onClick={() => setActiveTab('tasks')}
+                    className={`flex items-center gap-2 px-4 py-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'tasks'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                >
+                    <ListTodo className="w-4 h-4" />
+                    Užduotys
+                </button>
+                <button
+                    onClick={() => setActiveTab('my-calendar')}
+                    className={`flex items-center gap-2 px-4 py-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'my-calendar'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                >
+                    <CalendarIcon className="w-4 h-4" />
+                    Mano kalendorius
+                </button>
+                <button
+                    onClick={() => setActiveTab('team-calendar')}
+                    className={`flex items-center gap-2 px-4 py-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'team-calendar'
+                        ? 'border-blue-500 text-blue-600'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                        }`}
+                >
+                    <Layout className="w-4 h-4" />
+                    Komandos kalendorius
+                </button>
+                {userRole === 'admin' && (
+                    <button
+                        onClick={() => setActiveTab('users')}
+                        className={`flex items-center gap-2 px-4 py-2 border-b-2 font-medium text-sm whitespace-nowrap transition-colors ${activeTab === 'users'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                            }`}
+                    >
+                        <UsersIcon className="w-4 h-4" />
+                        Vartotojai
+                    </button>
+                )}
             </div>
 
-            <AllWorkersCalendars />
-
-            {userRole === 'admin' && <UserManagement />}
-
-            {viewMode === 'mobile' ? (
-                <div className="space-y-4">
-                    {tasks.map(task => (
-                        <TaskCard
-                            key={task.id}
-                            task={task}
-                            onEdit={() => handleEditTask(task)}
+            {/* Tab Content */}
+            {activeTab === 'tasks' && (
+                <>
+                    <AllUsersHoursSummary />
+                    {viewMode === 'mobile' ? (
+                        <div className="space-y-4">
+                            {tasks.map(task => (
+                                <TaskCard
+                                    key={task.id}
+                                    task={task}
+                                    onEdit={() => handleEditTask(task)}
+                                    role="manager"
+                                />
+                            ))}
+                        </div>
+                    ) : (
+                        <TaskTable
+                            tasks={tasks}
+                            onEdit={handleEditTask}
                             role="manager"
                         />
-                    ))}
+                    )}
+                </>
+            )}
+
+            {activeTab === 'my-calendar' && (
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Mano darbo kalendorius</h3>
+                    <WorkPlanner />
                 </div>
-            ) : (
-                <TaskTable
-                    tasks={tasks}
-                    onEdit={handleEditTask}
-                    role="manager"
-                />
+            )}
+
+            {activeTab === 'team-calendar' && (
+                <AllUsersCalendar />
+            )}
+
+            {activeTab === 'users' && userRole === 'admin' && (
+                <UserManagement />
             )}
 
             {isModalOpen && (

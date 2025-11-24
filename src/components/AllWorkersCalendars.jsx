@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { collection, query, onSnapshot, getDocs } from 'firebase/firestore';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
-import lt from 'date-fns/locale/lt';
+import { lt } from 'date-fns/locale';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { Users } from 'lucide-react';
 

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText } from 'lucide-react';
 import clsx from 'clsx';
 import { db } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { LinksModal, CommentsModal, DescriptionModal } from './TaskDetailsModals';
 
@@ -10,6 +10,26 @@ export default function TaskCard({ task, onEdit, role }) {
     const { currentUser } = useAuth();
     const [showComments, setShowComments] = useState(false);
     const [activeModal, setActiveModal] = useState(null); // 'description', 'links', 'comments'
+    // Use color from props (enriched in ManagerView) or fallback to internal fetch if not present (for Worker view compatibility)
+    // Note: In ManagerView, task.assignedWorkerColor is now provided.
+    const displayColor = task.assignedWorkerColor || workerColor;
+
+    React.useEffect(() => {
+        // Only fetch if not provided in props and we have an ID
+        if (!task.assignedWorkerColor && task.assignedWorkerId && !workerColor) {
+            const fetchWorkerColor = async () => {
+                try {
+                    const userDoc = await getDoc(doc(db, 'users', task.assignedWorkerId));
+                    if (userDoc.exists()) {
+                        setWorkerColor(userDoc.data().color);
+                    }
+                } catch (err) {
+                    console.error("Error fetching worker color:", err);
+                }
+            };
+            fetchWorkerColor();
+        }
+    }, [task.assignedWorkerId, task.assignedWorkerColor]);
 
     const priorityColors = {
         Low: 'bg-green-100 text-green-800',
@@ -75,10 +95,17 @@ export default function TaskCard({ task, onEdit, role }) {
                 <div className="flex-1" onClick={!task.completed ? onEdit : undefined}>
                     {/* Header */}
                     <div className="flex justify-between items-start mb-3">
-                        <h3 className={clsx(
-                            "font-semibold line-clamp-1 flex-1",
-                            task.completed ? "text-gray-500 line-through" : "text-gray-900"
-                        )}>
+                        <h3
+                            className={clsx(
+                                "font-semibold line-clamp-1 flex-1 px-2 py-1 rounded",
+                                task.completed ? "text-gray-500 line-through" : "text-gray-900"
+                            )}
+                            style={{
+                                backgroundColor: !task.completed && displayColor ? displayColor : 'transparent',
+                                color: !task.completed && displayColor ? '#fff' : undefined,
+                                textShadow: !task.completed && displayColor ? '0 1px 2px rgba(0,0,0,0.3)' : 'none'
+                            }}
+                        >
                             {task.title}
                         </h3>
                         <span className={clsx(
@@ -97,9 +124,14 @@ export default function TaskCard({ task, onEdit, role }) {
                             </span>
                         )}
                         {task.assignedWorkerName && (
-                            <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-purple-50 text-purple-700">
-                                👤 {task.assignedWorkerName}
-                            </span>
+                            <div
+                                className="inline-flex items-center justify-center p-[4px] rounded-full"
+                                style={{ backgroundColor: displayColor || '#3b82f6' }}
+                            >
+                                <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white text-gray-800 border border-white/50">
+                                    👤 {task.assignedWorkerName}
+                                </span>
+                            </div>
                         )}
                     </div>
 
