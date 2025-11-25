@@ -7,10 +7,11 @@ import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import UserManagement from '../components/UserManagement';
 import AllUsersHoursSummary from '../components/AllUsersHoursSummary';
+import DailyHoursSummary from '../components/DailyHoursSummary';
 import AllUsersCalendar from '../components/AllUsersCalendar';
 import WorkPlanner from '../components/WorkPlanner';
 import { useAuth } from '../context/AuthContext';
-import { Layout, Calendar as CalendarIcon, Users as UsersIcon, ListTodo } from 'lucide-react';
+import { Layout, Calendar as CalendarIcon, Users as UsersIcon, ListTodo, ArrowUpDown } from 'lucide-react';
 
 export default function ManagerView() {
     const { userRole } = useAuth();
@@ -19,6 +20,7 @@ export default function ManagerView() {
     const [editingTask, setEditingTask] = useState(null);
     const [viewMode, setViewMode] = useState('desktop'); // 'mobile' or 'desktop'
     const [activeTab, setActiveTab] = useState('tasks'); // 'tasks', 'my-calendar', 'team-calendar', 'users'
+    const [sortBy, setSortBy] = useState('none'); // 'none', 'user', 'day', 'user-day', 'day-user'
 
     const [error, setError] = useState(null);
 
@@ -84,6 +86,72 @@ export default function ManagerView() {
         setEditingTask(null);
         setIsModalOpen(true);
     };
+
+    // Sort tasks based on selected criteria
+    const sortedTasks = React.useMemo(() => {
+        if (sortBy === 'none') return tasks;
+
+        const dayOrder = {
+            'Pirmadienis': 1,
+            'Antradienis': 2,
+            'Trečiadienis': 3,
+            'Ketvirtadienis': 4,
+            'Penktadienis': 5,
+            'Šeštadienis': 6,
+            'Sekmadienis': 7
+        };
+
+        const sorted = [...tasks];
+
+        if (sortBy === 'user') {
+            sorted.sort((a, b) => {
+                const nameA = a.assignedWorkerName || '';
+                const nameB = b.assignedWorkerName || '';
+                if (!nameA && !nameB) return 0;
+                if (!nameA) return 1;
+                if (!nameB) return -1;
+                return nameA.localeCompare(nameB);
+            });
+        } else if (sortBy === 'day') {
+            sorted.sort((a, b) => {
+                const dayA = dayOrder[a.dayOfWeek] || 999;
+                const dayB = dayOrder[b.dayOfWeek] || 999;
+                return dayA - dayB;
+            });
+        } else if (sortBy === 'user-day') {
+            sorted.sort((a, b) => {
+                const nameA = a.assignedWorkerName || '';
+                const nameB = b.assignedWorkerName || '';
+                if (!nameA && !nameB) {
+                    const dayA = dayOrder[a.dayOfWeek] || 999;
+                    const dayB = dayOrder[b.dayOfWeek] || 999;
+                    return dayA - dayB;
+                }
+                if (!nameA) return 1;
+                if (!nameB) return -1;
+                const nameCompare = nameA.localeCompare(nameB);
+                if (nameCompare !== 0) return nameCompare;
+                const dayA = dayOrder[a.dayOfWeek] || 999;
+                const dayB = dayOrder[b.dayOfWeek] || 999;
+                return dayA - dayB;
+            });
+        } else if (sortBy === 'day-user') {
+            sorted.sort((a, b) => {
+                const dayA = dayOrder[a.dayOfWeek] || 999;
+                const dayB = dayOrder[b.dayOfWeek] || 999;
+                const dayCompare = dayA - dayB;
+                if (dayCompare !== 0) return dayCompare;
+                const nameA = a.assignedWorkerName || '';
+                const nameB = b.assignedWorkerName || '';
+                if (!nameA && !nameB) return 0;
+                if (!nameA) return 1;
+                if (!nameB) return -1;
+                return nameA.localeCompare(nameB);
+            });
+        }
+
+        return sorted;
+    }, [tasks, sortBy]);
 
     const handleEditTask = (task) => {
         setEditingTask(task);
@@ -159,9 +227,29 @@ export default function ManagerView() {
             {activeTab === 'tasks' && (
                 <>
                     <AllUsersHoursSummary />
+                    <DailyHoursSummary />
+
+                    {/* Sort dropdown above task list */}
+                    <div className="flex justify-end mb-4">
+                        <div className="relative">
+                            <ArrowUpDown className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <select
+                                value={sortBy}
+                                onChange={(e) => setSortBy(e.target.value)}
+                                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                            >
+                                <option value="none">Numatyta tvarka</option>
+                                <option value="user">Pagal vartotoją</option>
+                                <option value="day">Pagal dieną</option>
+                                <option value="user-day">Vartotojas → Diena</option>
+                                <option value="day-user">Diena → Vartotojas</option>
+                            </select>
+                        </div>
+                    </div>
+
                     {viewMode === 'mobile' ? (
                         <div className="space-y-4">
-                            {tasks.map(task => (
+                            {sortedTasks.map(task => (
                                 <TaskCard
                                     key={task.id}
                                     task={task}
@@ -172,7 +260,7 @@ export default function ManagerView() {
                         </div>
                     ) : (
                         <TaskTable
-                            tasks={tasks}
+                            tasks={sortedTasks}
                             onEdit={handleEditTask}
                             role="manager"
                         />
