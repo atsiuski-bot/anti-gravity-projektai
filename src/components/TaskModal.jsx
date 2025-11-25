@@ -256,13 +256,33 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         {/* Actual Time - Both Edit (Worker mostly) */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Faktinis laikas</label>
-                            <input
-                                type="text"
+                            <select
                                 value={formData.actualTime}
                                 onChange={(e) => setFormData({ ...formData, actualTime: e.target.value })}
-                                placeholder="pvz. 1h 30m"
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                            />
+                            >
+                                <option value="">Pasirinkite...</option>
+                                <option value="15m">15 min</option>
+                                <option value="30m">30 min</option>
+                                <option value="45m">45 min</option>
+                                <option value="1h">1 val</option>
+                                <option value="1h 15m">1 val 15 min</option>
+                                <option value="1h 30m">1 val 30 min</option>
+                                <option value="1h 45m">1 val 45 min</option>
+                                <option value="2h">2 val</option>
+                                <option value="2h 15m">2 val 15 min</option>
+                                <option value="2h 30m">2 val 30 min</option>
+                                <option value="2h 45m">2 val 45 min</option>
+                                <option value="3h">3 val</option>
+                                <option value="3h 15m">3 val 15 min</option>
+                                <option value="3h 30m">3 val 30 min</option>
+                                <option value="3h 45m">3 val 45 min</option>
+                                <option value="4h">4 val</option>
+                                <option value="5h">5 val</option>
+                                <option value="6h">6 val</option>
+                                <option value="7h">7 val</option>
+                                <option value="8h">8 val</option>
+                            </select>
                         </div>
                     </div>
 
