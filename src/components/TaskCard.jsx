@@ -6,6 +6,7 @@ import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useSwipeable } from 'react-swipeable';
 import { LinksModal, CommentsModal, DescriptionModal } from './TaskDetailsModals';
+import { InlineEditModal } from './InlineEditModal';
 
 // Time Entry Modal Component
 function TimeEntryModal({ isOpen, onClose, onSubmit, direction }) {
@@ -79,6 +80,7 @@ export default function TaskCard({ task, onEdit, role }) {
     const [showTimeModal, setShowTimeModal] = useState(null); // 'left' or 'right'
     const [workerColor, setWorkerColor] = useState(null);
     const [lastTap, setLastTap] = useState(0);
+    const [editingField, setEditingField] = useState(null); // { field: 'title' | 'description' | 'dayOfWeek', label: string }
 
     const displayColor = task.assignedWorkerColor || workerColor;
     const isWorker = role === 'worker';
@@ -181,13 +183,19 @@ export default function TaskCard({ task, onEdit, role }) {
         }
     };
 
-    // Double-tap handler
-    const handleDoubleTap = async () => {
+    // Double-tap handler for touch events
+    const handleDoubleTap = async (e) => {
+        // Only handle if it's a touch event or if we're on desktop
+        if (e.type !== 'touchend' && e.type !== 'click') return;
+
         const now = Date.now();
         const DOUBLE_TAP_DELAY = 300;
 
-        if (now - lastTap < DOUBLE_TAP_DELAY) {
+        if (now - lastTap < DOUBLE_TAP_DELAY && isWorker && taskStatus !== 'confirmed') {
             // Double tap detected
+            e.preventDefault();
+            e.stopPropagation();
+
             if (taskStatus === 'pending') {
                 await updateDoc(doc(db, 'tasks', task.id), {
                     status: 'in-progress',
@@ -232,7 +240,7 @@ export default function TaskCard({ task, onEdit, role }) {
         <>
             <div
                 {...(isWorker ? swipeHandlers : {})}
-                onClick={handleDoubleTap}
+                onTouchEnd={isWorker ? handleDoubleTap : undefined}
                 className={clsx(
                     "rounded-lg border-2 shadow-sm p-4 transition-all duration-200",
                     statusStyles[taskStatus],
@@ -244,12 +252,21 @@ export default function TaskCard({ task, onEdit, role }) {
                     <div className="flex-1" onClick={!task.completed ? onEdit : undefined}>
                         {/* Header */}
                         <div className="flex justify-between items-start mb-3">
-                            <h3 className={clsx(
-                                "font-semibold line-clamp-1 flex-1 px-2 py-1 rounded",
-                                task.completed ? "line-through text-gray-500" : "text-gray-900"
-                            )}>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    if (!task.completed && isWorker) {
+                                        setEditingField({ field: 'title', label: 'Redaguoti pavadinimą' });
+                                    }
+                                }}
+                                className={clsx(
+                                    "font-semibold line-clamp-1 flex-1 px-2 py-1 rounded text-left",
+                                    task.completed ? "line-through text-gray-500" : "text-gray-900",
+                                    !task.completed && isWorker && "hover:bg-gray-100"
+                                )}
+                            >
                                 {task.title}
-                            </h3>
+                            </button>
                             {task.priority && (
                                 <span className={clsx(
                                     "px-2 py-1 text-xs font-medium rounded ml-2 whitespace-nowrap",
@@ -263,9 +280,20 @@ export default function TaskCard({ task, onEdit, role }) {
                         {/* Day and Worker */}
                         <div className="flex flex-wrap gap-2 mb-2">
                             {task.dayOfWeek && (
-                                <span className="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!task.completed && isWorker) {
+                                            setEditingField({ field: 'dayOfWeek', label: 'Redaguoti savaitės dieną' });
+                                        }
+                                    }}
+                                    className={clsx(
+                                        "inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700",
+                                        !task.completed && isWorker && "hover:bg-blue-100"
+                                    )}
+                                >
                                     {task.dayOfWeek}
-                                </span>
+                                </button>
                             )}
                             {task.assignedWorkerName && (
                                 <div
@@ -359,6 +387,14 @@ export default function TaskCard({ task, onEdit, role }) {
                 isOpen={activeModal === 'description'}
                 onClose={() => setActiveModal(null)}
                 description={task.description}
+            />
+
+            <InlineEditModal
+                isOpen={!!editingField}
+                onClose={() => setEditingField(null)}
+                task={task}
+                field={editingField?.field}
+                label={editingField?.label}
             />
         </>
     );

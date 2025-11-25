@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, FileText } from 'lucide-react';
+import { Link as LinkIcon, MessageCircle, FileText, CheckCircle2 } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal } from './TaskDetailsModals';
 
 export default function TaskTable({ tasks, onEdit, role }) {
@@ -210,13 +210,18 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                     </td>
                                     {!isWorker && (
                                         <td className="px-6 py-4 whitespace-nowrap text-center">
-                                            {task.status === 'completed' && (
+                                            {task.status === 'completed' && task.status !== 'confirmed' && (
                                                 <input
                                                     type="checkbox"
-                                                    checked={task.status === 'confirmed'}
+                                                    checked={false}
                                                     onChange={() => handleConfirmTask(task.id)}
                                                     className="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
                                                 />
+                                            )}
+                                            {task.status === 'confirmed' && (
+                                                <span className="inline-flex items-center text-green-600">
+                                                    <CheckCircle2 className="w-5 h-5" />
+                                                </span>
                                             )}
                                         </td>
                                     )}
