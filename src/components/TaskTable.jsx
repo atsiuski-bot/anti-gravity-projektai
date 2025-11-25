@@ -43,11 +43,34 @@ export default function TaskTable({ tasks, onEdit, role }) {
             await updateDoc(taskRef, {
                 completed: !currentStatus,
                 completedAt: !currentStatus ? new Date().toISOString() : null,
-                completedBy: !currentStatus ? currentUser.uid : null
+                completedBy: !currentStatus ? currentUser.uid : null,
+                updatedAt: new Date().toISOString()
             });
         } catch (err) {
             console.error("Error toggling task completion:", err);
         }
+    };
+
+    const handleConfirmTask = async (taskId) => {
+        try {
+            const taskRef = doc(db, 'tasks', taskId);
+            await updateDoc(taskRef, {
+                status: 'confirmed',
+                confirmedBy: currentUser.uid,
+                confirmedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+        } catch (err) {
+            console.error("Error confirming task:", err);
+        }
+    };
+
+    const getStatusStyle = (task) => {
+        const status = task.status || 'pending';
+        if (status === 'confirmed') return 'bg-gray-400';
+        if (status === 'completed') return 'bg-gray-200';
+        if (status === 'in-progress') return 'bg-blue-50';
+        return 'bg-white';
     };
 
     const toggleComments = (taskId) => {
@@ -78,6 +101,7 @@ export default function TaskTable({ tasks, onEdit, role }) {
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Num. laikas</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Fakt. laikas</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nuorodos/Komentarai</th>
+                            {!isWorker && <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Patvirtinti</th>}
                             <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Veiksmai</th>
                         </tr>
                     </thead>
@@ -86,7 +110,8 @@ export default function TaskTable({ tasks, onEdit, role }) {
                             <React.Fragment key={task.id}>
                                 <tr className={clsx(
                                     "transition-colors",
-                                    task.completed ? "bg-gray-50 opacity-75" : "hover:bg-gray-50"
+                                    getStatusStyle(task),
+                                    !task.completed && "hover:bg-gray-50"
                                 )}>
                                     {isWorker && (
                                         <td className="px-4 py-4">
@@ -183,6 +208,18 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                             )}
                                         </div>
                                     </td>
+                                    {!isWorker && (
+                                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                                            {task.status === 'completed' && (
+                                                <input
+                                                    type="checkbox"
+                                                    checked={task.status === 'confirmed'}
+                                                    onChange={() => handleConfirmTask(task.id)}
+                                                    className="w-5 h-5 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                                                />
+                                            )}
+                                        </td>
+                                    )}
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                         <button
                                             onClick={() => onEdit(task)}
