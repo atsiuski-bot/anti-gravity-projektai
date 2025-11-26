@@ -5,7 +5,7 @@ import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay, addDays, isSameDay, startOfDay } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { Users, Info } from 'lucide-react';
+import { Users, Info, Clock } from 'lucide-react';
 
 const locales = {
     'lt': lt,
@@ -40,12 +40,24 @@ const dayMap = {
     'Šeštadienis': 6
 };
 
+const dayNames = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
+
 export default function AllUsersCalendar() {
     const [events, setEvents] = useState([]);
     const [tasks, setTasks] = useState([]);
     const [users, setUsers] = useState({});
     const [error, setError] = useState('');
     const [currentDate, setCurrentDate] = useState(new Date());
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+    useEffect(() => {
+        const handleResize = () => {
+            setIsMobile(window.innerWidth < 768);
+        };
+
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
 
     useEffect(() => {
         const fetchData = async () => {
@@ -76,7 +88,8 @@ export default function AllUsersCalendar() {
                             end: new Date(data.end),
                             resourceId: data.userId,
                             color: user?.color || '#3b82f6',
-                            userId: data.userId // Store userId for capacity calc
+                            userId: data.userId,
+                            userName: user?.displayName || 'Nežinomas'
                         };
                     });
                     setEvents(allEvents);
@@ -112,7 +125,7 @@ export default function AllUsersCalendar() {
         };
     };
 
-    // Custom Header Component
+    // Custom Header Component for desktop calendar
     const CustomHeader = ({ date, label }) => {
         const stats = useMemo(() => {
             const dayStart = startOfDay(date);
@@ -133,8 +146,6 @@ export default function AllUsersCalendar() {
             tasks.forEach(task => {
                 if (task.assignedWorkerId && task.estimatedTime && task.dayOfWeek) {
                     const taskDayIndex = dayMap[task.dayOfWeek];
-                    // Check if task's day matches current header day
-                    // Note: This assumes tasks repeat every week or apply to current week.
                     if (taskDayIndex === dayOfWeek) {
                         const hours = parseTimeToHours(task.estimatedTime);
                         if (!plannedByUser[task.assignedWorkerId]) plannedByUser[task.assignedWorkerId] = 0;
@@ -186,17 +197,86 @@ export default function AllUsersCalendar() {
         }
     }), [events, tasks, users]);
 
+    // Mobile List View
+    const MobileListView = () => {
+        const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
+        const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
+        const groupedEvents = useMemo(() => {
+            const grouped = {};
+
+            weekDays.forEach((day, idx) => {
+                const dayName = dayNames[getDay(day)];
+                grouped[dayName] = {
+                    date: day,
+                    events: events.filter(event => isSameDay(event.start, day))
+                };
+            });
+
+            return grouped;
+        }, [events, currentDate]);
+
+        return (
+            <div className="space-y-4">
+                {Object.entries(groupedEvents).map(([dayName, dayData]) => (
+                    <div key={dayName} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="bg-blue-50 px-4 py-2 border-b border-gray-200">
+                            <h4 className="font-semibold text-gray-900">{dayName}</h4>
+                            <p className="text-xs text-gray-500">{format(dayData.date, 'MMM d', { locale: lt })}</p>
+                        </div>
+                        <div className="divide-y divide-gray-100">
+                            {dayData.events.length > 0 ? (
+                                dayData.events.map(event => (
+                                    <div key={event.id} className="p-3 hover:bg-gray-50">
+                                        <div className="flex items-start gap-3">
+                                            <div
+                                                className="w-1 h-full min-h-[40px] rounded-full flex-shrink-0"
+                                                style={{ backgroundColor: event.color }}
+                                            />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="font-medium text-gray-900 truncate">
+                                                        {event.userName}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center gap-2 text-sm text-gray-600">
+                                                    <Clock className="w-4 h-4 flex-shrink-0" />
+                                                    <span>
+                                                        {format(event.start, 'HH:mm')} - {format(event.end, 'HH:mm')}
+                                                    </span>
+                                                    <span className="text-xs bg-gray-100 px-2 py-0.5 rounded">
+                                                        {((event.end - event.start) / (1000 * 60 * 60)).toFixed(1)}h
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="p-4 text-center text-gray-400 text-sm">
+                                    Nėra suplanuoto darbo
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    };
+
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 h-[800px]">
-            <div className="flex items-center justify-between mb-4">
+        <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:p-6 ${isMobile ? 'min-h-[400px]' : 'h-[800px]'}`}>
+            <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-3">
                 <div className="flex items-center gap-2">
                     <Users className="w-5 h-5 text-blue-600" />
                     <h3 className="text-lg font-semibold text-gray-900">Komandos kalendorius</h3>
                 </div>
-                <div className="flex items-center gap-2 text-sm text-gray-500 bg-blue-50 px-3 py-1.5 rounded-full">
-                    <Info className="w-4 h-4 text-blue-600" />
-                    <span>Rodoma: Suplanuota (Užduotys) / Pajėgumas (Darbo val.)</span>
-                </div>
+                {!isMobile && (
+                    <div className="flex items-center gap-2 text-sm text-gray-500 bg-blue-50 px-3 py-1.5 rounded-full">
+                        <Info className="w-4 h-4 text-blue-600" />
+                        <span>Rodoma: Suplanuota (Užduotys) / Pajėgumas (Darbo val.)</span>
+                    </div>
+                )}
             </div>
 
             {error && (
@@ -205,32 +285,36 @@ export default function AllUsersCalendar() {
                 </div>
             )}
 
-            <Calendar
-                localizer={localizer}
-                events={events}
-                startAccessor="start"
-                endAccessor="end"
-                style={{ height: 'calc(100% - 60px)' }}
-                culture='lt'
-                views={['week', 'day']}
-                defaultView='week'
-                eventPropGetter={eventStyleGetter}
-                components={components}
-                onNavigate={date => setCurrentDate(date)}
-                messages={{
-                    next: "Kitas",
-                    previous: "Ankstesnis",
-                    today: "Šiandien",
-                    month: "Mėnuo",
-                    week: "Savaitė",
-                    day: "Diena",
-                    agenda: "Darbotvarkė",
-                    date: "Data",
-                    time: "Laikas",
-                    event: "Įvykis",
-                    noEventsInRange: "Nėra įvykių šiame periode."
-                }}
-            />
+            {isMobile ? (
+                <MobileListView />
+            ) : (
+                <Calendar
+                    localizer={localizer}
+                    events={events}
+                    startAccessor="start"
+                    endAccessor="end"
+                    style={{ height: 'calc(100% - 60px)' }}
+                    culture='lt'
+                    views={['week', 'day']}
+                    defaultView='week'
+                    eventPropGetter={eventStyleGetter}
+                    components={components}
+                    onNavigate={date => setCurrentDate(date)}
+                    messages={{
+                        next: "Kitas",
+                        previous: "Ankstesnis",
+                        today: "Šiandien",
+                        month: "Mėnuo",
+                        week: "Savaitė",
+                        day: "Diena",
+                        agenda: "Darbotvarkė",
+                        date: "Data",
+                        time: "Laikas",
+                        event: "Įvykis",
+                        noEventsInRange: "Nėra įvykių šiame periode."
+                    }}
+                />
+            )}
         </div>
     );
 }
