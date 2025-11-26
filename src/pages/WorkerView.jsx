@@ -7,6 +7,7 @@ import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import WeeklyHoursSummary from '../components/WeeklyHoursSummary';
 import WorkPlanner from '../components/WorkPlanner';
+import AllUsersCalendar from '../components/AllUsersCalendar';
 
 export default function WorkerView() {
     const { currentUser } = useAuth();
@@ -214,7 +215,16 @@ export default function WorkerView() {
                             : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
                             }`}
                     >
-                        Kalendorius
+                        Mano kalendorius
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('team-calendar')}
+                        className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'team-calendar'
+                            ? 'border-blue-500 text-blue-600'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                            }`}
+                    >
+                        Komandos kalendorius
                     </button>
                 </nav>
             </div>
@@ -252,6 +262,11 @@ export default function WorkerView() {
             {/* Calendar Tab */}
             {activeTab === 'calendar' && (
                 <WorkPlanner />
+            )}
+
+            {/* Team Calendar Tab */}
+            {activeTab === 'team-calendar' && (
+                <AllUsersCalendar />
             )}
 
             {isModalOpen && (

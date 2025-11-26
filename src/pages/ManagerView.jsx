@@ -6,8 +6,7 @@ import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import UserManagement from '../components/UserManagement';
-import AllUsersHoursSummary from '../components/AllUsersHoursSummary';
-import DailyHoursSummary from '../components/DailyHoursSummary';
+import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import AllUsersCalendar from '../components/AllUsersCalendar';
 import WorkPlanner from '../components/WorkPlanner';
 import { useAuth } from '../context/AuthContext';
@@ -226,8 +225,7 @@ export default function ManagerView() {
             {/* Tab Content */}
             {activeTab === 'tasks' && (
                 <>
-                    <AllUsersHoursSummary />
-                    <DailyHoursSummary />
+                    <CombinedHoursSummary />
 
                     {/* Sort dropdown above task list */}
                     <div className="flex justify-end mb-4">
