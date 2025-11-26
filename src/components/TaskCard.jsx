@@ -25,7 +25,7 @@ function TimeEntryModal({ isOpen, onClose, onSubmit, direction }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
             <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6" onClick={(e) => e.stopPropagation()}>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                    {direction === 'right' ? 'Pažymėti kaip Atlikta' : 'Pažymėti kaip Vykdoma'}
+                    {direction === 'right' ? 'Pažymėti kaip užbaigtą' : 'Pažymėti kaip pradėtą'}
                 </h3>
                 <p className="text-sm text-gray-600 mb-4">Įveskite faktinį laiką:</p>
 
@@ -111,9 +111,9 @@ export default function TaskCard({ task, onEdit, role }) {
 
     const statusStyles = {
         'pending': 'bg-white border-gray-200',
-        'in-progress': 'bg-blue-50 border-blue-200',
+        'in-progress': 'bg-white border-gray-200',
         'completed': 'bg-gray-200 border-gray-300',
-        'confirmed': 'bg-gray-400 border-gray-500 text-gray-700'
+        'confirmed': 'bg-green-100 border-green-300'
     };
 
     const taskStatus = task.status || 'pending';

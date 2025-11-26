@@ -26,15 +26,17 @@ export default function TaskTable({ tasks, onEdit, role }) {
     };
 
     const statusColors = {
-        'Todo': 'bg-gray-100 text-gray-800',
-        'In Progress': 'bg-blue-100 text-blue-800',
-        'Done': 'bg-green-100 text-green-800'
+        'pending': 'bg-white text-gray-800 border border-gray-200',
+        'in-progress': 'bg-white text-gray-800 border border-gray-200',
+        'completed': 'bg-gray-200 text-gray-800',
+        'confirmed': 'bg-green-100 text-gray-800'
     };
 
     const statusLabels = {
-        'Todo': 'Atlikti',
-        'In Progress': 'Vykdoma',
-        'Done': 'Atlikta'
+        'pending': 'Nepradėtas',
+        'in-progress': 'Pradėtas',
+        'completed': 'Užbaigtas, nepriduotas',
+        'confirmed': 'Užbaigtas, priduotas'
     };
 
     const handleToggleComplete = async (taskId, currentStatus) => {
@@ -67,9 +69,8 @@ export default function TaskTable({ tasks, onEdit, role }) {
 
     const getStatusStyle = (task) => {
         const status = task.status || 'pending';
-        if (status === 'confirmed') return 'bg-gray-400';
-        if (status === 'completed') return 'bg-gray-200';
-        if (status === 'in-progress') return 'bg-blue-50';
+        if (status === 'confirmed') return 'bg-green-50';
+        if (status === 'completed') return 'bg-gray-100';
         return 'bg-white';
     };
 
@@ -166,7 +167,7 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className={clsx(
-                                            "px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full",
+                                            "px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-md",
                                             priorityColors[task.priority] || priorityColors.Medium
                                         )}>
                                             {priorityLabels[task.priority] || task.priority}
@@ -175,9 +176,9 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <span className={clsx(
                                             "px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full",
-                                            statusColors[task.status] || statusColors.Todo
+                                            statusColors[task.status || 'pending']
                                         )}>
-                                            {statusLabels[task.status] || task.status}
+                                            {statusLabels[task.status || 'pending']}
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">

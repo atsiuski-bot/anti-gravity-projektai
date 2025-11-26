@@ -17,7 +17,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         actualTime: '',
         description: '',
         links: [],
-        status: 'Todo',
+        status: 'pending',
         comments: [],
         dayOfWeek: 'Nepriskirta',
         completed: false
@@ -36,7 +36,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 actualTime: task.actualTime || '',
                 description: task.description || '',
                 links: task.links || [],
-                status: task.status || 'Todo',
+                status: task.status || 'pending',
                 comments: task.comments || [],
                 dayOfWeek: task.dayOfWeek || 'Nepriskirta',
                 completed: task.completed || false
@@ -51,7 +51,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 actualTime: '',
                 description: '',
                 links: [],
-                status: 'Todo',
+                status: 'pending',
                 comments: [],
                 dayOfWeek: 'Nepriskirta',
                 completed: false
@@ -177,9 +177,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 onChange={(e) => setFormData({ ...formData, status: e.target.value })}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                             >
-                                <option value="Todo">Atlikti</option>
-                                <option value="In Progress">Vykdoma</option>
-                                <option value="Done">Atlikta</option>
+                                <option value="pending">Nepradėtas</option>
+                                <option value="in-progress">Pradėtas</option>
+                                <option value="completed">Užbaigtas, nepriduotas</option>
+                                <option value="confirmed">Užbaigtas, priduotas</option>
                             </select>
                         </div>
 
