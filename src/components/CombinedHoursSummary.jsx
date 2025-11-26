@@ -95,27 +95,36 @@ export default function CombinedHoursSummary() {
             // Initialize days
             dayNames.forEach(day => {
                 stats[user.id].days[day] = {
-                    available: 0,
-                    planned: 0
+                    calendarHours: 0,  // Planned hours from calendar
+                    taskHours: 0       // Planned hours from tasks
                 };
             });
 
-            // Add available hours from user work_hours config
-            if (user.work_hours && Array.isArray(user.work_hours)) {
-                user.work_hours.forEach(wh => {
-                    if (wh.dayOfWeek && stats[user.id].days[wh.dayOfWeek] !== undefined) {
-                        stats[user.id].days[wh.dayOfWeek].available = parseTimeToHours(wh.hours);
-                    }
-                });
-            }
-
-            // Calculate weekly work hours from actual logged time
+            // Calculate weekly work hours and daily calendar hours from work_hours collection
             workHours.forEach(wh => {
                 if (wh.userId === user.id) {
                     const start = new Date(wh.start);
                     const end = new Date(wh.end);
                     const durationHours = (end - start) / (1000 * 60 * 60);
+
+                    // Add to weekly total
                     stats[user.id].weeklyWorkHours += durationHours;
+
+                    // Add to daily calendar hours
+                    const dayOfWeek = start.getDay(); // 0 = Sunday, 1 = Monday, etc.
+                    const dayMap = {
+                        0: 'Sekmadienis',
+                        1: 'Pirmadienis',
+                        2: 'Antradienis',
+                        3: 'Trečiadienis',
+                        4: 'Ketvirtadienis',
+                        5: 'Penktadienis',
+                        6: 'Šeštadienis'
+                    };
+                    const dayName = dayMap[dayOfWeek];
+                    if (dayName && stats[user.id].days[dayName]) {
+                        stats[user.id].days[dayName].calendarHours += durationHours;
+                    }
                 }
             });
 
@@ -125,9 +134,9 @@ export default function CombinedHoursSummary() {
                     const hours = parseTimeToHours(task.estimatedTime);
                     stats[user.id].weeklyTaskDuration += hours;
 
-                    // Add to daily planned if day is specified
+                    // Add to daily task hours if day is specified
                     if (task.dayOfWeek && stats[user.id].days[task.dayOfWeek] !== undefined) {
-                        stats[user.id].days[task.dayOfWeek].planned += hours;
+                        stats[user.id].days[task.dayOfWeek].taskHours += hours;
                     }
                 }
             });
@@ -161,7 +170,7 @@ export default function CombinedHoursSummary() {
                     <Users className="w-5 h-5 text-blue-600" />
                     <h3 className="font-semibold text-gray-900">Vartotojų valandų suvestinė</h3>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Savaitės darbo valandos, užduočių trukmė ir dienų planavimas</p>
+                <p className="text-xs text-gray-500 mt-1">Savaitės darbo valandos, užduočių trukmė ir dienų planavimas (kalendorius+užduotys)</p>
             </div>
 
             <div className="overflow-x-auto">
@@ -226,16 +235,17 @@ export default function CombinedHoursSummary() {
                                 </td>
                                 {dayNames.map((day, idx) => {
                                     const dayData = userData.days[day];
-                                    const isOverbooked = dayData.planned > dayData.available && dayData.available > 0;
+                                    const totalPlanned = dayData.calendarHours + dayData.taskHours;
+                                    const showWarning = dayData.taskHours > dayData.calendarHours && dayData.calendarHours > 0;
 
                                     return (
                                         <td key={idx} className="px-2 py-3 whitespace-nowrap text-center">
-                                            {dayData.available > 0 || dayData.planned > 0 ? (
-                                                <div className={`text-xs font-medium ${isOverbooked ? 'text-red-600' : 'text-gray-700'}`}>
+                                            {totalPlanned > 0 ? (
+                                                <div className={`text-xs font-medium ${showWarning ? 'text-orange-600' : 'text-gray-700'}`}>
                                                     <div className="flex items-center justify-center gap-1">
-                                                        {isOverbooked && <AlertTriangle className="w-3 h-3 flex-shrink-0" />}
+                                                        {showWarning && <AlertTriangle className="w-3 h-3 flex-shrink-0" />}
                                                         <span className="whitespace-nowrap">
-                                                            {dayData.planned.toFixed(1)}/{dayData.available.toFixed(1)}
+                                                            {dayData.calendarHours.toFixed(1)}+{dayData.taskHours.toFixed(1)}
                                                         </span>
                                                     </div>
                                                 </div>
