@@ -56,18 +56,14 @@ export default function AllUsersHoursSummary() {
 
                         tasksSnap.docs.forEach(doc => {
                             const task = doc.data();
-                            if (task.assignedWorkerId && task.estimatedTime && task.dayOfWeek) {
-                                // Check if task is for current week
-                                const dayIndex = Object.keys(dayMap).find(key => dayMap[key] === task.dayOfWeek);
-                                if (dayIndex !== undefined || task.dayOfWeek === 'Nepriskirta') {
-                                    // Parse estimated time (e.g., "2h", "1.5h", "90m", "1h 30m")
-                                    const hours = parseTimeToHours(task.estimatedTime);
+                            if (task.assignedWorkerId && task.estimatedTime) {
+                                // Parse estimated time (e.g., "2h", "1.5h", "90m", "1h 30m")
+                                const hours = parseTimeToHours(task.estimatedTime);
 
-                                    if (!hoursByUser[task.assignedWorkerId]) {
-                                        hoursByUser[task.assignedWorkerId] = { workHours: 0, taskDuration: 0 };
-                                    }
-                                    hoursByUser[task.assignedWorkerId].taskDuration += hours;
+                                if (!hoursByUser[task.assignedWorkerId]) {
+                                    hoursByUser[task.assignedWorkerId] = { workHours: 0, taskDuration: 0 };
                                 }
+                                hoursByUser[task.assignedWorkerId].taskDuration += hours;
                             }
                         });
 

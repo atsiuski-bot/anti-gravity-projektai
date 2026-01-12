@@ -1,44 +1,58 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { Clock, AlertTriangle } from 'lucide-react';
+import { formatDisplayName } from '../utils/formatters';
 
 export default function DailyHoursSummary() {
     const [users, setUsers] = useState([]);
     const [tasks, setTasks] = useState([]);
+    const [workSessions, setWorkSessions] = useState([]);
     const [loading, setLoading] = useState(true);
 
     const dayNames = ['Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis', 'Sekmadienis'];
     const dayAbbr = ['Pir', 'Ant', 'Tre', 'Ket', 'Pen', 'Šeš', 'Sek'];
 
     useEffect(() => {
-        const fetchData = async () => {
-            try {
-                const [usersSnapshot, tasksSnapshot] = await Promise.all([
-                    getDocs(collection(db, 'users')),
-                    getDocs(collection(db, 'tasks'))
-                ]);
+        setLoading(true);
 
-                const usersData = usersSnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
+        // 1. Listen to Users
+        const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+            const usersData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setUsers(usersData);
+            setLoading(false);
+        });
 
-                const tasksData = tasksSnapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
+        // 2. Listen to Tasks (Active)
+        let activeTasks = [];
+        // 3. Listen to Archived Tasks
+        let archivedTasks = [];
 
-                setUsers(usersData);
-                setTasks(tasksData);
-            } catch (error) {
-                console.error('Error fetching data:', error);
-            } finally {
-                setLoading(false);
-            }
+        const updateAllTasks = () => {
+            setTasks([...activeTasks, ...archivedTasks]);
         };
 
-        fetchData();
+        const unsubActive = onSnapshot(collection(db, 'tasks'), (snap) => {
+            activeTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            updateAllTasks();
+        });
+
+        const unsubArchived = onSnapshot(collection(db, 'archived_tasks'), (snap) => {
+            archivedTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            updateAllTasks();
+        });
+
+        // 4. Listen to Work Sessions (Actual task time)
+        const unsubSessions = onSnapshot(collection(db, 'work_sessions'), (snap) => {
+            setWorkSessions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+
+        return () => {
+            unsubUsers();
+            unsubActive();
+            unsubArchived();
+            unsubSessions();
+        };
     }, []);
 
     // Parse time string to hours (e.g., "2h 30m" -> 2.5)
@@ -58,7 +72,7 @@ export default function DailyHoursSummary() {
 
         users.forEach(user => {
             stats[user.id] = {
-                name: user.displayName || user.email,
+                name: formatDisplayName(user.displayName) || user.email,
                 color: user.color || '#3b82f6',
                 days: {}
             };
@@ -67,7 +81,8 @@ export default function DailyHoursSummary() {
             dayNames.forEach(day => {
                 stats[user.id].days[day] = {
                     available: 0,
-                    planned: 0
+                    planned: 0,
+                    actual: 0
                 };
             });
 
@@ -84,6 +99,18 @@ export default function DailyHoursSummary() {
             tasks.forEach(task => {
                 if (task.assignedWorkerId === user.id && task.dayOfWeek && stats[user.id].days[task.dayOfWeek] !== undefined) {
                     stats[user.id].days[task.dayOfWeek].planned += parseTimeToHours(task.estimatedTime);
+                }
+            });
+
+            // Add actual hours from work_sessions
+            workSessions.forEach(session => {
+                if (session.workerId === user.id && session.date) {
+                    // Map session date to day name
+                    const daysMap = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
+                    const dayName = daysMap[new Date(session.date).getDay()];
+                    if (stats[user.id].days[dayName]) {
+                        stats[user.id].days[dayName].actual += (session.durationMinutes || 0) / 60;
+                    }
                 }
             });
         });
@@ -108,7 +135,7 @@ export default function DailyHoursSummary() {
                     <Clock className="w-5 h-5 text-blue-600" />
                     <h3 className="font-semibold text-gray-900">Dienos valandos pagal vartotoją</h3>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Planuotos / Galimos valandos kiekvienai dienai</p>
+                <p className="text-xs text-gray-500 mt-1">Planuotos / Faktinės / Galimos valandos kiekvienai dienai</p>
             </div>
 
             <div className="overflow-x-auto">
@@ -151,7 +178,7 @@ export default function DailyHoursSummary() {
                                                     <div className="flex items-center justify-center gap-1">
                                                         {isOverbooked && <AlertTriangle className="w-3 h-3" />}
                                                         <span>
-                                                            {dayData.planned.toFixed(1)}h / {dayData.available.toFixed(1)}h
+                                                            {dayData.planned.toFixed(1)} / <span className="text-green-600 font-bold">{dayData.actual.toFixed(1)}</span> / {dayData.available.toFixed(1)}h
                                                         </span>
                                                     </div>
                                                 </div>

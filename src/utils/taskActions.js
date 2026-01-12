@@ -1,0 +1,202 @@
+import { doc, updateDoc, collection, query, where, getDocs, addDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { db } from '../firebase';
+import { parseTimeStringToMinutes, formatMinutesToTimeString } from './timeUtils';
+
+/**
+ * Updates the user's work status in Firestore.
+ */
+const updateUserWorkStatus = async (userId, isWorking, status, taskId) => {
+    if (!userId) return;
+    try {
+        await updateDoc(doc(db, 'users', userId), {
+            workStatus: {
+                isWorking,
+                status, // 'running', 'paused', 'idle'
+                activeTaskId: taskId,
+                lastUpdated: new Date().toISOString()
+            }
+        });
+    } catch (err) {
+        console.error("Error updating user work status:", err);
+    }
+};
+
+/**
+ * Starts a task.
+ * @param {Object} task - The task to start.
+ * @param {string} userId - The user ID.
+ */
+export const startTask = async (task, userId) => {
+    try {
+        // 1. Pause others
+        await pauseOtherTasks(userId, task.id);
+
+        // 2. Update Task
+        await updateDoc(doc(db, 'tasks', task.id), {
+            timerStatus: 'running',
+            timerStartedAt: new Date().toISOString(),
+            status: 'in-progress',
+            updatedAt: new Date().toISOString()
+        });
+
+        // 3. Update User Status
+        await updateUserWorkStatus(userId, true, 'running', task.id);
+
+        console.log(`Task ${task.id} started.`);
+    } catch (err) {
+        console.error("Error starting task:", err);
+        throw err;
+    }
+};
+
+/**
+ * Pauses a task, calculating elapsed time and updating the database.
+ * @param {Object} task - The task object to pause.
+ * @returns {Promise<void>}
+ */
+export const pauseTask = async (task) => {
+    if (!task.timerStartedAt || task.timerStatus !== 'running') return;
+
+    try {
+        const now = new Date();
+        const start = new Date(task.timerStartedAt);
+        const elapsedMinutes = (now - start) / (1000 * 60); // minutes using float for precision
+
+        // 1. Get current Timer Minutes
+        const currentTimerMinutes = task.timerMinutes || 0;
+        const newTimerMinutes = currentTimerMinutes + elapsedMinutes;
+
+        // 2. Get current Manual Minutes (backwards compat)
+        const totalCurrentMinutes = parseTimeStringToMinutes(task.actualTime || '0m');
+        const currentManualMinutes = task.manualMinutes !== undefined
+            ? task.manualMinutes
+            : Math.max(0, totalCurrentMinutes - currentTimerMinutes);
+
+        await updateDoc(doc(db, 'tasks', task.id), {
+            timerStatus: 'paused',
+            timerStartedAt: null,
+            timerMinutes: newTimerMinutes,
+            manualMinutes: currentManualMinutes,
+            updatedAt: new Date().toISOString()
+        });
+
+        // Update User Status to Paused
+        // We assume if we pause a task, we go to "paused" state.
+        // If pauseOtherTasks called this, the subsequent startTask will overwrite this to running.
+        await updateUserWorkStatus(task.assignedWorkerId, false, 'paused', task.id);
+
+        // 4. Log Work Session (NEW)
+        if (elapsedMinutes > 0.1) { // Only log meaningful sessions (> 6 seconds)
+            try {
+                const sessionDate = start.toISOString().split('T')[0];
+                await addDoc(collection(db, 'work_sessions'), {
+                    taskId: task.id,
+                    taskTitle: task.title || 'Unknown Task',
+                    workerId: task.assignedWorkerId,
+                    workerName: task.assignedWorkerName || null,
+                    startTime: start.toISOString(),
+                    endTime: now.toISOString(),
+                    durationMinutes: elapsedMinutes,
+                    date: sessionDate,
+                    createdAt: new Date().toISOString()
+                });
+                console.log(`Logged work session for task ${task.id}: ${elapsedMinutes.toFixed(2)}m`);
+            } catch (logErr) {
+                console.error("Error logging work session:", logErr);
+            }
+        }
+
+        console.log(`Task ${task.id} paused via shared action.`);
+    } catch (err) {
+        console.error("Error pausing task:", err);
+        throw err;
+    }
+};
+
+/**
+ * Resumes a paused task.
+ * @param {Object} task - The task object to resume.
+ * @param {string} userId - The user ID.
+ * @returns {Promise<void>}
+ */
+export const resumeTask = async (task, userId) => {
+    try {
+        // 1. Pause others
+        await pauseOtherTasks(userId, task.id);
+
+        // 2. Update Task
+        await updateDoc(doc(db, 'tasks', task.id), {
+            timerStatus: 'running',
+            timerStartedAt: new Date().toISOString(),
+            status: 'in-progress',
+            updatedAt: new Date().toISOString()
+        });
+
+        // 3. Update User Status
+        await updateUserWorkStatus(userId, true, 'running', task.id);
+
+        console.log(`Task ${task.id} resumed via shared action.`);
+    } catch (err) {
+        console.error("Error resuming task:", err);
+        throw err;
+    }
+};
+
+/**
+ * Pauses all OTHER running tasks for a user, to ensure single threaded work.
+ * @param {string} userId - The ID of the user.
+ * @param {string} currentTaskId - The ID of the task that is about to start (to skip pausing it).
+ * @returns {Promise<void>}
+ */
+export const pauseOtherTasks = async (userId, currentTaskId) => {
+    try {
+        const q = query(
+            collection(db, 'tasks'),
+            where('assignedWorkerId', '==', userId),
+            where('timerStatus', '==', 'running')
+        );
+        const snapshot = await getDocs(q);
+
+        const pausePromises = snapshot.docs
+            .filter(doc => doc.id !== currentTaskId)
+            .map(docSnap => {
+                const taskData = { id: docSnap.id, ...docSnap.data() };
+                return pauseTask(taskData);
+            });
+
+        if (pausePromises.length > 0) {
+            console.log(`Pausing ${pausePromises.length} other running tasks...`);
+            await Promise.all(pausePromises);
+        }
+    } catch (err) {
+        console.error("Error pausing other tasks:", err);
+    }
+};
+/**
+ * Archives a task by moving it from 'tasks' to 'archived_tasks' collection.
+ * @param {Object} task - The full task data.
+ * @param {string} userId - The ID of the user performing the archive.
+ * @returns {Promise<void>}
+ */
+export const archiveTask = async (task, userId) => {
+    if (!task || !task.id) return;
+
+    try {
+        const { id, ...taskData } = task;
+
+        // 1. Create document in archived_tasks
+        await setDoc(doc(db, 'archived_tasks', id), {
+            ...taskData,
+            archivedAt: new Date().toISOString(),
+            archivedBy: userId
+        });
+
+        // 2. Delete from tasks
+        await deleteDoc(doc(db, 'tasks', id));
+
+        console.log(`Task ${id} moved to archive by user ${userId}`);
+    } catch (err) {
+        console.error("Error archiving task:", err);
+        throw err;
+    }
+};

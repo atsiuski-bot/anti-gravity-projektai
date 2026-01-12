@@ -1,90 +1,54 @@
 import React, { useState } from 'react';
-import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText, Check } from 'lucide-react';
+import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText, Check, Calendar, Trash2 } from 'lucide-react';
 import clsx from 'clsx';
 import { db } from '../firebase';
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useSwipeable } from 'react-swipeable';
 import { LinksModal, CommentsModal, DescriptionModal } from './TaskDetailsModals';
 import { InlineEditModal } from './InlineEditModal';
+import TaskTimerControls from './TaskTimerControls';
+import { parseTimeStringToMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { pauseOtherTasks, archiveTask } from '../utils/taskActions';
+import { formatDisplayName } from '../utils/formatters';
 
-// Time Entry Modal Component
-function TimeEntryModal({ isOpen, onClose, onSubmit, direction }) {
-    const [time, setTime] = useState('');
 
-    if (!isOpen) return null;
+export default function TaskCard({ task, onEdit, role }) {
+    const { currentUser, userRole } = useAuth();
+    const [activeModal, setActiveModal] = useState(null);
+    const [editingField, setEditingField] = useState(null);
+    const [workerColor, setWorkerColor] = useState(null);
+    const [lastTap, setLastTap] = useState(0);
+    const [editingCommentIndex, setEditingCommentIndex] = useState(null);
+    const [editCommentText, setEditCommentText] = useState('');
 
-    const handleSubmit = () => {
-        if (time) {
-            onSubmit(time);
-            setTime('');
+    const handleUpdateComment = async (index, newText) => {
+        try {
+            const updatedComments = [...(task.comments || [])];
+            updatedComments[index] = { ...updatedComments[index], text: newText, updatedAt: new Date().toISOString() };
+            await updateDoc(doc(db, 'tasks', task.id), { comments: updatedComments, updatedAt: new Date().toISOString() });
+            setEditingCommentIndex(null);
+            setEditCommentText('');
+        } catch (err) {
+            console.error("Error updating comment:", err);
+            alert("Nepavyko atnaujinti komentaro.");
         }
     };
 
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-            <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-6" onClick={(e) => e.stopPropagation()}>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">
-                    {direction === 'right' ? 'Pažymėti kaip užbaigtą' : 'Pažymėti kaip pradėtą'}
-                </h3>
-                <p className="text-sm text-gray-600 mb-4">Įveskite faktinį laiką:</p>
-
-                <select
-                    value={time}
-                    onChange={(e) => setTime(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 mb-4"
-                    autoFocus
-                >
-                    <option value="">Pasirinkite...</option>
-                    <option value="15m">15 min</option>
-                    <option value="30m">30 min</option>
-                    <option value="45m">45 min</option>
-                    <option value="1h">1 val</option>
-                    <option value="1h 15m">1 val 15 min</option>
-                    <option value="1h 30m">1 val 30 min</option>
-                    <option value="1h 45m">1 val 45 min</option>
-                    <option value="2h">2 val</option>
-                    <option value="2h 30m">2 val 30 min</option>
-                    <option value="3h">3 val</option>
-                    <option value="4h">4 val</option>
-                    <option value="5h">5 val</option>
-                    <option value="6h">6 val</option>
-                    <option value="7h">7 val</option>
-                    <option value="8h">8 val</option>
-                </select>
-
-                <div className="flex gap-3">
-                    <button
-                        onClick={onClose}
-                        className="flex-1 px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-                    >
-                        Atšaukti
-                    </button>
-                    <button
-                        onClick={handleSubmit}
-                        disabled={!time}
-                        className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                        <Check className="w-4 h-4" />
-                        Patvirtinti
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-}
-
-export default function TaskCard({ task, onEdit, role }) {
-    const { currentUser } = useAuth();
-    const [activeModal, setActiveModal] = useState(null);
-    const [showTimeModal, setShowTimeModal] = useState(null); // 'left' or 'right'
-    const [workerColor, setWorkerColor] = useState(null);
-    const [lastTap, setLastTap] = useState(0);
-    const [editingField, setEditingField] = useState(null); // { field: 'title' | 'description' | 'dayOfWeek', label: string }
+    const handleDeleteComment = async (index) => {
+        if (!window.confirm("Ar tikrai norite ištrinti komentarą?")) return;
+        try {
+            const updatedComments = task.comments.filter((_, i) => i !== index);
+            await updateDoc(doc(db, 'tasks', task.id), { comments: updatedComments, updatedAt: new Date().toISOString() });
+        } catch (err) {
+            console.error("Error deleting comment:", err);
+        }
+    };
 
     const displayColor = task.assignedWorkerColor || workerColor;
     const isWorker = role === 'worker';
     const isManager = role === 'manager' || role === 'admin';
+    const isAssignedToMe = currentUser?.uid === task.assignedWorkerId;
 
     React.useEffect(() => {
         if (!task.assignedWorkerColor && task.assignedWorkerId && !workerColor) {
@@ -103,10 +67,10 @@ export default function TaskCard({ task, onEdit, role }) {
     }, [task.assignedWorkerId, task.assignedWorkerColor]);
 
     const priorityColors = {
-        Low: 'bg-green-100 text-green-800',
-        Medium: 'bg-yellow-100 text-yellow-800',
-        High: 'bg-orange-100 text-orange-800',
-        Urgent: 'bg-red-100 text-red-800'
+        Low: 'bg-gray-800 text-white',
+        Medium: 'bg-gray-500 text-white',
+        High: 'bg-gray-200 text-gray-800',
+        Urgent: 'bg-yellow-50 text-black border border-yellow-200'
     };
 
     const statusStyles = {
@@ -118,68 +82,37 @@ export default function TaskCard({ task, onEdit, role }) {
 
     const taskStatus = task.status || 'pending';
 
-    // Parse time to add
-    const addTime = (existing, newTime) => {
-        const parseTime = (str) => {
-            if (!str) return 0;
-            let total = 0;
-            const hMatch = str.match(/(\d+\.?\d*)\s*h/);
-            const mMatch = str.match(/(\d+)\s*m/);
-            if (hMatch) total += parseFloat(hMatch[1]) * 60;
-            if (mMatch) total += parseInt(mMatch[1]);
-            return total;
-        };
 
-        const formatTime = (minutes) => {
-            const h = Math.floor(minutes / 60);
-            const m = minutes % 60;
-            if (h === 0) return `${m}m`;
-            if (m === 0) return `${h}h`;
-            return `${h}h ${m}m`;
-        };
-
-        const totalMinutes = parseTime(existing) + parseTime(newTime);
-        return formatTime(totalMinutes);
-    };
-
-    // Swipe handlers
-    const handleSwipeLeft = () => {
-        if (isWorker && taskStatus !== 'confirmed') {
-            setShowTimeModal('left');
-        }
-    };
-
-    const handleSwipeRight = () => {
-        if (isWorker && taskStatus !== 'confirmed') {
-            setShowTimeModal('right');
-        }
-    };
-
-    const handleTimeSubmit = async (time) => {
+    const handleAddComment = async (text) => {
         try {
-            const newActualTime = addTime(task.actualTime, time);
+            const comment = {
+                text: text,
+                user: currentUser.displayName || currentUser.email,
+                userId: currentUser.uid,
+                createdAt: new Date().toISOString()
+            };
 
-            if (showTimeModal === 'right') {
-                // Swipe right: Mark as completed
-                await updateDoc(doc(db, 'tasks', task.id), {
-                    status: 'completed',
-                    actualTime: newActualTime,
-                    completed: true,
-                    completedAt: new Date().toISOString(),
-                    updatedAt: new Date().toISOString()
-                });
-            } else if (showTimeModal === 'left') {
-                // Swipe left: Mark as in-progress
-                await updateDoc(doc(db, 'tasks', task.id), {
-                    status: 'in-progress',
-                    actualTime: newActualTime,
-                    updatedAt: new Date().toISOString()
-                });
-            }
+            const taskRef = doc(db, 'tasks', task.id);
+            await updateDoc(taskRef, {
+                comments: [...(task.comments || []), comment],
+                updatedAt: new Date().toISOString()
+            });
+        } catch (err) {
+            console.error("Error adding comment:", err);
+            alert("Nepavyko pridėti komentaro.");
+        }
+    };
 
-            setShowTimeModal(null);
-        } catch (error) {
-            console.error('Error updating task:', error);
+    const handleDeleteTask = async () => {
+        if (!window.confirm(`Ar tikrai norite ištrinti užduotį "${task.title}"? Šis veiksmas negrįžtamas.`)) {
+            return;
+        }
+
+        try {
+            await deleteDoc(doc(db, 'tasks', task.id));
+        } catch (err) {
+            console.error("Error deleting task:", err);
+            alert("Nepavyko ištrinti užduoties: " + err.message);
         }
     };
 
@@ -191,7 +124,7 @@ export default function TaskCard({ task, onEdit, role }) {
         const now = Date.now();
         const DOUBLE_TAP_DELAY = 300;
 
-        if (now - lastTap < DOUBLE_TAP_DELAY && isWorker && taskStatus !== 'confirmed') {
+        if (now - lastTap < DOUBLE_TAP_DELAY && isAssignedToMe && taskStatus !== 'confirmed') {
             // Double tap detected
             e.preventDefault();
             e.stopPropagation();
@@ -212,6 +145,53 @@ export default function TaskCard({ task, onEdit, role }) {
         setLastTap(now);
     };
 
+    // Swipe handlers for mobile gestures
+    const handleSwipeLeft = async () => {
+        if (!isAssignedToMe || taskStatus === 'confirmed') return;
+
+        if (!window.confirm("Ar tikrai norite užbaigti užduotį?")) return;
+
+        // Swipe left: Mark as completed
+        try {
+            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
+            const taskData = {
+                ...task,
+                status: isManagerOrAdmin ? 'confirmed' : 'completed',
+                confirmedBy: isManagerOrAdmin ? currentUser.uid : null,
+                confirmedAt: isManagerOrAdmin ? new Date().toISOString() : null,
+                completed: true,
+                completedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+
+            // Always archive when finished to move to history/reports
+            await archiveTask(taskData, currentUser.uid);
+        } catch (error) {
+            console.error('Error completing task via swipe:', error);
+        }
+    };
+
+    const handleSwipeRight = async () => {
+        if (!isAssignedToMe || taskStatus === 'confirmed') return;
+
+        // Swipe right: Toggle between pending and in-progress
+        try {
+            if (taskStatus === 'pending') {
+                await updateDoc(doc(db, 'tasks', task.id), {
+                    status: 'in-progress',
+                    updatedAt: new Date().toISOString()
+                });
+            } else if (taskStatus === 'in-progress') {
+                await updateDoc(doc(db, 'tasks', task.id), {
+                    status: 'pending',
+                    updatedAt: new Date().toISOString()
+                });
+            }
+        } catch (error) {
+            console.error('Error updating task via swipe:', error);
+        }
+    };
+
     const swipeHandlers = useSwipeable({
         onSwipedLeft: handleSwipeLeft,
         onSwipedRight: handleSwipeRight,
@@ -222,15 +202,33 @@ export default function TaskCard({ task, onEdit, role }) {
 
     const handleToggleComplete = async (e) => {
         e.stopPropagation();
-        if (!isWorker) return;
+        if (!isAssignedToMe) return;
+
+        const willBeCompleted = !task.completed;
+
+        if (willBeCompleted && !window.confirm("Ar tikrai norite užbaigti užduotį?")) {
+            return;
+        }
 
         try {
-            const taskRef = doc(db, 'tasks', task.id);
-            await updateDoc(taskRef, {
-                completed: !task.completed,
-                completedAt: !task.completed ? new Date().toISOString() : null,
+            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
+
+            const taskData = {
+                ...task,
+                completed: willBeCompleted,
+                completedAt: willBeCompleted ? new Date().toISOString() : null,
+                status: willBeCompleted ? (isManagerOrAdmin ? 'confirmed' : 'completed') : 'pending',
+                confirmedBy: willBeCompleted && isManagerOrAdmin ? currentUser.uid : null,
+                confirmedAt: willBeCompleted && isManagerOrAdmin ? new Date().toISOString() : null,
                 updatedAt: new Date().toISOString()
-            });
+            };
+
+            // Always archive when finished to move to history/reports
+            if (willBeCompleted) {
+                await archiveTask(taskData, currentUser.uid);
+            } else {
+                await updateDoc(doc(db, 'tasks', task.id), taskData);
+            }
         } catch (error) {
             console.error('Error toggling completion:', error);
         }
@@ -242,134 +240,257 @@ export default function TaskCard({ task, onEdit, role }) {
                 {...(isWorker ? swipeHandlers : {})}
                 onTouchEnd={isWorker ? handleDoubleTap : undefined}
                 className={clsx(
-                    "rounded-lg border-2 shadow-sm p-4 transition-all duration-200",
+                    "rounded-xl border-[3px] shadow-sm p-4 transition-all duration-200 mb-4",
                     statusStyles[taskStatus],
                     taskStatus !== 'confirmed' && !task.completed && "cursor-pointer hover:shadow-md",
                     task.completed && "opacity-75"
                 )}
             >
                 <div className="flex items-start gap-3">
-                    <div className="flex-1" onClick={!task.completed ? onEdit : undefined}>
+                    <div className="flex-1" onClick={isManager || !task.completed ? onEdit : undefined}>
                         {/* Header */}
-                        <div className="flex justify-between items-start mb-3">
+                        <div className="flex justify-between items-start mb-3 gap-2">
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    if (!task.completed && isWorker) {
+                                    // Allow editing title inline if manager, or if not completed
+                                    if (isManager || !task.completed) {
                                         setEditingField({ field: 'title', label: 'Redaguoti pavadinimą' });
                                     }
                                 }}
                                 className={clsx(
-                                    "font-semibold line-clamp-1 flex-1 px-2 py-1 rounded text-left",
+                                    "font-bold text-base leading-snug text-left flex-1 px-2 py-1 rounded",
                                     task.completed ? "line-through text-gray-500" : "text-gray-900",
-                                    !task.completed && isWorker && "hover:bg-gray-100"
+                                    (isManager || !task.completed) && "hover:bg-gray-100"
                                 )}
                             >
                                 {task.title}
                             </button>
-                            {task.priority && (
-                                <span className={clsx(
-                                    "px-2 py-1 text-xs font-medium rounded ml-2 whitespace-nowrap",
-                                    priorityColors[task.priority]
-                                )}>
-                                    {task.priority === 'Low' ? 'Žemas' : task.priority === 'Medium' ? 'Vidutinis' : task.priority === 'High' ? 'Aukštas' : 'Skubus'}
-                                </span>
-                            )}
+
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                                {task.priority && (
+                                    <span className={clsx(
+                                        "px-2 py-1 text-xs font-bold rounded-full whitespace-nowrap border border-black/5 shadow-sm",
+                                        priorityColors[task.priority]
+                                    )}>
+                                        {task.priority === 'Low' ? 'Žemas' : task.priority === 'Medium' ? 'Vidutinis' : task.priority === 'High' ? 'Aukštas' : 'Skubus'}
+                                    </span>
+                                )}
+                                {isManager && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteTask();
+                                        }}
+                                        className="p-1 text-red-500 hover:bg-red-50 rounded-md transition-colors flex-shrink-0"
+                                        title="Ištrinti užduotį"
+                                    >
+                                        <Trash2 className="w-5 h-5" />
+                                    </button>
+                                )}
+                            </div>
                         </div>
 
-                        {/* Day and Worker */}
-                        <div className="flex flex-wrap gap-2 mb-2">
-                            {task.dayOfWeek && (
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        if (!task.completed && isWorker) {
-                                            setEditingField({ field: 'dayOfWeek', label: 'Redaguoti savaitės dieną' });
-                                        }
-                                    }}
-                                    className={clsx(
-                                        "inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-blue-50 text-blue-700",
-                                        !task.completed && isWorker && "hover:bg-blue-100"
-                                    )}
-                                >
-                                    {task.dayOfWeek}
-                                </button>
-                            )}
-                            {task.assignedWorkerName && (
+                        {/* Meta Row: Worker, Deadline, Time, Manager */}
+                        <div className="flex flex-wrap items-center gap-3 mb-2 min-h-[24px]">
+                            {/* Worker Pill */}
+                            {!isAssignedToMe && task.assignedWorkerName && (
                                 <div
                                     className="inline-flex items-center justify-center p-[4px] rounded-full"
                                     style={{ backgroundColor: displayColor || '#3b82f6' }}
                                 >
-                                    <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-white text-gray-800 border border-white/50">
-                                        👤 {task.assignedWorkerName}
+                                    <span className="px-2 py-1 rounded-full text-xs font-bold bg-white text-gray-800 border border-white/50">
+                                        👤 {formatDisplayName(task.assignedWorkerName)}
                                     </span>
+                                </div>
+                            )}
+
+                            {/* Deadline */}
+                            {task.deadline && (
+                                <div className="flex items-center gap-1.5 text-xs text-orange-600 font-medium bg-orange-50 px-2 py-1 rounded border border-orange-100">
+                                    <Calendar className="w-3 h-3" />
+                                    {task.deadline}
+                                </div>
+                            )}
+
+                            {/* Planned Time (Moved here) */}
+                            {task.estimatedTime && (
+                                <div className={clsx("inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold bg-gray-100 border border-gray-200", task.completed ? "text-gray-400" : "text-gray-700")}>
+                                    <Clock className="w-3.5 h-3.5" />
+                                    {task.estimatedTime}
+                                </div>
+                            )}
+
+                            {/* Manager Name (Moved here) */}
+                            {task.creatorName && (
+                                <div className="inline-flex items-center py-1 text-[10px] font-medium text-purple-600 opacity-80">
+                                    Vadovas: {formatDisplayName(task.creatorName)}
                                 </div>
                             )}
                         </div>
 
-                        {/* Description Button */}
+                        {/* Removed separate Deadline div */}
+
+                        {/* Description Section */}
                         {task.description && (
+                            <div className="mb-2">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveModal('description');
+                                    }}
+                                    className={clsx(
+                                        "w-full text-left p-2.5 rounded-lg border border-gray-100 transition-all",
+                                        "bg-gray-50/50 hover:bg-gray-50 hover:border-gray-200 active:scale-[0.98]",
+                                        task.completed ? "opacity-60" : "opacity-100"
+                                    )}
+                                >
+                                    <div className="flex items-start gap-2">
+                                        <FileText className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                                        <div className="flex-1">
+                                            <p className="text-sm text-gray-700 line-clamp-5 leading-normal whitespace-pre-wrap">
+                                                {task.description}
+                                            </p>
+                                            {task.description.length > 100 && (
+                                                <span className="text-[10px] text-blue-500 font-medium mt-1.5 block italic">
+                                                    Bakstelėkite, jei norite matyti visą tekstą...
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Comments Section */}
+                        {task.comments && task.comments.length > 0 && (
+                            <div className="mb-3 mt-2 space-y-2">
+                                {task.comments.map((comment, index) => {
+                                    const isEditing = editingCommentIndex === index;
+                                    const canEdit = isManager || comment.userId === currentUser.uid;
+
+                                    return (
+                                        <div key={index} className="bg-indigo-50/50 p-2.5 rounded-lg border border-indigo-100 hover:bg-indigo-50 transition-colors">
+                                            <div className="flex justify-between items-start mb-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-[10px] font-bold text-indigo-700">
+                                                        {formatDisplayName(comment.user)}
+                                                    </span>
+                                                    <span className="text-[9px] text-gray-400">
+                                                        {new Date(comment.createdAt).toLocaleDateString()}
+                                                    </span>
+                                                </div>
+                                                {canEdit && !isEditing && (
+                                                    <div className="flex gap-1">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setEditingCommentIndex(index);
+                                                                setEditCommentText(comment.text);
+                                                            }}
+                                                            className="text-gray-400 hover:text-blue-600 p-0.5"
+                                                        >
+                                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                handleDeleteComment(index);
+                                                            }}
+                                                            className="text-gray-400 hover:text-red-600 p-0.5"
+                                                        >
+                                                            <Trash2 className="w-3 h-3" />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {isEditing ? (
+                                                <div onClick={(e) => e.stopPropagation()}>
+                                                    <textarea
+                                                        value={editCommentText}
+                                                        onChange={(e) => setEditCommentText(e.target.value)}
+                                                        className="w-full text-sm p-1 border rounded"
+                                                        rows={2}
+                                                    />
+                                                    <div className="flex justify-end gap-2 mt-1">
+                                                        <button
+                                                            onClick={() => setEditingCommentIndex(null)}
+                                                            className="text-xs text-gray-500 hover:text-gray-700"
+                                                        >
+                                                            Atšaukti
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleUpdateComment(index, editCommentText)}
+                                                            className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+                                                        >
+                                                            Išsaugoti
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <p
+                                                    className="text-sm text-gray-700 leading-snug break-words cursor-pointer"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        // Optional: Expand toggle if needed, but now all comments are shown.
+                                                        // Maybe just do nothing or allow selecting text.
+                                                    }}
+                                                >
+                                                    {comment.text}
+                                                </p>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+
+                        {/* Links and Comments */}
+                        <div className="flex items-center gap-4 text-xs mt-1">
+                            {task.links && task.links.length > 0 && (
+                                <div className="flex items-center gap-2 overflow-x-auto py-1">
+                                    {(() => {
+                                        const allLinks = (task.links || []).flatMap(l => l.split('\n')).filter(l => l.trim().length > 0);
+                                        return allLinks.slice(0, 4).map((link, idx) => (
+                                            <a
+                                                key={idx}
+                                                href={link.trim().startsWith('http') ? link.trim() : `https://${link.trim()}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="flex items-center justify-center text-blue-600 hover:text-blue-800 transition-transform active:scale-90 min-w-[44px] min-h-[44px] bg-blue-50 rounded-lg"
+                                                title={link.trim()}
+                                                onClick={(e) => e.stopPropagation()}
+                                            >
+                                                <LinkIcon className="w-5 h-5" />
+                                            </a>
+                                        ));
+                                    })()}
+                                </div>
+                            )}
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
-                                    setActiveModal('description');
+                                    setActiveModal('comments');
                                 }}
-                                className={clsx(
-                                    "text-sm text-left line-clamp-2 mb-3 hover:underline w-full",
-                                    task.completed ? "text-gray-400" : "text-gray-600"
-                                )}
+                                className="flex items-center justify-center gap-1.5 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors px-2 py-1"
                             >
-                                <FileText className="w-3 h-3 inline mr-1" />
-                                {task.description}
+                                <MessageCircle className="w-5 h-5" />
+                                <span className="text-sm font-bold">{task.comments?.length || 0}</span>
                             </button>
-                        )}
-
-                        {/* Time Info */}
-                        <div className="flex items-center justify-between text-sm mb-3">
-                            <span className={clsx("flex items-center gap-2", task.completed ? "text-gray-400" : "text-gray-600")}>
-                                <Clock className="w-4 h-4" />
-                                {task.estimatedTime || 'Nepriskirta'}
-                                {task.actualTime && ` / Faktas: ${task.actualTime}`}
-                            </span>
-                        </div>
-
-                        {/* Links and Comments */}
-                        <div className="flex gap-3 text-xs">
-                            {task.links && task.links.length > 0 && (
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setActiveModal('links');
-                                    }}
-                                    className="flex items-center gap-1 text-blue-600 hover:text-blue-800"
-                                >
-                                    <LinkIcon className="w-3 h-3" />
-                                    {task.links.length}
-                                </button>
-                            )}
-                            {task.comments && task.comments.length > 0 && (
-                                <button
-                                    onClick={(e) => {
-                                        e.stopPropagation();
-                                        setActiveModal('comments');
-                                    }}
-                                    className="flex items-center gap-1 text-gray-600 hover:text-gray-800"
-                                >
-                                    <MessageCircle className="w-3 h-3" />
-                                    {task.comments.length}
-                                </button>
-                            )}
                         </div>
                     </div>
                 </div>
+
+                {/* Timer Controls - Inside task card */}
+                <div className="mt-1">
+                    <TaskTimerControls
+                        task={task}
+                        role={role}
+                    />
+                </div>
             </div>
 
-            <TimeEntryModal
-                isOpen={!!showTimeModal}
-                onClose={() => setShowTimeModal(null)}
-                onSubmit={handleTimeSubmit}
-                direction={showTimeModal}
-            />
 
             <LinksModal
                 isOpen={activeModal === 'links'}
@@ -381,6 +502,7 @@ export default function TaskCard({ task, onEdit, role }) {
                 isOpen={activeModal === 'comments'}
                 onClose={() => setActiveModal(null)}
                 comments={task.comments}
+                onAddComment={handleAddComment}
             />
 
             <DescriptionModal

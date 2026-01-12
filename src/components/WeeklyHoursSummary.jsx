@@ -8,29 +8,27 @@ import { startOfWeek, endOfWeek } from 'date-fns';
 export default function WeeklyHoursSummary() {
     const { currentUser } = useAuth();
     const [totalHours, setTotalHours] = useState(0);
+    const [actualHours, setActualHours] = useState(0);
     const [error, setError] = useState('');
 
     useEffect(() => {
         if (!currentUser) return;
 
-        // Query only by userId to avoid composite index requirement
-        const q = query(
+        // 1. Listen to Work Hours (Planned from calendar)
+        const qHours = query(
             collection(db, 'work_hours'),
             where('userId', '==', currentUser.uid)
         );
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            // Get current week range (Sunday to Saturday)
+        const unsubHours = onSnapshot(qHours, (snapshot) => {
             const now = new Date();
-            const weekStart = startOfWeek(now, { weekStartsOn: 0 }); // Sunday
-            const weekEnd = endOfWeek(now, { weekStartsOn: 0 }); // Saturday
+            const weekStart = startOfWeek(now, { weekStartsOn: 0 });
+            const weekEnd = endOfWeek(now, { weekStartsOn: 0 });
 
             let total = 0;
             snapshot.docs.forEach(doc => {
                 const data = doc.data();
                 const start = new Date(data.start);
-
-                // Filter client-side for current week
                 if (start >= weekStart && start <= weekEnd) {
                     const end = new Date(data.end);
                     const durationHours = (end - start) / (1000 * 60 * 60);
@@ -44,7 +42,34 @@ export default function WeeklyHoursSummary() {
             setError("Nepavyko užkrauti savaitės valandų.");
         });
 
-        return () => unsubscribe();
+        // 2. Listen to Work Sessions (Actual task time)
+        const qSessions = query(
+            collection(db, 'work_sessions'),
+            where('workerId', '==', currentUser.uid)
+        );
+
+        const unsubSessions = onSnapshot(qSessions, (snapshot) => {
+            const now = new Date();
+            const weekStart = startOfWeek(now, { weekStartsOn: 0 });
+            const weekEnd = endOfWeek(now, { weekStartsOn: 0 });
+
+            let total = 0;
+            snapshot.docs.forEach(doc => {
+                const data = doc.data();
+                const start = new Date(data.startTime);
+                if (start >= weekStart && start <= weekEnd) {
+                    total += (data.durationMinutes || 0) / 60;
+                }
+            });
+            setActualHours(total);
+        }, (err) => {
+            console.error("Error fetching work sessions:", err);
+        });
+
+        return () => {
+            unsubHours();
+            unsubSessions();
+        };
     }, [currentUser]);
 
     return (
@@ -58,8 +83,11 @@ export default function WeeklyHoursSummary() {
                     {error ? (
                         <p className="text-xs text-red-600">{error}</p>
                     ) : (
-                        <p className="text-2xl font-bold text-blue-700">{totalHours.toFixed(1)} val.</p>
+                        <p className="text-2xl font-bold text-blue-700">
+                            {actualHours.toFixed(1)} <span className="text-sm font-medium text-blue-500">/ {totalHours.toFixed(1)} val.</span>
+                        </p>
                     )}
+                    <p className="text-[10px] text-blue-400 font-medium">Faktinė / Planuota (pagal kalendorių)</p>
                 </div>
             </div>
         </div>

@@ -2,10 +2,10 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
 
-// Lazy load pages
-const Login = React.lazy(() => import('./pages/Login'));
-const Dashboard = React.lazy(() => import('./pages/Dashboard'));
+import { NavigationProvider } from './context/NavigationContext';
 
 const ProtectedRoute = ({ children }) => {
     const { currentUser, loading } = useAuth();
@@ -23,11 +23,7 @@ function App() {
     return (
         <BrowserRouter>
             <AuthProvider>
-                <React.Suspense fallback={
-                    <div className="flex h-screen items-center justify-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-                    </div>
-                }>
+                <NavigationProvider>
                     <Routes>
                         <Route path="/login" element={<Login />} />
                         <Route path="/" element={
@@ -38,7 +34,7 @@ function App() {
                             </ProtectedRoute>
                         } />
                     </Routes>
-                </React.Suspense>
+                </NavigationProvider>
             </AuthProvider>
         </BrowserRouter>
     );

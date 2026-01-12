@@ -141,12 +141,12 @@ export default function AllUsersCalendar() {
                 }
             });
 
-            // Calculate Planned (from tasks)
+            // Calculate Planned (from tasks - based on deadline if needed, but for now we remove dayOfWeek based planning)
             const plannedByUser = {};
             tasks.forEach(task => {
-                if (task.assignedWorkerId && task.estimatedTime && task.dayOfWeek) {
-                    const taskDayIndex = dayMap[task.dayOfWeek];
-                    if (taskDayIndex === dayOfWeek) {
+                if (task.assignedWorkerId && task.deadline && task.estimatedTime) {
+                    const taskDate = new Date(task.deadline);
+                    if (isSameDay(taskDate, date)) {
                         const hours = parseTimeToHours(task.estimatedTime);
                         if (!plannedByUser[task.assignedWorkerId]) plannedByUser[task.assignedWorkerId] = 0;
                         plannedByUser[task.assignedWorkerId] += hours;
@@ -171,8 +171,12 @@ export default function AllUsersCalendar() {
             return userStats;
         }, [date, events, tasks, users]);
 
+        // Get day name
+        const dayName = dayNames[getDay(date)];
+
         return (
             <div className="flex flex-col items-center">
+                <span className="text-sm font-bold text-blue-600 mb-0.5">{dayName}</span>
                 <span className="text-lg font-semibold mb-1">{label}</span>
                 <div className="w-full space-y-1">
                     {stats.map(stat => (
@@ -197,87 +201,114 @@ export default function AllUsersCalendar() {
         }
     }), [events, tasks, users]);
 
-    // Mobile List View
+    // Mobile List View - Horizontal Scrollable Week
     const MobileListView = () => {
         const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
         const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
 
         const groupedEvents = useMemo(() => {
-            const grouped = {};
-
-            weekDays.forEach((day, idx) => {
+            return weekDays.map((day) => {
                 const dayName = dayNames[getDay(day)];
-                grouped[dayName] = {
+                return {
+                    dayName,
                     date: day,
                     events: events.filter(event => isSameDay(event.start, day))
                 };
             });
-
-            return grouped;
         }, [events, currentDate]);
 
         return (
-            <div className="space-y-4">
-                {Object.entries(groupedEvents).map(([dayName, dayData]) => (
-                    <div key={dayName} className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                        <div className="bg-blue-50 px-4 py-2 border-b border-gray-200">
-                            <h4 className="font-semibold text-gray-900">{dayName}</h4>
-                            <p className="text-xs text-gray-500">{format(dayData.date, 'MMM d', { locale: lt })}</p>
-                        </div>
-                        <div className="divide-y divide-gray-100">
-                            {dayData.events.length > 0 ? (
-                                dayData.events.map(event => (
-                                    <div key={event.id} className="p-3 hover:bg-gray-50">
-                                        <div className="flex items-start gap-3">
-                                            <div
-                                                className="w-1 h-full min-h-[40px] rounded-full flex-shrink-0"
-                                                style={{ backgroundColor: event.color }}
-                                            />
-                                            <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2 mb-1">
-                                                    <span className="font-medium text-gray-900 truncate">
-                                                        {event.userName}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-2 text-sm text-gray-600">
-                                                    <Clock className="w-4 h-4 flex-shrink-0" />
-                                                    <span>
-                                                        {format(event.start, 'HH:mm')} - {format(event.end, 'HH:mm')}
-                                                    </span>
-                                                    <span className="text-xs bg-gray-100 px-2 py-0.5 rounded">
-                                                        {((event.end - event.start) / (1000 * 60 * 60)).toFixed(1)}h
-                                                    </span>
+            <div className="relative">
+                {/* Week Navigation */}
+                <div className="flex justify-between items-center mb-3 px-2">
+                    <button
+                        onClick={() => setCurrentDate(addDays(currentDate, -7))}
+                        className="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium"
+                    >
+                        ← Ankstesnė
+                    </button>
+                    <span className="text-sm font-semibold text-gray-700">
+                        {format(weekStart, 'MMM d', { locale: lt })} - {format(addDays(weekStart, 6), 'MMM d', { locale: lt })}
+                    </span>
+                    <button
+                        onClick={() => setCurrentDate(addDays(currentDate, 7))}
+                        className="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium"
+                    >
+                        Kita →
+                    </button>
+                </div>
+
+                {/* Horizontal Scrollable Days */}
+                <div className="overflow-x-auto snap-x snap-mandatory scrollbar-hide">
+                    <div className="flex gap-3 pb-2">
+                        {groupedEvents.map((dayData, idx) => (
+                            <div
+                                key={idx}
+                                className="flex-shrink-0 snap-center bg-white border-2 border-gray-200 rounded-lg overflow-hidden"
+                                style={{ width: 'calc(100vw - 3rem)' }}
+                            >
+                                {/* Day Header */}
+                                <div className="bg-blue-50 px-4 py-3 border-b-2 border-blue-200">
+                                    <h4 className="font-bold text-gray-900 text-lg">{dayData.dayName}</h4>
+                                    <p className="text-sm text-gray-600">{format(dayData.date, 'MMMM d', { locale: lt })}</p>
+                                </div>
+
+                                {/* Events List */}
+                                <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
+                                    {dayData.events.length > 0 ? (
+                                        dayData.events.map(event => (
+                                            <div key={event.id} className="p-4 hover:bg-gray-50">
+                                                <div className="flex items-start gap-3">
+                                                    <div
+                                                        className="w-1.5 h-full min-h-[50px] rounded-full flex-shrink-0"
+                                                        style={{ backgroundColor: event.color }}
+                                                    />
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <span className="font-semibold text-gray-900 text-base">
+                                                                {event.userName}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex items-center gap-2 text-sm text-gray-600">
+                                                            <Clock className="w-4 h-4 flex-shrink-0" />
+                                                            <span className="font-medium">
+                                                                {format(event.start, 'HH:mm')} - {format(event.end, 'HH:mm')}
+                                                            </span>
+                                                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded font-semibold">
+                                                                {((event.end - event.start) / (1000 * 60 * 60)).toFixed(1)}h
+                                                            </span>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
+                                        ))
+                                    ) : (
+                                        <div className="p-8 text-center text-gray-400">
+                                            <p className="text-sm">Nėra suplanuoto darbo</p>
                                         </div>
-                                    </div>
-                                ))
-                            ) : (
-                                <div className="p-4 text-center text-gray-400 text-sm">
-                                    Nėra suplanuoto darbo
+                                    )}
                                 </div>
-                            )}
-                        </div>
+                            </div>
+                        ))}
                     </div>
-                ))}
+                </div>
+
+                {/* Scroll Indicator Dots */}
+                <div className="flex justify-center gap-1.5 mt-3">
+                    {groupedEvents.map((_, idx) => (
+                        <div
+                            key={idx}
+                            className="w-2 h-2 rounded-full bg-gray-300"
+                        />
+                    ))}
+                </div>
             </div>
         );
     };
 
     return (
-        <div className={`bg-white rounded-lg shadow-sm border border-gray-200 p-4 md:p-6 ${isMobile ? 'min-h-[400px]' : 'h-[800px]'}`}>
-            <div className="flex flex-col md:flex-row md:items-center justify-between mb-4 gap-3">
-                <div className="flex items-center gap-2">
-                    <Users className="w-5 h-5 text-blue-600" />
-                    <h3 className="text-lg font-semibold text-gray-900">Komandos kalendorius</h3>
-                </div>
-                {!isMobile && (
-                    <div className="flex items-center gap-2 text-sm text-gray-500 bg-blue-50 px-3 py-1.5 rounded-full">
-                        <Info className="w-4 h-4 text-blue-600" />
-                        <span>Rodoma: Suplanuota (Užduotys) / Pajėgumas (Darbo val.)</span>
-                    </div>
-                )}
-            </div>
+        <div className={`w-full ${isMobile ? 'min-h-[500px]' : 'h-[850px]'} max-w-full`}>
+            {/* Header removed for more space */}
 
             {error && (
                 <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
@@ -297,6 +328,8 @@ export default function AllUsersCalendar() {
                     culture='lt'
                     views={['week', 'day']}
                     defaultView='week'
+                    scrollToTime={new Date(1970, 1, 1, 8)}
+                    min={new Date(1970, 1, 1, 7)}
                     eventPropGetter={eventStyleGetter}
                     components={components}
                     onNavigate={date => setCurrentDate(date)}

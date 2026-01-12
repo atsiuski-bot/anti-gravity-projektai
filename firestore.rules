@@ -1,0 +1,76 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper to get user data
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    // Helper to check user role
+    function isAdmin() {
+      return isAuthenticated() && 
+             (getUserData().role == 'admin' ||
+              getUserData().role == 'Administratorius') &&
+             getUserData().isDisabled != true;
+    }
+
+    function isManager() {
+      return isAuthenticated() && 
+             getUserData().role == 'manager' &&
+             getUserData().isDisabled != true;
+    }
+
+    function isManagerOrAdmin() {
+      return isAdmin() || isManager();
+    }
+
+    // USERS
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated(); 
+      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin() || isManager());
+      allow delete: if isAdmin();
+    }
+
+    // TASKS
+    match /tasks/{taskId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // SHIFT LOGS (New)
+    match /shift_logs/{logId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // WORK SESSIONS
+    match /work_sessions/{sessionId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // DAILY STATS
+    match /daily_stats/{statId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // WORK HOURS (Planner)
+    match /work_hours/{docId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // ARCHIVED TASKS
+    match /archived_tasks/{taskId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // NOTIFICATIONS
+    match /calendar_notifications/{notifId} {
+      allow read, write: if isAuthenticated();
+    }
+  }
+}

@@ -6,6 +6,7 @@ import { format, parse, startOfWeek, getDay } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { Users } from 'lucide-react';
+import { formatDisplayName } from '../utils/formatters';
 
 const locales = {
     'lt': lt,
@@ -59,7 +60,7 @@ export default function AllWorkersCalendars() {
                         // Create calendar data for each user
                         const calendars = Object.entries(hoursByUser).map(([userId, events]) => ({
                             userId,
-                            displayName: usersMap[userId]?.displayName || 'Nežinomas',
+                            displayName: formatDisplayName(usersMap[userId]?.displayName) || 'Nežinomas',
                             email: usersMap[userId]?.email || '',
                             events: events.sort((a, b) => b.start - a.start)
                         }));
@@ -137,6 +138,8 @@ export default function AllWorkersCalendars() {
                                             display: 'block'
                                         }
                                     })}
+                                    min={new Date(1970, 1, 1, 7)}
+                                    scrollToTime={new Date(1970, 1, 1, 8)}
                                     messages={{
                                         next: "Kitas",
                                         previous: "Ankstesnis",

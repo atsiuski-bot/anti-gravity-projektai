@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
-import { UserCog, ShieldAlert, Check, Sliders } from 'lucide-react';
+import { collection, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { UserCog, ShieldAlert, Check, Sliders, Trash2 } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { formatDisplayName } from '../utils/formatters';
 
 export default function UserManagement() {
+    const { currentUser, userRole } = useAuth();
     const [users, setUsers] = useState([]);
     const [error, setError] = useState('');
 
@@ -37,7 +40,7 @@ export default function UserManagement() {
     }, []);
 
     const countAdmins = () => {
-        return users.filter(u => u.role === 'admin').length;
+        return users.filter(u => u.role === 'admin' && !u.isDisabled).length;
     };
 
     const handleRoleChange = async (userId, newRole) => {
@@ -102,6 +105,38 @@ export default function UserManagement() {
         setEditingColorUser(null);
     };
 
+    const handleToggleBlockUser = async (user) => {
+        const userId = user.id;
+        const userName = formatDisplayName(user.displayName) || user.email;
+        const isCurrentlyDisabled = user.isDisabled;
+
+        if (userId === currentUser?.uid) {
+            setError('Negalite užblokuoti savęs.');
+            return;
+        }
+
+        const actionText = isCurrentlyDisabled ? "atblokuoti" : "užblokuoti/ištrinti";
+        if (!window.confirm(`Ar tikrai norite ${actionText} vartotoją "${userName}"?`)) {
+            return;
+        }
+
+        try {
+            setError('');
+            const userRef = doc(db, 'users', userId);
+            await updateDoc(userRef, {
+                isDisabled: !isCurrentlyDisabled
+            });
+            console.log(`User ${userId} ${isCurrentlyDisabled ? 'unblocked' : 'blocked'}`);
+        } catch (err) {
+            console.error("Error updating user status:", err);
+            if (err.code === 'permission-denied') {
+                setError(`Neturite teisių. Jūsų rolė: ${userRole}.`);
+            } else {
+                setError(`Nepavyko atnaujinti vartotojo statuso: ${err.message}`);
+            }
+        }
+    };
+
     return (
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-8 relative">
             <div className="p-6 border-b border-gray-200 bg-gray-50">
@@ -147,7 +182,7 @@ export default function UserManagement() {
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {users.map((user) => (
-                            <tr key={user.id}>
+                            <tr key={user.id} className={user.isDisabled ? 'bg-gray-50 opacity-75' : ''}>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     <div className="flex items-center">
                                         {user.photoURL ? (
@@ -161,7 +196,8 @@ export default function UserManagement() {
                                         )}
                                         <div className="ml-4">
                                             <div className="text-sm font-medium text-gray-900">
-                                                {user.displayName || 'Be vardo'}
+                                                {formatDisplayName(user.displayName) || 'Be vardo'}
+                                                {user.isDisabled && <span className="ml-2 text-xs text-red-500 font-bold">(Užblokuotas)</span>}
                                             </div>
                                             <div className="text-sm text-gray-500">{user.email}</div>
                                         </div>
@@ -187,15 +223,39 @@ export default function UserManagement() {
                                     </button>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                    <select
-                                        value={user.role}
-                                        onChange={(e) => handleRoleChange(user.id, e.target.value)}
-                                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
-                                    >
-                                        <option value="worker">Darbuotojas</option>
-                                        <option value="manager">Vadovas</option>
-                                        <option value="admin">Administratorius</option>
-                                    </select>
+                                    <div className="flex flex-col gap-2">
+                                        <select
+                                            value={user.role}
+                                            onChange={(e) => handleRoleChange(user.id, e.target.value)}
+                                            className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                        >
+                                            <option value="worker">Darbuotojas</option>
+                                            <option value="manager">Vadovas</option>
+                                            <option value="admin">Administratorius</option>
+                                        </select>
+                                        <button
+                                            onClick={() => handleToggleBlockUser(user)}
+                                            disabled={user.id === currentUser?.uid}
+                                            className={`flex items-center justify-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${user.id === currentUser?.uid
+                                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                                : user.isDisabled
+                                                    ? 'bg-green-50 text-green-600 hover:bg-green-100'
+                                                    : 'bg-red-50 text-red-600 hover:bg-red-100'
+                                                }`}
+                                        >
+                                            {user.isDisabled ? (
+                                                <>
+                                                    <Check className="w-3 h-3" />
+                                                    Atblokuoti
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <Trash2 className="w-3 h-3" />
+                                                    Blokuoti / Ištrinti
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                         ))}

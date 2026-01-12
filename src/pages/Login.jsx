@@ -18,10 +18,13 @@ export default function Login() {
         try {
             setError('');
             await login();
-            navigate('/');
+            // Navigation handled by useEffect when currentUser changes
         } catch (err) {
-            setError('Failed to log in. Please try again.');
-            console.error(err);
+            const errorMessage = err.code === 'auth/popup-blocked'
+                ? 'Login popup was blocked. Please allow popups for this site.'
+                : err.message || 'Failed to log in. Please try again.';
+            setError(errorMessage);
+            console.error("Login component error:", err);
         }
     }
 

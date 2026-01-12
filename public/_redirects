@@ -1,0 +1,5 @@
+# Force HTTPS
+http://* https://:splat 301!
+
+# SPA fallback
+/*    /index.html   200

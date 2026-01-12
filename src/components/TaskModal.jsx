@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, updateDoc, addDoc, collection, getDocs, query, where } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { X, Plus, Trash2, ExternalLink } from 'lucide-react';
+import { formatDisplayName } from '../utils/formatters';
 
 export default function TaskModal({ isOpen, onClose, task, role }) {
     const { currentUser } = useAuth();
@@ -14,13 +15,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         assignedWorkerId: '',
         priority: 'Medium',
         estimatedTime: '',
-        actualTime: '',
         description: '',
         links: [],
         status: 'pending',
         comments: [],
-        dayOfWeek: 'Nepriskirta',
-        completed: false
+        completed: false,
+        deadline: ''
     });
 
     const [newLink, setNewLink] = useState('');
@@ -33,33 +33,31 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 assignedWorkerId: task.assignedWorkerId || '',
                 priority: task.priority || 'Medium',
                 estimatedTime: task.estimatedTime || '',
-                actualTime: task.actualTime || '',
                 description: task.description || '',
                 links: task.links || [],
                 status: task.status || 'pending',
                 comments: task.comments || [],
-                dayOfWeek: task.dayOfWeek || 'Nepriskirta',
-                completed: task.completed || false
+                completed: task.completed || false,
+                deadline: task.deadline || ''
             });
         } else {
             // Reset for new task
             setFormData({
                 title: '',
-                assignedWorkerId: '',
+                assignedWorkerId: role === 'worker' ? currentUser.uid : '',
                 priority: 'Medium',
                 estimatedTime: '',
-                actualTime: '',
                 description: '',
                 links: [],
                 status: 'pending',
                 comments: [],
-                dayOfWeek: 'Nepriskirta',
-                completed: false
+                completed: false,
+                deadline: ''
             });
         }
 
         fetchWorkers();
-    }, [task, role]);
+    }, [task, role, currentUser]);
 
     async function fetchWorkers() {
         const q = query(collection(db, 'users'));
@@ -76,8 +74,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         setLoading(true);
 
         try {
+            const selectedManager = workers.find(w => w.id === formData.managerId);
             const taskData = {
                 ...formData,
+                managerName: selectedManager ? (selectedManager.displayName || selectedManager.email) : '',
                 updatedAt: new Date().toISOString()
             };
 
@@ -87,7 +87,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 await addDoc(collection(db, 'tasks'), {
                     ...taskData,
                     createdAt: new Date().toISOString(),
-                    createdBy: currentUser.uid
+                    createdBy: currentUser.uid,
+                    creatorName: currentUser.displayName || currentUser.email
                 });
             }
             onClose();
@@ -139,27 +140,27 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 </div>
 
                 <form onSubmit={handleSubmit} className="p-6 space-y-6">
-                    {/* Title - Manager Only Edit */}
+                    {/* Title - Manager Only Edit OR Worker Creation */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Pavadinimas</label>
                         <input
                             type="text"
                             value={formData.title}
                             onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                            disabled={!isManager}
+                            disabled={!isManager && !!task}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100"
                             required
                         />
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Priority - Manager Only Edit */}
+                        {/* Priority - Manager Only Edit OR Worker Creation */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Prioritetas</label>
                             <select
                                 value={formData.priority}
                                 onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
-                                disabled={!isManager}
+                                disabled={!isManager && !!task}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                             >
                                 <option value="Low">Žemas</option>
@@ -169,53 +170,27 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             </select>
                         </div>
 
-                        {/* Status - Both Edit */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Būsena</label>
-                            <select
-                                value={formData.status}
-                                onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                            >
-                                <option value="pending">Nepradėtas</option>
-                                <option value="in-progress">Pradėtas</option>
-                                <option value="completed">Užbaigtas, nepriduotas</option>
-                                <option value="confirmed">Užbaigtas, priduotas</option>
-                            </select>
-                        </div>
-
-                        {/* Day of Week - Manager Only, REQUIRED */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                Savaitės diena <span className="text-red-500">*</span>
-                            </label>
-                            <select
-                                value={formData.dayOfWeek}
-                                onChange={(e) => setFormData({ ...formData, dayOfWeek: e.target.value })}
-                                disabled={!isManager}
+                        {/* Deadline - Manager Only OR Worker Creation */}
+                        <div className="md:col-span-2">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Terminas</label>
+                            <input
+                                type="date"
+                                value={formData.deadline}
+                                onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                                disabled={!isManager && !!task}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-                                required
-                            >
-                                <option value="Nepriskirta">Nepriskirta</option>
-                                <option value="Pirmadienis">Pirmadienis</option>
-                                <option value="Antradienis">Antradienis</option>
-                                <option value="Trečiadienis">Trečiadienis</option>
-                                <option value="Ketvirtadienis">Ketvirtadienis</option>
-                                <option value="Penktadienis">Penktadienis</option>
-                                <option value="Šeštadienis">Šeštadienis</option>
-                                <option value="Sekmadienis">Sekmadienis</option>
-                            </select>
+                            />
                         </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Estimated Time - Manager Only */}
+                        {/* Estimated Time - Manager Only OR Worker Creation */}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Numatomas laikas</label>
                             <select
                                 value={formData.estimatedTime}
                                 onChange={(e) => setFormData({ ...formData, estimatedTime: e.target.value })}
-                                disabled={!isManager}
+                                disabled={!isManager && !!task}
                                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                             >
                                 <option value="">Pasirinkite...</option>
@@ -253,41 +228,9 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 <option value="20h">20 val</option>
                             </select>
                         </div>
-
-                        {/* Actual Time - Both Edit (Worker mostly) */}
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Faktinis laikas</label>
-                            <select
-                                value={formData.actualTime}
-                                onChange={(e) => setFormData({ ...formData, actualTime: e.target.value })}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                            >
-                                <option value="">Pasirinkite...</option>
-                                <option value="15m">15 min</option>
-                                <option value="30m">30 min</option>
-                                <option value="45m">45 min</option>
-                                <option value="1h">1 val</option>
-                                <option value="1h 15m">1 val 15 min</option>
-                                <option value="1h 30m">1 val 30 min</option>
-                                <option value="1h 45m">1 val 45 min</option>
-                                <option value="2h">2 val</option>
-                                <option value="2h 15m">2 val 15 min</option>
-                                <option value="2h 30m">2 val 30 min</option>
-                                <option value="2h 45m">2 val 45 min</option>
-                                <option value="3h">3 val</option>
-                                <option value="3h 15m">3 val 15 min</option>
-                                <option value="3h 30m">3 val 30 min</option>
-                                <option value="3h 45m">3 val 45 min</option>
-                                <option value="4h">4 val</option>
-                                <option value="5h">5 val</option>
-                                <option value="6h">6 val</option>
-                                <option value="7h">7 val</option>
-                                <option value="8h">8 val</option>
-                            </select>
-                        </div>
                     </div>
 
-                    {/* Assigned Worker - Manager Only */}
+                    {/* Assigned Worker - Manager Only OR Worker Creation (Fixed to self) */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Priskirtas darbuotojas</label>
                         <select
@@ -296,22 +239,28 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             disabled={!isManager}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                         >
-                            <option value="">Nepriskirta</option>
-                            {workers.map(worker => (
-                                <option key={worker.id} value={worker.id}>
-                                    {worker.displayName || worker.email}
-                                </option>
-                            ))}
+                            {!isManager ? (
+                                <option value={currentUser.uid}>{formatDisplayName(currentUser.displayName) || currentUser.email}</option>
+                            ) : (
+                                <>
+                                    <option value="">Nepriskirta / Unassigned</option>
+                                    {workers.map(worker => (
+                                        <option key={worker.id} value={worker.id}>
+                                            {formatDisplayName(worker.displayName) || worker.email}
+                                        </option>
+                                    ))}
+                                </>
+                            )}
                         </select>
                     </div>
 
-                    {/* Description - Manager Only */}
+                    {/* Description - Manager Only OR Worker Creation */}
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">Aprašymas</label>
                         <textarea
                             value={formData.description}
                             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                            disabled={!isManager}
+                            disabled={!isManager && !!task}
                             rows={3}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
                         />
@@ -358,7 +307,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             {formData.comments.map((comment, index) => (
                                 <div key={index} className="bg-gray-50 p-3 rounded-lg text-sm">
                                     <div className="flex justify-between text-xs text-gray-500 mb-1">
-                                        <span className="font-medium text-gray-900">{comment.user}</span>
+                                        <span className="font-medium text-gray-900">{formatDisplayName(comment.user)}</span>
                                         <span>{new Date(comment.createdAt).toLocaleString()}</span>
                                     </div>
                                     <p className="text-gray-700">{comment.text}</p>
@@ -380,13 +329,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     </div>
 
                     {/* Timestamps - Read Only */}
-                    {task && (
-                        <div className="text-xs text-gray-400 border-t border-gray-100 pt-4 flex flex-col gap-1">
-                            <p>Sukurta: {new Date(task.createdAt).toLocaleString()}</p>
-                            {task.updatedAt && <p>Atnaujinta: {new Date(task.updatedAt).toLocaleString()}</p>}
-                            {task.id && <p className="font-mono text-[10px]">ID: {task.id}</p>}
-                        </div>
-                    )}
+                    {
+                        task && (
+                            <div className="text-xs text-gray-400 border-t border-gray-100 pt-4 flex flex-col gap-1">
+                                <p>Sukurta: {new Date(task.createdAt).toLocaleString()}</p>
+                                {task.updatedAt && <p>Atnaujinta: {new Date(task.updatedAt).toLocaleString()}</p>}
+                                {task.id && <p className="font-mono text-[10px]">ID: {task.id}</p>}
+                            </div>
+                        )
+                    }
 
                     <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
                         <button
@@ -404,7 +355,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             {loading ? 'Saugoma...' : 'Išsaugoti'}
                         </button>
                     </div>
-                </form>
+                </form >
             </div >
         </div >
     );

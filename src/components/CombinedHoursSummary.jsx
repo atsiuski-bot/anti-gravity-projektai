@@ -8,6 +8,7 @@ export default function CombinedHoursSummary() {
     const [users, setUsers] = useState([]);
     const [tasks, setTasks] = useState([]);
     const [workHours, setWorkHours] = useState([]);
+    const [workSessions, setWorkSessions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
 
@@ -15,55 +16,71 @@ export default function CombinedHoursSummary() {
     const dayAbbr = ['Pir', 'Ant', 'Tre', 'Ket', 'Pen', 'Šeš', 'Sek'];
 
     useEffect(() => {
-        const fetchData = async () => {
-            try {
-                // Get current week range
-                const now = new Date();
-                const weekStart = startOfWeek(now, { weekStartsOn: 0 });
-                const weekEnd = endOfWeek(now, { weekStartsOn: 0 });
+        setLoading(true);
 
-                // Fetch users
-                const usersSnap = await getDocs(collection(db, 'users'));
-                const usersData = usersSnap.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                setUsers(usersData);
+        const now = new Date();
+        const weekStart = startOfWeek(now, { weekStartsOn: 0 });
+        const weekEnd = endOfWeek(now, { weekStartsOn: 0 });
 
-                // Fetch tasks
-                const tasksSnap = await getDocs(collection(db, 'tasks'));
-                const tasksData = tasksSnap.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-                setTasks(tasksData);
+        // 1. Listen to Users
+        const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+            const usersData = snap.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(u => !u.isDisabled); // Filter out blocked users
+            setUsers(usersData);
+            setLoading(false);
+        });
 
-                // Subscribe to work hours
-                const workHoursQuery = query(collection(db, 'work_hours'));
-                const unsubscribe = onSnapshot(workHoursQuery, (snapshot) => {
-                    const hoursData = snapshot.docs
-                        .map(doc => ({ id: doc.id, ...doc.data() }))
-                        .filter(wh => {
-                            const start = new Date(wh.start);
-                            return start >= weekStart && start <= weekEnd;
-                        });
-                    setWorkHours(hoursData);
-                    setLoading(false);
-                });
-
-                return unsubscribe;
-            } catch (err) {
-                console.error('Error fetching data:', err);
-                setError('Nepavyko užkrauti duomenų');
-                setLoading(false);
-            }
+        // 2. Listen to Tasks (Active)
+        let activeTasks = [];
+        // 3. Listen to Archived Tasks
+        let archivedTasks = [];
+        const updateAllTasks = () => {
+            setTasks([...activeTasks, ...archivedTasks]);
         };
 
-        const unsubscribe = fetchData();
+        const unsubActive = onSnapshot(collection(db, 'tasks'), (snap) => {
+            activeTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            updateAllTasks();
+        });
+
+        const unsubArchived = onSnapshot(collection(db, 'archived_tasks'), (snap) => {
+            archivedTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            updateAllTasks();
+        });
+
+        // 4. Listen to Work Hours
+        const workHoursQuery = query(collection(db, 'work_hours'));
+        const unsubWorkHours = onSnapshot(workHoursQuery, (snapshot) => {
+            const hoursData = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(wh => {
+                    const start = new Date(wh.start);
+                    return start >= weekStart && start <= weekEnd;
+                });
+            setWorkHours(hoursData);
+        }, (err) => {
+            console.error('Error fetching work hours:', err);
+            setError('Nepavyko užkrauti duomenų');
+        });
+
+        // 5. Listen to Work Sessions (Actual task time)
+        const unsubSessions = onSnapshot(collection(db, 'work_sessions'), (snapshot) => {
+            const sessionsData = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(s => {
+                    const start = new Date(s.startTime);
+                    return start >= weekStart && start <= weekEnd;
+                });
+            setWorkSessions(sessionsData);
+        });
+
         return () => {
-            if (unsubscribe && typeof unsubscribe.then === 'function') {
-                unsubscribe.then(unsub => unsub && unsub());
-            }
+            unsubUsers();
+            unsubActive();
+            unsubArchived();
+            unsubWorkHours();
+            unsubSessions();
         };
     }, []);
 
@@ -89,18 +106,10 @@ export default function CombinedHoursSummary() {
                 color: user.color || '#3b82f6',
                 weeklyWorkHours: 0,
                 weeklyTaskDuration: 0,
-                days: {}
+                weeklyActualMinutes: 0
             };
 
-            // Initialize days
-            dayNames.forEach(day => {
-                stats[user.id].days[day] = {
-                    calendarHours: 0,  // Planned hours from calendar
-                    taskHours: 0       // Planned hours from tasks
-                };
-            });
-
-            // Calculate weekly work hours and daily calendar hours from work_hours collection
+            // Calculate weekly work hours from work_hours collection
             workHours.forEach(wh => {
                 if (wh.userId === user.id) {
                     const start = new Date(wh.start);
@@ -109,35 +118,21 @@ export default function CombinedHoursSummary() {
 
                     // Add to weekly total
                     stats[user.id].weeklyWorkHours += durationHours;
-
-                    // Add to daily calendar hours
-                    const dayOfWeek = start.getDay(); // 0 = Sunday, 1 = Monday, etc.
-                    const dayMap = {
-                        0: 'Sekmadienis',
-                        1: 'Pirmadienis',
-                        2: 'Antradienis',
-                        3: 'Trečiadienis',
-                        4: 'Ketvirtadienis',
-                        5: 'Penktadienis',
-                        6: 'Šeštadienis'
-                    };
-                    const dayName = dayMap[dayOfWeek];
-                    if (dayName && stats[user.id].days[dayName]) {
-                        stats[user.id].days[dayName].calendarHours += durationHours;
-                    }
                 }
             });
 
-            // Calculate task planning
+            // Calculate weekly task planning
             tasks.forEach(task => {
                 if (task.assignedWorkerId === user.id && task.estimatedTime) {
                     const hours = parseTimeToHours(task.estimatedTime);
                     stats[user.id].weeklyTaskDuration += hours;
+                }
+            });
 
-                    // Add to daily task hours if day is specified
-                    if (task.dayOfWeek && stats[user.id].days[task.dayOfWeek] !== undefined) {
-                        stats[user.id].days[task.dayOfWeek].taskHours += hours;
-                    }
+            // Calculate weekly actual sessions
+            workSessions.forEach(session => {
+                if (session.workerId === user.id) {
+                    stats[user.id].weeklyActualMinutes += (session.durationMinutes || 0);
                 }
             });
         });
@@ -170,91 +165,71 @@ export default function CombinedHoursSummary() {
                     <Users className="w-5 h-5 text-blue-600" />
                     <h3 className="font-semibold text-gray-900">Vartotojų valandų suvestinė</h3>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Savaitės darbo valandos, užduočių trukmė ir dienų planavimas (kalendorius+užduotys)</p>
+                <p className="text-xs text-gray-500 mt-1">Savaitės darbo valandos ir užduočių trukmė</p>
             </div>
 
             <div className="overflow-x-auto">
-                <table className="min-w-full">
+                {/* Changed to w-auto to shrink columns to content, keeping them close to names */}
+                <table className="w-auto divide-y divide-gray-200">
                     <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10">
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10 w-[200px]">
                                 Vartotojas
                             </th>
-                            <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <div className="flex items-center justify-end gap-1">
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[120px]">
+                                <div className="flex items-center justify-start gap-1">
                                     <Clock className="w-3 h-3" />
                                     <span>Darbo val.</span>
                                 </div>
                             </th>
-                            <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                <div className="flex items-center justify-end gap-1">
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[120px]">
+                                <div className="flex items-center justify-start gap-1">
                                     <Clock className="w-3 h-3" />
-                                    <span>Užd. val.</span>
+                                    <span>Planuota u.</span>
                                 </div>
                             </th>
-                            {dayAbbr.map((day, idx) => (
-                                <th key={idx} className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                    <div className="hidden lg:block">{dayNames[idx]}</div>
-                                    <div className="lg:hidden">{day}</div>
-                                </th>
-                            ))}
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[120px]">
+                                <div className="flex items-center justify-start gap-1">
+                                    <Clock className="w-3 h-3 text-green-600" />
+                                    <span>Faktinė u.</span>
+                                </div>
+                            </th>
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {Object.entries(combinedStats).map(([userId, userData]) => (
                             <tr key={userId} className="hover:bg-gray-50">
-                                <td className="px-4 py-3 whitespace-nowrap sticky left-0 bg-white">
+                                <td className="px-4 py-3 whitespace-nowrap sticky left-0 bg-white border-r border-gray-100 max-w-[200px]">
                                     <div className="flex items-center gap-2">
                                         <div
                                             className="w-3 h-3 rounded-full flex-shrink-0"
                                             style={{ backgroundColor: userData.color }}
                                         />
                                         <div className="min-w-0">
-                                            <div className="text-sm font-medium text-gray-900 truncate max-w-[150px]">
+                                            <div className="text-sm font-medium text-gray-900 truncate">
                                                 {userData.name}
                                             </div>
-                                            <div className="text-xs text-gray-500 truncate max-w-[150px]">
+                                            <div className="text-xs text-gray-500 truncate">
                                                 {userData.email}
                                             </div>
                                         </div>
                                     </div>
                                 </td>
-                                <td className="px-3 py-3 text-right whitespace-nowrap">
-                                    <div className="flex items-center justify-end gap-1">
-                                        <span className="text-sm font-semibold text-blue-900">
-                                            {userData.weeklyWorkHours.toFixed(1)}h
-                                        </span>
-                                    </div>
+                                <td className="px-3 py-3 text-left whitespace-nowrap">
+                                    <span className="text-sm font-semibold text-blue-900">
+                                        {userData.weeklyWorkHours.toFixed(1)}h
+                                    </span>
                                 </td>
-                                <td className="px-3 py-3 text-right whitespace-nowrap">
-                                    <div className="flex items-center justify-end gap-1">
-                                        <span className="text-sm font-semibold text-purple-900">
-                                            {userData.weeklyTaskDuration.toFixed(1)}h
-                                        </span>
-                                    </div>
+                                <td className="px-3 py-3 text-left whitespace-nowrap">
+                                    <span className="text-sm font-semibold text-purple-900">
+                                        {userData.weeklyTaskDuration.toFixed(1)}h
+                                    </span>
                                 </td>
-                                {dayNames.map((day, idx) => {
-                                    const dayData = userData.days[day];
-                                    const totalPlanned = dayData.calendarHours + dayData.taskHours;
-                                    const showWarning = dayData.taskHours > dayData.calendarHours && dayData.calendarHours > 0;
-
-                                    return (
-                                        <td key={idx} className="px-2 py-3 whitespace-nowrap text-center">
-                                            {totalPlanned > 0 ? (
-                                                <div className={`text-xs font-medium ${showWarning ? 'text-orange-600' : 'text-gray-700'}`}>
-                                                    <div className="flex items-center justify-center gap-1">
-                                                        {showWarning && <AlertTriangle className="w-3 h-3 flex-shrink-0" />}
-                                                        <span className="whitespace-nowrap">
-                                                            {dayData.calendarHours.toFixed(1)}+{dayData.taskHours.toFixed(1)}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <span className="text-xs text-gray-400">-</span>
-                                            )}
-                                        </td>
-                                    );
-                                })}
+                                <td className="px-3 py-3 text-left whitespace-nowrap">
+                                    <span className="text-sm font-bold text-green-700">
+                                        {(userData.weeklyActualMinutes / 60).toFixed(1)}h
+                                    </span>
+                                </td>
                             </tr>
                         ))}
                     </tbody>
