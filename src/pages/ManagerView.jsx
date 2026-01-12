@@ -11,6 +11,7 @@ import AllUsersCalendar from '../components/AllUsersCalendar';
 import WorkPlanner from '../components/WorkPlanner';
 import TaskHistory from '../components/TaskHistory';
 import DailyStatistics from '../components/DailyStatistics';
+import DailyWorkProgress from '../components/DailyWorkProgress';
 import ManagerNotifications from '../components/ManagerNotifications';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
@@ -216,6 +217,9 @@ export default function ManagerView() {
 
                         return (
                             <>
+                                <div className="mb-6">
+                                    <DailyWorkProgress currentUser={currentUser} />
+                                </div>
                                 {sortedMyTasks.length === 0 ? (
                                     <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-200">
                                         <p className="text-gray-500">Jums dar nepriskirta jokių užduočių.</p>

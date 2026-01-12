@@ -8,7 +8,7 @@ import TaskModal from '../components/TaskModal';
 import WeeklyHoursSummary from '../components/WeeklyHoursSummary';
 import WorkPlanner from '../components/WorkPlanner';
 import AllUsersCalendar from '../components/AllUsersCalendar';
-import DailyStatsHeader from '../components/DailyStatsHeader';
+import DailyWorkProgress from '../components/DailyWorkProgress';
 import { filterTasksByVisibility, sortWorkerTasks } from '../utils/taskUtils';
 import DailyStatistics from '../components/DailyStatistics';
 import { History, Plus } from 'lucide-react';
@@ -134,7 +134,7 @@ export default function WorkerView() {
                         <h2 className="text-xl font-bold text-gray-900 hidden sm:block">Mano užduotys</h2>
                     </div>
 
-                    <DailyStatsHeader currentUser={currentUser} />
+                    <DailyWorkProgress currentUser={currentUser} />
 
                     <WeeklyHoursSummary />
 
