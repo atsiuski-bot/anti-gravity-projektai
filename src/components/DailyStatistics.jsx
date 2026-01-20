@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, getDoc, orderBy, updateDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { formatDisplayName } from '../utils/formatters';
-import { Calendar, Clock, Coffee, User, Briefcase, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
+import { Calendar, Clock, Coffee, User, Briefcase, ChevronLeft, ChevronRight, Zap, Phone } from 'lucide-react';
 import clsx from 'clsx';
 
 export default function DailyStatistics({ currentUser, userRole, users = [] }) {
@@ -23,6 +24,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         const date = new Date(selectedDate);
         date.setDate(date.getDate() + offset);
         setSelectedDate(date.toISOString().split('T')[0]);
+    };
+
+    const [expandedTasks, setExpandedTasks] = useState(new Set());
+
+    const toggleExpand = (taskId) => {
+        const newExpanded = new Set(expandedTasks);
+        if (newExpanded.has(taskId)) {
+            newExpanded.delete(taskId);
+        } else {
+            newExpanded.add(taskId);
+        }
+        setExpandedTasks(newExpanded);
     };
 
     useEffect(() => {
@@ -144,15 +157,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         ? Object.values(dailyStats || {}).reduce((acc, s) => acc + (s.breakMinutes || 0), 0)
         : (dailyStats?.breakMinutes || 0);
 
-    // Sum from actualTime in tasks (including manual entries)
-    const totalTaskActualMinutes = finishedTasks.reduce((acc, t) => {
-        const mins = t.actualTime ? (t.timerMinutes || 0) + (t.manualMinutes || 0) : 0;
-        return acc + mins;
-    }, 0);
+    // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
+    const manualTasks = finishedTasks.filter(t => t.manualMinutes && t.manualMinutes > 0);
+    const totalManualMinutes = manualTasks.reduce((acc, t) => acc + (t.manualMinutes || 0), 0);
 
-    // Find earliest start and latest end
-    const firstSession = sessions.length > 0 ? sessions[0].startTime : null;
-    const lastSession = sessions.length > 0 ? sessions[sessions.length - 1].endTime : null;
+    // Sum from actualTime in tasks (including manual entries)
+    // We strictly use calculated values now to ensure consistency
+    const totalWorkedMinutes = totalTimerMinutes + totalManualMinutes;
 
     // Helper to format ISO time to HH:MM
     const formatTime = (isoString) => {
@@ -160,8 +171,51 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         return new Date(isoString).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     };
 
+    // Merge sessions and manual tasks for Timeline
+    const combinedTimelineItems = useMemo(() => {
+        const items = sessions.map(s => ({
+            id: s.id,
+            type: 'session',
+            startTime: s.startTime,
+            endTime: s.endTime,
+            title: s.taskTitle,
+            duration: s.durationMinutes,
+            workerId: s.workerId,
+            workerName: s.workerName
+        }));
+
+        manualTasks.forEach(t => {
+            // For manual tasks, we infer start time from completedAt - duration
+            // This is an approximation for visual timeline
+            const end = new Date(t.completedAt);
+            const start = new Date(end.getTime() - (t.manualMinutes * 60000));
+
+            items.push({
+                id: t.id,
+                type: 'task',
+                startTime: start.toISOString(),
+                endTime: t.completedAt,
+                title: t.title,
+                duration: t.manualMinutes,
+                workerId: t.assignedWorkerId,
+                workerName: t.assignedWorkerName,
+                isSystemTask: t.isSystemTask,
+                isQuickWork: t.isQuickWork
+            });
+        });
+
+        // Sort by start time
+        return items.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    }, [sessions, manualTasks]);
+
+
+    // Find earliest start and latest end from COMBINED items
+    const firstActivity = combinedTimelineItems.length > 0 ? combinedTimelineItems[0].startTime : null;
+    const lastActivity = combinedTimelineItems.length > 0 ? combinedTimelineItems[combinedTimelineItems.length - 1].endTime : null;
+
+
     // Group sessions by worker for Team mode
-    const workerSummaries = selectedUserId === 'all' ? sessions.reduce((acc, s) => {
+    const workerSummaries = selectedUserId === 'all' ? combinedTimelineItems.reduce((acc, s) => {
         if (!acc[s.workerId]) {
             const worker = users.find(u => u.id === s.workerId);
             const rawName = worker ? (worker.displayName || worker.email) : (s.workerName || 'Nežinomas');
@@ -172,12 +226,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 earliestStart: s.startTime,
                 latestEnd: s.endTime,
                 taskTimeMinutes: 0,
-                breakMinutes: dailyStats?.[s.workerId]?.breakMinutes || 0
+                breakMinutes: dailyStats?.[s.workerId]?.breakMinutes || 0,
+                breaks: dailyStats?.[s.workerId]?.breaks || []
             };
         }
-        acc[s.workerId].taskTimeMinutes += (s.durationMinutes || 0);
+        acc[s.workerId].taskTimeMinutes += (s.duration || 0);
         if (s.startTime < acc[s.workerId].earliestStart) acc[s.workerId].earliestStart = s.startTime;
         if (s.endTime > acc[s.workerId].latestEnd) acc[s.workerId].latestEnd = s.endTime;
+
         return acc;
     }, {}) : null;
 
@@ -229,7 +285,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                             className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-white min-w-[200px]"
                         >
                             <option value="all">Už visą komandą</option>
-                            {users.map(u => (
+                            {users.filter(u => !u.isDisabled).map(u => (
                                 <option key={u.id} value={u.id}>
                                     {u.displayName || u.email}
                                 </option>
@@ -249,7 +305,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                             Dienos Pradžia/Pabaiga
                         </div>
                         <div className="text-lg font-semibold text-gray-900">
-                            {firstSession ? formatTime(firstSession) : '--:--'} - {lastSession ? formatTime(lastSession) : '--:--'}
+                            {firstActivity ? formatTime(firstActivity) : '--:--'} - {lastActivity ? formatTime(lastActivity) : '--:--'}
                         </div>
                         <div className="text-xs text-gray-500 mt-1">
                             Pagal pirmą/paskutinį įrašą
@@ -263,7 +319,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                         Darbo laikas
                     </div>
                     <div className="text-2xl font-bold text-gray-900">
-                        {formatMinutesToTimeString(totalTimerMinutes)}
+                        {formatMinutesToTimeString(totalWorkedMinutes)}
                     </div>
                 </div>
 
@@ -302,7 +358,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     <h3 className="font-semibold">{selectedUserId === 'all' ? 'Darbo valandos' : 'Darbų eiga (Timeline)'}</h3>
                 </div>
 
-                {sessions.length === 0 ? (
+                {combinedTimelineItems.length === 0 ? (
                     <div className="p-12 text-center text-gray-500">
                         <p>Šią dieną darbo sesijų nefiksuota.</p>
                     </div>
@@ -347,7 +403,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                         {formatMinutesToTimeString(totalBreakMinutes)}
                                     </td>
                                     <td className="px-4 py-3 text-right text-indigo-700">
-                                        {formatMinutesToTimeString(totalTimerMinutes)}
+                                        {formatMinutesToTimeString(totalWorkedMinutes)}
                                     </td>
                                 </tr>
                             </tbody>
@@ -365,25 +421,27 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
-                                {sessions.map((session) => (
-                                    <tr key={session.id} className="hover:bg-gray-50">
+                                {combinedTimelineItems.map((item) => (
+                                    <tr key={item.id} className={clsx("hover:bg-gray-50", item.type === 'task' ? 'bg-blue-50/30' : '')}>
                                         <td className="px-4 py-3 text-gray-600 font-mono text-xs">
-                                            {formatTime(session.startTime)} - {formatTime(session.endTime)}
+                                            {formatTime(item.startTime)} - {formatTime(item.endTime)}
                                         </td>
-                                        <td className="px-4 py-3 text-gray-900 font-medium">
-                                            {session.taskTitle}
+                                        <td className="px-4 py-3 text-gray-900 font-medium flex items-center gap-2">
+                                            {item.type === 'task' && item.isSystemTask && <Phone className="w-3 h-3 text-sky-500" />}
+                                            {item.type === 'task' && item.isQuickWork && <Zap className="w-3 h-3 text-red-500" />}
+                                            {item.title}
                                         </td>
                                         <td className="px-4 py-3 text-right text-gray-900 font-mono">
-                                            {session.durationMinutes?.toFixed(1)}m
+                                            {item.duration?.toFixed(1)}m
                                         </td>
                                     </tr>
                                 ))}
                                 <tr className="bg-gray-50 font-semibold">
                                     <td colSpan="2" className="px-4 py-3 text-right text-gray-900">
-                                        Viso (Timer):
+                                        Viso (Timer + Manual):
                                     </td>
                                     <td className="px-4 py-3 text-right text-indigo-600">
-                                        {formatMinutesToTimeString(totalTimerMinutes)}
+                                        {formatMinutesToTimeString(totalWorkedMinutes)}
                                     </td>
                                 </tr>
                             </tbody>
@@ -391,6 +449,59 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     </div>
                 )}
             </div>
+
+            {/* Breaks Timeline */}
+            {(selectedUserId !== 'all' && dailyStats?.breaks && dailyStats.breaks.length > 0) && (
+                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 text-gray-900">
+                        <h3 className="font-semibold">Pertraukos ({dailyStats.breaks.length})</h3>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead className="bg-gray-50">
+                                <tr>
+                                    <th className="px-4 py-3 text-left font-medium text-gray-500 w-24">Laikas</th>
+                                    <th className="px-4 py-3 text-left font-medium text-gray-500">Aprašymas</th>
+                                    <th className="px-4 py-3 text-right font-medium text-gray-500 w-32">Trukmė</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                                {dailyStats.breaks.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)).map((brk, idx) => (
+                                    <tr key={idx} className="hover:bg-gray-50">
+                                        <td className="px-4 py-3 text-gray-600 font-mono text-xs">
+                                            {formatTime(brk.startTime)} - {formatTime(brk.endTime)}
+                                        </td>
+                                        <td className="px-4 py-3 text-gray-900 font-medium">
+                                            Pertrauka #{idx + 1}
+                                        </td>
+                                        <td className="px-4 py-3 text-right text-amber-600 font-mono">
+                                            {brk.durationMinutes?.toFixed(1)}m
+                                        </td>
+                                    </tr>
+                                ))}
+                                <tr className="bg-gray-50 font-semibold">
+                                    <td colSpan="2" className="px-4 py-3 text-right text-gray-900">
+                                        Viso pertraukų:
+                                    </td>
+                                    <td className="px-4 py-3 text-right text-amber-600">
+                                        {formatMinutesToTimeString(totalBreakMinutes)}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            )}
+
+            {(selectedUserId === 'all') && (
+                /* Optional: Add Breaks Breakdown for Team if requested, but for now only adding for individual user as per "user has had a break today" request interpretation */
+                /* Re-reading request: "create a similar table... for Breaks. Show all times a user has had a break today." 
+                   This implies when viewing a specific user (or maybe all users, but individual view is clearest).
+                   I will stick to Individual view first.
+                */
+                null
+            )}
+
 
             {/* Completed Tasks List for Confirmation */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -444,14 +555,38 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                                     />
                                                 </td>
                                             )}
-                                            <td className="px-3 py-3">
+                                            <td className="px-3 py-3" onClick={() => toggleExpand(task.id)}>
                                                 <div className="text-sm font-medium text-gray-900 truncate">
                                                     {task.title}
                                                 </div>
+                                                {task.estimatedTime && (
+                                                    <div className="text-[10px] text-blue-600 font-medium mt-0.5">
+                                                        Planuota: {task.estimatedTime}
+                                                    </div>
+                                                )}
+                                                {task.deadline && (
+                                                    <div className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
+                                                        <Calendar className="w-3 h-3" />
+                                                        {task.deadline}
+                                                    </div>
+                                                )}
                                                 {task.description && (
-                                                    <div className="text-xs text-gray-500 line-clamp-1 mt-0.5 flex items-center gap-1">
-                                                        <Briefcase className="w-3 h-3 flex-shrink-0" />
+                                                    <div className={clsx(
+                                                        "text-xs text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700",
+                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : "line-clamp-1"
+                                                    )}>
+                                                        <Briefcase className="w-3 h-3 flex-shrink-0 mt-0.5" />
                                                         {task.description}
+                                                    </div>
+                                                )}
+                                                {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
+                                                    <div className="mt-2 pl-4 border-l-2 border-gray-200">
+                                                        <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
+                                                        {task.comments.map((comment, idx) => (
+                                                            <div key={idx} className="text-[10px] text-gray-600 mb-1">
+                                                                <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 )}
                                             </td>
@@ -461,14 +596,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                                 </span>
                                             </td>
                                             <td className="px-2 py-3 whitespace-nowrap">
-                                                <span className={clsx(
-                                                    "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-md",
-                                                    task.priority === 'Urgent' ? 'bg-yellow-50 text-black border border-yellow-200' :
-                                                        task.priority === 'High' ? 'bg-gray-200 text-gray-800' :
-                                                            task.priority === 'Medium' ? 'bg-gray-500 text-white' :
-                                                                'bg-gray-800 text-white'
-                                                )}>
-                                                    {task.priority || 'Medium'}
+                                                <span
+                                                    className={clsx(
+                                                        "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-md border border-black/5"
+                                                    )}
+                                                    style={{
+                                                        backgroundColor: getPriorityColor(task.priority),
+                                                        color: getPriorityTextColor(task.priority)
+                                                    }}
+                                                >
+                                                    {getPriorityLabel(task.priority)}
                                                 </span>
                                             </td>
                                             <td className="px-2 py-3 whitespace-nowrap">
@@ -483,7 +620,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                                 )}
                                             </td>
                                             <td className="px-2 py-3 text-right text-gray-900 font-mono text-xs">
-                                                {task.actualTime || '-'}
+                                                {task.actualTime || (task.manualMinutes ? `${task.manualMinutes.toFixed(1)}m` : '-')}
                                             </td>
                                         </tr>
                                     );

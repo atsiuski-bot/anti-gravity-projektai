@@ -72,5 +72,10 @@ service cloud.firestore {
     match /calendar_notifications/{notifId} {
       allow read, write: if isAuthenticated();
     }
+
+    // TASK TEMPLATES
+    match /task_templates/{templateId} {
+      allow read, write: if isAuthenticated();
+    }
   }
 }

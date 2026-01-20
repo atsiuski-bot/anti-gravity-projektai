@@ -1,53 +1,111 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { startOfDay, endOfDay, format } from 'date-fns';
+import { startOfWeek, endOfWeek, eachDayOfInterval, format, isSameDay } from 'date-fns';
 
-export default function DailyWorkProgress({ currentUser }) {
-    const [plannedHours, setPlannedHours] = useState(0);
-    const [workedHours, setWorkedHours] = useState(0);
+export default function DailyWorkProgress({ currentUser, tasks = [] }) {
+    const [dayPlanned, setDayPlanned] = useState(0);
+    const [dayWorked, setDayWorked] = useState(0);
+    const [weekPlanned, setWeekPlanned] = useState(0);
+    const [weekWorked, setWeekWorked] = useState(0);
+    const [currentSessionHours, setCurrentSessionHours] = useState(0);
     const [loading, setLoading] = useState(true);
+
+    // Calculate active session time from running tasks
+    useEffect(() => {
+        const calculateActiveTime = () => {
+            if (!tasks || tasks.length === 0) {
+                setCurrentSessionHours(0);
+                return;
+            }
+
+            let totalActiveMillis = 0;
+            const now = new Date();
+
+            tasks.forEach(task => {
+                if (task.timerStatus === 'running' && task.timerStartedAt && task.assignedWorkerId === currentUser?.uid) {
+                    const start = new Date(task.timerStartedAt);
+                    if (!isNaN(start.getTime())) {
+                        totalActiveMillis += (now - start);
+                    }
+                }
+            });
+
+            setCurrentSessionHours(totalActiveMillis / (1000 * 60 * 60));
+        };
+
+        calculateActiveTime();
+        const interval = setInterval(calculateActiveTime, 60000);
+        return () => clearInterval(interval);
+    }, [tasks, currentUser]);
 
     useEffect(() => {
         if (!currentUser) return;
 
-        const todayStr = format(new Date(), 'yyyy-MM-dd');
-        const startToday = startOfDay(new Date());
-        const endToday = endOfDay(new Date());
+        const now = new Date();
+        const weekStart = startOfWeek(now, { weekStartsOn: 1 }); // Monday start
+        const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+        const todayStr = format(now, 'yyyy-MM-dd');
 
-        // 1. Fetch Work Sessions (Actual Worked Hours Today)
+        // Generate array of date strings for the week to use in 'in' query
+        const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd })
+            .map(d => format(d, 'yyyy-MM-dd'));
+
+        // 1. Fetch Work Sessions (Actual Worked Hours - FINISHED ONLY)
         const sessionsQuery = query(
             collection(db, 'work_sessions'),
             where('workerId', '==', currentUser.uid),
-            where('date', '==', todayStr)
+            where('date', 'in', weekDays)
         );
 
         const unsubSessions = onSnapshot(sessionsQuery, (snapshot) => {
-            let totalMinutes = 0;
+            let dWorked = 0;
+            let wWorked = 0;
             snapshot.docs.forEach(doc => {
-                totalMinutes += doc.data().durationMinutes || 0;
+                const data = doc.data();
+                const duration = (data.durationMinutes || 0) / 60;
+                wWorked += duration;
+                if (data.date === todayStr) {
+                    dWorked += duration;
+                }
             });
-            setWorkedHours(totalMinutes / 60);
+            setDayWorked(dWorked);
+            setWeekWorked(wWorked);
         });
 
-        // 2. Fetch Work Hours (Planned Hours Today)
-        // Similar logic to DailyStatsHeader
+        // 2. Fetch Work Hours (Planned from Calendar)
         const plannedQuery = query(
             collection(db, 'work_hours'),
             where('userId', '==', currentUser.uid),
-            where('start', '>=', startToday.toISOString()),
-            where('start', '<=', endToday.toISOString())
+            where('start', '>=', weekStart.toISOString()),
+            where('start', '<=', weekEnd.toISOString())
         );
 
         const unsubPlanned = onSnapshot(plannedQuery, (snapshot) => {
-            let totalMillis = 0;
+            let dPlanned = 0;
+            let wPlanned = 0;
             snapshot.docs.forEach(doc => {
-                const data = doc.data();
-                const start = new Date(data.start);
-                const end = new Date(data.end);
-                totalMillis += (end - start);
+                try {
+                    const data = doc.data();
+                    const start = new Date(data.start);
+                    const end = new Date(data.end);
+
+                    if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+                        const duration = (end - start) / (1000 * 60 * 60);
+
+                        if (Number.isFinite(duration) && duration >= 0) {
+                            wPlanned += duration;
+                            if (isSameDay(start, now)) {
+                                dPlanned += duration;
+                            }
+                        }
+                    }
+                } catch (error) {
+                    console.warn('Error processing planned work entry:', doc.id, error);
+                }
             });
-            setPlannedHours(totalMillis / (1000 * 60 * 60));
+            setDayPlanned(dPlanned);
+            setWeekPlanned(wPlanned);
             setLoading(false);
         });
 
@@ -63,58 +121,64 @@ export default function DailyWorkProgress({ currentUser }) {
         return `${h}h ${m}m`;
     };
 
-    // SCALING LOGIC
-    // 1. Base scale: plannedHours should be at 70% of the width.
-    // scaleMax = plannedHours / 0.7
-    // If plannedHours is 0, default to something reasonable (e.g. 8h represents 70% -> scaleMax = 11.4)
-    let scaleMax = plannedHours > 0 ? plannedHours / 0.7 : 11.4;
+    // Calculate totals including current session
+    // Current session counts towards both Day and Week
+    const totalDayWorked = dayWorked + currentSessionHours;
+    const totalWeekWorked = weekWorked + currentSessionHours;
 
-    // 2. If workedHours exceeds the calculated scaleMax (or gets too close), expand the scale.
-    // We want workedHours to fit. If workedHours > scaleMax, effectively 'zoom out'.
-    // Let's say we always want the bars to fit within 100%.
-    if (workedHours > scaleMax) {
-        // If worked is bigger, make IT the 95% mark (padding).
-        scaleMax = workedHours / 0.95;
-    }
+    const renderProgressBar = (label, current, total, colorClass = "bg-blue-600") => {
+        // Prevent division by zero
+        const percent = total > 0 ? (current / total) * 100 : 0;
+        // Cap at 100% for the bar visual, but allow text to show real values? 
+        // User might want to see over-achievement.
+        // Let's just cap the visual bar at 100%.
 
-    // 3. Percentages
-    const plannedPercent = scaleMax > 0 ? (plannedHours / scaleMax) * 100 : 0;
-    const workedPercent = scaleMax > 0 ? (workedHours / scaleMax) * 100 : 0;
-
-    if (loading) return null;
+        return (
+            <div className="relative">
+                <div className="flex justify-between text-xs font-medium text-gray-500 mb-1">
+                    <span>{label}</span>
+                    <span className="text-gray-900">
+                        {formatTime(current)} <span className="text-gray-400">/ {formatTime(total)}</span>
+                        {currentSessionHours > 0 && label.includes('Dienos') && (
+                            <span className="text-xs text-green-600 ml-1">(+vyksta)</span>
+                        )}
+                    </span>
+                </div>
+                <div className="h-4 w-full bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                        className={`h-full ${colorClass} rounded-full transition-all duration-500 ease-in-out`}
+                        style={{ width: `${Math.min(percent, 100)}%` }}
+                    ></div>
+                </div>
+            </div>
+        );
+    };
 
     return (
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6">
-            <h3 className="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wide">Dienos Progresas</h3>
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 relative">
+            {loading && (
+                <div className="absolute inset-0 bg-white/50 z-10 animate-pulse rounded-xl" />
+            )}
+            <h3 className="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wide">
+                Darbo Progresas
+            </h3>
 
             <div className="space-y-6">
-                {/* Planned Hours Bar */}
-                <div className="relative">
-                    <div className="flex justify-between text-xs font-medium text-gray-500 mb-1">
-                        <span>Suplanuotos valandos</span>
-                        <span>{formatTime(plannedHours)}</span>
-                    </div>
-                    <div className="h-4 w-full bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                            className="h-full bg-blue-300 rounded-full transition-all duration-500 ease-in-out"
-                            style={{ width: `${Math.min(plannedPercent, 100)}%` }}
-                        ></div>
-                    </div>
-                </div>
+                {/* Day Progress */}
+                {renderProgressBar(
+                    "Dienos tikslas",
+                    totalDayWorked,
+                    dayPlanned,
+                    "bg-blue-500"
+                )}
 
-                {/* Worked Hours Bar */}
-                <div className="relative">
-                    <div className="flex justify-between text-xs font-medium text-gray-500 mb-1">
-                        <span>Išdirbtos valandos</span>
-                        <span className="text-blue-700">{formatTime(workedHours)}</span>
-                    </div>
-                    <div className="h-4 w-full bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                            className="h-full bg-blue-600 rounded-full transition-all duration-500 ease-in-out"
-                            style={{ width: `${Math.min(workedPercent, 100)}%` }}
-                        ></div>
-                    </div>
-                </div>
+                {/* Week Progress */}
+                {renderProgressBar(
+                    "Savaitės tikslas",
+                    totalWeekWorked,
+                    weekPlanned,
+                    "bg-indigo-500" // Slightly different color for distinction
+                )}
             </div>
         </div>
     );

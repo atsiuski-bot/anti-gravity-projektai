@@ -1,24 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Coffee, Play } from 'lucide-react';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, setDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs, setDoc, arrayUnion, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from '../utils/taskActions';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
+import { SoundManager } from '../utils/soundUtils';
+
+import { stopCall, stopQuickWork } from '../utils/userStateActions';
 
 export default function BreakTimer({ currentUser, compact = false }) {
     const [isTakingBreak, setIsTakingBreak] = useState(false);
     const [accumulatedMinutes, setAccumulatedMinutes] = useState(0);
     const [currentSessionMinutes, setCurrentSessionMinutes] = useState(0);
 
-    // Load initial break state
+    // Real-time break state listener
     useEffect(() => {
         if (!currentUser) return;
 
-        const loadBreakState = async () => {
-            const userRef = doc(db, 'users', currentUser.uid);
-            const userSnap = await getDoc(userRef);
+        const userRef = doc(db, 'users', currentUser.uid);
 
+        // Subscribe to real-time updates
+        const unsubscribe = onSnapshot(userRef, (userSnap) => {
             if (userSnap.exists()) {
                 const data = userSnap.data().breakState || {};
                 const today = new Date().toISOString().split('T')[0];
@@ -33,9 +36,9 @@ export default function BreakTimer({ currentUser, compact = false }) {
                     setIsTakingBreak(data.isTakingBreak || false);
                 }
             }
-        };
+        });
 
-        loadBreakState();
+        return () => unsubscribe();
     }, [currentUser]);
 
     const [startTime, setStartTime] = useState(null);
@@ -58,13 +61,22 @@ export default function BreakTimer({ currentUser, compact = false }) {
     }, [isTakingBreak, currentUser]);
 
     useEffect(() => {
+        let interval;
         if (isTakingBreak && startTime) {
-            const interval = setInterval(() => {
+            interval = setInterval(() => {
                 const now = new Date();
                 const session = (now - startTime) / (1000 * 60);
                 setCurrentSessionMinutes(session);
             }, 1000);
-            return () => clearInterval(interval);
+
+            // Start sound notification
+            SoundManager.startPeriodicBeep();
+        } else {
+            SoundManager.stopPeriodicBeep();
+        }
+        return () => {
+            clearInterval(interval);
+            SoundManager.stopPeriodicBeep();
         }
     }, [isTakingBreak, startTime]);
 
@@ -89,6 +101,9 @@ export default function BreakTimer({ currentUser, compact = false }) {
                 });
                 const resumableTaskIds = snapshot.docs.map(doc => doc.id);
 
+                await stopCall(currentUser.uid, currentUser.displayName);
+                await stopQuickWork(currentUser.uid, currentUser.displayName);
+
                 await Promise.all(pausePromises);
 
                 await updateDoc(userRef, {
@@ -107,13 +122,15 @@ export default function BreakTimer({ currentUser, compact = false }) {
                 const now = new Date();
                 let session = 0;
 
+                let actualStartTime = startTime;
                 if (startTime) {
                     session = (now - startTime) / (1000 * 60);
                 } else {
                     const s = await getDoc(userRef);
                     const startStr = s.data()?.breakState?.lastStartedAt;
                     if (startStr) {
-                        session = (now - new Date(startStr)) / (1000 * 60);
+                        actualStartTime = new Date(startStr);
+                        session = (now - actualStartTime) / (1000 * 60);
                     }
                 }
 
@@ -152,6 +169,11 @@ export default function BreakTimer({ currentUser, compact = false }) {
                         userId: currentUser.uid,
                         date: today,
                         breakMinutes: newTotal,
+                        breaks: arrayUnion({
+                            startTime: actualStartTime ? actualStartTime.toISOString() : new Date().toISOString(),
+                            endTime: now.toISOString(),
+                            durationMinutes: session
+                        }),
                         updatedAt: new Date().toISOString()
                     }, { merge: true });
                 } catch (err) {
@@ -168,21 +190,28 @@ export default function BreakTimer({ currentUser, compact = false }) {
         }
     };
 
-    const totalDisplay = formatMinutesToTimeString(accumulatedMinutes + currentSessionMinutes);
+    const totalDisplay = formatMinutesToTimeString(currentSessionMinutes);
 
     if (compact) {
         return (
             <div className="flex flex-col items-center">
-                <span className="text-[10px] font-bold text-gray-700 font-mono mb-1 leading-none">
-                    {totalDisplay}
-                </span>
+                {isTakingBreak && (
+                    <span className="text-[10px] font-bold text-gray-700 font-mono mb-1 leading-none">
+                        {totalDisplay}
+                    </span>
+                )}
+                {!isTakingBreak && (
+                    <span className="text-[10px] font-bold text-transparent font-mono mb-1 leading-none select-none">
+                        00:00
+                    </span>
+                )}
                 <button
                     onClick={handleToggleBreak}
                     className={clsx(
-                        "p-2.5 rounded-full transition-all shadow-md active:scale-95",
+                        "p-2 rounded-lg transition-all active:scale-95",
                         isTakingBreak
-                            ? 'bg-amber-500 text-white ring-4 ring-amber-100'
-                            : 'bg-blue-600 text-white hover:bg-blue-700'
+                            ? 'bg-amber-500 text-white ring-2 ring-amber-100'
+                            : 'text-gray-600 hover:bg-gray-100'
                     )}
                     title={isTakingBreak ? "Tęsti darbą" : "Pertrauka"}
                 >
@@ -196,13 +225,17 @@ export default function BreakTimer({ currentUser, compact = false }) {
         );
     }
 
+
+
     return (
         <div className="flex items-center gap-3">
-            <div className="flex flex-col items-end mr-2">
-                <span className="text-sm font-medium text-gray-700 font-mono">
-                    {totalDisplay}
-                </span>
-            </div>
+            {isTakingBreak && (
+                <div className="flex flex-col items-end mr-2">
+                    <span className="text-sm font-medium text-gray-700 font-mono">
+                        {totalDisplay}
+                    </span>
+                </div>
+            )}
 
             <button
                 onClick={handleToggleBreak}

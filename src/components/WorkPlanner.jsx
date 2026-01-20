@@ -6,7 +6,7 @@ import { lt } from 'date-fns/locale';
 import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Clock, Plus, Trash2, AlertCircle, Info } from 'lucide-react';
+import { Clock, Plus, Trash2, AlertCircle, Info, ChevronLeft, ChevronRight, Home, Palmtree } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 
@@ -53,20 +53,45 @@ const CustomToolbar = (toolbar) => {
                     </button>
                 </div>
 
-                {/* Right: Today */}
-                <button
-                    onClick={goToToday}
-                    className="w-[90px] sm:w-[100px] h-[40px] text-sm font-bold bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-lg shadow-sm transition-all active:scale-95 flex items-center justify-center"
-                >
-                    Šiandien
-                </button>
+                {/* Right: Today & Manual Add */}
+                <div className="flex flex-col gap-2 items-end">
+                    <button
+                        onClick={goToToday}
+                        className="w-[90px] sm:w-[100px] h-[40px] text-sm font-bold bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-lg shadow-sm transition-all active:scale-95 flex items-center justify-center"
+                    >
+                        Šiandien
+                    </button>
+                    <button
+                        onClick={toolbar.onManualClick}
+                        className="flex items-center justify-center bg-blue-600 text-white px-2 py-1 rounded-md hover:bg-blue-700 transition-all active:scale-90 shadow-sm text-[10px] font-semibold"
+                    >
+                        <Plus className="w-3 h-3 mr-1" />
+                        Pridėti rankiniu būdu
+                    </button>
+                </div>
             </div>
 
-            {/* Date Label */}
-            <div className="text-center py-2">
-                <span className="text-lg font-bold text-gray-800 capitalize select-none">
+            {/* Date Label & Navigation */}
+            <div className="flex items-center justify-center gap-4 py-2">
+                <button
+                    onClick={() => toolbar.onNavigate('PREV')}
+                    className="p-1 hover:bg-gray-200 rounded-full transition-colors text-gray-600"
+                    aria-label="Atgal"
+                >
+                    <ChevronLeft className="w-6 h-6" />
+                </button>
+
+                <span className="text-lg font-bold text-gray-800 capitalize select-none min-w-[140px] text-center">
                     {toolbar.label}
                 </span>
+
+                <button
+                    onClick={() => toolbar.onNavigate('NEXT')}
+                    className="p-1 hover:bg-gray-200 rounded-full transition-colors text-gray-600"
+                    aria-label="Pirmyn"
+                >
+                    <ChevronRight className="w-6 h-6" />
+                </button>
             </div>
         </div>
     );
@@ -81,6 +106,8 @@ export default function WorkPlanner() {
     const [manualEnd, setManualEnd] = useState('');
     const [error, setError] = useState('');
     const [editingEvent, setEditingEvent] = useState(null);
+    const [manualIsWorkFromHome, setManualIsWorkFromHome] = useState(false);
+    const [manualIsVacation, setManualIsVacation] = useState(false);
 
     useEffect(() => {
         if (!currentUser) return;
@@ -99,6 +126,8 @@ export default function WorkPlanner() {
                     start: new Date(data.start),
                     end: new Date(data.end),
                     userId: data.userId,
+                    isWorkFromHome: data.isWorkFromHome || false,
+                    isVacation: data.isVacation || false,
                 };
             });
             setEvents(hoursData);
@@ -110,23 +139,30 @@ export default function WorkPlanner() {
         return () => unsubscribe();
     }, [currentUser]);
 
-    const handleSelectSlot = async ({ start, end }) => {
+    const handleSelectSlot = ({ start, end }) => {
         if (!currentUser) return;
 
-        try {
-            await addDoc(collection(db, 'work_hours'), {
-                userId: currentUser.uid,
-                start: start.toISOString(),
-                end: end.toISOString(),
-                title: 'Darbas',
-                type: 'planned',
-            });
-            await logCalendarChange(currentUser, 'add', start, end);
-            setError('');
-        } catch (err) {
-            console.error("Error adding work hours:", err);
-            setError("Nepavyko pridėti darbo valandų.");
+        // Check for overlaps
+        const hasOverlap = events.some(event => {
+            return (start < event.end && end > event.start);
+        });
+
+        if (hasOverlap) {
+            setError('Pasirinktas laikas persidengia su jau esamu įrašu.');
+            return;
         }
+
+        setEditingEvent({
+            id: null, // null ID indicates new event
+            start,
+            end,
+            dateStr: format(start, 'yyyy-MM-dd'),
+            startStr: format(start, 'HH:mm'),
+            endStr: format(end, 'HH:mm'),
+            isWorkFromHome: false,
+            isVacation: false
+        });
+        setError('');
     };
 
     const handleSelectEvent = (event) => {
@@ -134,7 +170,9 @@ export default function WorkPlanner() {
             ...event,
             dateStr: format(event.start, 'yyyy-MM-dd'),
             startStr: format(event.start, 'HH:mm'),
-            endStr: format(event.end, 'HH:mm')
+            endStr: format(event.end, 'HH:mm'),
+            isWorkFromHome: event.isWorkFromHome || false,
+            isVacation: event.isVacation || false
         });
     };
 
@@ -151,19 +189,49 @@ export default function WorkPlanner() {
                 return;
             }
 
-            const eventRef = doc(db, 'work_hours', editingEvent.id);
-            await updateDoc(eventRef, {
-                start: startDateTime.toISOString(),
-                end: endDateTime.toISOString()
+            // Check for overlaps
+            const hasOverlap = events.some(event => {
+                if (event.id === editingEvent.id) return false; // Skip current event if editing
+                return (startDateTime < event.end && endDateTime > event.start);
             });
 
-            await logCalendarChange(currentUser, 'edit', startDateTime, endDateTime);
+            if (hasOverlap) {
+                setError('Pasirinktas laikas persidengia su jau esamu įrašu.');
+                return;
+            }
+
+            const title = editingEvent.isVacation ? 'Atostogos' : 'Darbas';
+
+            if (editingEvent.id) {
+                // Update existing
+                const eventRef = doc(db, 'work_hours', editingEvent.id);
+                await updateDoc(eventRef, {
+                    start: startDateTime.toISOString(),
+                    end: endDateTime.toISOString(),
+                    title: title,
+                    isWorkFromHome: editingEvent.isWorkFromHome,
+                    isVacation: editingEvent.isVacation
+                });
+                await logCalendarChange(currentUser, 'edit', startDateTime, endDateTime);
+            } else {
+                // Create new
+                await addDoc(collection(db, 'work_hours'), {
+                    userId: currentUser.uid,
+                    start: startDateTime.toISOString(),
+                    end: endDateTime.toISOString(),
+                    title: title,
+                    type: 'planned',
+                    isWorkFromHome: editingEvent.isWorkFromHome,
+                    isVacation: editingEvent.isVacation
+                });
+                await logCalendarChange(currentUser, 'add', startDateTime, endDateTime);
+            }
 
             setEditingEvent(null);
             setError('');
         } catch (err) {
-            console.error("Error updating work hours:", err);
-            setError("Nepavyko atnaujinti darbo valandų.");
+            console.error("Error saving work hours:", err);
+            setError("Nepavyko išsaugoti darbo valandų.");
         }
     };
 
@@ -199,12 +267,26 @@ export default function WorkPlanner() {
                 return;
             }
 
+            // Check for overlaps
+            const hasOverlap = events.some(event => {
+                return (startDateTime < event.end && endDateTime > event.start);
+            });
+
+            if (hasOverlap) {
+                setError('Pasirinktas laikas persidengia su jau esamu įrašu.');
+                return;
+            }
+
+            const title = manualIsVacation ? 'Atostogos' : 'Darbas';
+
             await addDoc(collection(db, 'work_hours'), {
                 userId: currentUser.uid,
                 start: startDateTime.toISOString(),
                 end: endDateTime.toISOString(),
-                title: 'Darbas',
+                title: title,
                 type: 'planned',
+                isWorkFromHome: manualIsWorkFromHome,
+                isVacation: manualIsVacation
             });
             await logCalendarChange(currentUser, 'add', startDateTime, endDateTime);
 
@@ -212,6 +294,8 @@ export default function WorkPlanner() {
             setManualDate('');
             setManualStart('');
             setManualEnd('');
+            setManualIsWorkFromHome(false);
+            setManualIsVacation(false);
             setShowManualInput(false);
             setError('');
         } catch (err) {
@@ -228,18 +312,37 @@ export default function WorkPlanner() {
         timeOptions.push(`${hour}:30`);
     }
 
+    const components = {
+        event: ({ event }) => (
+            <div className={`flex flex-col h-full justify-center px-1 leading-tight ${event.isVacation ? 'bg-black/10' : ''}`} style={{ writingMode: 'vertical-rl', textOrientation: 'sideways' }}>
+                <div className="font-semibold text-xs flex items-center gap-1">
+                    {event.isVacation ? (
+                        <>
+                            <Palmtree className="w-3 h-3 rotate-90" />
+                            <span>Atostogos</span>
+                        </>
+                    ) : event.isWorkFromHome ? (
+                        <>
+                            <Home className="w-3 h-3 rotate-90" />
+                            <span>Iš namų</span>
+                        </>
+                    ) : (
+                        <span>Dirbtuvėse</span>
+                    )}
+                </div>
+            </div>
+        ),
+        toolbar: (props) => (
+            <CustomToolbar
+                {...props}
+                onManualClick={() => setShowManualInput(!showManualInput)}
+            />
+        )
+    };
+
     return (
         <div className="w-full relative">
-            {/* Floating Add Button */}
-            <div className="fixed top-[113px] right-4 z-[60] sm:absolute sm:top-[-40px] sm:right-0">
-                <button
-                    onClick={() => setShowManualInput(!showManualInput)}
-                    className="flex items-center justify-center bg-blue-600 text-white w-12 h-12 rounded-full hover:bg-blue-700 transition-all active:scale-90 shadow-lg border-2 border-white sm:w-auto sm:h-auto sm:px-4 sm:py-2 sm:rounded-lg sm:border-0"
-                >
-                    <Plus className="w-6 h-6 sm:w-4 sm:h-4" />
-                    <span className="hidden sm:inline ml-1.5 text-sm font-semibold">Pridėti rankiniu būdu</span>
-                </button>
-            </div>
+            {/* Floating button removed */}
 
             {error && (
                 <div className="mb-3 bg-red-50 border-l-4 border-red-500 p-3 rounded flex items-center gap-2">
@@ -282,6 +385,32 @@ export default function WorkPlanner() {
                             />
                         </div>
                     </div>
+                    <div className="mt-3 flex gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={manualIsWorkFromHome}
+                                onChange={(e) => {
+                                    setManualIsWorkFromHome(e.target.checked);
+                                    if (e.target.checked) setManualIsVacation(false);
+                                }}
+                                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                            />
+                            <span className="text-sm font-medium text-gray-700">Darbas iš namų</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={manualIsVacation}
+                                onChange={(e) => {
+                                    setManualIsVacation(e.target.checked);
+                                    if (e.target.checked) setManualIsWorkFromHome(false);
+                                }}
+                                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                            />
+                            <span className="text-sm font-medium text-gray-700">Atostogos</span>
+                        </label>
+                    </div>
                     <div className="flex gap-2 mt-4">
                         <button
                             type="submit"
@@ -298,7 +427,8 @@ export default function WorkPlanner() {
                         </button>
                     </div>
                 </form>
-            )}
+            )
+            }
 
             <div className="h-[820px] sm:h-[650px] md:h-[750px]">
                 <Calendar
@@ -316,9 +446,7 @@ export default function WorkPlanner() {
                     timeslots={2}
                     min={new Date(1970, 1, 1, 7)}
                     scrollToTime={new Date(1970, 1, 1, 8)}
-                    components={{
-                        toolbar: CustomToolbar
-                    }}
+                    components={components}
                     messages={{
                         week: 'Savaitė',
                         day: 'Diena',
@@ -331,82 +459,129 @@ export default function WorkPlanner() {
             </div>
 
             {/* Edit Event Modal */}
-            {editingEvent && (
-                <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200">
-                        <h3 className="text-lg font-bold text-gray-900 mb-4">Redaguoti laiką</h3>
+            {
+                editingEvent && (
+                    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                        <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200">
+                            <h3 className="text-lg font-bold text-gray-900 mb-4">
+                                {editingEvent.id ? 'Redaguoti laiką' : 'Pridėti darbo laiką'}
+                            </h3>
 
-                        <form onSubmit={handleUpdateEvent}>
-                            <div className="grid grid-cols-1 gap-4 mb-6">
-                                <div>
-                                    <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Data</label>
-                                    <input
-                                        type="date"
-                                        value={editingEvent.dateStr}
-                                        onChange={(e) => setEditingEvent({ ...editingEvent, dateStr: e.target.value })}
-                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                        required
-                                    />
-                                </div>
-                                <div className="grid grid-cols-2 gap-4">
+                            <form onSubmit={handleUpdateEvent}>
+                                <div className="grid grid-cols-1 gap-4 mb-6">
                                     <div>
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Pradžia</label>
-                                        <select
-                                            value={editingEvent.startStr}
-                                            onChange={(e) => setEditingEvent({ ...editingEvent, startStr: e.target.value })}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white appearance-none"
+                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Data</label>
+                                        <input
+                                            type="date"
+                                            value={editingEvent.dateStr}
+                                            onChange={(e) => setEditingEvent({ ...editingEvent, dateStr: e.target.value })}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
                                             required
-                                        >
-                                            {timeOptions.map(time => (
-                                                <option key={`start-${time}`} value={time}>{time}</option>
-                                            ))}
-                                        </select>
+                                        />
                                     </div>
-                                    <div>
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Pabaiga</label>
-                                        <select
-                                            value={editingEvent.endStr}
-                                            onChange={(e) => setEditingEvent({ ...editingEvent, endStr: e.target.value })}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white appearance-none"
-                                            required
-                                        >
-                                            {timeOptions.map(time => (
-                                                <option key={`end-${time}`} value={time}>{time}</option>
-                                            ))}
-                                        </select>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Pradžia</label>
+                                            <select
+                                                value={editingEvent.startStr}
+                                                onChange={(e) => setEditingEvent({ ...editingEvent, startStr: e.target.value })}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white appearance-none"
+                                                required
+                                            >
+                                                {timeOptions.map(time => (
+                                                    <option key={`start-${time}`} value={time}>{time}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Pabaiga</label>
+                                            <select
+                                                value={editingEvent.endStr}
+                                                onChange={(e) => setEditingEvent({ ...editingEvent, endStr: e.target.value })}
+                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white appearance-none"
+                                                required
+                                            >
+                                                {timeOptions.map(time => (
+                                                    <option key={`end-${time}`} value={time}>{time}</option>
+                                                ))}
+                                            </select>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                                <div className="mt-4 flex gap-4">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={editingEvent.isWorkFromHome}
+                                            onChange={(e) => setEditingEvent({
+                                                ...editingEvent,
+                                                isWorkFromHome: e.target.checked,
+                                                isVacation: e.target.checked ? false : editingEvent.isVacation
+                                            })}
+                                            className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm font-medium text-gray-700">Darbas iš namų</span>
+                                    </label>
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={editingEvent.isVacation}
+                                            onChange={(e) => setEditingEvent({
+                                                ...editingEvent,
+                                                isVacation: e.target.checked,
+                                                isWorkFromHome: e.target.checked ? false : editingEvent.isWorkFromHome
+                                            })}
+                                            className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                                        />
+                                        <span className="text-sm font-medium text-gray-700">Atostogos</span>
+                                    </label>
+                                </div>
 
-                            <div className="flex items-center justify-between gap-3">
-                                <button
-                                    type="button"
-                                    onClick={handleDeleteEvent}
-                                    className="flex items-center gap-2 px-4 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors"
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                    Ištrinti
-                                </button>
-                                <div className="flex items-center gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={() => setEditingEvent(null)}
-                                        className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors"
-                                    >
-                                        Atšaukti
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-sm transition-transform active:scale-95"
-                                    >
-                                        Išsaugoti
-                                    </button>
+
+                                <div className="flex items-center justify-between gap-3 pt-2">
+                                    {editingEvent.id ? (
+                                        <button
+                                            type="button"
+                                            onClick={handleDeleteEvent}
+                                            className="flex items-center gap-2 px-4 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                            <span className="hidden sm:inline">Ištrinti</span>
+                                            <span className="sm:hidden">Trinti</span>
+                                        </button>
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditingEvent(null)}
+                                            className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition-colors"
+                                        >
+                                            Atšaukti
+                                        </button>
+                                    )}
+
+                                    <div className="flex items-center gap-3">
+                                        {editingEvent.id && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setEditingEvent(null)}
+                                                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors"
+                                            >
+                                                Atšaukti
+                                            </button>
+                                        )}
+                                        <button
+                                            type="submit"
+                                            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-sm transition-transform active:scale-95"
+                                        >
+                                            Išsaugoti
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
+                            </form>
+                        </div >
+                    </div >
+                )
+            }
 
             <div className="mt-8 p-3 bg-blue-50/30 rounded-lg border border-blue-100/50">
                 <p className="text-xs font-bold text-blue-800/70 mb-2 flex items-center gap-1.5">
@@ -419,6 +594,6 @@ export default function WorkPlanner() {
                     <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
                 </ul>
             </div>
-        </div>
+        </div >
     );
 }

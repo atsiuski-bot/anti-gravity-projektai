@@ -1,56 +1,56 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, onSnapshot, getDocs } from 'firebase/firestore';
-import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
-import { format, parse, startOfWeek, getDay, addDays, isSameDay, startOfDay } from 'date-fns';
+import { format, addDays, isSameDay, startOfWeek, getDay } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import 'react-big-calendar/lib/css/react-big-calendar.css';
-import { Users, Info, Clock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock, Users } from 'lucide-react';
+import { formatDisplayName } from '../utils/formatters';
 
-const locales = {
-    'lt': lt,
+// Constants
+const START_HOUR = 7;
+const END_HOUR = 22;
+const TOTAL_HOURS = END_HOUR - START_HOUR; // 15 hours
+const GRID_COLS = TOTAL_HOURS * 2; // Every 30 mins
+const WEEKDAYS = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
+
+// Helper to calculate position and width
+const getEventStyle = (start, end) => {
+    const startHour = start.getHours() + start.getMinutes() / 60;
+    const endHour = end.getHours() + end.getMinutes() / 60;
+
+    // Clamp to view range
+    const effectiveStart = Math.max(startHour, START_HOUR);
+    const effectiveEnd = Math.min(endHour, END_HOUR);
+
+    if (effectiveEnd <= effectiveStart) return null;
+
+    const leftPercent = ((effectiveStart - START_HOUR) / TOTAL_HOURS) * 100;
+    const widthPercent = ((effectiveEnd - effectiveStart) / TOTAL_HOURS) * 100;
+
+    return {
+        left: `${leftPercent}%`,
+        width: `${widthPercent}%`
+    };
 };
-
-const localizer = dateFnsLocalizer({
-    format,
-    parse,
-    startOfWeek,
-    getDay,
-    locales,
-});
-
-const parseTimeToHours = (timeStr) => {
-    if (!timeStr) return 0;
-    let totalHours = 0;
-    const str = timeStr.toLowerCase().trim();
-    const hourMatch = str.match(/(\d+\.?\d*)\s*h/);
-    const minMatch = str.match(/(\d+)\s*m/);
-    if (hourMatch) totalHours += parseFloat(hourMatch[1]);
-    if (minMatch) totalHours += parseInt(minMatch[1]) / 60;
-    return totalHours;
-};
-
-const dayMap = {
-    'Sekmadienis': 0,
-    'Pirmadienis': 1,
-    'Antradienis': 2,
-    'Trečiadienis': 3,
-    'Ketvirtadienis': 4,
-    'Penktadienis': 5,
-    'Šeštadienis': 6
-};
-
-const dayNames = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
 
 export default function AllUsersCalendar() {
+    // Current time state
+    const [now, setNow] = useState(new Date());
+
+    useEffect(() => {
+        const interval = setInterval(() => setNow(new Date()), 60000);
+        return () => clearInterval(interval);
+    }, []);
+
     const [events, setEvents] = useState([]);
-    const [tasks, setTasks] = useState([]);
     const [users, setUsers] = useState({});
-    const [error, setError] = useState('');
     const [currentDate, setCurrentDate] = useState(new Date());
+    const [error, setError] = useState('');
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
     useEffect(() => {
+        setCurrentDate(new Date());
+
         const handleResize = () => {
             setIsMobile(window.innerWidth < 768);
         };
@@ -70,12 +70,7 @@ export default function AllUsersCalendar() {
                 });
                 setUsers(usersMap);
 
-                // 2. Fetch Tasks
-                const tasksSnapshot = await getDocs(collection(db, 'tasks'));
-                const tasksData = tasksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setTasks(tasksData);
-
-                // 3. Listen to Work Hours
+                // 2. Listen to Work Hours
                 const workHoursQuery = query(collection(db, 'work_hours'));
                 const unsubscribe = onSnapshot(workHoursQuery, (snapshot) => {
                     const allEvents = snapshot.docs.map(doc => {
@@ -83,13 +78,14 @@ export default function AllUsersCalendar() {
                         const user = usersMap[data.userId];
                         return {
                             id: doc.id,
-                            title: `${user?.displayName || 'Nežinomas'} - ${data.title || 'Darbas'}`,
+                            title: data.title || 'Darbas',
                             start: new Date(data.start),
                             end: new Date(data.end),
-                            resourceId: data.userId,
-                            color: user?.color || '#3b82f6',
                             userId: data.userId,
-                            userName: user?.displayName || 'Nežinomas'
+                            userName: user ? formatDisplayName(user.displayName || user.email) : 'Nežinomas',
+                            color: user?.color || '#3b82f6', // Default blue
+                            isWorkFromHome: data.isWorkFromHome || false,
+                            isVacation: data.isVacation || false,
                         };
                     });
                     setEvents(allEvents);
@@ -111,243 +107,177 @@ export default function AllUsersCalendar() {
         };
     }, []);
 
-    const eventStyleGetter = (event) => {
-        const backgroundColor = event.color;
-        return {
-            style: {
-                backgroundColor: backgroundColor,
-                borderRadius: '4px',
-                opacity: 0.8,
-                color: 'white',
-                border: '0px',
-                display: 'block'
-            }
-        };
-    };
+    const dayEvents = useMemo(() => {
+        return events.filter(event => isSameDay(event.start, currentDate));
+    }, [events, currentDate]);
 
-    // Custom Header Component for desktop calendar
-    const CustomHeader = ({ date, label }) => {
-        const stats = useMemo(() => {
-            const dayStart = startOfDay(date);
-            const dayOfWeek = getDay(date);
+    // Group by User
+    const usersWithEvents = useMemo(() => {
+        const userList = Object.keys(users).map(id => ({
+            id,
+            ...users[id],
+            displayName: formatDisplayName(users[id].displayName || users[id].email)
+        })).sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-            // Calculate Capacity (from events/work_hours)
-            const capacityByUser = {};
-            events.forEach(event => {
-                if (isSameDay(event.start, date)) {
-                    const duration = (event.end - event.start) / (1000 * 60 * 60);
-                    if (!capacityByUser[event.userId]) capacityByUser[event.userId] = 0;
-                    capacityByUser[event.userId] += duration;
-                }
-            });
+        return userList.map(user => ({
+            ...user,
+            events: dayEvents.filter(e => e.userId === user.id)
+        })).filter(user => user.events.length > 0); // Filter out users with no events
+    }, [users, dayEvents]);
 
-            // Calculate Planned (from tasks - based on deadline if needed, but for now we remove dayOfWeek based planning)
-            const plannedByUser = {};
-            tasks.forEach(task => {
-                if (task.assignedWorkerId && task.deadline && task.estimatedTime) {
-                    const taskDate = new Date(task.deadline);
-                    if (isSameDay(taskDate, date)) {
-                        const hours = parseTimeToHours(task.estimatedTime);
-                        if (!plannedByUser[task.assignedWorkerId]) plannedByUser[task.assignedWorkerId] = 0;
-                        plannedByUser[task.assignedWorkerId] += hours;
-                    }
-                }
-            });
-
-            // Merge stats
-            const userStats = Object.keys(users).map(userId => {
-                const cap = capacityByUser[userId] || 0;
-                const plan = plannedByUser[userId] || 0;
-                if (cap === 0 && plan === 0) return null;
-                return {
-                    userId,
-                    name: users[userId].displayName || users[userId].email,
-                    color: users[userId].color,
-                    capacity: cap,
-                    planned: plan
-                };
-            }).filter(Boolean);
-
-            return userStats;
-        }, [date, events, tasks, users]);
-
-        // Get day name
-        const dayName = dayNames[getDay(date)];
-
-        return (
-            <div className="flex flex-col items-center">
-                <span className="text-sm font-bold text-blue-600 mb-0.5">{dayName}</span>
-                <span className="text-lg font-semibold mb-1">{label}</span>
-                <div className="w-full space-y-1">
-                    {stats.map(stat => (
-                        <div key={stat.userId} className="flex justify-between items-center text-xs bg-gray-50 rounded px-1 py-0.5 border border-gray-100" style={{ borderLeft: `3px solid ${stat.color || '#ccc'}` }}>
-                            <span className="truncate max-w-[60px] font-medium" title={stat.name}>{stat.name.split(' ')[0]}</span>
-                            <span className={`${stat.planned > stat.capacity ? 'text-red-600 font-bold' : 'text-gray-600'}`}>
-                                {stat.planned.toFixed(1)}h / {stat.capacity.toFixed(1)}h
-                            </span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        );
-    };
-
-    const components = useMemo(() => ({
-        week: {
-            header: CustomHeader
-        },
-        day: {
-            header: CustomHeader
+    // Scroll to 9:00 on mount for mobile
+    const timelineRef = React.useRef(null);
+    useEffect(() => {
+        if (isMobile && timelineRef.current) {
+            // 9:00 is 2 hours after 7:00 start
+            // Total 15 hours. 
+            // We want 9-19 (10 hours) to fill screen => min-w-[150%]
+            // Scroll to (2 / 15) * width
+            const scrollAmount = (timelineRef.current.scrollWidth * 2) / 15;
+            timelineRef.current.scrollLeft = scrollAmount;
         }
-    }), [events, tasks, users]);
+    }, [isMobile, usersWithEvents]); // Re-run when data loads
 
-    // Mobile List View - Horizontal Scrollable Week
-    const MobileListView = () => {
-        const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
-        const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+    // Desktop Timeline View
+    const hours = Array.from({ length: TOTAL_HOURS + 1 }, (_, i) => START_HOUR + i);
 
-        const groupedEvents = useMemo(() => {
-            return weekDays.map((day) => {
-                const dayName = dayNames[getDay(day)];
-                return {
-                    dayName,
-                    date: day,
-                    events: events.filter(event => isSameDay(event.start, day))
-                };
-            });
-        }, [events, currentDate]);
+    return (
+        <div className="w-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden flex flex-col h-[850px]">
+            {/* Toolbar */}
+            <div className="p-4 border-b border-gray-200 flex flex-col gap-4">
+                <div className="flex justify-between items-center">
+                    {/* Placeholder for left side (was toggle) */}
+                    <div className="w-[100px]"></div>
 
-        return (
-            <div className="relative">
-                {/* Week Navigation */}
-                <div className="flex justify-between items-center mb-3 px-2">
-                    <button
-                        onClick={() => setCurrentDate(addDays(currentDate, -7))}
-                        className="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium"
-                    >
-                        ← Ankstesnė
-                    </button>
-                    <span className="text-sm font-semibold text-gray-700">
-                        {format(weekStart, 'MMM d', { locale: lt })} - {format(addDays(weekStart, 6), 'MMM d', { locale: lt })}
-                    </span>
-                    <button
-                        onClick={() => setCurrentDate(addDays(currentDate, 7))}
-                        className="px-3 py-1 bg-blue-100 text-blue-700 rounded-lg text-sm font-medium"
-                    >
-                        Kita →
-                    </button>
-                </div>
+                    {/* Right Side: Today & Manual Add */}
+                    <div className="flex flex-col items-end gap-2">
+                        <button
+                            onClick={() => setCurrentDate(new Date())}
+                            className="w-[100px] h-[40px] text-sm font-bold bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-lg shadow-sm transition-all active:scale-95 flex items-center justify-center"
+                        >
+                            Šiandien
+                        </button>
 
-                {/* Horizontal Scrollable Days */}
-                <div className="overflow-x-auto snap-x snap-mandatory scrollbar-hide">
-                    <div className="flex gap-3 pb-2">
-                        {groupedEvents.map((dayData, idx) => (
-                            <div
-                                key={idx}
-                                className="flex-shrink-0 snap-center bg-white border-2 border-gray-200 rounded-lg overflow-hidden"
-                                style={{ width: 'calc(100vw - 3rem)' }}
-                            >
-                                {/* Day Header */}
-                                <div className="bg-blue-50 px-4 py-3 border-b-2 border-blue-200">
-                                    <h4 className="font-bold text-gray-900 text-lg">{dayData.dayName}</h4>
-                                    <p className="text-sm text-gray-600">{format(dayData.date, 'MMMM d', { locale: lt })}</p>
-                                </div>
-
-                                {/* Events List */}
-                                <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
-                                    {dayData.events.length > 0 ? (
-                                        dayData.events.map(event => (
-                                            <div key={event.id} className="p-4 hover:bg-gray-50">
-                                                <div className="flex items-start gap-3">
-                                                    <div
-                                                        className="w-1.5 h-full min-h-[50px] rounded-full flex-shrink-0"
-                                                        style={{ backgroundColor: event.color }}
-                                                    />
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="flex items-center gap-2 mb-2">
-                                                            <span className="font-semibold text-gray-900 text-base">
-                                                                {event.userName}
-                                                            </span>
-                                                        </div>
-                                                        <div className="flex items-center gap-2 text-sm text-gray-600">
-                                                            <Clock className="w-4 h-4 flex-shrink-0" />
-                                                            <span className="font-medium">
-                                                                {format(event.start, 'HH:mm')} - {format(event.end, 'HH:mm')}
-                                                            </span>
-                                                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded font-semibold">
-                                                                {((event.end - event.start) / (1000 * 60 * 60)).toFixed(1)}h
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <div className="p-8 text-center text-gray-400">
-                                            <p className="text-sm">Nėra suplanuoto darbo</p>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
                     </div>
                 </div>
 
-                {/* Scroll Indicator Dots */}
-                <div className="flex justify-center gap-1.5 mt-3">
-                    {groupedEvents.map((_, idx) => (
-                        <div
-                            key={idx}
-                            className="w-2 h-2 rounded-full bg-gray-300"
-                        />
-                    ))}
+                {/* Date Navigation */}
+                <div className="flex items-center justify-center gap-6">
+                    <button
+                        onClick={() => setCurrentDate(addDays(currentDate, -1))}
+                        className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
+                    >
+                        <ChevronLeft className="w-8 h-8" />
+                    </button>
+                    <div className="text-center">
+                        <h2 className="text-2xl font-bold text-gray-900 capitalize">
+                            {WEEKDAYS[getDay(currentDate)]}
+                        </h2>
+                        <p className="text-lg text-gray-500 capitalize">
+                            {format(currentDate, 'MMMM d', { locale: lt })}d.
+                        </p>
+                    </div>
+                    <button
+                        onClick={() => setCurrentDate(addDays(currentDate, 1))}
+                        className="p-2 hover:bg-gray-100 rounded-full text-gray-600 transition-colors"
+                    >
+                        <ChevronRight className="w-8 h-8" />
+                    </button>
                 </div>
             </div>
-        );
-    };
 
-    return (
-        <div className={`w-full ${isMobile ? 'min-h-[500px]' : 'h-[850px]'} max-w-full`}>
-            {/* Header removed for more space */}
+            {/* Timeline Area */}
+            <div className="flex-1 overflow-auto relative flex flex-col" ref={timelineRef}>
+                <div className={`relative flex flex-col min-w-full px-4 ${isMobile ? 'min-w-[150%]' : ''}`}>
+                    {/* Time Scale Header */}
+                    <div className="flex border-b border-gray-300 bg-white sticky top-0 z-20 h-10">
+                        <div className="w-full relative">
+                            {hours.map((hour, i) => (
+                                <div
+                                    key={hour}
+                                    className="absolute top-0 bottom-0 border-l border-gray-300"
+                                    style={{
+                                        left: `${(i / TOTAL_HOURS) * 100}%`
+                                    }}
+                                >
+                                    <span className={`absolute -top-1 left-0 -translate-x-1/2 text-[10px] text-gray-500 font-medium ${isMobile && i % 2 !== 0 ? 'hidden' : 'block'}`}>
+                                        {hour}:00
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
 
-            {error && (
-                <div className="bg-red-50 border-l-4 border-red-500 p-4 mb-4">
-                    <p className="text-sm text-red-700">{error}</p>
+                    {/* Grid Body */}
+                    <div className="flex-1 relative mt-2">
+                        {/* Vertical Grid Lines Background */}
+                        <div className="absolute inset-0 z-0">
+                            {hours.map((hour, i) => (
+                                <div
+                                    key={`grid-${hour}`}
+                                    className="absolute top-0 bottom-0 border-l border-gray-300"
+                                    style={{
+                                        left: `${(i / TOTAL_HOURS) * 100}%`,
+                                        borderColor: i === 0 || i === TOTAL_HOURS ? 'transparent' : '#e5e7eb'
+                                    }}
+                                />
+                            ))}
+
+                            {/* Current Time Indicator */}
+                            {(() => {
+                                const nowHour = now.getHours() + now.getMinutes() / 60;
+                                if (isSameDay(now, currentDate) && nowHour >= START_HOUR && nowHour <= END_HOUR) {
+                                    const left = ((nowHour - START_HOUR) / TOTAL_HOURS) * 100;
+                                    return (
+                                        <div
+                                            className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-30 pointer-events-none transition-all duration-1000"
+                                            style={{ left: `${left}%` }}
+                                        >
+                                            <div className="absolute -top-1 -translate-x-1/2 w-2 h-2 bg-red-500 rounded-full"></div>
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            })()}
+                        </div>
+
+                        {/* Users Rows */}
+                        <div className="relative z-10 space-y-3 py-4 w-full">
+                            {usersWithEvents.map((user) => (
+                                <div key={user.id} className="relative h-8 w-full">
+                                    {/* Events Bar */}
+                                    {user.events.map(event => {
+                                        const style = getEventStyle(event.start, event.end);
+                                        if (!style) return null;
+                                        return (
+                                            <div
+                                                key={event.id}
+                                                className="absolute top-1 h-6 rounded-full border border-gray-800/10 shadow-sm flex items-center justify-center hover:brightness-105 transition-all cursor-default z-10"
+                                                style={{
+                                                    ...style,
+                                                    backgroundColor: event.isVacation ? '#000000' : event.color
+                                                }}
+                                                title={`${event.title} (${format(event.start, 'HH:mm')} - ${format(event.end, 'HH:mm')})`}
+                                            >
+                                                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-gray-800 border border-white/50 shadow-sm z-20 relative whitespace-nowrap leading-tight">
+                                                    👤 {user.displayName} {event.isVacation ? '(atostogos)' : event.isWorkFromHome ? '(iš namų)' : ''}
+                                                </span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ))}
+
+                            {/* Empty state if no users found */}
+                            {usersWithEvents.length === 0 && (
+                                <div className="text-center text-gray-400 py-10 w-full text-sm">
+                                    Šią dieną suplanuotų darbų nėra.
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </div>
-            )}
-
-            {isMobile ? (
-                <MobileListView />
-            ) : (
-                <Calendar
-                    localizer={localizer}
-                    events={events}
-                    startAccessor="start"
-                    endAccessor="end"
-                    style={{ height: 'calc(100% - 60px)' }}
-                    culture='lt'
-                    views={['week', 'day']}
-                    defaultView='week'
-                    scrollToTime={new Date(1970, 1, 1, 8)}
-                    min={new Date(1970, 1, 1, 7)}
-                    eventPropGetter={eventStyleGetter}
-                    components={components}
-                    onNavigate={date => setCurrentDate(date)}
-                    messages={{
-                        next: "Kitas",
-                        previous: "Ankstesnis",
-                        today: "Šiandien",
-                        month: "Mėnuo",
-                        week: "Savaitė",
-                        day: "Diena",
-                        agenda: "Darbotvarkė",
-                        date: "Data",
-                        time: "Laikas",
-                        event: "Įvykis",
-                        noEventsInRange: "Nėra įvykių šiame periode."
-                    }}
-                />
-            )}
+            </div>
         </div>
     );
 }

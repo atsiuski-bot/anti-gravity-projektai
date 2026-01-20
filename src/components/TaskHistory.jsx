@@ -4,6 +4,7 @@ import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc } from '
 import { FileText, Download, Trash2, RotateCcw, Calendar, UserCheck, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { updateDoc } from 'firebase/firestore';
+import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
 
 export default function TaskHistory() {
@@ -11,6 +12,17 @@ export default function TaskHistory() {
     const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [expandedTasks, setExpandedTasks] = useState(new Set());
+
+    const toggleExpand = (taskId) => {
+        const newExpanded = new Set(expandedTasks);
+        if (newExpanded.has(taskId)) {
+            newExpanded.delete(taskId);
+        } else {
+            newExpanded.add(taskId);
+        }
+        setExpandedTasks(newExpanded);
+    };
 
     useEffect(() => {
         const q = query(collection(db, 'archived_tasks'), orderBy('archivedAt', 'desc'));
@@ -125,6 +137,8 @@ export default function TaskHistory() {
                                 <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Darb.</th>
                                 <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Prior.</th>
                                 <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Būsena</th>
+                                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Būsena</th>
+                                <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Laikas</th>
                                 <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Archyvuota</th>
                                 <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Veiksmai</th>
                             </tr>
@@ -132,10 +146,15 @@ export default function TaskHistory() {
                         <tbody className="bg-white divide-y divide-gray-200">
                             {tasks.map((task) => (
                                 <tr key={task.id} className="hover:bg-gray-50 transition-colors">
-                                    <td className="px-3 py-3">
+                                    <td className="px-3 py-3" onClick={() => toggleExpand(task.id)}>
                                         <div className="text-sm font-medium text-gray-900 truncate">
                                             {task.title}
                                         </div>
+                                        {task.estimatedTime && (
+                                            <div className="text-[10px] text-blue-600 font-medium mt-0.5">
+                                                Planuota: {task.estimatedTime}
+                                            </div>
+                                        )}
                                         {task.deadline && (
                                             <div className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
                                                 <Calendar className="w-3 h-3" />
@@ -143,31 +162,46 @@ export default function TaskHistory() {
                                             </div>
                                         )}
                                         {task.description && (
-                                            <div className="text-xs text-gray-500 line-clamp-1 mt-0.5 flex items-center gap-1">
-                                                <FileText className="w-3 h-3 flex-shrink-0" />
+                                            <div className={clsx(
+                                                "text-xs text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700",
+                                                expandedTasks.has(task.id) ? "whitespace-pre-wrap" : "line-clamp-1"
+                                            )}>
+                                                <FileText className="w-3 h-3 flex-shrink-0 mt-0.5" />
                                                 {task.description}
                                             </div>
                                         )}
+                                        {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
+                                            <div className="mt-2 pl-4 border-l-2 border-gray-200">
+                                                <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
+                                                {task.comments.map((comment, idx) => (
+                                                    <div key={idx} className="text-[10px] text-gray-600 mb-1">
+                                                        <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap">
+                                    <td className="px-2 py-3 whitespace-nowrap align-top">
                                         {task.assignedWorkerName && (
                                             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-800 border border-gray-200 truncate max-w-[80px] inline-block">
                                                 {task.assignedWorkerName.split(' ')[0]}
                                             </span>
                                         )}
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap">
-                                        <span className={clsx(
-                                            "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-md",
-                                            task.priority === 'Urgent' ? 'bg-yellow-50 text-black border border-yellow-200' :
-                                                task.priority === 'High' ? 'bg-gray-200 text-gray-800' :
-                                                    task.priority === 'Medium' ? 'bg-gray-500 text-white' :
-                                                        'bg-gray-800 text-white'
-                                        )}>
-                                            {task.priority}
+                                    <td className="px-2 py-3 whitespace-nowrap align-top">
+                                        <span
+                                            className={clsx(
+                                                "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-md border border-black/5"
+                                            )}
+                                            style={{
+                                                backgroundColor: getPriorityColor(task.priority),
+                                                color: getPriorityTextColor(task.priority)
+                                            }}
+                                        >
+                                            {getPriorityLabel(task.priority)}
                                         </span>
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap">
+                                    <td className="px-2 py-3 whitespace-nowrap align-top">
                                         <div className="flex items-center gap-1">
                                             {task.status === 'confirmed' ? (
                                                 <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200 flex items-center gap-1">
@@ -181,10 +215,13 @@ export default function TaskHistory() {
                                             )}
                                         </div>
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap text-[10px] text-gray-500">
+                                    <td className="px-2 py-3 whitespace-nowrap text-right text-xs font-medium text-gray-900 align-top font-mono">
+                                        {task.actualTime || '-'}
+                                    </td>
+                                    <td className="px-2 py-3 whitespace-nowrap text-[10px] text-gray-500 align-top">
                                         {new Date(task.archivedAt).toLocaleDateString()}
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap text-right text-xs font-medium">
+                                    <td className="px-2 py-3 whitespace-nowrap text-right text-xs font-medium align-top">
                                         <div className="flex items-center justify-end gap-2">
                                             {task.status !== 'confirmed' && (isManagerOrAdmin) && (
                                                 <button

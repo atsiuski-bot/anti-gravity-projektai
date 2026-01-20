@@ -9,16 +9,25 @@ export function useNavigation() {
 
 export function NavigationProvider({ children }) {
     const { userRole } = useAuth();
-    const [activeTab, setActiveTab] = useState('tasks');
+    const [activeTab, setActiveTabState] = useState('tasks');
+    const scrollPositions = React.useRef({});
 
     // Reset tab when role changes (e.g. login/logout)
     useEffect(() => {
-        setActiveTab('tasks');
+        setActiveTabState('tasks');
+        scrollPositions.current = {};
     }, [userRole]);
+
+    const setActiveTab = (newTab) => {
+        // Save current scroll position before switching
+        scrollPositions.current[activeTab] = window.scrollY;
+        setActiveTabState(newTab);
+    };
 
     const value = {
         activeTab,
-        setActiveTab
+        setActiveTab,
+        scrollPositions // Expose for restoration
     };
 
     return (

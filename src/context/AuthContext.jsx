@@ -18,9 +18,10 @@ export function useAuth() {
 
 export function AuthProvider({ children }) {
     const [currentUser, setCurrentUser] = useState(null);
+    const [userData, setUserData] = useState(null); // Real-time Firestore data
     const [userRole, setUserRole] = useState(null);
-    const [breakState, setBreakState] = useState(null); // { isTakingBreak: boolean, ... }
-    const [workStatus, setWorkStatus] = useState(null); // { isWorking: boolean, currentShiftId: string, ... }
+    const [breakState, setBreakState] = useState(null);
+    const [workStatus, setWorkStatus] = useState(null);
     const [loading, setLoading] = useState(true);
 
     async function login() {
@@ -40,28 +41,31 @@ export function AuthProvider({ children }) {
 
             if (!userSnap.exists()) {
                 console.log("Auth: Creating new user document in Firestore...");
-                // Create new user with default role 'worker'
-                await setDoc(userRef, {
+                const newUserData = {
                     email: user.email,
                     displayName: user.displayName,
                     photoURL: user.photoURL,
                     role: 'worker',
                     createdAt: new Date().toISOString(),
                     isDisabled: false
-                });
+                };
+                // Create new user with default role 'worker'
+                await setDoc(userRef, newUserData);
                 setUserRole('worker');
+                setUserData(newUserData);
                 console.log("Auth: New user document created.");
             } else {
-                const userData = userSnap.data();
-                if (userData.isDisabled) {
+                const data = userSnap.data();
+                if (data.isDisabled) {
                     console.log("Auth: User is disabled. Logging out.");
                     await signOut(auth);
                     throw new Error("Jūsų paskyra yra užblokuota/ištrinta.");
                 }
 
-                const role = userData.role;
+                const role = data.role;
                 console.log("Auth: Existing user found with role:", role);
                 setUserRole(role);
+                setUserData(data);
             }
             setCurrentUser(user);
         } catch (error) {
@@ -76,6 +80,8 @@ export function AuthProvider({ children }) {
 
     useEffect(() => {
         console.log("Auth: Initializing onAuthStateChanged...");
+        let unsubscribeSnapshot = null;
+
         const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
             console.log("Auth: State changed, user:", user ? user.email : "none");
 
@@ -84,7 +90,7 @@ export function AuthProvider({ children }) {
                 const userRef = doc(db, 'users', user.uid);
 
                 // We use onSnapshot to get real-time updates for role and break status
-                const unsubscribeSnapshot = onSnapshot(userRef, async (docSnap) => {
+                unsubscribeSnapshot = onSnapshot(userRef, async (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
 
@@ -93,6 +99,7 @@ export function AuthProvider({ children }) {
                             await signOut(auth);
                             setCurrentUser(null);
                             setUserRole(null);
+                            setUserData(null);
                             window.location.reload();
                             return;
                         }
@@ -100,25 +107,15 @@ export function AuthProvider({ children }) {
                         setUserRole(data.role || 'worker');
                         setBreakState(data.breakState || null);
                         setWorkStatus(data.workStatus || { isWorking: false });
+                        setUserData(data); // Update full user data
+
                         console.log("Auth: User data updated", data.role);
                         setCurrentUser(user);
                         setLoading(false);
                     } else {
-                        console.log("Auth: User document missing. Waiting for creation or auto-healing...");
-                        // If we are logged in but no doc, and it's not being created by login() (e.g. reload), we should create it.
-                        // But login() creates it. 
-                        // If we are here, either login() is running, or we just loaded app without doc.
-                        // Let's not block indefinitely.
-                        // If it takes too long (>2s?), create it?
-                        // For now, let's just NOT set loading(false) immediately, wait for next snapshot?
-                        // But if it never comes?
-                        // Let's set a timeout to self-heal?
-                        // Or just set default role and proceed?
-                        // Let's try setting defaults to unblock user.
-
-                        // setUserRole('worker');
-                        // setCurrentUser(user);
-                        // setLoading(false);
+                        console.log("Auth: User document missing. Waiting for creation...");
+                        // Document doesn't exist yet - this is normal during initial login
+                        // The login() function will create it, so we just wait
                     }
                 }, (error) => {
                     console.error("Auth: Snapshot error:", error);
@@ -130,11 +127,17 @@ export function AuthProvider({ children }) {
                 setUserRole(null);
                 setBreakState(null);
                 setWorkStatus(null);
+                setUserData(null);
                 setLoading(false);
             }
         });
 
-        return () => unsubscribeAuth();
+        return () => {
+            unsubscribeAuth();
+            if (unsubscribeSnapshot) {
+                unsubscribeSnapshot();
+            }
+        };
     }, []);
 
     const [showForceButton, setShowForceButton] = useState(false);
@@ -150,6 +153,7 @@ export function AuthProvider({ children }) {
 
     const value = {
         currentUser,
+        userData, // Exposed here
         userRole,
         login,
         logout,

@@ -1,12 +1,13 @@
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { LogOut, User } from 'lucide-react';
 import BottomNavigation from './BottomNavigation';
+import InstallPrompt from './InstallPrompt';
 import { checkAndPromoteTasks, shouldRunAutomation } from '../utils/automationUtils';
 import { formatDisplayName } from '../utils/formatters';
 
 export default function Layout({ children }) {
-    const { currentUser, userRole, logout, isTakingBreak, workStatus } = useAuth();
+    const { currentUser, userData, userRole, logout, isTakingBreak, workStatus } = useAuth(); // userData added
 
     const roleNames = {
         manager: 'Vadovas',
@@ -25,8 +26,48 @@ export default function Layout({ children }) {
     const isRunning = taskStatus === 'running' || (workStatus?.isWorking && !taskStatus);
     const isPaused = taskStatus === 'paused';
 
+    const [isOnline, setIsOnline] = React.useState(navigator.onLine);
+
+    useEffect(() => {
+        const handleOnline = () => setIsOnline(true);
+        const handleOffline = () => setIsOnline(false);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
+    // Determine background color based on state priority
+    // Priority: Quick Work (Red) > Call (Blue) > Break (Amber) > Working (Green) > Default (White)
+
+    // Using userData from context which is a real-time Firestore object
+    const callState = userData?.callState || {};
+    const quickWorkState = userData?.quickWorkState || {};
+    const isCalling = callState.isCalling;
+    const isQuickWorking = quickWorkState.isQuickWorking;
+
+    const getBackgroundColor = () => {
+        if (isQuickWorking) return 'bg-red-500'; // Much more intense red for Quick Work
+        if (isCalling) return 'bg-blue-100'; // Light Blue for Call
+        if (isTakingBreak) return 'bg-amber-100'; // Existing Break
+        if (isRunning) return 'bg-green-200'; // Working
+        return 'bg-white';
+    };
+
+    const bgColor = getBackgroundColor();
+
     return (
-        <div className={`min-h-screen ${isTakingBreak ? 'bg-amber-100' : isRunning ? 'bg-green-200' : isPaused ? 'bg-yellow-50' : 'bg-gray-50'} transition-colors duration-300 pb-20 sm:pb-24`}>
+        <div className={`min-h-screen ${bgColor} transition-colors duration-300 pb-20 sm:pb-24`}>
+            {/* Offline Banner */}
+            {!isOnline && (
+                <div className="bg-red-500 text-white px-4 py-1 text-xs text-center font-medium shadow-sm z-50 relative animate-in fade-in slide-in-from-top-2">
+                    Jūs esate neprisijungęs. Duomenys bus išsaugoti telefone ir sinchronizuoti vėliau.
+                </div>
+            )}
             <nav className="bg-white shadow-sm border-b border-gray-200">
                 <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
                     {/* Mobile Layout - User Info & Logout */}
@@ -36,6 +77,7 @@ export default function Layout({ children }) {
                                 <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800">
                                     {roleNames[userRole] || userRole}
                                 </span>
+                                <InstallPrompt />
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className="text-xs font-medium text-gray-700">
@@ -75,6 +117,7 @@ export default function Layout({ children }) {
                                 <span className="text-sm font-medium text-gray-700">
                                     {formatDisplayName(currentUser?.displayName)}
                                 </span>
+                                <InstallPrompt />
                             </div>
                             <button
                                 onClick={() => logout()}

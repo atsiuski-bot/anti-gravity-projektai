@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { Clock, AlertTriangle } from 'lucide-react';
-import { formatDisplayName } from '../utils/formatters';
+import { formatDisplayName, parseTimeToHours } from '../utils/formatters';
 
 export default function DailyHoursSummary() {
     const [users, setUsers] = useState([]);
@@ -55,17 +55,6 @@ export default function DailyHoursSummary() {
         };
     }, []);
 
-    // Parse time string to hours (e.g., "2h 30m" -> 2.5)
-    const parseTimeToHours = (timeStr) => {
-        if (!timeStr) return 0;
-        let hours = 0;
-        const hourMatch = timeStr.match(/(\d+\.?\d*)\s*h/);
-        const minMatch = timeStr.match(/(\d+)\s*m/);
-        if (hourMatch) hours += parseFloat(hourMatch[1]);
-        if (minMatch) hours += parseInt(minMatch[1]) / 60;
-        return hours;
-    };
-
     // Calculate daily stats for each user
     const dailyStats = useMemo(() => {
         const stats = {};
@@ -104,19 +93,30 @@ export default function DailyHoursSummary() {
 
             // Add actual hours from work_sessions
             workSessions.forEach(session => {
-                if (session.workerId === user.id && session.date) {
-                    // Map session date to day name
-                    const daysMap = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
-                    const dayName = daysMap[new Date(session.date).getDay()];
-                    if (stats[user.id].days[dayName]) {
-                        stats[user.id].days[dayName].actual += (session.durationMinutes || 0) / 60;
+                try {
+                    if (session.workerId === user.id && session.date) {
+                        // Map session date to day name
+                        const daysMap = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
+                        const sessionDate = new Date(session.date);
+
+                        if (!isNaN(sessionDate.getTime())) {
+                            const dayName = daysMap[sessionDate.getDay()];
+                            if (stats[user.id].days[dayName]) {
+                                const durationHours = (session.durationMinutes || 0) / 60;
+                                if (Number.isFinite(durationHours) && durationHours >= 0) {
+                                    stats[user.id].days[dayName].actual += durationHours;
+                                }
+                            }
+                        }
                     }
+                } catch (error) {
+                    console.warn('Error processing work session:', session.id, error);
                 }
             });
         });
 
         return stats;
-    }, [users, tasks]);
+    }, [users, tasks, workSessions]);
 
     if (loading) {
         return (

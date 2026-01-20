@@ -1,4 +1,4 @@
-import { doc, updateDoc, collection, query, where, getDocs, addDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, getDocs, addDoc, setDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString } from './timeUtils';
 
@@ -138,7 +138,30 @@ export const resumeTask = async (task, userId) => {
         console.log(`Task ${task.id} resumed via shared action.`);
     } catch (err) {
         console.error("Error resuming task:", err);
+        // Even if resume fails (e.g. network), we might want to suppress if it's just sync issue?
+        // But for now, throw so UI can show error or we can catch it there.
         throw err;
+    }
+};
+
+/**
+ * Helper to get docs with cache fallback.
+ */
+const getDocsWithCacheFallback = async (q) => {
+    try {
+        // Try default (server first/smart)
+        return await getDocs(q);
+    } catch (err) {
+        console.warn("Network fetch failed, attempting cache fallback...", err);
+        // Fallback to cache
+        // Note: getDocs({ source: 'cache' }) requires the query to perfectly match cached data or it might be empty
+        // But for simple queries it often works.
+        try {
+            return await getDocs(q, { source: 'cache' });
+        } catch (cacheErr) {
+            console.error("Cache fallback also failed:", cacheErr);
+            return { docs: [] }; // Return empty to not block
+        }
     }
 };
 
@@ -155,7 +178,9 @@ export const pauseOtherTasks = async (userId, currentTaskId) => {
             where('assignedWorkerId', '==', userId),
             where('timerStatus', '==', 'running')
         );
-        const snapshot = await getDocs(q);
+
+        // Use robust fetch
+        const snapshot = await getDocsWithCacheFallback(q);
 
         const pausePromises = snapshot.docs
             .filter(doc => doc.id !== currentTaskId)
@@ -166,10 +191,12 @@ export const pauseOtherTasks = async (userId, currentTaskId) => {
 
         if (pausePromises.length > 0) {
             console.log(`Pausing ${pausePromises.length} other running tasks...`);
-            await Promise.all(pausePromises);
+            // We use allSettled to ensure one failure doesn't stop others
+            await Promise.allSettled(pausePromises);
         }
     } catch (err) {
-        console.error("Error pausing other tasks:", err);
+        // Explicitly catch everything in pauseOtherTasks so it NEVER blocks startTask
+        console.error("Error in pauseOtherTasks (non-fatal):", err);
     }
 };
 /**
@@ -197,6 +224,62 @@ export const archiveTask = async (task, userId) => {
         console.log(`Task ${id} moved to archive by user ${userId}`);
     } catch (err) {
         console.error("Error archiving task:", err);
+        throw err;
+    }
+};
+
+/**
+ * Saves a new task template.
+ * @param {string} templateName - The name of the template.
+ * @param {Object} selectedData - The task data to save in the template.
+ * @param {Object} user - The current user object.
+ * @returns {Promise<void>}
+ */
+export const saveTaskTemplate = async (templateName, selectedData, user) => {
+    try {
+        await addDoc(collection(db, 'task_templates'), {
+            templateName,
+            data: selectedData,
+            createdBy: user.uid,
+            creatorName: user.displayName || user.email,
+            createdAt: new Date().toISOString()
+        });
+        console.log(`Template "${templateName}" saved.`);
+    } catch (err) {
+        console.error("Error saving template:", err);
+        throw err;
+    }
+};
+
+/**
+ * Fetches all task templates.
+ * @returns {Promise<Array>} Array of template objects.
+ */
+export const getTaskTemplates = async () => {
+    try {
+        const q = query(collection(db, 'task_templates'), orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
+        return snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+    } catch (err) {
+        console.error("Error fetching templates:", err);
+        throw err;
+    }
+};
+
+/**
+ * Deletes a task template.
+ * @param {string} templateId - The ID of the template to delete.
+ * @returns {Promise<void>}
+ */
+export const deleteTaskTemplate = async (templateId) => {
+    try {
+        await deleteDoc(doc(db, 'task_templates', templateId));
+        console.log(`Template ${templateId} deleted.`);
+    } catch (err) {
+        console.error("Error deleting template:", err);
         throw err;
     }
 };

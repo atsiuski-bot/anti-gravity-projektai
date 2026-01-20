@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
-import WeeklyHoursSummary from '../components/WeeklyHoursSummary';
+
 import WorkPlanner from '../components/WorkPlanner';
 import AllUsersCalendar from '../components/AllUsersCalendar';
 import DailyWorkProgress from '../components/DailyWorkProgress';
@@ -17,7 +17,7 @@ import { useNavigation } from '../context/NavigationContext';
 
 export default function WorkerView() {
     const { currentUser } = useAuth();
-    const { activeTab } = useNavigation();
+    const { activeTab, scrollPositions } = useNavigation();
     const [tasks, setTasks] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
@@ -116,6 +116,14 @@ export default function WorkerView() {
         setIsModalOpen(true);
     };
 
+    // Scroll restoration logic
+    useEffect(() => {
+        requestAnimationFrame(() => {
+            const savedScroll = scrollPositions.current[activeTab] || 0;
+            window.scrollTo(0, savedScroll);
+        });
+    }, [activeTab]);
+
     return (
         <div className="pt-1">
             <div className="mb-2 sm:mb-6">
@@ -128,67 +136,64 @@ export default function WorkerView() {
 
 
             {/* Tasks Tab */}
-            {activeTab === 'tasks' && (
-                <>
-                    <div className="flex justify-between items-center mb-4 sm:mb-6">
-                        <h2 className="text-xl font-bold text-gray-900 hidden sm:block">Mano užduotys</h2>
+            <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
+                <div className="flex justify-between items-center mb-4 sm:mb-6">
+                    <h2 className="text-xl font-bold text-gray-900 hidden sm:block">Mano užduotys</h2>
+                </div>
+
+                <DailyWorkProgress currentUser={currentUser} tasks={tasks} />
+
+
+                {tasks.length === 0 ? (
+                    <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-200">
+                        <p className="text-gray-500">Jums dar nepriskirta jokių užduočių.</p>
                     </div>
-
-                    <DailyWorkProgress currentUser={currentUser} />
-
-                    <WeeklyHoursSummary />
-
-                    {tasks.length === 0 ? (
-                        <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-200">
-                            <p className="text-gray-500">Jums dar nepriskirta jokių užduočių.</p>
-                        </div>
-                    ) : viewMode === 'mobile' ? (
-                        <div className="space-y-4">
-                            {tasks.map(task => (
-                                <TaskCard
-                                    key={task.id}
-                                    task={task}
-                                    onEdit={() => handleEditTask(task)}
-                                    role="worker"
-                                />
-                            ))}
-                        </div>
-                    ) : (
-                        <TaskTable
-                            tasks={tasks}
-                            onEdit={handleEditTask}
-                            role="worker"
-                        />
-                    )}
-                </>
-            )}
+                ) : viewMode === 'mobile' ? (
+                    <div className="space-y-4">
+                        {tasks.map(task => (
+                            <TaskCard
+                                key={task.id}
+                                task={task}
+                                onEdit={() => handleEditTask(task)}
+                                role="worker"
+                            />
+                        ))}
+                    </div>
+                ) : (
+                    <TaskTable
+                        tasks={tasks}
+                        onEdit={handleEditTask}
+                        role="worker"
+                    />
+                )}
+            </div>
 
             {/* Calendar Tab */}
-            {activeTab === 'calendar' && (
+            <div className={activeTab === 'calendar' ? 'block' : 'hidden'}>
                 <div className="w-full">
                     <WorkPlanner />
                 </div>
-            )}
+            </div>
 
             {/* Team Calendar Tab */}
-            {activeTab === 'team-calendar' && (
+            <div className={activeTab === 'team-calendar' ? 'block' : 'hidden'}>
                 <AllUsersCalendar />
-            )}
+            </div>
 
-            {activeTab === 'reports' && (
+            <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
                 <DailyStatistics
                     currentUser={currentUser}
                     userRole="worker"
                     users={[]} // Workers don't see other users
                 />
-            )}
+            </div>
 
             {isModalOpen && (
                 <TaskModal
                     isOpen={isModalOpen}
                     onClose={() => setIsModalOpen(false)}
                     task={editingTask}
-                    role="worker"
+                    role={currentUser?.role || "worker"}
                 />
             )}
         </div>

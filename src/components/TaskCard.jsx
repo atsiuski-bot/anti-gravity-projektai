@@ -1,19 +1,19 @@
 import React, { useState } from 'react';
-import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText, Check, Calendar, Trash2 } from 'lucide-react';
+import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText, Check, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit } from 'lucide-react';
 import clsx from 'clsx';
+import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { useSwipeable } from 'react-swipeable';
-import { LinksModal, CommentsModal, DescriptionModal } from './TaskDetailsModals';
-import { InlineEditModal } from './InlineEditModal';
-import TaskTimerControls from './TaskTimerControls';
-import { parseTimeStringToMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { Swipeable } from 'react-swipeable';
+import TaskDetailsModals from './TaskDetailsModals';
+import { startTask, resumeTask, pauseTask } from '../utils/taskActions';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { pauseOtherTasks, archiveTask } from '../utils/taskActions';
 import { formatDisplayName } from '../utils/formatters';
+import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 
 
-export default function TaskCard({ task, onEdit, role }) {
+export default function TaskCard({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) {
     const { currentUser, userRole } = useAuth();
     const [activeModal, setActiveModal] = useState(null);
     const [editingField, setEditingField] = useState(null);
@@ -47,7 +47,7 @@ export default function TaskCard({ task, onEdit, role }) {
 
     const displayColor = task.assignedWorkerColor || workerColor;
     const isWorker = role === 'worker';
-    const isManager = role === 'manager' || role === 'admin';
+    const isManager = role === 'manager' || role === 'admin' || userRole === 'manager' || userRole === 'admin';
     const isAssignedToMe = currentUser?.uid === task.assignedWorkerId;
 
     React.useEffect(() => {
@@ -66,21 +66,24 @@ export default function TaskCard({ task, onEdit, role }) {
         }
     }, [task.assignedWorkerId, task.assignedWorkerColor]);
 
-    const priorityColors = {
+    // Priority colors are now handled dynamically via utility
+    /* const priorityColors = {
         Low: 'bg-gray-800 text-white',
         Medium: 'bg-gray-500 text-white',
         High: 'bg-gray-200 text-gray-800',
         Urgent: 'bg-yellow-50 text-black border border-yellow-200'
-    };
+    }; */
 
     const statusStyles = {
         'pending': 'bg-white border-gray-200',
         'in-progress': 'bg-white border-gray-200',
         'completed': 'bg-gray-200 border-gray-300',
-        'confirmed': 'bg-green-100 border-green-300'
+        'confirmed': 'bg-green-100 border-green-300',
+        'unapproved': 'bg-amber-50 border-amber-200'
     };
 
     const taskStatus = task.status || 'pending';
+    const isUnapproved = taskStatus === 'unapproved';
 
 
     const handleAddComment = async (text) => {
@@ -124,21 +127,30 @@ export default function TaskCard({ task, onEdit, role }) {
         const now = Date.now();
         const DOUBLE_TAP_DELAY = 300;
 
-        if (now - lastTap < DOUBLE_TAP_DELAY && isAssignedToMe && taskStatus !== 'confirmed') {
-            // Double tap detected
-            e.preventDefault();
-            e.stopPropagation();
+        if (now - lastTap < DOUBLE_TAP_DELAY) {
+            const canInteract = (isAssignedToMe && taskStatus !== 'confirmed') || (isManager && taskStatus === 'unapproved');
 
-            if (taskStatus === 'pending') {
-                await updateDoc(doc(db, 'tasks', task.id), {
-                    status: 'in-progress',
-                    updatedAt: new Date().toISOString()
-                });
-            } else if (taskStatus === 'in-progress') {
-                await updateDoc(doc(db, 'tasks', task.id), {
-                    status: 'pending',
-                    updatedAt: new Date().toISOString()
-                });
+            if (canInteract) {
+                // Double tap detected
+                e.preventDefault();
+                e.stopPropagation();
+
+                if (taskStatus === 'pending') {
+                    await updateDoc(doc(db, 'tasks', task.id), {
+                        status: 'in-progress',
+                        updatedAt: new Date().toISOString()
+                    });
+                } else if (taskStatus === 'in-progress') {
+                    await updateDoc(doc(db, 'tasks', task.id), {
+                        status: 'pending',
+                        updatedAt: new Date().toISOString()
+                    });
+                } else if (taskStatus === 'unapproved' && isManager) {
+                    await updateDoc(doc(db, 'tasks', task.id), {
+                        status: 'pending',
+                        updatedAt: new Date().toISOString()
+                    });
+                }
             }
         }
 
@@ -240,40 +252,56 @@ export default function TaskCard({ task, onEdit, role }) {
                 {...(isWorker ? swipeHandlers : {})}
                 onTouchEnd={isWorker ? handleDoubleTap : undefined}
                 className={clsx(
-                    "rounded-xl border-[3px] shadow-sm p-4 transition-all duration-200 mb-4",
+                    "rounded-xl border-[3px] shadow-sm p-3 transition-all duration-200 mb-2", // Reduced padding (p-4->p-3) and margin (mb-4->mb-2)
                     statusStyles[taskStatus],
                     taskStatus !== 'confirmed' && !task.completed && "cursor-pointer hover:shadow-md",
                     task.completed && "opacity-75"
                 )}
             >
-                <div className="flex items-start gap-3">
-                    <div className="flex-1" onClick={isManager || !task.completed ? onEdit : undefined}>
+                <div className="flex items-start gap-2"> {/* Reduced gap (gap-3->gap-2) */}
+                    <div className="flex-1">
                         {/* Header */}
-                        <div className="flex justify-between items-start mb-3 gap-2">
-                            <button
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    // Allow editing title inline if manager, or if not completed
-                                    if (isManager || !task.completed) {
-                                        setEditingField({ field: 'title', label: 'Redaguoti pavadinimą' });
-                                    }
-                                }}
+                        <div className="flex justify-between items-start mb-1.5 gap-2"> {/* Reduced margin (mb-3->mb-1.5) */}
+                            {showReorderControls && (
+                                <div className="flex flex-col gap-0.5 mr-1">
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
+                                        className="p-0.5 hover:bg-gray-100 rounded text-gray-500 hover:text-blue-600"
+                                        title="Perkelti aukštyn"
+                                    >
+                                        <ArrowUp className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
+                                        className="p-0.5 hover:bg-gray-100 rounded text-gray-500 hover:text-blue-600"
+                                        title="Perkelti žemyn"
+                                    >
+                                        <ArrowDown className="w-3.5 h-3.5" />
+                                    </button>
+                                </div>
+                            )}
+                            <div
                                 className={clsx(
-                                    "font-bold text-base leading-snug text-left flex-1 px-2 py-1 rounded",
+                                    "font-bold text-sm leading-tight text-left flex-1 px-2 py-1 rounded",
                                     task.completed ? "line-through text-gray-500" : "text-gray-900",
-                                    (isManager || !task.completed) && "hover:bg-gray-100"
+                                    taskStatus === 'unapproved' ? "bg-gray-200 text-gray-700" : ""
                                 )}
                             >
                                 {task.title}
-                            </button>
+                            </div>
 
-                            <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="flex items-center gap-1.5 flex-shrink-0"> {/* Reduced gap */}
                                 {task.priority && (
-                                    <span className={clsx(
-                                        "px-2 py-1 text-xs font-bold rounded-full whitespace-nowrap border border-black/5 shadow-sm",
-                                        priorityColors[task.priority]
-                                    )}>
-                                        {task.priority === 'Low' ? 'Žemas' : task.priority === 'Medium' ? 'Vidutinis' : task.priority === 'High' ? 'Aukštas' : 'Skubus'}
+                                    <span
+                                        className={clsx(
+                                            "px-1.5 py-0.5 text-[10px] font-bold rounded-full whitespace-nowrap shadow-sm border border-black/5"
+                                        )}
+                                        style={{
+                                            backgroundColor: getPriorityColor(task.priority),
+                                            color: getPriorityTextColor(task.priority)
+                                        }}
+                                    >
+                                        {getPriorityLabel(task.priority)}
                                     </span>
                                 )}
                                 {isManager && (
@@ -282,24 +310,24 @@ export default function TaskCard({ task, onEdit, role }) {
                                             e.stopPropagation();
                                             handleDeleteTask();
                                         }}
-                                        className="p-1 text-red-500 hover:bg-red-50 rounded-md transition-colors flex-shrink-0"
+                                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors flex-shrink-0 -mr-1" // Reduced padding
                                         title="Ištrinti užduotį"
                                     >
-                                        <Trash2 className="w-5 h-5" />
+                                        <Trash2 className="w-4 h-4" /> {/* Reduced icon size */}
                                     </button>
                                 )}
                             </div>
                         </div>
 
                         {/* Meta Row: Worker, Deadline, Time, Manager */}
-                        <div className="flex flex-wrap items-center gap-3 mb-2 min-h-[24px]">
+                        <div className="flex flex-wrap items-center gap-2 mb-1.5 min-h-[20px]"> {/* Reduced gap and margin */}
                             {/* Worker Pill */}
-                            {!isAssignedToMe && task.assignedWorkerName && (
+                            {task.assignedWorkerName && (isManager || !isAssignedToMe) && (
                                 <div
-                                    className="inline-flex items-center justify-center p-[4px] rounded-full"
+                                    className="inline-flex items-center justify-center p-[2px] rounded-full"
                                     style={{ backgroundColor: displayColor || '#3b82f6' }}
                                 >
-                                    <span className="px-2 py-1 rounded-full text-xs font-bold bg-white text-gray-800 border border-white/50">
+                                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-gray-800 border border-white/50">
                                         👤 {formatDisplayName(task.assignedWorkerName)}
                                     </span>
                                 </div>
@@ -307,55 +335,56 @@ export default function TaskCard({ task, onEdit, role }) {
 
                             {/* Deadline */}
                             {task.deadline && (
-                                <div className="flex items-center gap-1.5 text-xs text-orange-600 font-medium bg-orange-50 px-2 py-1 rounded border border-orange-100">
+                                <div className="flex items-center gap-1 text-[10px] text-orange-600 font-medium bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
                                     <Calendar className="w-3 h-3" />
                                     {task.deadline}
                                 </div>
                             )}
 
-                            {/* Planned Time (Moved here) */}
+                            {/* Planned Time */}
                             {task.estimatedTime && (
-                                <div className={clsx("inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-semibold bg-gray-100 border border-gray-200", task.completed ? "text-gray-400" : "text-gray-700")}>
-                                    <Clock className="w-3.5 h-3.5" />
+                                <div className={clsx("inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-100 border border-gray-200", task.completed ? "text-gray-400" : "text-gray-700")}>
+                                    <Clock className="w-3 h-3" />
                                     {task.estimatedTime}
                                 </div>
                             )}
 
-                            {/* Manager Name (Moved here) */}
+                            {/* Tag */}
+                            {task.tag && (
+                                <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
+                                    {task.tag}
+                                </div>
+                            )}
+
+                            {/* Manager Name */}
                             {task.creatorName && (
-                                <div className="inline-flex items-center py-1 text-[10px] font-medium text-purple-600 opacity-80">
+                                <div className="inline-flex items-center py-0.5 text-[9px] font-medium text-purple-600 opacity-80">
                                     Vadovas: {formatDisplayName(task.creatorName)}
                                 </div>
                             )}
                         </div>
 
-                        {/* Removed separate Deadline div */}
-
                         {/* Description Section */}
                         {task.description && (
-                            <div className="mb-2">
+                            <div className="mb-1.5"> {/* Reduced margin */}
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setActiveModal('description');
                                     }}
                                     className={clsx(
-                                        "w-full text-left p-2.5 rounded-lg border border-gray-100 transition-all",
+                                        "w-full text-left p-2 rounded-lg border border-gray-100 transition-all",
                                         "bg-gray-50/50 hover:bg-gray-50 hover:border-gray-200 active:scale-[0.98]",
                                         task.completed ? "opacity-60" : "opacity-100"
                                     )}
                                 >
-                                    <div className="flex items-start gap-2">
-                                        <FileText className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" />
+                                    <div className="flex items-start gap-1.5">
+                                        <FileText className="w-3.5 h-3.5 text-blue-500 mt-0.5 flex-shrink-0" />
                                         <div className="flex-1">
-                                            <p className="text-sm text-gray-700 line-clamp-5 leading-normal whitespace-pre-wrap">
+                                            <p className="text-xs text-gray-700 line-clamp-2 leading-snug whitespace-pre-wrap"> {/* Reduced line clamp (5->2) and text size */}
                                                 {task.description}
                                             </p>
-                                            {task.description.length > 100 && (
-                                                <span className="text-[10px] text-blue-500 font-medium mt-1.5 block italic">
-                                                    Bakstelėkite, jei norite matyti visą tekstą...
-                                                </span>
-                                            )}
                                         </div>
                                     </div>
                                 </button>
@@ -364,19 +393,19 @@ export default function TaskCard({ task, onEdit, role }) {
 
                         {/* Comments Section */}
                         {task.comments && task.comments.length > 0 && (
-                            <div className="mb-3 mt-2 space-y-2">
+                            <div className="mb-2 mt-1 space-y-1.5">
                                 {task.comments.map((comment, index) => {
                                     const isEditing = editingCommentIndex === index;
                                     const canEdit = isManager || comment.userId === currentUser.uid;
 
                                     return (
-                                        <div key={index} className="bg-indigo-50/50 p-2.5 rounded-lg border border-indigo-100 hover:bg-indigo-50 transition-colors">
-                                            <div className="flex justify-between items-start mb-1">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-[10px] font-bold text-indigo-700">
+                                        <div key={index} className="bg-indigo-50/50 p-2 rounded-lg border border-indigo-100 hover:bg-indigo-50 transition-colors">
+                                            <div className="flex justify-between items-start mb-0.5">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-[9px] font-bold text-indigo-700">
                                                         {formatDisplayName(comment.user)}
                                                     </span>
-                                                    <span className="text-[9px] text-gray-400">
+                                                    <span className="text-[8px] text-gray-400">
                                                         {new Date(comment.createdAt).toLocaleDateString()}
                                                     </span>
                                                 </div>
@@ -388,18 +417,18 @@ export default function TaskCard({ task, onEdit, role }) {
                                                                 setEditingCommentIndex(index);
                                                                 setEditCommentText(comment.text);
                                                             }}
-                                                            className="text-gray-400 hover:text-blue-600 p-0.5"
+                                                            className="text-gray-400 hover:text-blue-600 p-2 -my-2"
                                                         >
-                                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                                         </button>
                                                         <button
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 handleDeleteComment(index);
                                                             }}
-                                                            className="text-gray-400 hover:text-red-600 p-0.5"
+                                                            className="text-gray-400 hover:text-red-600 p-2 -my-2"
                                                         >
-                                                            <Trash2 className="w-3 h-3" />
+                                                            <Trash2 className="w-4 h-4" />
                                                         </button>
                                                     </div>
                                                 )}
@@ -410,13 +439,13 @@ export default function TaskCard({ task, onEdit, role }) {
                                                     <textarea
                                                         value={editCommentText}
                                                         onChange={(e) => setEditCommentText(e.target.value)}
-                                                        className="w-full text-sm p-1 border rounded"
+                                                        className="w-full text-xs p-1.5 border rounded" // Reduced padding and text size
                                                         rows={2}
                                                     />
                                                     <div className="flex justify-end gap-2 mt-1">
                                                         <button
                                                             onClick={() => setEditingCommentIndex(null)}
-                                                            className="text-xs text-gray-500 hover:text-gray-700"
+                                                            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
                                                         >
                                                             Atšaukti
                                                         </button>
@@ -430,11 +459,9 @@ export default function TaskCard({ task, onEdit, role }) {
                                                 </div>
                                             ) : (
                                                 <p
-                                                    className="text-sm text-gray-700 leading-snug break-words cursor-pointer"
+                                                    className="text-xs text-gray-700 leading-snug break-words cursor-pointer"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        // Optional: Expand toggle if needed, but now all comments are shown.
-                                                        // Maybe just do nothing or allow selecting text.
                                                     }}
                                                 >
                                                     {comment.text}
@@ -447,9 +474,9 @@ export default function TaskCard({ task, onEdit, role }) {
                         )}
 
                         {/* Links and Comments */}
-                        <div className="flex items-center gap-4 text-xs mt-1">
+                        <div className="flex items-center gap-3 text-xs mt-0.5">
                             {task.links && task.links.length > 0 && (
-                                <div className="flex items-center gap-2 overflow-x-auto py-1">
+                                <div className="flex items-center gap-1.5 overflow-x-auto py-1">
                                     {(() => {
                                         const allLinks = (task.links || []).flatMap(l => l.split('\n')).filter(l => l.trim().length > 0);
                                         return allLinks.slice(0, 4).map((link, idx) => (
@@ -458,38 +485,83 @@ export default function TaskCard({ task, onEdit, role }) {
                                                 href={link.trim().startsWith('http') ? link.trim() : `https://${link.trim()}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="flex items-center justify-center text-blue-600 hover:text-blue-800 transition-transform active:scale-90 min-w-[44px] min-h-[44px] bg-blue-50 rounded-lg"
+                                                className="flex items-center justify-center text-blue-600 hover:text-blue-800 transition-transform active:scale-95 min-w-[36px] min-h-[36px] bg-blue-50 rounded-lg shadow-sm border border-blue-100" // Reduced size
                                                 title={link.trim()}
                                                 onClick={(e) => e.stopPropagation()}
                                             >
-                                                <LinkIcon className="w-5 h-5" />
+                                                <LinkIcon className="w-4 h-4" />
                                             </a>
                                         ));
                                     })()}
                                 </div>
+                            )}
+
+                            {task.attachmentUrl && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        setActiveModal('image');
+                                    }}
+                                    className="flex items-center justify-center gap-1.5 text-pink-600 hover:text-pink-800 hover:bg-pink-50 rounded-lg transition-colors px-2 py-1.5 min-h-[36px]"
+                                    title="Peržiūrėti nuotrauką"
+                                >
+                                    <ImageIcon className="w-4 h-4" />
+                                </button>
                             )}
                             <button
                                 onClick={(e) => {
                                     e.stopPropagation();
                                     setActiveModal('comments');
                                 }}
-                                className="flex items-center justify-center gap-1.5 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors px-2 py-1"
+                                className="flex items-center justify-center gap-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors px-2 py-1.5 min-h-[36px]" // Reduced size
                             >
-                                <MessageCircle className="w-5 h-5" />
-                                <span className="text-sm font-bold">{task.comments?.length || 0}</span>
+                                <MessageCircle className="w-4 h-4" />
+                                <span className="text-xs font-bold">{task.comments?.length || 0}</span>
                             </button>
+                            {onEdit && (
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        onEdit(task);
+                                    }}
+                                    className="flex items-center justify-center gap-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors ml-auto min-h-[36px]"
+                                >
+                                    <Edit className="w-3.5 h-3.5" />
+                                    Redaguoti
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
 
-                {/* Timer Controls - Inside task card */}
-                <div className="mt-1">
+                {/* Footer Actions: Timer & Edit */}
+                <div className="flex items-center justify-between mt-0.5">
                     <TaskTimerControls
                         task={task}
                         role={role}
                     />
+
+                    {isManager && taskStatus === 'unapproved' && (
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                const confirmApprove = window.confirm("Patvirtinti šią užduotį?");
+                                if (confirmApprove) {
+                                    updateDoc(doc(db, 'tasks', task.id), {
+                                        status: 'pending',
+                                        updatedAt: new Date().toISOString()
+                                    });
+                                }
+                            }}
+                            className="text-xs bg-green-500 text-white px-3 py-1.5 rounded-lg font-medium shadow-sm active:scale-95 transition-all ml-2"
+                        >
+                            Patvirtinti
+                        </button>
+                    )}
+
+
                 </div>
-            </div>
+            </div >
 
 
             <LinksModal
@@ -509,6 +581,12 @@ export default function TaskCard({ task, onEdit, role }) {
                 isOpen={activeModal === 'description'}
                 onClose={() => setActiveModal(null)}
                 description={task.description}
+            />
+
+            <ImageModal
+                isOpen={activeModal === 'image'}
+                onClose={() => setActiveModal(null)}
+                imageUrls={task.attachmentUrls && task.attachmentUrls.length > 0 ? task.attachmentUrls : (task.attachmentUrl ? [task.attachmentUrl] : [])}
             />
 
             <InlineEditModal

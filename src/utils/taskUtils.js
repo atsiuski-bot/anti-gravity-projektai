@@ -1,20 +1,24 @@
+// Task tags configuration
+export const TASK_TAGS = ['Auto', 'Renginiams', 'Piro'];
+
 export const filterTasksByVisibility = (tasks) => {
-    // dayOfWeek property is removed, so we return all tasks.
-    // In the future, we could add filtering based on deadline if needed.
+    // Return all tasks regardless of deadline
+    // Previously this filtered out tasks with future deadlines
+    if (!tasks) return [];
     return tasks;
 };
 
-export const sortWorkerTasks = (tasksList) => {
-    const priorityOrder = { 'Urgent': 1, 'High': 2, 'Medium': 3, 'Low': 4 };
+import { getPriorityRank } from './priority';
 
+export const sortWorkerTasks = (tasksList) => {
     return [...tasksList].sort((a, b) => {
         // 1. Completed tasks last
         if (a.completed !== b.completed) return a.completed ? 1 : -1;
 
-        // 2. Priority (Urgent first)
-        const prioA = priorityOrder[a.priority] || 99;
-        const prioB = priorityOrder[b.priority] || 99;
-        if (prioA !== prioB) return prioA - prioB;
+        // 2. Priority (Urgent first - Higher rank first)
+        const rankA = getPriorityRank(a.priority);
+        const rankB = getPriorityRank(b.priority);
+        if (rankA !== rankB) return rankB - rankA; // Descending order of rank
 
         // 3. Deadline (soonest first, null/undefined last)
         const deadlineA = a.deadline ? new Date(a.deadline).getTime() : Infinity;

@@ -3,14 +3,15 @@ import clsx from 'clsx';
 import { db } from '../firebase';
 import { doc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, FileText, CheckCircle2, MessageSquare, Calendar, Archive, Trash2 } from 'lucide-react';
-import { LinksModal, CommentsModal, DescriptionModal } from './TaskDetailsModals';
+import { Link as LinkIcon, MessageCircle, FileText, CheckCircle2, MessageSquare, Calendar, Archive, Trash2, ArrowUp, ArrowDown, ImageIcon } from 'lucide-react';
+import { LinksModal, CommentsModal, DescriptionModal, ImageModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import { parseTimeStringToMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { pauseOtherTasks, archiveTask } from '../utils/taskActions';
 import { formatDisplayName } from '../utils/formatters';
+import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 
-export default function TaskTable({ tasks, onEdit, role }) {
+export default function TaskTable({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) {
     const { currentUser, userRole } = useAuth();
     const [expandedComments, setExpandedComments] = useState({});
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null }); // { type: 'description'|'links'|'comments', taskId: string }
@@ -63,7 +64,8 @@ export default function TaskTable({ tasks, onEdit, role }) {
         }));
     };
 
-    const priorityColors = {
+    // Priority colors/labels handled via utility
+    /* const priorityColors = {
         Low: 'bg-gray-800 text-white',
         Medium: 'bg-gray-500 text-white',
         High: 'bg-gray-200 text-gray-800',
@@ -75,20 +77,22 @@ export default function TaskTable({ tasks, onEdit, role }) {
         Medium: 'Vidutinis',
         High: 'Aukštas',
         Urgent: 'Skubus'
-    };
+    }; */
 
     const statusColors = {
         'pending': 'bg-white text-gray-800 border border-gray-200',
         'in-progress': 'bg-white text-gray-800 border border-gray-200',
         'completed': 'bg-gray-200 text-gray-800',
-        'confirmed': 'bg-green-100 text-gray-800'
+        'confirmed': 'bg-green-100 text-gray-800',
+        'unapproved': 'bg-amber-50 text-gray-800 border-amber-200'
     };
 
     const statusLabels = {
         'pending': 'Nepradėtas',
         'in-progress': 'Pradėtas',
         'completed': 'Užbaigtas, nepriduotas',
-        'confirmed': 'Užbaigtas, priduotas'
+        'confirmed': 'Užbaigtas, priduotas',
+        'unapproved': 'Nepatvirtintas'
     };
 
     const handleToggleComplete = async (taskId, currentStatus) => {
@@ -156,6 +160,20 @@ export default function TaskTable({ tasks, onEdit, role }) {
         }
     };
 
+    const handleApproveTask = async (taskId) => {
+        try {
+            const task = tasks.find(t => t.id === taskId);
+            if (!task) return;
+            await updateDoc(doc(db, 'tasks', taskId), {
+                status: 'pending',
+                updatedAt: new Date().toISOString()
+            });
+        } catch (err) {
+            console.error("Error approving task:", err);
+            alert("Nepavyko patvirtinti užduoties.");
+        }
+    };
+
     const handleDeleteTask = async (taskId, taskTitle) => {
         if (!window.confirm(`Ar tikrai norite ištrinti užduotį "${taskTitle}"? Šis veiksmas negrįžtamas ir užduotis nebus archyvuota.`)) {
             return;
@@ -173,6 +191,7 @@ export default function TaskTable({ tasks, onEdit, role }) {
         const status = task.status || 'pending';
         if (status === 'confirmed') return 'bg-green-50';
         if (status === 'completed') return 'bg-gray-100';
+        if (status === 'unapproved') return 'bg-amber-50';
         return 'bg-white';
     };
 
@@ -202,6 +221,7 @@ export default function TaskTable({ tasks, onEdit, role }) {
     };
 
     const isWorker = role === 'worker';
+    const canManage = userRole === 'manager' || userRole === 'admin';
 
     return (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -209,19 +229,25 @@ export default function TaskTable({ tasks, onEdit, role }) {
                 <table className="min-w-full divide-y divide-gray-200 table-fixed">
                     <thead className="bg-gray-50">
                         <tr>
+                            {showReorderControls && (
+                                <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
+                                    #
+                                </th>
+                            )}
                             <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
                                 ✓
                             </th>
-                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[40%]">Užduotis</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Darb.</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Atlikti iki</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Prior.</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-28">Būsena</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16" title="Numatytas laikas">Num.</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Nuorodos</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12 text-center">Kom.</th>
-                            {!isWorker && <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Patv.</th>}
-                            <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Veik.</th>
+                            <th className={`px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${!isWorker ? 'w-72' : ''}`}>Užduotis</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Darb.</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Žyma</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Atlikti iki</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Prior.</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Būsena</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-14" title="Numatytas laikas">Num.</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Nuorodos</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10 text-center">Kom.</th>
+                            {!isWorker && <th className="px-1 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Patv.</th>}
+                            <th className="px-1 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Veik.</th>
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
@@ -234,7 +260,27 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                         getStatusStyle(task),
                                         !task.completed && "hover:bg-gray-50"
                                     )}>
-                                        <td className="px-2 py-3 text-center">
+                                        {showReorderControls && (
+                                            <td className="px-2 py-3 text-center">
+                                                <div className="flex flex-col items-center gap-1">
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
+                                                        className="text-gray-400 hover:text-blue-600 transition-colors p-0.5 hover:bg-gray-100 rounded"
+                                                        title="Perkelti aukštyn"
+                                                    >
+                                                        <ArrowUp className="w-3.5 h-3.5" />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
+                                                        className="text-gray-400 hover:text-blue-600 transition-colors p-0.5 hover:bg-gray-100 rounded"
+                                                        title="Perkelti žemyn"
+                                                    >
+                                                        <ArrowDown className="w-3.5 h-3.5" />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        )}
+                                        <td className="px-1 py-3 text-center">
                                             <input
                                                 type="checkbox"
                                                 checked={task.completed || false}
@@ -250,10 +296,11 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                                 )}
                                             />
                                         </td>
-                                        <td className="px-3 py-3">
+                                        <td className="px-1 py-3">
                                             <div className={clsx(
-                                                "text-sm font-medium truncate",
-                                                task.completed ? "text-gray-500 line-through" : "text-gray-900"
+                                                "text-sm font-medium break-words rounded px-2 py-1",
+                                                task.completed ? "text-gray-500 line-through" : "text-gray-900",
+                                                task.status === 'unapproved' ? "bg-gray-200 text-gray-700" : ""
                                             )}>
                                                 {task.title}
                                             </div>
@@ -355,7 +402,7 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                                 </div>
                                             )}
                                         </td>
-                                        <td className="px-2 py-3 whitespace-nowrap">
+                                        <td className="px-1 py-3 whitespace-nowrap">
                                             {task.assignedWorkerName && (
                                                 <div
                                                     className="inline-flex items-center justify-center p-[3px] rounded-full"
@@ -367,18 +414,30 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                                 </div>
                                             )}
                                         </td>
-                                        <td className="px-2 py-3 whitespace-nowrap text-xs text-gray-600">
+                                        <td className="px-1 py-3 whitespace-nowrap">
+                                            {task.tag && (
+                                                <span className="px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-md bg-purple-100 text-purple-800 border border-purple-200">
+                                                    {task.tag}
+                                                </span>
+                                            )}
+                                        </td>
+                                        <td className="px-1 py-3 whitespace-nowrap text-xs text-gray-600">
                                             {formatDeadline(task.deadline)}
                                         </td>
-                                        <td className="px-2 py-3 whitespace-nowrap">
-                                            <span className={clsx(
-                                                "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-md",
-                                                priorityColors[task.priority] || priorityColors.Medium
-                                            )}>
-                                                {priorityLabels[task.priority] || task.priority}
+                                        <td className="px-1 py-3 whitespace-nowrap">
+                                            <span
+                                                className={clsx(
+                                                    "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-md border border-black/5"
+                                                )}
+                                                style={{
+                                                    backgroundColor: getPriorityColor(task.priority),
+                                                    color: getPriorityTextColor(task.priority)
+                                                }}
+                                            >
+                                                {getPriorityLabel(task.priority)}
                                             </span>
                                         </td>
-                                        <td className="px-2 py-3 whitespace-nowrap">
+                                        <td className="px-1 py-3 whitespace-nowrap">
                                             <span className={clsx(
                                                 "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full max-w-[100px] truncate",
                                                 statusColors[task.status || 'pending']
@@ -386,10 +445,10 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                                 {statusLabels[task.status || 'pending']}
                                             </span>
                                         </td>
-                                        <td className="px-2 py-3 whitespace-nowrap text-xs text-gray-500">
+                                        <td className="px-1 py-3 whitespace-nowrap text-xs text-gray-500">
                                             {task.estimatedTime || '-'}
                                         </td>
-                                        <td className="px-2 py-3 text-xs">
+                                        <td className="px-1 py-3 text-xs">
                                             <div className="flex flex-wrap gap-1.5 min-w-[60px]">
                                                 {(() => {
                                                     const allLinks = (task.links || []).flatMap(l => l.split('\n')).filter(l => l.trim().length > 0);
@@ -408,8 +467,22 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                                     ));
                                                 })()}
                                             </div>
+                                            {((task.attachmentUrls && task.attachmentUrls.length > 0) || task.attachmentUrl) && (
+                                                <div className="mt-1 flex justify-center">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setActiveModal({ type: 'image', taskId: task.id });
+                                                        }}
+                                                        className="text-pink-600 hover:text-pink-800 transition-transform active:scale-90"
+                                                        title="Peržiūrėti nuotrauką"
+                                                    >
+                                                        <ImageIcon className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            )}
                                         </td>
-                                        <td className="px-2 py-3 text-center">
+                                        <td className="px-1 py-3 text-center">
                                             <button
                                                 onClick={(e) => {
                                                     e.stopPropagation();
@@ -425,14 +498,24 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                             </button>
                                         </td>
                                         {!isWorker && (
-                                            <td className="px-2 py-3 text-center">
+                                            <td className="px-1 py-3 text-center">
                                                 {task.status === 'completed' && task.status !== 'confirmed' && (
                                                     <input
                                                         type="checkbox"
                                                         checked={false}
                                                         onChange={() => handleConfirmTask(task.id)}
                                                         className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                                                        title="Patvirtinti atlikimą"
                                                     />
+                                                )}
+                                                {task.status === 'unapproved' && (
+                                                    <button
+                                                        onClick={() => handleApproveTask(task.id)}
+                                                        className="text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200 hover:bg-green-200 transition-colors"
+                                                        title="Patvirtinti užduotį (leisti vykdyti)"
+                                                    >
+                                                        Patvirtinti
+                                                    </button>
                                                 )}
                                                 {task.status === 'confirmed' && (
                                                     <span className="inline-flex items-center text-green-600">
@@ -441,40 +524,42 @@ export default function TaskTable({ tasks, onEdit, role }) {
                                                 )}
                                             </td>
                                         )}
-                                        <td className="px-2 py-3 whitespace-nowrap text-right text-xs font-medium">
-                                            {!isWorker && (
-                                                <button
-                                                    onClick={() => onEdit(task)}
-                                                    className="text-blue-600 hover:text-blue-900 block"
-                                                >
-                                                    Redaguoti
-                                                </button>
-                                            )}
-                                            {!isWorker && (
-                                                <button
-                                                    onClick={() => handleDeleteTask(task.id, task.title)}
-                                                    className="text-red-500 hover:text-red-700 block mt-1 text-[10px] flex items-center justify-end gap-1 ml-auto"
-                                                    title="Ištrinti"
-                                                >
-                                                    <Trash2 className="w-3 h-3" />
-                                                    Ištrinti
-                                                </button>
-                                            )}
-                                            {!isWorker && task.status === 'confirmed' && (
-                                                <button
-                                                    onClick={() => handleArchiveTask(task)}
-                                                    className="text-gray-500 hover:text-gray-700 block mt-1 text-[10px] flex items-center justify-end gap-1 ml-auto"
-                                                    title="Archyvuoti"
-                                                >
-                                                    <Archive className="w-3 h-3" />
-                                                    Archyvuoti
-                                                </button>
-                                            )}
-                                            <div className="mt-2 text-right">
-                                                <TaskTimerControls
-                                                    task={task}
-                                                    role={role}
-                                                />
+                                        <td className="px-1 py-3 text-right text-xs font-medium valign-top">
+                                            <div className="flex flex-col items-end gap-2">
+                                                {onEdit && (
+                                                    <button
+                                                        onClick={() => onEdit(task)}
+                                                        className="text-blue-600 hover:text-blue-900 font-medium"
+                                                    >
+                                                        Redaguoti
+                                                    </button>
+                                                )}
+                                                {(canManage || !isWorker) && (
+                                                    <button
+                                                        onClick={() => handleDeleteTask(task.id, task.title)}
+                                                        className="text-red-500 hover:text-red-700 font-medium flex items-center justify-end gap-1"
+                                                        title="Ištrinti"
+                                                    >
+                                                        <Trash2 className="w-3 h-3" />
+                                                        Ištrinti
+                                                    </button>
+                                                )}
+                                                {(canManage || !isWorker) && task.status === 'confirmed' && (
+                                                    <button
+                                                        onClick={() => handleArchiveTask(task)}
+                                                        className="text-gray-500 hover:text-gray-700 font-medium flex items-center justify-end gap-1"
+                                                        title="Archyvuoti"
+                                                    >
+                                                        <Archive className="w-3 h-3" />
+                                                        Archyvuoti
+                                                    </button>
+                                                )}
+                                                <div className="w-full">
+                                                    <TaskTimerControls
+                                                        task={task}
+                                                        role={role}
+                                                    />
+                                                </div>
                                             </div>
                                         </td>
                                     </tr>
@@ -485,31 +570,38 @@ export default function TaskTable({ tasks, onEdit, role }) {
                 </table>
             </div>
             {/* Modals */}
-            {activeModal.taskId && (() => {
-                const task = tasks.find(t => t.id === activeModal.taskId);
-                if (!task) return null;
+            {
+                activeModal.taskId && (() => {
+                    const task = tasks.find(t => t.id === activeModal.taskId);
+                    if (!task) return null;
 
-                return (
-                    <>
-                        <DescriptionModal
-                            isOpen={activeModal.type === 'description'}
-                            onClose={() => setActiveModal({ type: null, taskId: null })}
-                            description={task.description}
-                        />
-                        <LinksModal
-                            isOpen={activeModal.type === 'links'}
-                            onClose={() => setActiveModal({ type: null, taskId: null })}
-                            links={task.links}
-                        />
-                        <CommentsModal
-                            isOpen={activeModal.type === 'comments'}
-                            onClose={() => setActiveModal({ type: null, taskId: null })}
-                            comments={task.comments}
-                            onAddComment={(text) => handleAddComment(task.id, text)}
-                        />
-                    </>
-                );
-            })()}
+                    return (
+                        <>
+                            <DescriptionModal
+                                isOpen={activeModal.type === 'description'}
+                                onClose={() => setActiveModal({ type: null, taskId: null })}
+                                description={task.description}
+                            />
+                            <LinksModal
+                                isOpen={activeModal.type === 'links'}
+                                onClose={() => setActiveModal({ type: null, taskId: null })}
+                                links={task.links}
+                            />
+                            <CommentsModal
+                                isOpen={activeModal.type === 'comments'}
+                                onClose={() => setActiveModal({ type: null, taskId: null })}
+                                comments={task.comments}
+                                onAddComment={(text) => handleAddComment(task.id, text)}
+                            />
+                            <ImageModal
+                                isOpen={activeModal.type === 'image'}
+                                onClose={() => setActiveModal({ type: null, taskId: null })}
+                                imageUrls={task.attachmentUrls && task.attachmentUrls.length > 0 ? task.attachmentUrls : (task.attachmentUrl ? [task.attachmentUrl] : [])}
+                            />
+                        </>
+                    );
+                })()
+            }
 
         </div >
     );

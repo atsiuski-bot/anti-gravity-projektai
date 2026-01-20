@@ -6,6 +6,8 @@ import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStrin
 import { startTask, pauseTask, resumeTask, archiveTask } from '../utils/taskActions';
 import { useAuth } from '../context/AuthContext';
 
+import { stopBreak, stopCall, stopQuickWork } from '../utils/userStateActions';
+
 export default function TaskTimerControls({ task, onShowModal, role }) {
     const { isTakingBreak, currentUser, userRole } = useAuth();
     const isAssignedToMe = currentUser?.uid === task.assignedWorkerId;
@@ -40,11 +42,19 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
         e.stopPropagation();
         try {
             if (currentUser) {
+                // Stop other activities
+                await stopBreak(currentUser.uid);
+                await stopCall(currentUser.uid, currentUser.displayName);
+                await stopQuickWork(currentUser.uid, currentUser.displayName);
+
                 await startTask(task, currentUser.uid);
             }
         } catch (err) {
             console.error("Error starting timer:", err);
-            alert("Nepavyko pradėti laikmačio.");
+            // Only alert if we think it's a critical failure and we are online
+            if (navigator.onLine) {
+                alert("Nepavyko pradėti laikmačio.");
+            }
         }
     };
 
@@ -56,6 +66,9 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
             await pauseTask(task);
         } catch (err) {
             console.error("Error pausing timer:", err);
+            if (navigator.onLine) {
+                alert("Nepavyko sustabdyti laikmačio."); // Usually pause is less critical to alert
+            }
         }
     };
 
@@ -67,6 +80,9 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
             }
         } catch (err) {
             console.error("Error resuming timer:", err);
+            if (navigator.onLine) {
+                alert("Nepavyko atnaujinti laikmačio.");
+            }
         }
     };
 
@@ -105,6 +121,7 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
                         });
                     } catch (logErr) {
                         console.error("Error logging final work session:", logErr);
+                        // Non-critical, continue
                     }
                 }
             }
@@ -145,7 +162,9 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
             console.log(`Task ${task.id} finished and archived`);
         } catch (err) {
             console.error("Error finishing task:", err);
-            alert("Nepavyko užbaigti užduoties: " + err.message);
+            if (navigator.onLine) {
+                alert("Nepavyko užbaigti užduoties: " + err.message);
+            }
         }
     };
 
@@ -160,12 +179,12 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
                     type="button"
                     onClick={handlePause}
                     disabled={isTakingBreak}
-                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors ${isTakingBreak
+                    className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${isTakingBreak
                         ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
                         }`}
                 >
-                    <Pause className="w-3.5 h-3.5" />
+                    <Pause className="w-3.5 h-3.5 flex-shrink-0" />
                     Pauzė {elapsedString}
                 </button>
             ) : (
@@ -173,13 +192,13 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
                     type="button"
                     onClick={isPaused ? handleResume : handleStart}
                     disabled={isTakingBreak}
-                    className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors ${isTakingBreak
+                    className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${isTakingBreak
                         ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                         : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
                         }`}
                     title={isTakingBreak ? "Pertraukos metu negalima dirbti" : ""}
                 >
-                    <Play className="w-3.5 h-3.5" />
+                    <Play className="w-3.5 h-3.5 flex-shrink-0" />
                     {isPaused ? 'Tęsti' : 'Pradėti'} {elapsedString !== '00:00' ? elapsedString : ''}
                 </button>
             )}
@@ -188,9 +207,9 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
             <button
                 type="button"
                 onClick={handleFinish}
-                className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors bg-gray-50 text-gray-700 hover:bg-gray-100"
+                className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium rounded transition-colors bg-gray-50 text-gray-700 hover:bg-gray-100 whitespace-nowrap"
             >
-                <Square className="w-3.5 h-3.5" />
+                <Square className="w-3.5 h-3.5 flex-shrink-0" />
                 Užbaigti
             </button>
         </div>

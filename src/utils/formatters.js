@@ -1,3 +1,5 @@
+import { parseTimeStringToMinutes } from './timeUtils';
+
 /**
  * Formats a full name to the format "Name S."
  * Example: "Jonas Kazlauskas" -> "Jonas K."
@@ -14,4 +16,30 @@ export const formatDisplayName = (fullName) => {
     const firstName = parts[0];
     const lastName = parts[parts.length - 1];
     return `${firstName} ${lastName.charAt(0).toUpperCase()}.`;
+};
+
+/**
+ * Safely parses time string to hours with validation.
+ * Centralized function to eliminate duplication across components.
+ * 
+ * @param {string} timeStr - Time string like "2h", "90m", "1h 30m", "2.5h", "2val"
+ * @returns {number} Hours as decimal, returns 0 for invalid input
+ * 
+ * @example
+ * parseTimeToHours("2h") // 2
+ * parseTimeToHours("90m") // 1.5
+ * parseTimeToHours("1h 30m") // 1.5
+ * parseTimeToHours("2.5val") // 2.5
+ * parseTimeToHours(null) // 0
+ */
+export const parseTimeToHours = (timeStr) => {
+    try {
+        if (!timeStr || typeof timeStr !== 'string') return 0;
+        const minutes = parseTimeStringToMinutes(timeStr);
+        if (!Number.isFinite(minutes) || minutes < 0) return 0;
+        return minutes / 60;
+    } catch (error) {
+        console.warn('Failed to parse time string:', timeStr, error);
+        return 0;
+    }
 };

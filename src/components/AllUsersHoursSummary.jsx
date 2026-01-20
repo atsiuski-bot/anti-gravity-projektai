@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { collection, query, onSnapshot, getDocs } from 'firebase/firestore';
 import { Users, Clock } from 'lucide-react';
 import { startOfWeek, endOfWeek } from 'date-fns';
+import { parseTimeToHours } from '../utils/formatters';
 
 export default function AllUsersHoursSummary() {
     const [userHours, setUserHours] = useState([]);
@@ -27,19 +28,27 @@ export default function AllUsersHoursSummary() {
                         // Group work hours by user, filtering for current week client-side
                         const hoursByUser = {};
                         workHoursSnap.docs.forEach(doc => {
-                            const data = doc.data();
-                            const start = new Date(data.start);
+                            try {
+                                const data = doc.data();
+                                const start = new Date(data.start);
 
-                            // Filter client-side for current week
-                            if (start >= weekStart && start <= weekEnd) {
-                                const userId = data.userId;
-                                const end = new Date(data.end);
-                                const durationHours = (end - start) / (1000 * 60 * 60);
+                                if (!isNaN(start.getTime()) && start >= weekStart && start <= weekEnd) {
+                                    const userId = data.userId;
+                                    const end = new Date(data.end);
 
-                                if (!hoursByUser[userId]) {
-                                    hoursByUser[userId] = { workHours: 0, taskDuration: 0 };
+                                    if (!isNaN(end.getTime())) {
+                                        const durationHours = (end - start) / (1000 * 60 * 60);
+
+                                        if (Number.isFinite(durationHours) && durationHours >= 0) {
+                                            if (!hoursByUser[userId]) {
+                                                hoursByUser[userId] = { workHours: 0, taskDuration: 0 };
+                                            }
+                                            hoursByUser[userId].workHours += durationHours;
+                                        }
+                                    }
                                 }
-                                hoursByUser[userId].workHours += durationHours;
+                            } catch (error) {
+                                console.warn('Error processing work hour entry:', doc.id, error);
                             }
                         });
 
@@ -55,15 +64,20 @@ export default function AllUsersHoursSummary() {
                         };
 
                         tasksSnap.docs.forEach(doc => {
-                            const task = doc.data();
-                            if (task.assignedWorkerId && task.estimatedTime) {
-                                // Parse estimated time (e.g., "2h", "1.5h", "90m", "1h 30m")
-                                const hours = parseTimeToHours(task.estimatedTime);
+                            try {
+                                const task = doc.data();
+                                if (task.assignedWorkerId && task.estimatedTime) {
+                                    const hours = parseTimeToHours(task.estimatedTime);
 
-                                if (!hoursByUser[task.assignedWorkerId]) {
-                                    hoursByUser[task.assignedWorkerId] = { workHours: 0, taskDuration: 0 };
+                                    if (hours > 0) { // Already validated in parseTimeToHours
+                                        if (!hoursByUser[task.assignedWorkerId]) {
+                                            hoursByUser[task.assignedWorkerId] = { workHours: 0, taskDuration: 0 };
+                                        }
+                                        hoursByUser[task.assignedWorkerId].taskDuration += hours;
+                                    }
                                 }
-                                hoursByUser[task.assignedWorkerId].taskDuration += hours;
+                            } catch (error) {
+                                console.warn('Error processing task for hours:', doc.id, error);
                             }
                         });
 

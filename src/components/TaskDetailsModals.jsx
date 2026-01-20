@@ -1,5 +1,6 @@
-import React from 'react';
-import { X, Link as LinkIcon, MessageCircle, FileText } from 'lucide-react';
+import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X, Link as LinkIcon, MessageCircle, FileText, ImageIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -125,4 +126,159 @@ export function DescriptionModal({ isOpen, onClose, description }) {
             )}
         </DetailsModal>
     );
+}
+
+export function ImageModal({ isOpen, onClose, imageUrls }) {
+    const [currentIndex, setCurrentIndex] = useState(0);
+    const [zoom, setZoom] = useState(1);
+
+    // Drag state
+    const [isDragging, setIsDragging] = useState(false);
+    const [startX, setStartX] = useState(0);
+    const [startY, setStartY] = useState(0);
+    const [scrollLeft, setScrollLeft] = useState(0);
+    const [scrollTop, setScrollTop] = useState(0);
+    const containerRef = React.useRef(null);
+    const isDragOccurred = React.useRef(false);
+
+    if (!isOpen || !imageUrls || imageUrls.length === 0) return null;
+
+    const validIndex = currentIndex >= imageUrls.length ? 0 : currentIndex;
+
+    const handleNext = (e) => {
+        e?.stopPropagation();
+        setCurrentIndex((prev) => (prev + 1) % imageUrls.length);
+        setZoom(1); // Reset zoom
+    };
+
+    const handlePrev = (e) => {
+        e?.stopPropagation();
+        setCurrentIndex((prev) => (prev - 1 + imageUrls.length) % imageUrls.length);
+        setZoom(1); // Reset zoom
+    };
+
+    const toggleZoom = (e) => {
+        e.stopPropagation();
+        if (isDragOccurred.current) {
+            isDragOccurred.current = false;
+            return;
+        }
+        setZoom(prev => prev === 1 ? 3.5 : 1);
+    };
+
+    // Mouse Event Handlers for Dragging
+    const handleMouseDown = (e) => {
+        // Only allow dragging when zoomed in
+        if (zoom <= 1) return;
+
+        e.preventDefault();
+        setIsDragging(true);
+        isDragOccurred.current = false;
+
+        setStartX(e.pageX - containerRef.current.offsetLeft);
+        setStartY(e.pageY - containerRef.current.offsetTop);
+        setScrollLeft(containerRef.current.scrollLeft);
+        setScrollTop(containerRef.current.scrollTop);
+    };
+
+    const handleMouseLeave = () => {
+        setIsDragging(false);
+    };
+
+    const handleMouseUp = () => {
+        setIsDragging(false);
+    };
+
+    const handleMouseMove = (e) => {
+        if (!isDragging) return;
+        e.preventDefault();
+
+        // Mark that a drag occurred so we don't toggle zoom on release
+        isDragOccurred.current = true;
+
+        const x = e.pageX - containerRef.current.offsetLeft;
+        const y = e.pageY - containerRef.current.offsetTop;
+        const walkX = (x - startX) * 1.5; // Scroll speed multiplier
+        const walkY = (y - startY) * 1.5;
+
+        containerRef.current.scrollLeft = scrollLeft - walkX;
+        containerRef.current.scrollTop = scrollTop - walkY;
+    };
+
+    const modalContent = (
+        <div
+            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black bg-opacity-95"
+            onClick={onClose}
+        >
+            <div className={`relative w-full h-full flex items-center justify-center overflow-hidden`}>
+                {/* Controls - Only show when not zoomed or fix them to screen edges */}
+                <button
+                    onClick={onClose}
+                    className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors z-[10000] bg-black/20 rounded-full p-1"
+                >
+                    <X className="w-8 h-8" />
+                </button>
+
+                {imageUrls.length > 1 && (
+                    <>
+                        <button
+                            onClick={handlePrev}
+                            className="absolute left-4 top-1/2 -translate-y-1/2 p-2 text-white hover:bg-white/10 rounded-full transition-colors z-[10000] bg-black/20"
+                        >
+                            <ChevronLeft className="w-8 h-8" />
+                        </button>
+                        <button
+                            onClick={handleNext}
+                            className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-white hover:bg-white/10 rounded-full transition-colors z-[10000] bg-black/20"
+                        >
+                            <ChevronRight className="w-8 h-8" />
+                        </button>
+                    </>
+                )}
+
+                {/* Zoomable Container */}
+                {/* Zoomable Container */}
+                <div
+                    ref={containerRef}
+                    className={`w-full h-full overflow-auto overscroll-contain flex
+                        ${zoom > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'}`}
+                    onClick={toggleZoom}
+                    onMouseDown={handleMouseDown}
+                    onMouseLeave={handleMouseLeave}
+                    onMouseUp={handleMouseUp}
+                    onMouseMove={handleMouseMove}
+                >
+                    <img
+                        src={imageUrls[validIndex]}
+                        alt={`Attachment ${validIndex + 1}`}
+                        style={{
+                            width: zoom > 1 ? '350%' : 'auto',
+                            maxWidth: zoom > 1 ? 'none' : '100%',
+                            maxHeight: zoom > 1 ? 'none' : '90vh',
+                            objectFit: 'contain',
+                            transition: isDragging ? 'none' : 'width 0.3s ease-in-out',
+                            pointerEvents: 'auto', // Allow native touch interactions
+                            cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'
+                        }}
+                        className={`rounded shadow-2xl selectable-none select-none m-auto ${zoom <= 1 ? 'max-w-full max-h-[90vh]' : ''}`}
+                        onClick={(e) => {
+                            // Verify clicking image toggles zoom
+                            if (!isDragging) {
+                                e.stopPropagation();
+                                toggleZoom(e);
+                            }
+                        }}
+                    />
+                </div>
+
+                {imageUrls.length > 1 && (
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white bg-black/50 px-3 py-1 rounded-full text-sm z-[10000]">
+                        {validIndex + 1} / {imageUrls.length}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+
+    return createPortal(modalContent, document.body);
 }
