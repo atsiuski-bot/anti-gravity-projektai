@@ -9,7 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { stopBreak, stopCall, stopQuickWork } from '../utils/userStateActions';
 
 export default function TaskTimerControls({ task, onShowModal, role }) {
-    const { isTakingBreak, currentUser, userRole } = useAuth();
+    const { isTakingBreak, currentUser, userRole, userData } = useAuth();
     const isAssignedToMe = currentUser?.uid === task.assignedWorkerId;
 
     // Only allow the assigned worker to control the task
@@ -42,10 +42,16 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
         e.stopPropagation();
         try {
             if (currentUser) {
+                // Check if Quick Work is running - if so, prompt to stop it first
+                if (userData?.quickWorkState?.isQuickWorking) {
+                    window.dispatchEvent(new CustomEvent('stop-quick-work'));
+                    return;
+                }
+
                 // Stop other activities
                 await stopBreak(currentUser.uid);
                 await stopCall(currentUser.uid, currentUser.displayName);
-                await stopQuickWork(currentUser.uid, currentUser.displayName);
+                // await stopQuickWork(currentUser.uid, currentUser.displayName); // Removed as we handle it via event now
 
                 await startTask(task, currentUser.uid);
             }
@@ -76,6 +82,16 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
         e.stopPropagation();
         try {
             if (currentUser) {
+                // Check if Quick Work is running
+                if (userData?.quickWorkState?.isQuickWorking) {
+                    window.dispatchEvent(new CustomEvent('stop-quick-work'));
+                    return;
+                }
+
+                // Also stop break/call if resuming? Usually resume implies start.
+                await stopBreak(currentUser.uid);
+                await stopCall(currentUser.uid, currentUser.displayName);
+
                 await resumeTask(task, currentUser.uid);
             }
         } catch (err) {
@@ -146,8 +162,8 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
                 updatedAt: now.toISOString()
             };
 
-            // 3. Always archive when finished to move to history/reports
-            await archiveTask(taskData, currentUser.uid);
+            // 3. Do NOT archive immediately. Update task status and completion.
+            await updateDoc(doc(db, 'tasks', task.id), taskData);
 
             // 4. Update User Status to Idle
             await updateDoc(doc(db, 'users', currentUser.uid), {

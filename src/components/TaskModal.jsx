@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { db, storage } from '../firebase';
 import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc, addDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, getDocs, query, where, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { X, Plus, Trash2, ExternalLink } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
-import { saveTaskTemplate, getTaskTemplates } from '../utils/taskActions';
+import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { getPriorityOptions, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 
@@ -53,6 +53,31 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         deadline: false
     });
 
+    const sortedTemplates = useMemo(() => {
+        return [...templates].sort((a, b) => {
+            const getWorkerName = (tmpl) => {
+                const workerId = tmpl.data?.assignedWorkerId;
+                if (!workerId) return null;
+                const worker = workers.find(w => w.id === workerId);
+                if (!worker) return null;
+                return formatDisplayName(worker.displayName || worker.email);
+            };
+
+            const nameA = getWorkerName(a);
+            const nameB = getWorkerName(b);
+
+            if (nameA && !nameB) return -1;
+            if (!nameA && nameB) return 1;
+            if (nameA && nameB) {
+                const cmp = nameA.localeCompare(nameB);
+                if (cmp !== 0) return cmp;
+            }
+
+            // Secondary sort: Template Name
+            return (a.templateName || '').localeCompare(b.templateName || '');
+        });
+    }, [templates, workers]);
+
     const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.id === currentUser.uid);
 
     useEffect(() => {
@@ -81,22 +106,37 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             });
         } else {
             // Reset for new task
-            setFormData({
-                title: '',
-                assignedWorkerId: role === 'worker' ? currentUser.uid : '',
-                managerId: currentUser.uid,
-                priority: DEFAULT_PRIORITY,
-                estimatedTime: '',
-                description: '',
-                links: [],
-                status: 'pending',
-                comments: [],
-                completed: false,
-                deadline: '',
-                tag: '',
-                attachmentUrl: '',
-                attachmentUrls: []
-            });
+            // Fetch current user's default manager if they're a worker
+            (async () => {
+                let defaultManagerId = currentUser.uid;
+                if (role === 'worker') {
+                    try {
+                        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+                        if (userDoc.exists() && userDoc.data().defaultManager) {
+                            defaultManagerId = userDoc.data().defaultManager;
+                        }
+                    } catch (error) {
+                        console.error('Error fetching default manager:', error);
+                    }
+                }
+
+                setFormData({
+                    title: '',
+                    assignedWorkerId: role === 'worker' ? currentUser.uid : '',
+                    managerId: defaultManagerId,
+                    priority: DEFAULT_PRIORITY,
+                    estimatedTime: '',
+                    description: '',
+                    links: [],
+                    status: 'pending',
+                    comments: [],
+                    completed: false,
+                    deadline: '',
+                    tag: '',
+                    attachmentUrl: '',
+                    attachmentUrls: []
+                });
+            })();
         }
         setSelectedFiles([]);
         fetchWorkers();
@@ -133,7 +173,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     const handleSaveTemplateClick = () => {
         setIsSavingTemplate(true);
-        setTemplateName('');
+        // If we loaded a template, maybe prefill name?
+        // But for now clear it or keep it empty to encourage explicit naming
+        // setTemplateName(''); 
+
         // Reset fields to default or current form state? Let's just default to all true except sensitive ones
         setSelectedTemplateFields({
             title: !!formData.title,
@@ -146,6 +189,18 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             managerId: !!formData.managerId,
             deadline: !!formData.deadline
         });
+    };
+
+    const handleDeleteTemplate = async (templateId, name) => {
+        if (window.confirm(`Ar tikrai norite ištrinti šabloną "${name}"?`)) {
+            try {
+                await deleteTaskTemplate(templateId);
+                setTemplates(prev => prev.filter(t => t.id !== templateId));
+                // Use toast or alert?
+            } catch (error) {
+                alert("Klaida trinant šabloną: " + error.message);
+            }
+        }
     };
 
     const handleConfirmSaveTemplate = async () => {
@@ -163,8 +218,21 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 }
             });
 
-            await saveTaskTemplate(templateName, dataToSave, currentUser);
-            alert("Šablonas sėkmingai išsaugotas!");
+            // Check for existing template to overwrite
+            const existingTemplate = templates.find(t => t.templateName.toLowerCase() === templateName.trim().toLowerCase());
+
+            if (existingTemplate) {
+                if (!window.confirm(`Šablonas "${existingTemplate.templateName}" jau egzistuoja. Ar norite jį perrašyti?`)) {
+                    setLoading(false);
+                    return;
+                }
+                await updateTaskTemplate(existingTemplate.id, templateName, dataToSave, currentUser);
+                alert("Šablonas atnaujintas!");
+            } else {
+                await saveTaskTemplate(templateName, dataToSave, currentUser);
+                alert("Šablonas sėkmingai išsaugotas!");
+            }
+
             await fetchTemplates();
             setIsSavingTemplate(false);
         } catch (error) {
@@ -291,34 +359,58 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 updatedAt: new Date().toISOString()
             };
 
-            // Status Logic for New Tasks
-            if (!task) {
+            let docRef;
+            if (task) {
+                docRef = doc(db, 'tasks', task.id);
+                await updateDoc(docRef, taskData);
+            } else {
                 // Determine if user is a manager/admin based on Context OR Prop
                 const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || role === 'manager' || role === 'admin';
                 const isSelfAssigned = formData.assignedWorkerId === currentUser.uid;
+                const isOtherManagerAssigned = formData.managerId && formData.managerId !== currentUser.uid;
 
                 console.log('Task Creation Status Check:', {
                     userRole, role, isManagerOrAdmin, isSelfAssigned,
-                    currentId: currentUser.uid, assignedId: formData.assignedWorkerId
+                    currentId: currentUser.uid, assignedId: formData.assignedWorkerId,
+                    managerId: formData.managerId
                 });
 
-                // If NOT a manager (so, a worker) and assigning to SELF -> unapproved
-                if (!isManagerOrAdmin && isSelfAssigned) {
-                    taskData.status = 'unapproved';
-                    console.log('SETTING STATUS TO UNAPPROVED');
+                // Determine initial status:
+                // - If manager/admin creates: active (no approval needed)
+                // - If worker creates: unapproved (needs approval)
+                let initialStatus = 'active';
+                if (!isManagerOrAdmin) {
+                    initialStatus = 'unapproved';
+                    console.log('SETTING STATUS TO UNAPPROVED (worker-created task)');
                 }
-            }
 
-
-            if (task) {
-                await updateDoc(doc(db, 'tasks', task.id), taskData);
-            } else {
-                await addDoc(collection(db, 'tasks'), {
+                docRef = await addDoc(collection(db, 'tasks'), {
                     ...taskData,
+                    status: initialStatus,
+                    taskManager: formData.managerId, // Store as taskManager for approval/confirmation
                     createdAt: new Date().toISOString(),
                     createdBy: currentUser.uid,
                     creatorName: currentUser.displayName || currentUser.email
                 });
+
+                // Create notification if task needs approval
+                if (initialStatus === 'unapproved' && formData.managerId) {
+                    try {
+                        await addDoc(collection(db, 'request_notifications'), {
+                            recipientId: formData.managerId,
+                            type: 'task_approval',
+                            taskId: docRef.id,
+                            taskTitle: taskData.title,
+                            isRead: false,
+                            createdAt: new Date().toISOString(),
+                            createdBy: currentUser.uid,
+                            createdByName: currentUser.displayName || currentUser.email
+                        });
+                        console.log('Approval notification created for manager:', formData.managerId);
+                    } catch (notifError) {
+                        console.error('Error creating notification:', notifError);
+                    }
+                }
             }
             console.log("Task saved successfully");
             onClose();
@@ -383,7 +475,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             >
                                 <option value="">Užkrauti šabloną...</option>
                                 <option value="" disabled>Šablonai</option>
-                                {templates.map(t => (
+                                {sortedTemplates.map(t => (
                                     <option key={t.id} value={t.id}>{t.templateName}</option>
                                 ))}
                             </select>
@@ -406,6 +498,32 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     placeholder="Šablono pavadinimas"
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                                 />
+                                {templates.length > 0 && (
+                                    <div className="mt-3">
+                                        <p className="text-xs text-gray-500 mb-1">Egzistuojantys šablonai (paspauskite norėdami pasirinkti):</p>
+                                        <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-gray-50">
+                                            {sortedTemplates.map(t => (
+                                                <div key={t.id} className="flex justify-between items-center p-2 hover:bg-gray-100 border-b last:border-b-0 border-gray-200 transition-colors">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setTemplateName(t.templateName)}
+                                                        className="text-sm text-left flex-1 truncate text-gray-700 hover:text-blue-600 font-medium"
+                                                    >
+                                                        {t.templateName}
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDeleteTemplate(t.id, t.templateName)}
+                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-colors"
+                                                        title="Ištrinti šabloną"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                             <div>
                                 <h4 className="font-medium mb-3">Pasirinkite laukus, kuriuos išsaugoti:</h4>
@@ -482,18 +600,26 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
                                 >
                                     <option value="">Planuojamas laikas...</option>
-                                    <option value="15 min">15 min</option>
-                                    <option value="30 min">30 min</option>
-                                    <option value="45 min">45 min</option>
-                                    <option value="1 val">1 val</option>
-                                    <option value="1.5 val">1.5 val</option>
-                                    <option value="2 val">2 val</option>
-                                    <option value="3 val">3 val</option>
-                                    <option value="4 val">4 val</option>
-                                    <option value="5 val">5 val</option>
-                                    <option value="6 val">6 val</option>
-                                    <option value="7 val">7 val</option>
-                                    <option value="8 val">8 val</option>
+                                    <option value="5min">5min</option>
+                                    <option value="15min">15min</option>
+                                    <option value="30min">30min</option>
+                                    <option value="45min">45min</option>
+                                    <option value="1h">1h</option>
+                                    <option value="1,5h">1,5h</option>
+                                    <option value="2h">2h</option>
+                                    <option value="3h">3h</option>
+                                    <option value="4h">4h</option>
+                                    <option value="5h">5h</option>
+                                    <option value="6h">6h</option>
+                                    <option value="8h">8h</option>
+                                    <option value="10h">10h</option>
+                                    <option value="12h">12h</option>
+                                    <option value="15h">15h</option>
+                                    <option value="20h">20h</option>
+                                    <option value="25h">25h</option>
+                                    <option value="30h">30h</option>
+                                    <option value="40h">40h</option>
+                                    <option value="50h">50h</option>
                                 </select>
 
                                 <select

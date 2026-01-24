@@ -8,10 +8,10 @@ import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
 
-import { stopBreak, stopQuickWork } from '../utils/userStateActions';
+import { stopBreak, stopQuickWork, stopCall } from '../utils/userStateActions';
 
 export default function CallTimer({ compact = false }) {
-    const { currentUser } = useAuth();
+    const { currentUser, userData } = useAuth(); // Added userData
     const [isCalling, setIsCalling] = useState(false);
     const [currentSessionMinutes, setCurrentSessionMinutes] = useState(0);
     const [startTime, setStartTime] = useState(null);
@@ -56,8 +56,8 @@ export default function CallTimer({ compact = false }) {
 
             interval = setInterval(updateTimer, 1000);
 
-            // Start sound notification
-            SoundManager.startPeriodicBeep();
+            // Start sound notification (don't play beep immediately, we'll play Call sound instead)
+            SoundManager.startPeriodicBeep(420000, false);
         } else {
             setCurrentSessionMinutes(0);
             SoundManager.stopPeriodicBeep();
@@ -88,10 +88,28 @@ export default function CallTimer({ compact = false }) {
                     const taskData = { id: docSnap.id, ...docSnap.data() };
                     return pauseTask(taskData);
                 });
-                const resumableTaskIds = snapshot.docs.map(doc => doc.id);
+
+                // Collect currently running tasks
+                const currentTaskIds = snapshot.docs.map(doc => doc.id);
+
+                // Fetch existing state to see if we need to inherit resumable IDs
+                const userSnap = await getDoc(userRef);
+                const userData = userSnap.data() || {};
+                const breakResumables = userData.breakState?.resumableTaskIds || [];
+                const quickWorkResumables = userData.quickWorkState?.resumableTaskIds || [];
+
+                // Combine all resumables (prevent duplicates)
+                const allResumableTaskIds = [...new Set([...currentTaskIds, ...breakResumables, ...quickWorkResumables])];
+
+                // Check if Quick Work is running
+                if (userData?.quickWorkState?.isQuickWorking) {
+                    window.dispatchEvent(new CustomEvent('stop-quick-work'));
+                    return;
+                }
 
                 await stopBreak(currentUser.uid);
-                await stopQuickWork(currentUser.uid, currentUser.displayName);
+                // await stopQuickWork(currentUser.uid, currentUser.displayName); // Handled via event
+
 
                 await Promise.all(pausePromises);
 
@@ -102,74 +120,22 @@ export default function CallTimer({ compact = false }) {
                     callState: {
                         isCalling: true,
                         lastStartedAt: now.toISOString(),
-                        resumableTaskIds: resumableTaskIds
+                        resumableTaskIds: allResumableTaskIds
                     }
                 });
+
+                // Play Call sound
+                SoundManager.playCallSound();
 
                 setStartTime(now);
                 setIsCalling(true);
 
             } else {
                 // STOP CALL
-                const now = new Date();
-                let sessionDuration = 0;
+                await stopCall(currentUser.uid, currentUser.displayName);
 
-                if (startTime) {
-                    sessionDuration = (now - startTime) / (1000 * 60);
-                } else {
-                    // Fallback if local state is missing but remote says were calling
-                    const s = await getDoc(userRef);
-                    const startStr = s.data()?.callState?.lastStartedAt;
-                    if (startStr) {
-                        const actualStartTime = new Date(startStr);
-                        sessionDuration = (now - actualStartTime) / (1000 * 60);
-                    }
-                }
-
-                // 1. Create the Task for this call
-                if (sessionDuration > 0.1) { // Only save if > 6 seconds
-                    await addDoc(collection(db, 'tasks'), {
-                        title: "Skambutis",
-                        description: "Automatiškai sukurtas",
-                        status: "completed", // Work hour calculations usually rely on 'completed' status for finished tasks
-                        priority: "Medium",
-                        assignedWorkerId: currentUser.uid,
-                        assignedWorkerName: currentUser.displayName || currentUser.email,
-                        createdBy: currentUser.uid,
-                        creatorName: currentUser.displayName || currentUser.email,
-                        createdAt: new Date().toISOString(),
-                        completedAt: now.toISOString(),
-                        manualMinutes: sessionDuration, // Store duration here
-                        isSystemTask: true // Flag to potentially identify these later
-                    });
-                }
-
-                // 2. Resume Tasks
-                const userSnap = await getDoc(userRef);
-                const resumableTaskIds = userSnap.data()?.callState?.resumableTaskIds || [];
-
-                if (resumableTaskIds.length > 0) {
-                    const resumePromises = resumableTaskIds.map(async (taskId) => {
-                        const tDoc = await getDoc(doc(db, 'tasks', taskId));
-                        if (tDoc.exists()) {
-                            const tData = { id: tDoc.id, ...tDoc.data() };
-                            // Only resume if it's still paused (user didn't change it manually elsewhere)
-                            if (tData.timerStatus === 'paused') {
-                                return resumeTask(tData, currentUser.uid);
-                            }
-                        }
-                    });
-                    await Promise.all(resumePromises);
-                }
-
-                // 3. Clear Call State
-                await updateDoc(userRef, {
-                    callState: {
-                        isCalling: false,
-                        lastStartedAt: null,
-                        resumableTaskIds: []
-                    }
-                });
+                // Play Call sound when stopping
+                SoundManager.playCallSound();
 
                 setIsCalling(false);
                 setStartTime(null);

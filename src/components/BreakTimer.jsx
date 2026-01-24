@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import { Coffee, Play } from 'lucide-react';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, setDoc, arrayUnion, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -7,9 +8,10 @@ import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { SoundManager } from '../utils/soundUtils';
 
-import { stopCall, stopQuickWork } from '../utils/userStateActions';
+import { stopBreak, stopCall, stopQuickWork } from '../utils/userStateActions';
 
-export default function BreakTimer({ currentUser, compact = false }) {
+export default function BreakTimer({ currentUser: propUser, compact = false }) {
+    const { currentUser, userData } = useAuth();
     const [isTakingBreak, setIsTakingBreak] = useState(false);
     const [accumulatedMinutes, setAccumulatedMinutes] = useState(0);
     const [currentSessionMinutes, setCurrentSessionMinutes] = useState(0);
@@ -69,8 +71,8 @@ export default function BreakTimer({ currentUser, compact = false }) {
                 setCurrentSessionMinutes(session);
             }, 1000);
 
-            // Start sound notification
-            SoundManager.startPeriodicBeep();
+            // Start sound notification (don't play beep immediately, we'll play Break sound instead)
+            SoundManager.startPeriodicBeep(420000, false);
         } else {
             SoundManager.stopPeriodicBeep();
         }
@@ -99,10 +101,27 @@ export default function BreakTimer({ currentUser, compact = false }) {
                     const taskData = { id: docSnap.id, ...docSnap.data() };
                     return pauseTask(taskData);
                 });
-                const resumableTaskIds = snapshot.docs.map(doc => doc.id);
+
+                // Collect currently running tasks
+                const currentTaskIds = snapshot.docs.map(doc => doc.id);
+
+                // Fetch existing state
+                const userSnap = await getDoc(userRef);
+                const userData = userSnap.data() || {};
+                const callResumables = userData.callState?.resumableTaskIds || [];
+                const quickWorkResumables = userData.quickWorkState?.resumableTaskIds || [];
+
+                // Combine all resumables (prevent duplicates)
+                const allResumableTaskIds = [...new Set([...currentTaskIds, ...callResumables, ...quickWorkResumables])];
+
+                // Check for Quick Work
+                if (userData?.quickWorkState?.isQuickWorking) {
+                    window.dispatchEvent(new CustomEvent('stop-quick-work'));
+                    return;
+                }
 
                 await stopCall(currentUser.uid, currentUser.displayName);
-                await stopQuickWork(currentUser.uid, currentUser.displayName);
+                // await stopQuickWork(currentUser.uid, currentUser.displayName); // Handled via event
 
                 await Promise.all(pausePromises);
 
@@ -112,75 +131,26 @@ export default function BreakTimer({ currentUser, compact = false }) {
                         lastStartedAt: new Date().toISOString(),
                         dailyAccumulatedMinutes: accumulatedMinutes,
                         lastDate: today,
-                        resumableTaskIds: resumableTaskIds
+                        resumableTaskIds: allResumableTaskIds
                     }
                 });
+
+                // Play Break sound
+                SoundManager.playBreakSound();
 
                 setIsTakingBreak(true);
 
             } else {
-                const now = new Date();
-                let session = 0;
+                await stopBreak(currentUser.uid);
 
-                let actualStartTime = startTime;
-                if (startTime) {
-                    session = (now - startTime) / (1000 * 60);
-                } else {
-                    const s = await getDoc(userRef);
-                    const startStr = s.data()?.breakState?.lastStartedAt;
-                    if (startStr) {
-                        actualStartTime = new Date(startStr);
-                        session = (now - actualStartTime) / (1000 * 60);
-                    }
-                }
+                // Play Break sound when stopping
+                SoundManager.playBreakSound();
 
-                const userSnap = await getDoc(userRef);
-                const resumableTaskIds = userSnap.data()?.breakState?.resumableTaskIds || [];
+                // Fetch stats to update local component state if needed (optional but good for syncing)
+                const s = await getDoc(userRef);
+                const data = s.data().breakState || {};
+                setAccumulatedMinutes(data.dailyAccumulatedMinutes || 0);
 
-                if (resumableTaskIds.length > 0) {
-                    const resumePromises = resumableTaskIds.map(async (taskId) => {
-                        const tDoc = await getDoc(doc(db, 'tasks', taskId));
-                        if (tDoc.exists()) {
-                            const tData = { id: tDoc.id, ...tDoc.data() };
-                            if (tData.timerStatus === 'paused') {
-                                return resumeTask(tData);
-                            }
-                        }
-                    });
-
-                    await Promise.all(resumePromises);
-                }
-
-                const newTotal = accumulatedMinutes + session;
-
-                await updateDoc(userRef, {
-                    breakState: {
-                        isTakingBreak: false,
-                        lastStartedAt: null,
-                        dailyAccumulatedMinutes: newTotal,
-                        lastDate: today,
-                        resumableTaskIds: []
-                    }
-                });
-
-                try {
-                    const statsId = `${currentUser.uid}_${today}`;
-                    await setDoc(doc(db, 'daily_stats', statsId), {
-                        userId: currentUser.uid,
-                        date: today,
-                        breakMinutes: newTotal,
-                        breaks: arrayUnion({
-                            startTime: actualStartTime ? actualStartTime.toISOString() : new Date().toISOString(),
-                            endTime: now.toISOString(),
-                            durationMinutes: session
-                        }),
-                        updatedAt: new Date().toISOString()
-                    }, { merge: true });
-                } catch (err) {
-                    console.error("Error logging daily stats:", err);
-                }
-
-                setAccumulatedMinutes(newTotal);
                 setIsTakingBreak(false);
                 setCurrentSessionMinutes(0);
             }

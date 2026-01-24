@@ -22,10 +22,6 @@ export default function Layout({ children }) {
         }
     }, [userRole]);
 
-    const taskStatus = workStatus?.status;
-    const isRunning = taskStatus === 'running' || (workStatus?.isWorking && !taskStatus);
-    const isPaused = taskStatus === 'paused';
-
     const [isOnline, setIsOnline] = React.useState(navigator.onLine);
 
     useEffect(() => {
@@ -50,12 +46,16 @@ export default function Layout({ children }) {
     const isCalling = callState.isCalling;
     const isQuickWorking = quickWorkState.isQuickWorking;
 
+    // Check work session status
+    const taskStatus = workStatus?.status;
+    const isRunning = taskStatus === 'running';
+
     const getBackgroundColor = () => {
         if (isQuickWorking) return 'bg-red-500'; // Much more intense red for Quick Work
         if (isCalling) return 'bg-blue-100'; // Light Blue for Call
-        if (isTakingBreak) return 'bg-amber-100'; // Existing Break
-        if (isRunning) return 'bg-green-200'; // Working
-        return 'bg-white';
+        if (isTakingBreak) return 'bg-amber-100'; // Break
+        if (isRunning) return 'bg-green-200'; // Actively working
+        return 'bg-white'; // Default (idle or paused)
     };
 
     const bgColor = getBackgroundColor();

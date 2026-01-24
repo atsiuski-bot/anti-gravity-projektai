@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, query, orderBy, getDocs, doc, getDoc, setDoc, where } from 'firebase/firestore';
-import { Plus, Users, LayoutDashboard, CheckSquare, Layout, Calendar as CalendarIcon, Users as UsersIcon, ListTodo, ArrowUpDown, History, UserCheck } from 'lucide-react';
+import { collection, onSnapshot, query, orderBy, getDocs, doc, getDoc, setDoc, where, updateDoc } from 'firebase/firestore';
+import { Plus, Users, LayoutDashboard, CheckSquare, Layout, Calendar as CalendarIcon, Users as UsersIcon, ListTodo, ArrowUpDown, History, UserCheck, Filter } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -10,6 +10,7 @@ import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import AllUsersCalendar from '../components/AllUsersCalendar';
 import WorkPlanner from '../components/WorkPlanner';
 import TaskHistory from '../components/TaskHistory';
+import Reports from '../components/Reports';
 import DailyStatistics from '../components/DailyStatistics';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import ManagerNotifications from '../components/ManagerNotifications';
@@ -17,7 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
-import { getPriorityRank } from '../utils/priority';
+import { getPriorityRank, PRIORITIES, getPriorityLabel } from '../utils/priority';
 
 export default function ManagerView() {
     const { userRole, currentUser } = useAuth();
@@ -29,6 +30,8 @@ export default function ManagerView() {
     const [viewMode, setViewMode] = useState('desktop');
     const [sortBy, setSortBy] = useState('none');
     const [manualTaskOrder, setManualTaskOrder] = useState([]);
+    const [filterUser, setFilterUser] = useState('');
+    const [filterPriority, setFilterPriority] = useState('');
 
     const [error, setError] = useState(null);
 
@@ -113,13 +116,13 @@ export default function ManagerView() {
                     tasksData = tasksData.map(task => ({
                         ...task,
                         assignedWorkerName: task.assignedWorkerId && usersMap[task.assignedWorkerId]
-                            ? usersMap[task.assignedWorkerId].displayName || usersMap[task.assignedWorkerId].email
+                            ? (usersMap[task.assignedWorkerId].displayName || usersMap[task.assignedWorkerId].email)
                             : null,
                         assignedWorkerColor: task.assignedWorkerId && usersMap[task.assignedWorkerId]
-                            ? usersMap[task.assignedWorkerId].color
+                            ? (usersMap[task.assignedWorkerId].color || null)
                             : null,
                         creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
-                            ? usersMap[task.createdBy].displayName || usersMap[task.createdBy].email
+                            ? (usersMap[task.createdBy].displayName || usersMap[task.createdBy].email)
                             : null)
                     }));
                 } catch (err) {
@@ -160,9 +163,33 @@ export default function ManagerView() {
         setIsModalOpen(true);
     };
 
+    const formatDisplayName = (name) => {
+        if (!name) return 'Nežinomas';
+        return name.split('@')[0];
+    };
+
     // Sort tasks based on selected criteria
     const sortedTasks = React.useMemo(() => {
-        if (sortBy === 'none') return tasks;
+        // Filter out completed, deleted, and unapproved tasks
+        let activeTasks = tasks.filter(t =>
+            !t.completed &&
+            !t.isDeleted &&
+            t.status !== 'deleted' &&
+            t.status !== 'unapproved' &&
+            t.status !== 'confirmed'
+        );
+
+        // Apply user filter
+        if (filterUser) {
+            activeTasks = activeTasks.filter(t => t.assignedWorkerId === filterUser);
+        }
+
+        // Apply priority filter
+        if (filterPriority) {
+            activeTasks = activeTasks.filter(t => t.priority === filterPriority);
+        }
+
+        if (sortBy === 'none') return activeTasks;
 
 
         const comparePriority = (a, b) => {
@@ -171,7 +198,7 @@ export default function ManagerView() {
             return rankB - rankA; // Descending rank (Urgent > Low)
         };
 
-        const sorted = [...tasks];
+        const sorted = [...activeTasks];
 
 
         const compareUser = (a, b) => {
@@ -239,7 +266,7 @@ export default function ManagerView() {
         }
 
         return sorted;
-    }, [tasks, sortBy, manualTaskOrder]);
+    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority]);
 
     const handleEditTask = (task) => {
         setEditingTask(task);
@@ -269,8 +296,110 @@ export default function ManagerView() {
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                 <CombinedHoursSummary />
 
-                {/* Sort dropdown above task list */}
-                <div className="flex justify-end mb-4">
+                {/* Unapproved Tasks Section */}
+                {(() => {
+                    const unapprovedTasks = tasks.filter(t =>
+                        t.status === 'unapproved' &&
+                        (t.taskManager === currentUser.uid || t.managerId === currentUser.uid)
+                    );
+
+                    const handleApproveTask = async (task) => {
+                        try {
+                            await updateDoc(doc(db, 'tasks', task.id), {
+                                status: 'active',
+                                approvedAt: new Date().toISOString(),
+                                approvedBy: currentUser.uid,
+                                updatedAt: new Date().toISOString()
+                            });
+                        } catch (err) {
+                            console.error('Error approving task:', err);
+                            alert('Klaida patvirtinant užduotį: ' + err.message);
+                        }
+                    };
+
+                    if (unapprovedTasks.length === 0) return null;
+
+                    return (
+                        <div className="mb-6 bg-amber-50 border-2 border-amber-200 rounded-xl p-4">
+                            <div className="flex items-center gap-2 mb-3">
+                                <UserCheck className="w-5 h-5 text-amber-600" />
+                                <h3 className="text-lg font-bold text-amber-900">
+                                    Laukia patvirtinimo ({unapprovedTasks.length})
+                                </h3>
+                            </div>
+                            <div className="space-y-3">
+                                {unapprovedTasks.map(task => {
+                                    const worker = users.find(u => u.id === task.assignedWorkerId);
+                                    const workerName = worker ? (worker.displayName || worker.email) : task.assignedWorkerName || 'Nežinomas';
+
+                                    return (
+                                        <div key={task.id} className="bg-white rounded-lg p-4 border border-amber-200">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="flex-1">
+                                                    <h4 className="font-bold text-gray-900">{task.title}</h4>
+                                                    {task.description && (
+                                                        <p className="text-sm text-gray-600 mt-1">{task.description}</p>
+                                                    )}
+                                                    <div className="flex flex-wrap gap-2 mt-2 text-xs text-gray-500">
+                                                        <span>Darbuotojas: <span className="font-medium">{formatDisplayName(workerName)}</span></span>
+                                                        {task.estimatedTime && <span>• Planuojamas: {task.estimatedTime}</span>}
+                                                        {task.priority && <span>• Prioritetas: {task.priority}</span>}
+                                                        {task.deadline && <span>• Terminas: {task.deadline}</span>}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => handleApproveTask(task)}
+                                                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium text-sm whitespace-nowrap flex items-center gap-2"
+                                                >
+                                                    <CheckSquare className="w-4 h-4" />
+                                                    Patvirtinti
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* Filter and Sort Controls */}
+                <div className="flex flex-wrap gap-3 mb-4 items-center justify-between">
+                    {/* Filters */}
+                    <div className="flex flex-wrap gap-2 items-center">
+                        <div className="relative">
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <select
+                                value={filterUser}
+                                onChange={(e) => setFilterUser(e.target.value)}
+                                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                            >
+                                <option value="">Visi darbuotojai</option>
+                                {users.map(user => (
+                                    <option key={user.id} value={user.id}>
+                                        {user.displayName || user.email}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div className="relative">
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <select
+                                value={filterPriority}
+                                onChange={(e) => setFilterPriority(e.target.value)}
+                                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                            >
+                                <option value="">Visi prioritetai</option>
+                                <option value={PRIORITIES.URGENT}>{getPriorityLabel(PRIORITIES.URGENT)}</option>
+                                <option value={PRIORITIES.HIGH}>{getPriorityLabel(PRIORITIES.HIGH)}</option>
+                                <option value={PRIORITIES.MEDIUM}>{getPriorityLabel(PRIORITIES.MEDIUM)}</option>
+                                <option value={PRIORITIES.LOW}>{getPriorityLabel(PRIORITIES.LOW)}</option>
+                                <option value={PRIORITIES.VERY_LOW}>{getPriorityLabel(PRIORITIES.VERY_LOW)}</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Sort dropdown */}
                     <div className="relative">
                         <ArrowUpDown className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                         <select
@@ -366,16 +495,11 @@ export default function ManagerView() {
             </div>
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
-                <div className="space-y-6">
-                    <DailyStatistics currentUser={currentUser} userRole="manager" users={users} />
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center text-gray-500">
-                        Pasirinkite "Užduotys" norėdami valdyti darbus
-                    </div>
-                    <div className="pt-8 border-t border-gray-200">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4">Archyvuotos užduotys</h3>
-                        <TaskHistory />
-                    </div>
-                </div>
+                <DailyStatistics
+                    currentUser={currentUser}
+                    userRole={userRole}
+                    users={users}
+                />
             </div>
 
             <div className={activeTab === 'my-reports' ? 'block' : 'hidden'}>

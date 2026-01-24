@@ -1,14 +1,16 @@
 import React, { useState } from 'react';
+// Force rebuild
 import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText, Check, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit } from 'lucide-react';
 import clsx from 'clsx';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, deleteDoc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
-import { Swipeable } from 'react-swipeable';
-import TaskDetailsModals from './TaskDetailsModals';
-import { startTask, resumeTask, pauseTask } from '../utils/taskActions';
+import { useSwipeable } from 'react-swipeable';
+import { LinksModal, CommentsModal, DescriptionModal, ImageModal } from './TaskDetailsModals';
+import { InlineEditModal } from './InlineEditModal';
+import TaskTimerControls from './TaskTimerControls';
+import { startTask, resumeTask, pauseTask, pauseOtherTasks, archiveTask, deleteTask } from '../utils/taskActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
-import { pauseOtherTasks, archiveTask } from '../utils/taskActions';
 import { formatDisplayName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 
@@ -78,7 +80,7 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
         'pending': 'bg-white border-gray-200',
         'in-progress': 'bg-white border-gray-200',
         'completed': 'bg-gray-200 border-gray-300',
-        'confirmed': 'bg-green-100 border-green-300',
+        'confirmed': 'bg-gray-100 border-gray-200',
         'unapproved': 'bg-amber-50 border-amber-200'
     };
 
@@ -107,12 +109,12 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
     };
 
     const handleDeleteTask = async () => {
-        if (!window.confirm(`Ar tikrai norite ištrinti užduotį "${task.title}"? Šis veiksmas negrįžtamas.`)) {
+        if (!window.confirm(`Ar tikrai norite ištrinti užduotį "${task.title}"?`)) {
             return;
         }
 
         try {
-            await deleteDoc(doc(db, 'tasks', task.id));
+            await deleteTask(task, currentUser.uid);
         } catch (err) {
             console.error("Error deleting task:", err);
             alert("Nepavyko ištrinti užduoties: " + err.message);
@@ -176,8 +178,11 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                 updatedAt: new Date().toISOString()
             };
 
-            // Always archive when finished to move to history/reports
-            await archiveTask(taskData, currentUser.uid);
+            // Sanitize data to remove undefined values
+            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
+
+            // Do NOT archive immediately
+            await updateDoc(doc(db, 'tasks', task.id), taskData);
         } catch (error) {
             console.error('Error completing task via swipe:', error);
         }
@@ -235,12 +240,11 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                 updatedAt: new Date().toISOString()
             };
 
-            // Always archive when finished to move to history/reports
-            if (willBeCompleted) {
-                await archiveTask(taskData, currentUser.uid);
-            } else {
-                await updateDoc(doc(db, 'tasks', task.id), taskData);
-            }
+            // Sanitize data to remove undefined values
+            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
+
+            // Do NOT archive immediately
+            await updateDoc(doc(db, 'tasks', task.id), taskData);
         } catch (error) {
             console.error('Error toggling completion:', error);
         }
@@ -358,9 +362,9 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                             )}
 
                             {/* Manager Name */}
-                            {task.creatorName && (
+                            {(task.managerName || task.creatorName) && (
                                 <div className="inline-flex items-center py-0.5 text-[9px] font-medium text-purple-600 opacity-80">
-                                    Vadovas: {formatDisplayName(task.creatorName)}
+                                    Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
                                 </div>
                             )}
                         </div>
@@ -548,7 +552,9 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                                 const confirmApprove = window.confirm("Patvirtinti šią užduotį?");
                                 if (confirmApprove) {
                                     updateDoc(doc(db, 'tasks', task.id), {
-                                        status: 'pending',
+                                        status: 'active',
+                                        approvedAt: new Date().toISOString(),
+                                        approvedBy: currentUser.uid,
                                         updatedAt: new Date().toISOString()
                                     });
                                 }

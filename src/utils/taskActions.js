@@ -64,7 +64,9 @@ export const pauseTask = async (task) => {
 
         // 1. Get current Timer Minutes
         const currentTimerMinutes = task.timerMinutes || 0;
-        const newTimerMinutes = currentTimerMinutes + elapsedMinutes;
+        const newTimerMinutes = (elapsedMinutes > (10 / 60))
+            ? currentTimerMinutes + elapsedMinutes
+            : currentTimerMinutes;
 
         // 2. Get current Manual Minutes (backwards compat)
         const totalCurrentMinutes = parseTimeStringToMinutes(task.actualTime || '0m');
@@ -86,7 +88,7 @@ export const pauseTask = async (task) => {
         await updateUserWorkStatus(task.assignedWorkerId, false, 'paused', task.id);
 
         // 4. Log Work Session (NEW)
-        if (elapsedMinutes > 0.1) { // Only log meaningful sessions (> 6 seconds)
+        if (elapsedMinutes > (10 / 60)) { // Only log meaningful sessions (> 10 seconds)
             try {
                 const sessionDate = start.toISOString().split('T')[0];
                 await addDoc(collection(db, 'work_sessions'), {
@@ -269,17 +271,77 @@ export const getTaskTemplates = async () => {
     }
 };
 
-/**
- * Deletes a task template.
- * @param {string} templateId - The ID of the template to delete.
- * @returns {Promise<void>}
- */
 export const deleteTaskTemplate = async (templateId) => {
     try {
         await deleteDoc(doc(db, 'task_templates', templateId));
         console.log(`Template ${templateId} deleted.`);
     } catch (err) {
         console.error("Error deleting template:", err);
+        throw err;
+    }
+};
+
+/**
+ * Updates an existing task template.
+ * @param {string} templateId - The ID of the template to update.
+ * @param {string} templateName - The name of the template.
+ * @param {Object} selectedData - The task data to save in the template.
+ * @param {Object} user - The current user object.
+ * @returns {Promise<void>}
+ */
+export const updateTaskTemplate = async (templateId, templateName, selectedData, user) => {
+    try {
+        await updateDoc(doc(db, 'task_templates', templateId), {
+            templateName,
+            data: selectedData,
+            updatedBy: user.uid,
+            updatedByName: user.displayName || user.email,
+            updatedAt: new Date().toISOString()
+        });
+        console.log(`Template "${templateName}" updated.`);
+    } catch (err) {
+        console.error("Error updating template:", err);
+        throw err;
+    }
+};
+
+/**
+ * Deletes a task. Attempts hard delete first, falls back to soft delete if permissions fail.
+ * @param {Object} task - The task to delete.
+ * @param {string} userId - The user ID.
+ */
+export const deleteTask = async (task, userId) => {
+    if (!task || !task.id) return;
+
+    try {
+        // 1. Create copy in deleted_tasks (Safety backup)
+        // We do this regardless of hard/soft delete to have a record
+        await setDoc(doc(db, 'deleted_tasks', task.id), {
+            ...task,
+            deletedAt: new Date().toISOString(),
+            deletedBy: userId
+        });
+
+        // 2. Try Hard Delete
+        try {
+            await deleteDoc(doc(db, 'tasks', task.id));
+            console.log(`Task ${task.id} hard deleted.`);
+        } catch (deleteErr) {
+            console.warn("Hard delete failed (likely permissions), falling back to soft delete:", deleteErr);
+
+            // 3. Fallback: Soft Delete (Update status)
+            // If we can't delete, we mark it as deleted so UI can filter it
+            await updateDoc(doc(db, 'tasks', task.id), {
+                status: 'deleted',
+                isDeleted: true,
+                deletedAt: new Date().toISOString(),
+                deletedBy: userId,
+                updatedAt: new Date().toISOString()
+            });
+            console.log(`Task ${task.id} soft deleted.`);
+        }
+    } catch (err) {
+        console.error("Error deleting task:", err);
         throw err;
     }
 };

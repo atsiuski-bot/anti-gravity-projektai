@@ -20,6 +20,19 @@ const ProtectedRoute = ({ children }) => {
 };
 
 function App() {
+    React.useEffect(() => {
+        const req = async () => {
+            if ("Notification" in window && Notification.permission === "default") {
+                try {
+                    await Notification.requestPermission();
+                } catch (e) {
+                    console.error("Notification request failed", e);
+                }
+            }
+        };
+        req();
+    }, []);
+
     return (
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AuthProvider>

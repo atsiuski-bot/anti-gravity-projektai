@@ -7,7 +7,7 @@ import { Link as LinkIcon, MessageCircle, FileText, CheckCircle2, MessageSquare,
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import { parseTimeStringToMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
-import { pauseOtherTasks, archiveTask } from '../utils/taskActions';
+import { pauseOtherTasks, archiveTask, deleteTask } from '../utils/taskActions';
 import { formatDisplayName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 
@@ -83,7 +83,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
         'pending': 'bg-white text-gray-800 border border-gray-200',
         'in-progress': 'bg-white text-gray-800 border border-gray-200',
         'completed': 'bg-gray-200 text-gray-800',
-        'confirmed': 'bg-green-100 text-gray-800',
+        'confirmed': 'bg-gray-100 text-gray-800 border-gray-200',
         'unapproved': 'bg-amber-50 text-gray-800 border-amber-200'
     };
 
@@ -92,7 +92,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
         'in-progress': 'Pradėtas',
         'completed': 'Užbaigtas, nepriduotas',
         'confirmed': 'Užbaigtas, priduotas',
-        'unapproved': 'Nepatvirtintas'
+        'unapproved': 'Laukia patvirtinimo'
     };
 
     const handleToggleComplete = async (taskId, currentStatus) => {
@@ -117,6 +117,9 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                 confirmedAt: willBeCompleted && isManagerOrAdmin ? new Date().toISOString() : null,
                 updatedAt: new Date().toISOString()
             };
+
+            // Sanitize data to remove undefined values
+            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
 
             if (willBeCompleted) {
                 // Changing to completed/confirmed - do NOT archive immediately
@@ -143,6 +146,9 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                 updatedAt: new Date().toISOString()
             };
 
+            // Sanitize data to remove undefined values
+            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
+
             // Do NOT archive immediately
             await updateDoc(doc(db, 'tasks', taskId), taskData);
         } catch (err) {
@@ -150,15 +156,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
         }
     };
 
-    const handleArchiveTask = async (task) => {
-        if (!window.confirm('Ar tikrai norite archyvuoti šią užduotį? Ji bus perkelta į istoriją.')) return;
-        try {
-            await archiveTask(task, currentUser.uid);
-        } catch (err) {
-            console.error("Error archiving task:", err);
-            alert("Nepavyko archyvuoti užduoties: " + err.message);
-        }
-    };
+    // Manual archiving removed per request. Archive only via nightly automation.
 
     const handleApproveTask = async (taskId) => {
         try {
@@ -175,12 +173,15 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
     };
 
     const handleDeleteTask = async (taskId, taskTitle) => {
-        if (!window.confirm(`Ar tikrai norite ištrinti užduotį "${taskTitle}"? Šis veiksmas negrįžtamas ir užduotis nebus archyvuota.`)) {
+        if (!window.confirm(`Ar tikrai norite ištrinti užduotį "${taskTitle}"?`)) {
             return;
         }
 
         try {
-            await deleteDoc(doc(db, 'tasks', taskId));
+            // Find full task object if needed, but deleteTask mainly needs ID
+            // We pass the full task object just in case (for archiving/backup)
+            const taskToDelete = tasks.find(t => t.id === taskId) || { id: taskId, title: taskTitle };
+            await deleteTask(taskToDelete, currentUser.uid);
         } catch (err) {
             console.error("Error deleting task:", err);
             alert("Nepavyko ištrinti užduoties: " + err.message);
@@ -189,7 +190,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
 
     const getStatusStyle = (task) => {
         const status = task.status || 'pending';
-        if (status === 'confirmed') return 'bg-green-50';
+        if (status === 'confirmed') return 'bg-gray-50';
         if (status === 'completed') return 'bg-gray-100';
         if (status === 'unapproved') return 'bg-amber-50';
         return 'bg-white';
@@ -304,9 +305,9 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                             )}>
                                                 {task.title}
                                             </div>
-                                            {task.creatorName && (
+                                            {(task.managerName || task.creatorName) && (
                                                 <div className="text-[9px] text-purple-600 font-medium mt-0.5 opacity-80">
-                                                    Vadovas: {formatDisplayName(task.creatorName)}
+                                                    Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
                                                 </div>
                                             )}
                                             {/* Deadline removed from here, moving to own column */}
@@ -544,16 +545,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                                         Ištrinti
                                                     </button>
                                                 )}
-                                                {(canManage || !isWorker) && task.status === 'confirmed' && (
-                                                    <button
-                                                        onClick={() => handleArchiveTask(task)}
-                                                        className="text-gray-500 hover:text-gray-700 font-medium flex items-center justify-end gap-1"
-                                                        title="Archyvuoti"
-                                                    >
-                                                        <Archive className="w-3 h-3" />
-                                                        Archyvuoti
-                                                    </button>
-                                                )}
+                                                {/* Manual Archive button removed */}
                                                 <div className="w-full">
                                                     <TaskTimerControls
                                                         task={task}

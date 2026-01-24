@@ -101,36 +101,42 @@ export function shouldRunAutomation() {
  */
 export async function archiveOldTasks() {
     try {
-        console.log("[Automation] Checking for old tasks to archive...");
+        console.log("[Automation] Checking for confirmed tasks to archive...");
         const tasksQ = query(
             collection(db, 'tasks'),
-            where('status', 'in', ['completed', 'confirmed'])
+            where('status', '==', 'confirmed')
         );
 
         const snapshot = await getDocs(tasksQ);
         const tasks = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
-        const todayStr = new Date().toISOString().split('T')[0];
+        // Archive rule: Flip "today" at 3:00 AM
+        const now = new Date();
+        const cutOff = new Date(now);
+        if (now.getHours() < 3) {
+            cutOff.setDate(cutOff.getDate() - 1);
+        }
+        const cutOffStr = cutOff.toISOString().split('T')[0];
+
         let archivedCount = 0;
 
         for (const task of tasks) {
-            // Check completedAt or confirmedAt or updatedAt
-            // If any of these are available and strictly less than today's date string
-            const relevantDate = task.completedAt || task.confirmedAt || task.updatedAt;
+            // Only confirmed tasks are archived
+            const relevantDate = task.confirmedAt || task.updatedAt;
             if (!relevantDate) continue;
 
             const dateStr = relevantDate.split('T')[0];
-            if (dateStr < todayStr) {
-                // It's from a previous day
+            if (dateStr < cutOffStr) {
+                // It's from a previous cycle
                 await archiveTask(task, 'system_automation');
                 archivedCount++;
             }
         }
 
         if (archivedCount > 0) {
-            console.log(`[Automation] Archived ${archivedCount} old tasks.`);
+            console.log(`[Automation] Archived ${archivedCount} old confirmed tasks.`);
         }
     } catch (error) {
-        console.error("[Automation] Error archiving old tasks:", error);
+        console.error("[Automation] Error archiving tasks:", error);
     }
 }

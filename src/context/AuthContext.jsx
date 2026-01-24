@@ -6,7 +6,7 @@ import {
     signOut,
     onAuthStateChanged,
     setPersistence,
-    browserSessionPersistence
+    browserLocalPersistence
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
@@ -28,11 +28,14 @@ export function AuthProvider({ children }) {
         console.log("Auth: Starting Google Login...");
         const provider = new GoogleAuthProvider();
         try {
-            // Use browserSessionPersistence for better compatibility in Incognito/restricted environments
-            await setPersistence(auth, browserSessionPersistence);
+            // Use browserLocalPersistence to allow session to persist across browser restarts for 4 days
+            await setPersistence(auth, browserLocalPersistence);
             const result = await signInWithPopup(auth, provider);
             const user = result.user;
             console.log("Auth: Google Sign-In successful for:", user.email);
+
+            // Set login timestamp for 4-day expiration
+            localStorage.setItem('auth_login_timestamp', Date.now().toString());
 
             // Check if user exists in Firestore
             console.log("Auth: Checking Firestore for user document...");
@@ -75,17 +78,43 @@ export function AuthProvider({ children }) {
     }
 
     function logout() {
+        localStorage.removeItem('auth_login_timestamp');
         return signOut(auth);
     }
 
     useEffect(() => {
         console.log("Auth: Initializing onAuthStateChanged...");
         let unsubscribeSnapshot = null;
+        let expirationCheckInterval = null;
 
         const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
             console.log("Auth: State changed, user:", user ? user.email : "none");
 
             if (user) {
+                // Check session expiration (4 days = 4 * 24 * 60 * 60 * 1000 ms)
+                const FOUR_DAYS_MS = 4 * 24 * 60 * 60 * 1000;
+                let loginTimestamp = localStorage.getItem('auth_login_timestamp');
+
+                if (!loginTimestamp) {
+                    // If missing (migration or cleared), set it now to start the 4-day timer
+                    loginTimestamp = Date.now().toString();
+                    localStorage.setItem('auth_login_timestamp', loginTimestamp);
+                }
+
+                const checkExpiration = () => {
+                    const now = Date.now();
+                    if (now - parseInt(loginTimestamp) > FOUR_DAYS_MS) {
+                        console.log("Auth: Session expired (4 days limit). Logging out.");
+                        logout();
+                    }
+                };
+
+                // Check immediately
+                checkExpiration();
+
+                // Check periodically (e.g., every minute)
+                expirationCheckInterval = setInterval(checkExpiration, 60000);
+
                 // Subscribe to User Document changes (Role + Break State + Disabled Status)
                 const userRef = doc(db, 'users', user.uid);
 
@@ -123,6 +152,7 @@ export function AuthProvider({ children }) {
                 });
 
             } else {
+                if (expirationCheckInterval) clearInterval(expirationCheckInterval);
                 setCurrentUser(null);
                 setUserRole(null);
                 setBreakState(null);
@@ -136,6 +166,9 @@ export function AuthProvider({ children }) {
             unsubscribeAuth();
             if (unsubscribeSnapshot) {
                 unsubscribeSnapshot();
+            }
+            if (expirationCheckInterval) {
+                clearInterval(expirationCheckInterval);
             }
         };
     }, []);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc } from 'firebase/firestore';
-import { FileText, Download, Trash2, RotateCcw, Calendar, UserCheck, CheckCircle2 } from 'lucide-react';
+import { FileText, Download, Trash2, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { updateDoc } from 'firebase/firestore';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
@@ -65,8 +65,19 @@ export default function TaskHistory() {
     };
 
     const handleDelete = async (taskId) => {
-        if (!window.confirm('Ar tikrai norite negrįžtamai ištrinti šį įrašą?')) return;
+        if (!window.confirm('Ar tikrai norite ištrinti šį įrašą?')) return;
         try {
+            const taskToDelete = tasks.find(t => t.id === taskId);
+            if (taskToDelete) {
+                const { id, ...taskData } = taskToDelete;
+                await setDoc(doc(db, 'deleted_tasks', taskId), {
+                    ...taskData,
+                    deletedAt: new Date().toISOString(),
+                    // We don't have current user in this scope but we can get it from context or just leave blank/admin implication
+                    deletedFromHistory: true,
+                    originalCollection: 'archived_tasks'
+                });
+            }
             await deleteDoc(doc(db, 'archived_tasks', taskId));
         } catch (err) {
             console.error("Error deleting archived task:", err);
@@ -133,40 +144,40 @@ export default function TaskHistory() {
                     <table className="min-w-full divide-y divide-gray-200 table-fixed">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-[35%]">Užduotis</th>
-                                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Darb.</th>
-                                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Prior.</th>
-                                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Būsena</th>
-                                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-20">Būsena</th>
-                                <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Laikas</th>
-                                <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Archyvuota</th>
-                                <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-32">Veiksmai</th>
+                                <th className="px-2 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-[35%]">UŽDUOTIS</th>
+                                <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">DARB.</th>
+                                <th className="px-1 py-2 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24">PLAN. / TIKRAS</th>
+                                <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">PRIO</th>
+                                <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">BŪSENA</th>
+                                <th className="px-1 py-2 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24"></th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {tasks.map((task) => (
-                                <tr key={task.id} className="hover:bg-gray-50 transition-colors">
-                                    <td className="px-3 py-3" onClick={() => toggleExpand(task.id)}>
-                                        <div className="text-sm font-medium text-gray-900 truncate">
+                                <tr key={task.id} className="group hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0">
+                                    <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
+                                        <div className="text-sm font-bold text-gray-900 whitespace-normal break-words">
                                             {task.title}
                                         </div>
-                                        {task.estimatedTime && (
-                                            <div className="text-[10px] text-blue-600 font-medium mt-0.5">
-                                                Planuota: {task.estimatedTime}
+                                        {task.deadline && (
+                                            <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                <Calendar className="w-2.5 h-2.5" />
+                                                <span>{task.deadline}</span>
+                                                <span className="text-gray-300">|</span>
+                                                <span>Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}</span>
                                             </div>
                                         )}
-                                        {task.deadline && (
-                                            <div className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
-                                                <Calendar className="w-3 h-3" />
-                                                {task.deadline}
+                                        {!task.deadline && (
+                                            <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                <span>Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}</span>
                                             </div>
                                         )}
                                         {task.description && (
                                             <div className={clsx(
-                                                "text-xs text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700",
-                                                expandedTasks.has(task.id) ? "whitespace-pre-wrap" : "line-clamp-1"
+                                                "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
+                                                expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
                                             )}>
-                                                <FileText className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                                                <Briefcase className="w-2.5 h-2.5 flex-shrink-0 mt-0.5" />
                                                 {task.description}
                                             </div>
                                         )}
@@ -181,17 +192,22 @@ export default function TaskHistory() {
                                             </div>
                                         )}
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap align-top">
+                                    <td className="px-1 py-2 whitespace-nowrap align-top">
                                         {task.assignedWorkerName && (
-                                            <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 text-gray-800 border border-gray-200 truncate max-w-[80px] inline-block">
+                                            <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
                                                 {task.assignedWorkerName.split(' ')[0]}
                                             </span>
                                         )}
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap align-top">
+                                    <td className="px-1 py-2 whitespace-nowrap text-right text-[10px] font-medium text-gray-900 align-top font-mono">
+                                        <span className="text-blue-600">{task.estimatedTime || '-'}</span>
+                                        <span className="text-gray-400 mx-1">/</span>
+                                        <span className="text-gray-900">{task.actualTime || '-'}</span>
+                                    </td>
+                                    <td className="px-1 py-2 whitespace-nowrap align-top">
                                         <span
                                             className={clsx(
-                                                "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-md border border-black/5"
+                                                "px-1.5 py-0.5 inline-flex text-[9px] leading-3 font-semibold rounded-md border border-black/5 uppercase"
                                             )}
                                             style={{
                                                 backgroundColor: getPriorityColor(task.priority),
@@ -201,50 +217,43 @@ export default function TaskHistory() {
                                             {getPriorityLabel(task.priority)}
                                         </span>
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap align-top">
+                                    <td className="px-1 py-2 whitespace-nowrap align-top">
                                         <div className="flex items-center gap-1">
                                             {task.status === 'confirmed' ? (
-                                                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200 flex items-center gap-1">
-                                                    <CheckCircle2 className="w-2.5 h-2.5" />
-                                                    OK
+                                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
+                                                    Patvirt.
                                                 </span>
                                             ) : (
-                                                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                                                    Atlikta
+                                                <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-800">
+                                                    Nepatv.
                                                 </span>
                                             )}
                                         </div>
                                     </td>
-                                    <td className="px-2 py-3 whitespace-nowrap text-right text-xs font-medium text-gray-900 align-top font-mono">
-                                        {task.actualTime || '-'}
-                                    </td>
-                                    <td className="px-2 py-3 whitespace-nowrap text-[10px] text-gray-500 align-top">
-                                        {new Date(task.archivedAt).toLocaleDateString()}
-                                    </td>
-                                    <td className="px-2 py-3 whitespace-nowrap text-right text-xs font-medium align-top">
-                                        <div className="flex items-center justify-end gap-2">
+                                    <td className="px-1 py-2 whitespace-nowrap text-right text-xs font-medium align-top">
+                                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             {task.status !== 'confirmed' && (isManagerOrAdmin) && (
                                                 <button
                                                     onClick={() => handleConfirm(task)}
-                                                    className="text-green-600 hover:text-green-900"
+                                                    className="p-1 text-green-600 hover:bg-green-50 rounded"
                                                     title="Patvirtinti"
                                                 >
-                                                    <UserCheck className="w-4 h-4" />
+                                                    <UserCheck className="w-3.5 h-3.5" />
                                                 </button>
                                             )}
                                             <button
                                                 onClick={() => handleRestore(task)}
-                                                className="text-blue-600 hover:text-blue-900"
+                                                className="p-1 text-blue-600 hover:bg-blue-50 rounded"
                                                 title="Grąžinti"
                                             >
-                                                <RotateCcw className="w-4 h-4" />
+                                                <RotateCcw className="w-3.5 h-3.5" />
                                             </button>
                                             <button
                                                 onClick={() => handleDelete(task.id)}
-                                                className="text-red-600 hover:text-red-900"
+                                                className="p-1 text-red-600 hover:bg-red-50 rounded"
                                                 title="Ištrinti negrįžtamai"
                                             >
-                                                <Trash2 className="w-4 h-4" />
+                                                <Trash2 className="w-3.5 h-3.5" />
                                             </button>
                                         </div>
                                     </td>

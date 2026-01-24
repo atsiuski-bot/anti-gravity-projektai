@@ -3,17 +3,25 @@ import { db } from '../firebase';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 import { Users, ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
 import { startOfWeek, endOfWeek, addDays } from 'date-fns';
+import { useAuth } from '../context/AuthContext';
 
 export default function CombinedHoursSummary() {
+    const { currentUser } = useAuth();
     const [users, setUsers] = useState([]);
     const [tasks, setTasks] = useState([]);
     const [workHours, setWorkHours] = useState([]);
     const [workSessions, setWorkSessions] = useState([]);
+    const [breakSessions, setBreakSessions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [isCollapsed, setIsCollapsed] = useState(true);
 
     useEffect(() => {
+        if (!currentUser) {
+            setLoading(false);
+            return;
+        }
+
         setLoading(true);
 
         const now = new Date();
@@ -41,6 +49,9 @@ export default function CombinedHoursSummary() {
                 .filter(u => !u.isDisabled);
             setUsers(usersData);
             setLoading(false);
+        }, (error) => {
+            console.error("CombinedHoursSummary: Users Listener Error:", error);
+            setLoading(false);
         });
 
         // 2. Listen to Tasks (Active)
@@ -53,11 +64,15 @@ export default function CombinedHoursSummary() {
         const unsubActive = onSnapshot(collection(db, 'tasks'), (snap) => {
             activeTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             updateAllTasks();
+        }, (error) => {
+            console.error("CombinedHoursSummary: Active Tasks Listener Error:", error);
         });
 
         const unsubArchived = onSnapshot(collection(db, 'archived_tasks'), (snap) => {
             archivedTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             updateAllTasks();
+        }, (error) => {
+            console.error("CombinedHoursSummary: Archived Tasks Listener Error:", error);
         });
 
         // 3. Listen to Work Hours (Planned Calendar Events)
@@ -78,6 +93,7 @@ export default function CombinedHoursSummary() {
         });
 
         // 4. Listen to Work Sessions (Actual Worked Time)
+        // 4. Listen to Work Sessions (Actual Worked Time)
         const unsubSessions = onSnapshot(collection(db, 'work_sessions'), (snapshot) => {
             const sessionsData = snapshot.docs
                 .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -86,6 +102,21 @@ export default function CombinedHoursSummary() {
                     return start >= weekStart && start <= weekEnd;
                 });
             setWorkSessions(sessionsData);
+        }, (error) => {
+            console.error("CombinedHoursSummary: Work Sessions Listener Error:", error);
+        });
+
+        // 5. Listen to Break Sessions (for progress bars only)
+        const unsubBreakSessions = onSnapshot(collection(db, 'break_sessions'), (snapshot) => {
+            const breakData = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(s => {
+                    const start = new Date(s.startTime);
+                    return start >= weekStart && start <= weekEnd;
+                });
+            setBreakSessions(breakData);
+        }, (error) => {
+            console.error("CombinedHoursSummary: Break Sessions Listener Error:", error);
         });
 
         return () => {
@@ -94,8 +125,9 @@ export default function CombinedHoursSummary() {
             unsubArchived();
             unsubWorkHours();
             unsubSessions();
+            unsubBreakSessions();
         };
-    }, []);
+    }, [currentUser]);
 
     // Calculate stats
     const combinedStats = useMemo(() => {
@@ -177,6 +209,23 @@ export default function CombinedHoursSummary() {
                 }
             });
 
+            // 3. From Break Sessions (for progress bar display only)
+            breakSessions.forEach(session => {
+                if (session.userId === user.id) {
+                    workedMinutes += (session.durationMinutes || 0);
+                }
+            });
+
+            // Add current active break time if user is taking a break right now
+            if (user.breakState?.isTakingBreak && user.breakState?.lastStartedAt) {
+                const start = new Date(user.breakState.lastStartedAt);
+                const now = new Date();
+                const currentDiff = (now - start) / (1000 * 60);
+                if (currentDiff > 0) {
+                    workedMinutes += currentDiff;
+                }
+            }
+
             const workedHours = workedMinutes / 60;
             if (plannedHours > maxVal) maxVal = plannedHours;
             if (workedHours > maxVal) maxVal = workedHours;
@@ -192,7 +241,7 @@ export default function CombinedHoursSummary() {
 
         // Add buffer to max value for visual spacing
         return { data: stats, max: Math.max(maxVal, 40) }; // Minimum scale 40h
-    }, [users, workHours, workSessions, tasks]);
+    }, [users, workHours, workSessions, tasks, breakSessions]);
 
     if (loading) return null;
     if (error) return null;

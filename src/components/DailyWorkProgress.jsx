@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
 import { startOfWeek, endOfWeek, eachDayOfInterval, format, isSameDay } from 'date-fns';
 
 export default function DailyWorkProgress({ currentUser, tasks = [] }) {
@@ -76,9 +76,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
         // 2. Fetch Work Hours (Planned from Calendar)
         const plannedQuery = query(
             collection(db, 'work_hours'),
-            where('userId', '==', currentUser.uid),
-            where('start', '>=', weekStart.toISOString()),
-            where('start', '<=', weekEnd.toISOString())
+            where('userId', '==', currentUser.uid)
         );
 
         const unsubPlanned = onSnapshot(plannedQuery, (snapshot) => {
@@ -94,9 +92,12 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                         const duration = (end - start) / (1000 * 60 * 60);
 
                         if (Number.isFinite(duration) && duration >= 0) {
-                            wPlanned += duration;
-                            if (isSameDay(start, now)) {
-                                dPlanned += duration;
+                            // Filter for current week (client-side to avoid index)
+                            if (start >= weekStart && start <= weekEnd) {
+                                wPlanned += duration;
+                                if (isSameDay(start, now)) {
+                                    dPlanned += duration;
+                                }
                             }
                         }
                     }
@@ -115,16 +116,79 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
         };
     }, [currentUser]);
 
+    // 3. Fetch Break Sessions (for historical breaks throughout the week)
+    const [breakSessions, setBreakSessions] = useState([]);
+    const [currentBreakMinutes, setCurrentBreakMinutes] = useState(0);
+
+    useEffect(() => {
+        if (!currentUser) return;
+
+        const now = new Date();
+        const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+        const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+
+        const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd })
+            .map(d => format(d, 'yyyy-MM-dd'));
+
+        // Fetch break sessions for the week
+        const breakQuery = query(
+            collection(db, 'break_sessions'),
+            where('userId', '==', currentUser.uid),
+            where('date', 'in', weekDays)
+        );
+
+        const unsubBreaks = onSnapshot(breakQuery, (snapshot) => {
+            const sessions = snapshot.docs.map(doc => doc.data());
+            setBreakSessions(sessions);
+        }, (error) => {
+            console.error("DailyWorkProgress: Break Sessions Listener Error:", error);
+        });
+
+        // Also listen to current active break
+        const userRef = doc(db, 'users', currentUser.uid);
+        const unsubUser = onSnapshot(userRef, (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data().breakState || {};
+
+                // Calculate current break time if active
+                if (data.isTakingBreak && data.lastStartedAt) {
+                    const start = new Date(data.lastStartedAt);
+                    const now = new Date();
+                    const currentDiff = (now - start) / (1000 * 60); // minutes
+                    setCurrentBreakMinutes(currentDiff > 0 ? currentDiff : 0);
+                } else {
+                    setCurrentBreakMinutes(0);
+                }
+            }
+        });
+
+        return () => {
+            unsubBreaks();
+            unsubUser();
+        };
+    }, [currentUser]);
+
+    // Calculate break hours from sessions
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const dayBreakMinutes = breakSessions
+        .filter(s => s.date === todayStr)
+        .reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
+    const weekBreakMinutes = breakSessions
+        .reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
+
+    const dayBreakHours = (dayBreakMinutes + currentBreakMinutes) / 60;
+    const weekBreakHours = (weekBreakMinutes + currentBreakMinutes) / 60;
+
     const formatTime = (decimalHours) => {
         const h = Math.floor(decimalHours);
         const m = Math.round((decimalHours - h) * 60);
         return `${h}h ${m}m`;
     };
 
-    // Calculate totals including current session
+    // Calculate totals including current session AND BREAKS
     // Current session counts towards both Day and Week
-    const totalDayWorked = dayWorked + currentSessionHours;
-    const totalWeekWorked = weekWorked + currentSessionHours;
+    const totalDayWorked = dayWorked + currentSessionHours + dayBreakHours;
+    const totalWeekWorked = weekWorked + currentSessionHours + weekBreakHours;
 
     const renderProgressBar = (label, current, total, colorClass = "bg-blue-600") => {
         // Prevent division by zero

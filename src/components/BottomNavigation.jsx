@@ -147,4 +147,5 @@ const BottomNavigation = () => {
     );
 };
 
-export default React.memo(BottomNavigation);
+const MemoizedBottomNavigation = React.memo(BottomNavigation);
+export default MemoizedBottomNavigation;

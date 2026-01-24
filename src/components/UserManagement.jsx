@@ -105,6 +105,19 @@ export default function UserManagement() {
         setEditingColorUser(null);
     };
 
+    const handleDefaultManagerChange = async (userId, newManagerId) => {
+        setError('');
+        try {
+            const userRef = doc(db, 'users', userId);
+            await updateDoc(userRef, {
+                defaultManager: newManagerId
+            });
+        } catch (err) {
+            console.error("Error updating default manager:", err);
+            setError('Nepavyko atnaujinti numatytojo vadovo.');
+        }
+    };
+
     const handleToggleBlockUser = async (user) => {
         const userId = user.id;
         const userName = formatDisplayName(user.displayName) || user.email;
@@ -176,6 +189,9 @@ export default function UserManagement() {
                                 Spalva
                             </th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Numatytasis vadovas
+                            </th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Veiksmai
                             </th>
                         </tr>
@@ -221,6 +237,26 @@ export default function UserManagement() {
                                     >
                                         <Sliders className="w-4 h-4 text-white drop-shadow-md opacity-75" />
                                     </button>
+                                </td>
+                                <td className="px-6 py-4 whitespace-nowrap">
+                                    {user.role === 'admin' || user.role === 'manager' ? (
+                                        <span className="text-xs text-gray-500 italic">Savimi</span>
+                                    ) : (
+                                        <select
+                                            value={user.defaultManager || ''}
+                                            onChange={(e) => handleDefaultManagerChange(user.id, e.target.value)}
+                                            className="block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm rounded-md"
+                                        >
+                                            <option value="">Pasirinkti vadovą...</option>
+                                            {users
+                                                .filter(u => (u.role === 'manager' || u.role === 'admin') && !u.isDisabled)
+                                                .map(manager => (
+                                                    <option key={manager.id} value={manager.id}>
+                                                        {formatDisplayName(manager.displayName) || manager.email}
+                                                    </option>
+                                                ))}
+                                        </select>
+                                    )}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     <div className="flex flex-col gap-2">

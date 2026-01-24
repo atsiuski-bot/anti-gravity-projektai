@@ -7,31 +7,37 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    // Helper to get user data
+    // Helper to get user data - with safety check
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
+    // Helper to check if user is not disabled - safe version
+    function isUserActive() {
+      return isAuthenticated() && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isDisabled != true;
+    }
+
     // Helper to check user role
     function isAdmin() {
-      return isAuthenticated() && 
+      return isUserActive() && 
              (getUserData().role == 'admin' ||
-              getUserData().role == 'Administratorius') &&
-             getUserData().isDisabled != true;
+              getUserData().role == 'Administratorius');
     }
 
     function isManager() {
-      return isAuthenticated() && 
-             getUserData().role == 'manager' &&
-             getUserData().isDisabled != true;
+      return isUserActive() && 
+             getUserData().role == 'manager';
     }
 
     function isManagerOrAdmin() {
       return isAdmin() || isManager();
     }
 
-    // USERS
+    // USERS - Allow users to read their own document without additional checks to avoid circular dependency
     match /users/{userId} {
+      // Allow authenticated users to read their own data (needed for AuthContext to work)
       allow read: if isAuthenticated();
       allow create: if isAuthenticated(); 
       allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin() || isManager());
@@ -53,6 +59,11 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    // BREAK SESSIONS
+    match /break_sessions/{sessionId} {
+      allow read, write: if isAuthenticated();
+    }
+
     // DAILY STATS
     match /daily_stats/{statId} {
       allow read, write: if isAuthenticated();
@@ -68,6 +79,11 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    // DELETED TASKS
+    match /deleted_tasks/{taskId} {
+      allow read, write: if isAuthenticated();
+    }
+
     // NOTIFICATIONS
     match /calendar_notifications/{notifId} {
       allow read, write: if isAuthenticated();
@@ -76,6 +92,11 @@ service cloud.firestore {
     // TASK TEMPLATES
     match /task_templates/{templateId} {
       allow read, write: if isAuthenticated();
+    }
+
+    // USER SETTINGS
+    match /user_settings/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
     }
   }
 }

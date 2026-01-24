@@ -1,11 +1,23 @@
 // Task tags configuration
 export const TASK_TAGS = ['Auto', 'Renginiams', 'Piro'];
 
+// Return only non-completed tasks AND non-system tasks (Call/QuickWork)
 export const filterTasksByVisibility = (tasks) => {
-    // Return all tasks regardless of deadline
-    // Previously this filtered out tasks with future deadlines
     if (!tasks) return [];
-    return tasks;
+    return tasks.filter(task => {
+        // 1. Basic completion check
+        if (task.completed) return false;
+
+        // 2. Explicitly hide Quick Work and Call tasks from the main list
+        // These should only appear in Reports/History, never in the active "Tasks" tab
+        if (task.isQuickWork) return false;
+        if (task.isSystemTask) return false; // Covers "Call" tasks
+
+        // 3. Exclude Soft-Deleted tasks
+        if (task.isDeleted || task.status === 'deleted') return false;
+
+        return true;
+    });
 };
 
 import { getPriorityRank } from './priority';

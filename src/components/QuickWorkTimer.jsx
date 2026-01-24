@@ -147,6 +147,18 @@ export default function QuickWorkTimer({ compact = false }) {
         return () => unsubscribe();
     }, [currentUser]);
 
+    // Listen for external stop requests (e.g. from TaskCard or CallTimer)
+    useEffect(() => {
+        const handleStopRequest = () => {
+            if (isQuickWorking) {
+                handleStopQuickWork();
+            }
+        };
+
+        window.addEventListener('stop-quick-work', handleStopRequest);
+        return () => window.removeEventListener('stop-quick-work', handleStopRequest);
+    }, [isQuickWorking]);
+
     // Timer
     useEffect(() => {
         let interval;
@@ -159,8 +171,8 @@ export default function QuickWorkTimer({ compact = false }) {
             updateTimer();
             interval = setInterval(updateTimer, 1000);
 
-            // Start sound notification
-            SoundManager.startPeriodicBeep();
+            // Start sound notification (don't play beep immediately, we'll play Quick Task sound instead)
+            SoundManager.startPeriodicBeep(420000, false);
         } else {
             setCurrentSessionMinutes(0);
             SoundManager.stopPeriodicBeep();
@@ -187,7 +199,18 @@ export default function QuickWorkTimer({ compact = false }) {
                 const taskData = { id: docSnap.id, ...docSnap.data() };
                 return pauseTask(taskData);
             });
-            const resumableTaskIds = snapshot.docs.map(doc => doc.id);
+
+            // Collect currently running tasks
+            const currentTaskIds = snapshot.docs.map(doc => doc.id);
+
+            // Fetch existing state
+            const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
+            const userData = userSnap.data() || {};
+            const breakResumables = userData.breakState?.resumableTaskIds || [];
+            const callResumables = userData.callState?.resumableTaskIds || [];
+
+            // Combine all resumables (prevent duplicates)
+            const allResumableTaskIds = [...new Set([...currentTaskIds, ...breakResumables, ...callResumables])];
 
             await stopBreak(currentUser.uid);
             await stopCall(currentUser.uid, currentUser.displayName);
@@ -202,9 +225,12 @@ export default function QuickWorkTimer({ compact = false }) {
                 quickWorkState: {
                     isQuickWorking: true,
                     lastStartedAt: now.toISOString(),
-                    resumableTaskIds: resumableTaskIds
+                    resumableTaskIds: allResumableTaskIds
                 }
             });
+
+            // Play Quick Task sound
+            SoundManager.playQuickTaskSound();
 
             setStartTime(now);
             setIsQuickWorking(true);
@@ -214,7 +240,72 @@ export default function QuickWorkTimer({ compact = false }) {
         }
     };
 
-    const handleStopQuickWork = () => {
+    const stopQuickWorkAndResume = async () => {
+        const userRef = doc(db, 'users', currentUser.uid);
+
+        // 1. Resume Tasks
+        const userSnap = await getDoc(userRef);
+        const resumableTaskIds = userSnap.data()?.quickWorkState?.resumableTaskIds || [];
+
+        if (resumableTaskIds.length > 0) {
+            const resumePromises = resumableTaskIds.map(async (taskId) => {
+                const tDoc = await getDoc(doc(db, 'tasks', taskId));
+                if (tDoc.exists()) {
+                    const tData = { id: tDoc.id, ...tDoc.data() };
+                    if (tData.timerStatus === 'paused') {
+                        return resumeTask(tData, currentUser.uid);
+                    }
+                }
+            });
+            await Promise.all(resumePromises);
+        }
+
+        // 2. Clear State
+        await updateDoc(userRef, {
+            quickWorkState: {
+                isQuickWorking: false,
+                lastStartedAt: null,
+                resumableTaskIds: []
+            }
+        });
+
+        setIsQuickWorking(false);
+        setStartTime(null);
+        setCurrentSessionMinutes(0);
+        setShowTitleModal(false);
+    };
+
+    const handleStopQuickWork = async () => {
+        const now = new Date();
+        let sessionDuration = 0;
+
+        if (startTime) {
+            sessionDuration = (now - startTime) / (1000 * 60);
+        } else if (currentUser) {
+            // Fallback check against DB if local startTime is missing
+            try {
+                const userRef = doc(db, 'users', currentUser.uid);
+                const s = await getDoc(userRef);
+                const startStr = s.data()?.quickWorkState?.lastStartedAt;
+                if (startStr) {
+                    sessionDuration = (now - new Date(startStr)) / (1000 * 60);
+                }
+            } catch (e) {
+                console.error("Error fetching start time:", e);
+            }
+        }
+
+        // 10 second threshold (10/60 minutes)
+        if (sessionDuration <= (10 / 60)) {
+            // Discard quietly
+            await stopQuickWorkAndResume();
+            return;
+        }
+
+        // Play Quick Task sound when stopping
+        SoundManager.playQuickTaskSound();
+
+        // Show modal for legitimate task
         setShowTitleModal(true);
     };
 
@@ -239,12 +330,14 @@ export default function QuickWorkTimer({ compact = false }) {
                 }
             }
 
-            // 1. Create Task
-            if (sessionDuration > 0) {
+            // 1. Create Task (Threshold: > 10 seconds)
+            // Double check threshold here just in case, though handleStopQuickWork should catch it
+            if (sessionDuration > (10 / 60)) {
+                const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
                 await addDoc(collection(db, 'tasks'), {
                     title: taskTitle,
-                    description: "Greitas darbas",
-                    status: "completed",
+                    description: timeString,
+                    status: "completed", // Done but waiting for confirmation
                     priority: "Medium",
                     assignedWorkerId: currentUser.uid,
                     assignedWorkerName: currentUser.displayName || currentUser.email,
@@ -252,12 +345,37 @@ export default function QuickWorkTimer({ compact = false }) {
                     creatorName: currentUser.displayName || currentUser.email,
                     createdAt: new Date().toISOString(),
                     completedAt: now.toISOString(),
+                    completed: true,
+                    // No confirmedBy/confirmedAt - waits for manager
                     manualMinutes: sessionDuration,
+                    isQuickWork: true
+                });
+
+                // Log Work Session for adding to daily total
+                const sessionDate = now.toISOString().split('T')[0];
+                await addDoc(collection(db, 'work_sessions'), {
+                    taskId: "quick_" + now.getTime(),
+                    taskTitle: taskTitle,
+                    workerId: currentUser.uid,
+                    workerName: currentUser.displayName || currentUser.email,
+                    startTime: startTime ? startTime.toISOString() : (new Date(now - sessionDuration * 60000).toISOString()),
+                    endTime: now.toISOString(),
+                    durationMinutes: sessionDuration,
+                    date: sessionDate,
+                    createdAt: new Date().toISOString(),
                     isQuickWork: true
                 });
             }
 
-            // 2. Resume Tasks
+            // 2. Resume Tasks & Clear State
+            // Re-use logic (we can't call stopQuickWorkAndResume directly because it's not in useCallback scope easily without deps)
+            // So we duplicate the RESUME/CLEAR logic or move stopQuickWorkAndResume to top level.
+            // For safety/speed in this replace_block, I will duplicate the resume parts but keep it clean.
+
+            // Actually, I can't call the outer helper if it's defined in the component body above this. 
+            // I'll just paste the resume/clear logic here to be safe and avoid scope issues in this large block replacement.
+
+            // Resume Tasks
             const userSnap = await getDoc(userRef);
             const resumableTaskIds = userSnap.data()?.quickWorkState?.resumableTaskIds || [];
 
@@ -274,7 +392,7 @@ export default function QuickWorkTimer({ compact = false }) {
                 await Promise.all(resumePromises);
             }
 
-            // 3. Clear State
+            // Clear State
             await updateDoc(userRef, {
                 quickWorkState: {
                     isQuickWorking: false,
