@@ -4,7 +4,7 @@ import { collection, query, where, onSnapshot, doc, getDoc, orderBy, updateDoc }
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { formatDisplayName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
-import { Calendar, Clock, Coffee, User, Briefcase, ChevronLeft, ChevronRight, Zap, Phone, MessageSquare } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, Briefcase, ChevronLeft, ChevronRight, Zap, Phone, MessageSquare, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 
@@ -15,7 +15,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     const [loading, setLoading] = useState(false);
 
     // Data states
-    const [dailyStats, setDailyStats] = useState(null); // From daily_stats collection
+    const [dailyStats, setDailyStats] = useState(null); // From daily_stats collection (legacy/ref for other stats if any)
+    const [breakSessions, setBreakSessions] = useState([]); // from break_sessions collection
     const [sessions, setSessions] = useState([]); // From work_sessions collection
     const [scheduledTasks, setScheduledTasks] = useState([]); // Tasks planned for this weekday
     const [finishedTasks, setFinishedTasks] = useState([]); // Tasks finished on this specific date
@@ -57,31 +58,25 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         setFinishedTasks([]);
 
 
-        // 1. Listen to Daily Stats (Breaks)
-        let unsubStats;
-        if (selectedUserId === 'all') {
-            const statsQ = query(collection(db, 'daily_stats'), where('date', '==', selectedDate));
-            unsubStats = onSnapshot(statsQ, (snap) => {
-                const statsMap = {};
-                snap.docs.forEach(d => {
-                    const data = d.data();
-                    const userId = d.id.split('_')[0]; // Document ID is userId_date
-                    statsMap[userId] = data;
-                });
-                setDailyStats(statsMap);
-            }, (error) => {
-                console.error("Error fetching daily stats (all):", error);
-                setLoading(false);
-            });
-        } else {
-            const statsId = `${selectedUserId}_${selectedDate}`;
-            unsubStats = onSnapshot(doc(db, 'daily_stats', statsId), (snap) => {
-                setDailyStats(snap.exists() ? snap.data() : null);
-            }, (error) => {
-                console.error("Error fetching daily stats (single):", error);
-                setLoading(false);
-            });
-        }
+
+        // 1. Listen to Break Sessions (New Logic)
+        const breaksQ = selectedUserId === 'all'
+            ? query(collection(db, 'break_sessions'), where('date', '==', selectedDate))
+            : query(collection(db, 'break_sessions'), where('userId', '==', selectedUserId), where('date', '==', selectedDate));
+
+        const unsubBreaks = onSnapshot(breaksQ, (snap) => {
+            setBreakSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        }, (error) => {
+            console.error("Error fetching break sessions:", error);
+        });
+
+        // (Optional: Keep listening to daily_stats only if needed for legacy reasons, 
+        // but for now we are calculating breaks from break_sessions. 
+        // We'll leave it empty or remove if not used elsewhere, but to minimize disruption let's comment it out or leave as is if other fields are used.)
+        // Actually, let's keep it null for now as we don't rely on it for breaks anymore.
+        setDailyStats(null);
+        let unsubStats = () => { }; // No-op
+
 
         // 2. Listen to Work Sessions
         const sessionsBaseQ = collection(db, 'work_sessions');
@@ -165,6 +160,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         });
 
         return () => {
+            unsubBreaks();
             unsubStats();
             unsubSessions();
             unsubActive();
@@ -214,9 +210,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     // Aggregations
     const totalTimerMinutes = sessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
-    const totalBreakMinutes = selectedUserId === 'all'
-        ? Object.values(dailyStats || {}).reduce((acc, s) => acc + (s.breakMinutes || 0), 0)
-        : (dailyStats?.breakMinutes || 0);
+    const totalBreakMinutes = breakSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
 
     // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
     const manualTasks = finishedTasks.filter(t => t.manualMinutes && t.manualMinutes > 0);
@@ -302,8 +296,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 earliestStart: s.startTime,
                 latestEnd: s.endTime,
                 taskTimeMinutes: 0,
-                breakMinutes: dailyStats?.[s.workerId]?.breakMinutes || 0,
-                breaks: dailyStats?.[s.workerId]?.breaks || []
+                breakMinutes: 0,
+                // We'll sum breaks later
             };
         }
         acc[s.workerId].taskTimeMinutes += (s.duration || 0);
@@ -312,6 +306,29 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
         return acc;
     }, {}) : null;
+
+    // Helper to add breaks to worker summaries in 'all' view
+    if (selectedUserId === 'all' && workerSummaries) {
+        breakSessions.forEach(brk => {
+            // brk has userId, we need to associate it
+            const uid = brk.userId;
+            if (!workerSummaries[uid]) {
+                // If worker has NO work sessions but has breaks, we should probably still show them?
+                // Or just skip. Usually they have work.
+                // Let's create entry if missing to be safe
+                const worker = users.find(u => u.id === uid);
+                const rawName = worker ? (worker.displayName || worker.email) : (brk.userName || 'Nežinomas');
+                workerSummaries[uid] = {
+                    name: formatDisplayName(rawName),
+                    earliestStart: null, // No work start
+                    latestEnd: null,
+                    taskTimeMinutes: 0,
+                    breakMinutes: 0
+                };
+            }
+            workerSummaries[uid].breakMinutes += (brk.durationMinutes || 0);
+        });
+    }
 
     const workerList = workerSummaries ? Object.entries(workerSummaries) : [];
 
@@ -376,6 +393,295 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             alert("Nepavyko pridėti komentaro.");
         }
     };
+
+    // View mode state for responsive design
+    const [viewMode, setViewMode] = useState('desktop');
+
+    useEffect(() => {
+        const handleResize = () => {
+            setViewMode(window.innerWidth < 768 ? 'mobile' : 'desktop');
+        };
+
+        window.addEventListener('resize', handleResize);
+        handleResize(); // Initial check
+
+        return () => window.removeEventListener('resize', handleResize);
+    }, []);
+
+    // Mobile Stats Card Component
+    const MobileStatsCard = ({ task, onToggleConfirm, onAddComment }) => {
+        const isConfirmed = task.status === 'confirmed';
+        const worker = users.find(u => u.id === task.assignedWorkerId);
+        const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
+
+        return (
+            <div className={clsx(
+                "p-3 rounded-lg border mb-3 shadow-sm",
+                isConfirmed ? "bg-gray-100 border-gray-200" : "bg-white border-gray-200"
+            )}>
+                <div className="flex justify-between items-start mb-2">
+                    <div className="flex-1">
+                        <div className={clsx(
+                            "font-bold text-sm",
+                            task.isDeleted && "line-through text-gray-500"
+                        )}>
+                            {task.title}
+                        </div>
+                        {task.isDeleted && (
+                            <span className="text-[9px] font-bold text-red-600 uppercase bg-red-50 px-1 py-0.5 rounded">Ištrinta</span>
+                        )}
+                    </div>
+
+                    <span
+                        className={clsx(
+                            "px-1.5 py-0.5 text-[10px] font-bold rounded-md border border-black/5 uppercase whitespace-nowrap ml-2"
+                        )}
+                        style={{
+                            backgroundColor: getPriorityColor(task.priority),
+                            color: getPriorityTextColor(task.priority)
+                        }}
+                    >
+                        {getPriorityLabel(task.priority)}
+                    </span>
+                </div>
+
+                {task.description && (
+                    <div className="text-xs text-gray-600 mb-2 whitespace-pre-wrap break-words">
+                        {task.description}
+                    </div>
+                )}
+
+                <div className="flex flex-wrap items-center gap-2 mb-2 text-[10px] text-gray-500">
+                    <div className="bg-gray-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <User className="w-3 h-3" />
+                        <span className="font-medium">{formatDisplayName(workerName)}</span>
+                    </div>
+                    <div className="bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+                        {task.estimatedTime || '-'} / {task.actualTime || formatMinutesToTimeString(task.manualMinutes) || '-'}
+                    </div>
+                    {task.deadline && (
+                        <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-orange-500" />
+                            {task.deadline}
+                        </div>
+                    )}
+                    {task.completedAt && (
+                        <div className="bg-green-50 text-green-700 border border-green-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                            <Check className="w-3 h-3 text-green-500" />
+                            {new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                    )}
+                </div>
+
+                <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100">
+                    <div className="flex items-center gap-2">
+                        {(userRole === 'manager' || userRole === 'admin') ? (
+                            <label className="flex items-center gap-1.5 cursor-pointer">
+                                <input
+                                    type="checkbox"
+                                    checked={isConfirmed}
+                                    onChange={() => onToggleConfirm(task)}
+                                    disabled={task.archivedAt}
+                                    className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                                />
+                                <span className={clsx("text-xs font-medium", isConfirmed ? "text-green-700" : "text-gray-600")}>
+                                    {isConfirmed ? "Patvirtinta" : "Nepatvirtinta"}
+                                </span>
+                            </label>
+                        ) : (
+                            <span className={clsx("text-xs font-medium", isConfirmed ? "text-green-700" : "text-gray-500")}>
+                                {isConfirmed ? "Būsena: Patvirtinta" : "Būsena: Laukiama patvirtinimo"}
+                            </span>
+                        )}
+                    </div>
+
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveModal({ type: 'comments', taskId: task.id, task: task });
+                        }}
+                        className="flex items-center gap-1 text-gray-500 hover:text-blue-600 p-1.5 hover:bg-gray-50 rounded"
+                    >
+                        <MessageSquare className="w-4 h-4" />
+                        <span className="text-xs font-bold">{task.comments?.length || 0}</span>
+                    </button>
+                </div>
+
+                {task.comments && task.comments.length > 0 && (
+                    <div className="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-600">
+                        {task.comments.slice(-2).map((c, i) => (
+                            <div key={i} className="mb-1 last:mb-0">
+                                <span className="font-bold">{c.user}:</span> {c.text}
+                            </div>
+                        ))}
+                        {task.comments.length > 2 && (
+                            <div className="text-[10px] text-gray-400 italic mt-1">
+                                + dar {task.comments.length - 2} komentarai...
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    };
+
+    // Task List Helper Component
+    const TaskListTable = ({ tasks, title }) => (
+        <div className={clsx("rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-white")}>
+            <div className={clsx("px-4 py-3 bg-gray-50 border-b border-gray-200", viewMode === 'mobile' && "rounded-lg mb-2 border")}>
+                <h3 className="text-sm font-bold text-gray-700">{title} ({tasks.length})</h3>
+            </div>
+
+            {viewMode === 'mobile' ? (
+                <div className="space-y-1">
+                    {tasks.map(task => (
+                        <MobileStatsCard
+                            key={task.id}
+                            task={task}
+                            onToggleConfirm={handleToggleConfirm}
+                            onAddComment={handleAddComment}
+                        />
+                    ))}
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full md:w-auto divide-y divide-gray-200 text-sm md:table-auto table-fixed">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                {(userRole === 'manager' || userRole === 'admin') && <th className="px-2 py-2 text-center w-8 text-[10px] font-bold text-gray-500 uppercase tracking-wider">OK</th>}
+                                <th className="px-2 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">DARB.</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">PRIO</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-[10px] font-bold text-gray-500 uppercase tracking-wider w-10 md:w-auto">KOM.</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                            {tasks.length === 0 ? (
+                                <tr>
+                                    <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
+                                        Nėra užduočių.
+                                    </td>
+                                </tr>
+                            ) : (
+                                tasks.map((task) => {
+                                    const isConfirmed = task.status === 'confirmed';
+                                    const worker = users.find(u => u.id === task.assignedWorkerId);
+                                    const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
+
+                                    return (
+                                        <tr
+                                            key={task.id}
+                                            className={clsx(
+                                                "transition-colors",
+                                                isConfirmed ? "bg-gray-100" : "bg-white hover:bg-gray-50"
+                                            )}
+                                        >
+                                            {(userRole === 'manager' || userRole === 'admin') && (
+                                                <td className="px-2 py-2 text-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isConfirmed}
+                                                        onChange={() => handleToggleConfirm(task)}
+                                                        disabled={task.archivedAt}
+                                                        className="w-3.5 h-3.5 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                                                    />
+                                                </td>
+                                            )}
+                                            <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
+                                                <div className="text-sm font-bold text-gray-900 whitespace-normal break-words">
+                                                    {task.title}
+                                                </div>
+                                                {task.deadline && (
+                                                    <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                        <Calendar className="w-2.5 h-2.5" />
+                                                        {task.deadline}
+                                                    </div>
+                                                )}
+                                                {task.description && (
+                                                    <div className={clsx(
+                                                        "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
+                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
+                                                    )}>
+                                                        <Briefcase className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
+                                                        {task.description}
+                                                    </div>
+                                                )}
+                                                {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
+                                                    <div className="mt-2 pl-4 border-l-2 border-gray-200">
+                                                        <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
+                                                        {task.comments.map((comment, idx) => (
+                                                            <div key={idx} className="text-[10px] text-gray-600 mb-1">
+                                                                <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td className="px-1 py-2 whitespace-nowrap">
+                                                <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                                                    {formatDisplayName(workerName).split(' ')[0]}
+                                                </span>
+                                            </td>
+                                            <td className="px-1 py-2 text-right text-gray-900 font-mono text-[10px] whitespace-nowrap">
+                                                <span className="text-blue-600">{task.estimatedTime || '-'}</span>
+                                                <span className="text-gray-400 mx-1">/</span>
+                                                <span>{task.actualTime || formatMinutesToTimeString(task.manualMinutes) || '-'}</span>
+                                            </td>
+                                            <td className="px-1 py-2 whitespace-nowrap text-[10px] text-gray-600">
+                                                {task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                                            </td>
+                                            <td className="px-1 py-2 whitespace-nowrap">
+                                                <span
+                                                    className={clsx(
+                                                        "px-1.5 py-0.5 inline-flex text-[10px] leading-3 font-semibold rounded-md border border-black/5 uppercase"
+                                                    )}
+                                                    style={{
+                                                        backgroundColor: getPriorityColor(task.priority),
+                                                        color: getPriorityTextColor(task.priority)
+                                                    }}
+                                                >
+                                                    {getPriorityLabel(task.priority)}
+                                                </span>
+                                            </td>
+                                            <td className="px-1 py-2 whitespace-nowrap">
+                                                {isConfirmed ? (
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
+                                                        Patvirt.
+                                                    </span>
+                                                ) : (
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-800">
+                                                        Nepatv.
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="px-1 py-2 text-center whitespace-nowrap">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setActiveModal({ type: 'comments', taskId: task.id, task: task });
+                                                    }}
+                                                    className="inline-flex items-center justify-center text-gray-400 hover:text-blue-600 transition-colors p-1"
+                                                    title="Komentarai"
+                                                >
+                                                    <MessageSquare className="w-4 h-4" />
+                                                    {task.comments?.length > 0 && (
+                                                        <span className="ml-0.5 text-[10px] font-bold">{task.comments.length}</span>
+                                                    )}
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            )}
+        </div>
+    );
 
     return (
         <div className="space-y-6">
@@ -550,7 +856,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                             {item.title}
                                         </td>
                                         <td className="px-4 py-3 text-right text-gray-900 font-mono">
-                                            {item.duration?.toFixed(1)}m
+                                            {formatMinutesToTimeString(item.duration)}
                                         </td>
                                     </tr>
                                 ))}
@@ -569,10 +875,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             </div>
 
             {/* Breaks Timeline */}
-            {(selectedUserId !== 'all' && dailyStats?.breaks && dailyStats.breaks.length > 0) && (
+            {(selectedUserId !== 'all' && breakSessions.length > 0) && (
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
                     <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 text-gray-900">
-                        <h3 className="font-semibold">Pertraukos ({dailyStats.breaks.length})</h3>
+                        <h3 className="font-semibold">Pertraukos ({breakSessions.length})</h3>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full md:w-auto divide-y divide-gray-200 text-sm">
@@ -584,8 +890,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
-                                {dailyStats.breaks.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)).map((brk, idx) => (
-                                    <tr key={idx} className="hover:bg-gray-50">
+                                {breakSessions.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)).map((brk, idx) => (
+                                    <tr key={brk.id || idx} className="hover:bg-gray-50">
                                         <td className="px-4 py-3 text-gray-600 font-mono text-xs">
                                             {formatTime(brk.startTime)} - {formatTime(brk.endTime)}
                                         </td>
@@ -593,7 +899,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                             Pertrauka #{idx + 1}
                                         </td>
                                         <td className="px-4 py-3 text-right text-amber-600 font-mono">
-                                            {brk.durationMinutes?.toFixed(1)}m
+                                            {formatMinutesToTimeString(brk.durationMinutes)}
                                         </td>
                                     </tr>
                                 ))}
@@ -621,167 +927,23 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             )}
 
 
-            {/* Task List Helper Component */}
-            {(() => {
-                const TaskListTable = ({ tasks, title }) => (
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
-                        <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-                            <h3 className="text-sm font-bold text-gray-700">{title} ({tasks.length})</h3>
-                        </div>
-                        <div className="overflow-x-auto">
-                            <table className="w-full md:w-auto divide-y divide-gray-200 text-sm md:table-auto table-fixed">
-                                <thead className="bg-gray-50">
-                                    <tr>
-                                        <th className="px-2 py-2 text-center w-8 text-[10px] font-bold text-gray-500 uppercase tracking-wider">OK</th>
-                                        <th className="px-2 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-[25%] md:w-auto">UŽDUOTIS</th>
-                                        <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">DARB.</th>
-                                        <th className="px-1 py-2 md:px-2 md:py-1 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
-                                        <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">PRIO</th>
-                                        <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
-                                        <th className="px-1 py-2 md:px-2 md:py-1 text-center text-[10px] font-bold text-gray-500 uppercase tracking-wider w-10 md:w-auto">KOM.</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-200">
-                                    {tasks.length === 0 ? (
-                                        <tr>
-                                            <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
-                                                Nėra užduočių.
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        tasks.map((task) => {
-                                            const isConfirmed = task.status === 'confirmed';
-                                            const worker = users.find(u => u.id === task.assignedWorkerId);
-                                            const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
+            {todayTasks.length > 0 && (
+                <TaskListTable tasks={todayTasks} title="Užduotys atliktos ŠIANDIEN (nuo 3:00 ryto)" />
+            )}
 
-                                            return (
-                                                <tr
-                                                    key={task.id}
-                                                    className={clsx(
-                                                        "transition-colors",
-                                                        isConfirmed ? "bg-gray-100" : "bg-white hover:bg-gray-50"
-                                                    )}
-                                                >
-                                                    <td className="px-2 py-2 text-center">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={isConfirmed}
-                                                            onChange={() => handleToggleConfirm(task)}
-                                                            disabled={task.archivedAt}
-                                                            className="w-3.5 h-3.5 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
-                                                        />
-                                                    </td>
-                                                    <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
-                                                        <div className="text-sm font-bold text-gray-900 whitespace-normal break-words">
-                                                            {task.title}
-                                                        </div>
-                                                        {task.deadline && (
-                                                            <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                                                                <Calendar className="w-2.5 h-2.5" />
-                                                                {task.deadline}
-                                                            </div>
-                                                        )}
-                                                        {task.description && (
-                                                            <div className={clsx(
-                                                                "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
-                                                                expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                                            )}>
-                                                                <Briefcase className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
-                                                                {task.description}
-                                                            </div>
-                                                        )}
-                                                        {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                                            <div className="mt-2 pl-4 border-l-2 border-gray-200">
-                                                                <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
-                                                                {task.comments.map((comment, idx) => (
-                                                                    <div key={idx} className="text-[10px] text-gray-600 mb-1">
-                                                                        <span className="font-medium">{comment.user}:</span> {comment.text}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-1 py-2 whitespace-nowrap">
-                                                        <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
-                                                            {formatDisplayName(workerName).split(' ')[0]}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-1 py-2 text-right text-gray-900 font-mono text-[10px] whitespace-nowrap">
-                                                        <span className="text-blue-600">{task.estimatedTime || '-'}</span>
-                                                        <span className="text-gray-400 mx-1">/</span>
-                                                        <span>{task.actualTime || (task.manualMinutes ? `${task.manualMinutes.toFixed(1)}m` : '-')}</span>
-                                                    </td>
-                                                    <td className="px-1 py-2 whitespace-nowrap">
-                                                        <span
-                                                            className={clsx(
-                                                                "px-1.5 py-0.5 inline-flex text-[10px] leading-3 font-semibold rounded-md border border-black/5 uppercase"
-                                                            )}
-                                                            style={{
-                                                                backgroundColor: getPriorityColor(task.priority),
-                                                                color: getPriorityTextColor(task.priority)
-                                                            }}
-                                                        >
-                                                            {getPriorityLabel(task.priority)}
-                                                        </span>
-                                                    </td>
-                                                    <td className="px-1 py-2 whitespace-nowrap">
-                                                        {isConfirmed ? (
-                                                            <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
-                                                                Patvirt.
-                                                            </span>
-                                                        ) : (
-                                                            <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-800">
-                                                                Nepatv.
-                                                            </span>
-                                                        )}
-                                                    </td>
-                                                    <td className="px-1 py-2 text-center whitespace-nowrap">
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                setActiveModal({ type: 'comments', taskId: task.id, task: task });
-                                                            }}
-                                                            className="inline-flex items-center justify-center text-gray-400 hover:text-blue-600 transition-colors p-1"
-                                                            title="Komentarai"
-                                                        >
-                                                            <MessageSquare className="w-4 h-4" />
-                                                            {task.comments?.length > 0 && (
-                                                                <span className="ml-0.5 text-[10px] font-bold">{task.comments.length}</span>
-                                                            )}
-                                                        </button>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                );
+            {earlierTasks.length > 0 && (
+                <TaskListTable tasks={earlierTasks} title="Užduotys atliktos ANKSČIAU (Nepatvirtintos)" />
+            )}
 
-                return (
-                    <>
-                        {todayTasks.length > 0 && (
-                            <TaskListTable tasks={todayTasks} title="Užduotys atliktos ŠIANDIEN (nuo 3:00 ryto)" />
-                        )}
+            {archivedTasks.length > 0 && (
+                <TaskListTable tasks={archivedTasks} title="Archyvuotos užduotys" />
+            )}
 
-                        {earlierTasks.length > 0 && (
-                            <TaskListTable tasks={earlierTasks} title="Užduotys atliktos ANKSČIAU (Nepatvirtintos)" />
-                        )}
-
-                        {archivedTasks.length > 0 && (
-                            <TaskListTable tasks={archivedTasks} title="Archyvuotos užduotys" />
-                        )}
-
-                        {todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0 && (
-                            <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">
-                                Nėra atliktų užduočių šiai dienai.
-                            </div>
-                        )}
-                    </>
-                );
-            })()}
+            {todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0 && (
+                <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">
+                    Nėra atliktų užduočių šiai dienai.
+                </div>
+            )}
 
             {/* Break log could be listed here if we stored individual breaks, 
                 but we only stored total 'breakMinutes' in daily_stats for now. 

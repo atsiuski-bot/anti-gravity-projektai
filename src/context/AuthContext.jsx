@@ -25,55 +25,69 @@ export function AuthProvider({ children }) {
     const [loading, setLoading] = useState(true);
 
     async function login() {
-        console.log("Auth: Starting Google Login...");
+        console.log("Auth: Starting Google Login with popup...");
         const provider = new GoogleAuthProvider();
         try {
             // Use browserLocalPersistence to allow session to persist across browser restarts for 4 days
             await setPersistence(auth, browserLocalPersistence);
+
+            // Use popup - now safe because we are on HTTP (no COOP/SSL errors)
             const result = await signInWithPopup(auth, provider);
             const user = result.user;
             console.log("Auth: Google Sign-In successful for:", user.email);
 
-            // Set login timestamp for 4-day expiration
-            localStorage.setItem('auth_login_timestamp', Date.now().toString());
+            // Allow the onSnapshot listener to handle state updates
+            // but we can check/create the document here to be safe
+            await processUserAfterLogin(user);
 
-            // Check if user exists in Firestore
-            console.log("Auth: Checking Firestore for user document...");
-            const userRef = doc(db, 'users', user.uid);
-            const userSnap = await getDoc(userRef);
-
-            if (!userSnap.exists()) {
-                console.log("Auth: Creating new user document in Firestore...");
-                const newUserData = {
-                    email: user.email,
-                    displayName: user.displayName,
-                    photoURL: user.photoURL,
-                    role: 'worker',
-                    createdAt: new Date().toISOString(),
-                    isDisabled: false
-                };
-                // Create new user with default role 'worker'
-                await setDoc(userRef, newUserData);
-                setUserRole('worker');
-                setUserData(newUserData);
-                console.log("Auth: New user document created.");
-            } else {
-                const data = userSnap.data();
-                if (data.isDisabled) {
-                    console.log("Auth: User is disabled. Logging out.");
-                    await signOut(auth);
-                    throw new Error("Jūsų paskyra yra užblokuota/ištrinta.");
-                }
-
-                const role = data.role;
-                console.log("Auth: Existing user found with role:", role);
-                setUserRole(role);
-                setUserData(data);
-            }
-            setCurrentUser(user);
         } catch (error) {
             console.error("Auth: Login Error:", error.code, error.message);
-            throw error;
+            if (error.code === 'auth/popup-blocked') {
+                alert('Login popup was blocked. Please allow popups for this site.');
+            } else if (error.code === 'auth/popup-closed-by-user') {
+                console.log('Login cancelled by user');
+            } else {
+                throw error;
+            }
+        }
+    }
+
+    // Helper function to process user after successful login
+    async function processUserAfterLogin(user) {
+
+
+        // Set login timestamp for 4-day expiration
+        localStorage.setItem('auth_login_timestamp', Date.now().toString());
+
+        // Check if user exists in Firestore
+
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+
+        if (!userSnap.exists()) {
+
+            const newUserData = {
+                email: user.email,
+                displayName: user.displayName,
+                photoURL: user.photoURL,
+                role: 'worker',
+                createdAt: new Date().toISOString(),
+                isDisabled: false
+            };
+            // Create new user with default role 'worker'
+            await setDoc(userRef, newUserData);
+
+            // Don't set state here - let the onSnapshot listener handle it
+        } else {
+            const data = userSnap.data();
+            if (data.isDisabled) {
+
+                await signOut(auth);
+                throw new Error("Jūsų paskyra yra užblokuota/ištrinta.");
+            }
+
+
+            // Don't set state here - let the onSnapshot listener handle it
         }
     }
 
@@ -88,7 +102,7 @@ export function AuthProvider({ children }) {
         let expirationCheckInterval = null;
 
         const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
-            console.log("Auth: State changed, user:", user ? user.email : "none");
+
 
             if (user) {
                 // Check session expiration (4 days = 4 * 24 * 60 * 60 * 1000 ms)
@@ -104,7 +118,7 @@ export function AuthProvider({ children }) {
                 const checkExpiration = () => {
                     const now = Date.now();
                     if (now - parseInt(loginTimestamp) > FOUR_DAYS_MS) {
-                        console.log("Auth: Session expired (4 days limit). Logging out.");
+
                         logout();
                     }
                 };
@@ -124,7 +138,7 @@ export function AuthProvider({ children }) {
                         const data = docSnap.data();
 
                         if (data.isDisabled) {
-                            console.log("Auth: User became disabled. Logging out.");
+
                             await signOut(auth);
                             setCurrentUser(null);
                             setUserRole(null);
@@ -138,13 +152,23 @@ export function AuthProvider({ children }) {
                         setWorkStatus(data.workStatus || { isWorking: false });
                         setUserData(data); // Update full user data
 
-                        console.log("Auth: User data updated", data.role);
+
                         setCurrentUser(user);
                         setLoading(false);
                     } else {
-                        console.log("Auth: User document missing. Waiting for creation...");
-                        // Document doesn't exist yet - this is normal during initial login
-                        // The login() function will create it, so we just wait
+
+                        // Document doesn't exist - create it if not already processing redirect
+                        if (!isProcessingRedirect) {
+                            isProcessingRedirect = true;
+                            try {
+                                await processUserAfterLogin(user);
+                            } catch (error) {
+                                console.error("Auth: Error creating user document:", error);
+                                setLoading(false);
+                            } finally {
+                                isProcessingRedirect = false;
+                            }
+                        }
                     }
                 }, (error) => {
                     console.error("Auth: Snapshot error:", error);

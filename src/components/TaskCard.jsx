@@ -13,6 +13,7 @@ import { startTask, resumeTask, pauseTask, pauseOtherTasks, archiveTask, deleteT
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { formatDisplayName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
+import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 
 
 export default function TaskCard({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) {
@@ -26,13 +27,10 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
 
     const handleUpdateComment = async (index, newText) => {
         try {
-            const updatedComments = [...(task.comments || [])];
-            updatedComments[index] = { ...updatedComments[index], text: newText, updatedAt: new Date().toISOString() };
-            await updateDoc(doc(db, 'tasks', task.id), { comments: updatedComments, updatedAt: new Date().toISOString() });
+            await updateComment(task.id, index, newText, task.comments);
             setEditingCommentIndex(null);
             setEditCommentText('');
         } catch (err) {
-            console.error("Error updating comment:", err);
             alert("Nepavyko atnaujinti komentaro.");
         }
     };
@@ -40,10 +38,9 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
     const handleDeleteComment = async (index) => {
         if (!window.confirm("Ar tikrai norite ištrinti komentarą?")) return;
         try {
-            const updatedComments = task.comments.filter((_, i) => i !== index);
-            await updateDoc(doc(db, 'tasks', task.id), { comments: updatedComments, updatedAt: new Date().toISOString() });
+            await deleteComment(task.id, index, task.comments);
         } catch (err) {
-            console.error("Error deleting comment:", err);
+            // Error managed in utility or silent fail
         }
     };
 
@@ -90,20 +87,8 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
 
     const handleAddComment = async (text) => {
         try {
-            const comment = {
-                text: text,
-                user: currentUser.displayName || currentUser.email,
-                userId: currentUser.uid,
-                createdAt: new Date().toISOString()
-            };
-
-            const taskRef = doc(db, 'tasks', task.id);
-            await updateDoc(taskRef, {
-                comments: [...(task.comments || []), comment],
-                updatedAt: new Date().toISOString()
-            });
+            await addComment(task.id, text, currentUser, task.comments);
         } catch (err) {
-            console.error("Error adding comment:", err);
             alert("Nepavyko pridėti komentaro.");
         }
     };

@@ -144,7 +144,7 @@ export default function TaskHistory() {
                     <table className="min-w-full divide-y divide-gray-200 table-fixed">
                         <thead className="bg-gray-50">
                             <tr>
-                                <th className="px-2 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-[35%]">UŽDUOTIS</th>
+                                <th className="px-2 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider min-w-[200px] w-auto">UŽDUOTIS</th>
                                 <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">DARB.</th>
                                 <th className="px-1 py-2 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24">PLAN. / TIKRAS</th>
                                 <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">PRIO</th>

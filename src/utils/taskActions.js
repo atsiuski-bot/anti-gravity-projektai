@@ -42,7 +42,7 @@ export const startTask = async (task, userId) => {
         // 3. Update User Status
         await updateUserWorkStatus(userId, true, 'running', task.id);
 
-        console.log(`Task ${task.id} started.`);
+
     } catch (err) {
         console.error("Error starting task:", err);
         throw err;
@@ -102,13 +102,13 @@ export const pauseTask = async (task) => {
                     date: sessionDate,
                     createdAt: new Date().toISOString()
                 });
-                console.log(`Logged work session for task ${task.id}: ${elapsedMinutes.toFixed(2)}m`);
+
             } catch (logErr) {
                 console.error("Error logging work session:", logErr);
             }
         }
 
-        console.log(`Task ${task.id} paused via shared action.`);
+
     } catch (err) {
         console.error("Error pausing task:", err);
         throw err;
@@ -137,7 +137,7 @@ export const resumeTask = async (task, userId) => {
         // 3. Update User Status
         await updateUserWorkStatus(userId, true, 'running', task.id);
 
-        console.log(`Task ${task.id} resumed via shared action.`);
+
     } catch (err) {
         console.error("Error resuming task:", err);
         // Even if resume fails (e.g. network), we might want to suppress if it's just sync issue?
@@ -192,7 +192,7 @@ export const pauseOtherTasks = async (userId, currentTaskId) => {
             });
 
         if (pausePromises.length > 0) {
-            console.log(`Pausing ${pausePromises.length} other running tasks...`);
+
             // We use allSettled to ensure one failure doesn't stop others
             await Promise.allSettled(pausePromises);
         }
@@ -223,7 +223,7 @@ export const archiveTask = async (task, userId) => {
         // 2. Delete from tasks
         await deleteDoc(doc(db, 'tasks', id));
 
-        console.log(`Task ${id} moved to archive by user ${userId}`);
+
     } catch (err) {
         console.error("Error archiving task:", err);
         throw err;
@@ -246,7 +246,7 @@ export const saveTaskTemplate = async (templateName, selectedData, user) => {
             creatorName: user.displayName || user.email,
             createdAt: new Date().toISOString()
         });
-        console.log(`Template "${templateName}" saved.`);
+
     } catch (err) {
         console.error("Error saving template:", err);
         throw err;
@@ -274,7 +274,7 @@ export const getTaskTemplates = async () => {
 export const deleteTaskTemplate = async (templateId) => {
     try {
         await deleteDoc(doc(db, 'task_templates', templateId));
-        console.log(`Template ${templateId} deleted.`);
+
     } catch (err) {
         console.error("Error deleting template:", err);
         throw err;
@@ -298,7 +298,7 @@ export const updateTaskTemplate = async (templateId, templateName, selectedData,
             updatedByName: user.displayName || user.email,
             updatedAt: new Date().toISOString()
         });
-        console.log(`Template "${templateName}" updated.`);
+
     } catch (err) {
         console.error("Error updating template:", err);
         throw err;
@@ -306,7 +306,8 @@ export const updateTaskTemplate = async (templateId, templateName, selectedData,
 };
 
 /**
- * Deletes a task. Attempts hard delete first, falls back to soft delete if permissions fail.
+ * Deletes a task by marking it as completed with a deleted flag.
+ * This allows it to appear in the Done Tasks window for manager confirmation.
  * @param {Object} task - The task to delete.
  * @param {string} userId - The user ID.
  */
@@ -315,33 +316,30 @@ export const deleteTask = async (task, userId) => {
 
     try {
         // 1. Create copy in deleted_tasks (Safety backup)
-        // We do this regardless of hard/soft delete to have a record
         await setDoc(doc(db, 'deleted_tasks', task.id), {
             ...task,
             deletedAt: new Date().toISOString(),
             deletedBy: userId
         });
 
-        // 2. Try Hard Delete
-        try {
-            await deleteDoc(doc(db, 'tasks', task.id));
-            console.log(`Task ${task.id} hard deleted.`);
-        } catch (deleteErr) {
-            console.warn("Hard delete failed (likely permissions), falling back to soft delete:", deleteErr);
+        // 2. Mark task as completed with deleted flag
+        // This makes it appear in Done Tasks window where it can be confirmed by manager
+        await updateDoc(doc(db, 'tasks', task.id), {
+            status: 'completed',
+            completed: true,
+            completedAt: new Date().toISOString(),
+            isDeleted: true,
+            deletedAt: new Date().toISOString(),
+            deletedBy: userId,
+            timerStatus: 'stopped',
+            timerStartedAt: null,
+            updatedAt: new Date().toISOString()
+        });
 
-            // 3. Fallback: Soft Delete (Update status)
-            // If we can't delete, we mark it as deleted so UI can filter it
-            await updateDoc(doc(db, 'tasks', task.id), {
-                status: 'deleted',
-                isDeleted: true,
-                deletedAt: new Date().toISOString(),
-                deletedBy: userId,
-                updatedAt: new Date().toISOString()
-            });
-            console.log(`Task ${task.id} soft deleted.`);
-        }
+
     } catch (err) {
         console.error("Error deleting task:", err);
         throw err;
     }
 };
+

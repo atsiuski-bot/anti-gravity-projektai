@@ -3,14 +3,14 @@ import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { formatDisplayName } from '../utils/formatters';
-import { BarChart, Calendar, Filter, Download, ChevronDown, ChevronUp, Clock, Tag, Briefcase, MessageSquare } from 'lucide-react';
+import { BarChart, Calendar, Filter, Download, ChevronDown, ChevronUp, Clock, Tag, Briefcase, MessageSquare, RotateCcw } from 'lucide-react';
 
 import WorkerCalendarReport from './WorkerCalendarReport';
 import { CommentsModal } from './TaskDetailsModals';
 import { useAuth } from '../context/AuthContext';
 
 export default function Reports({ users }) {
-    const { currentUser } = useAuth();
+    const { currentUser, userRole } = useAuth();
     const [activeTab, setActiveTab] = useState('hours'); // 'hours' | 'tasks'
     const [loading, setLoading] = useState(false);
 
@@ -253,6 +253,47 @@ export default function Reports({ users }) {
         }
     };
 
+    const handleRevert = async (task) => {
+        // Check permissions: manager or the user who completed the task
+        const isManager = userRole === 'manager' || userRole === 'admin';
+        const isCompleter = task.completedBy === currentUser.uid;
+
+        if (!isManager && !isCompleter) {
+            alert("Neturite teisių grąžinti šios užduoties.");
+            return;
+        }
+
+        if (!window.confirm('Ar norite grąžinti užduotį į aktyvių sąrašą?')) return;
+
+        try {
+            if (task.isArchived) {
+                alert("Negalima grąžinti archyvuotos užduoties. Naudokite užduočių istoriją.");
+                return;
+            }
+
+            // Optimistic update
+            setFilteredTasks(prev => prev.filter(t => t.id !== task.id));
+
+            const taskRef = doc(db, 'tasks', task.id);
+            await updateDoc(taskRef, {
+                status: 'in-progress',
+                timerStatus: 'paused',
+                completed: false,
+                completedAt: null,
+                completedBy: null,
+                confirmedAt: null,
+                confirmedBy: null,
+                updatedAt: new Date().toISOString()
+                // Importantly, we do NOT touch timerMinutes, actualTime, or any other time tracking data
+            });
+
+        } catch (error) {
+            console.error("Error reverting task:", error);
+            alert("Klaida grąžinant užduotį: " + error.message);
+            fetchTasks(); // Refresh on error
+        }
+    };
+
     const get3AMCutoff = () => {
         const now = new Date();
         const cutoff = new Date(now);
@@ -310,6 +351,7 @@ export default function Reports({ users }) {
                         <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">PRIO</th>
                         <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">BŪSENA</th>
                         <th className="px-1 py-2 text-center text-[10px] font-bold text-gray-500 uppercase tracking-wider w-10">KOM.</th>
+                        <th className="px-1 py-2 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16"></th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
@@ -318,6 +360,11 @@ export default function Reports({ users }) {
                         const worker = users?.find(u => u.id === task.assignedWorkerId);
                         const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '-');
                         const isConfirmed = task.status === 'confirmed';
+
+                        // Check permissions for revert button
+                        const isManager = userRole === 'manager' || userRole === 'admin';
+                        const isCompleter = task.completedBy === currentUser?.uid;
+                        const canRevert = (isManager || isCompleter) && !task.isArchived;
 
                         return (
                             <tr
@@ -334,8 +381,15 @@ export default function Reports({ users }) {
                                     />
                                 </td>
                                 <td className="px-2 py-2">
-                                    <div className="text-sm font-bold text-gray-900 whitespace-normal break-words">
-                                        {task.title}
+                                    <div className="flex items-center gap-2">
+                                        <div className={`text-sm font-bold text-gray-900 whitespace-normal break-words ${task.isDeleted ? 'line-through' : ''}`}>
+                                            {task.title}
+                                        </div>
+                                        {task.isDeleted && (
+                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-red-100 text-red-800 border border-red-200 uppercase whitespace-nowrap">
+                                                Ištrinta
+                                            </span>
+                                        )}
                                     </div>
                                     <div className="text-[10px] text-gray-500 mt-0.5 flex items-start gap-1">
                                         <Briefcase className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
@@ -384,6 +438,17 @@ export default function Reports({ users }) {
                                             <span className="ml-0.5 text-[10px] font-bold">{task.comments.length}</span>
                                         )}
                                     </button>
+                                </td>
+                                <td className="px-1 py-2 text-right">
+                                    {canRevert && (
+                                        <button
+                                            onClick={() => handleRevert(task)}
+                                            className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                                            title="Grąžinti užduotį"
+                                        >
+                                            <RotateCcw className="w-3.5 h-3.5" />
+                                        </button>
+                                    )}
                                 </td>
                             </tr>
                         );

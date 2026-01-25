@@ -150,9 +150,9 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     const fetchTemplates = async () => {
         try {
-            console.log("Fetching templates for role:", role);
+
             const temps = await getTaskTemplates();
-            console.log("Fetched templates:", temps);
+
             setTemplates(temps);
         } catch (error) {
             console.error("Failed to fetch templates:", error);
@@ -173,11 +173,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     const handleSaveTemplateClick = () => {
         setIsSavingTemplate(true);
-        // If we loaded a template, maybe prefill name?
-        // But for now clear it or keep it empty to encourage explicit naming
-        // setTemplateName(''); 
+        // IMPORTANT: Clear the template name so users can type a new one or select existing
+        setTemplateName('');
 
-        // Reset fields to default or current form state? Let's just default to all true except sensitive ones
+        // Reset fields to default or current form state
         setSelectedTemplateFields({
             title: !!formData.title,
             priority: true,
@@ -250,14 +249,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     async function fetchWorkers() {
         try {
-            console.log("Fetching workers...");
+
             const q = query(collection(db, 'users'));
             const snapshot = await getDocs(q);
             const workersData = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
             })).filter(w => !w.isDisabled);
-            console.log("Fetched workers:", workersData.length, workersData);
+
             setWorkers(workersData);
         } catch (error) {
             console.error("Error fetching workers:", error);
@@ -298,7 +297,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             uploadTask.on('state_changed',
                 (snapshot) => {
                     const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                    console.log(`Upload ${file.name} is ${progress}% done`);
+
                 },
                 (error) => {
                     console.error("Upload failed:", error);
@@ -315,7 +314,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 },
                 () => {
                     getDownloadURL(uploadTask.snapshot.ref).then((downloadURL) => {
-                        console.log('File available at', downloadURL);
+
                         resolve(downloadURL);
                     });
                 }
@@ -334,7 +333,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
             // 1. Upload all new selected files
             if (selectedFiles.length > 0) {
-                console.log(`Starting compression and upload for ${selectedFiles.length} files...`);
+
 
                 // Compress files first
                 const compressionPromises = selectedFiles.map(file => compressImage(file));
@@ -347,7 +346,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 currentAttachmentUrls = [...currentAttachmentUrls, ...newUrls];
             }
 
-            console.log("Saving task data...");
+
             // Keep the first URL as 'attachmentUrl' for backward compatibility, if any
             const primaryAttachmentUrl = currentAttachmentUrls.length > 0 ? currentAttachmentUrls[0] : '';
 
@@ -369,11 +368,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 const isSelfAssigned = formData.assignedWorkerId === currentUser.uid;
                 const isOtherManagerAssigned = formData.managerId && formData.managerId !== currentUser.uid;
 
-                console.log('Task Creation Status Check:', {
-                    userRole, role, isManagerOrAdmin, isSelfAssigned,
-                    currentId: currentUser.uid, assignedId: formData.assignedWorkerId,
-                    managerId: formData.managerId
-                });
+
 
                 // Determine initial status:
                 // - If manager/admin creates: active (no approval needed)
@@ -381,7 +376,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 let initialStatus = 'active';
                 if (!isManagerOrAdmin) {
                     initialStatus = 'unapproved';
-                    console.log('SETTING STATUS TO UNAPPROVED (worker-created task)');
+
                 }
 
                 docRef = await addDoc(collection(db, 'tasks'), {
@@ -406,13 +401,13 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             createdBy: currentUser.uid,
                             createdByName: currentUser.displayName || currentUser.email
                         });
-                        console.log('Approval notification created for manager:', formData.managerId);
+
                     } catch (notifError) {
                         console.error('Error creating notification:', notifError);
                     }
                 }
             }
-            console.log("Task saved successfully");
+
             onClose();
         } catch (error) {
             console.error("Error saving task:", error);
@@ -825,30 +820,13 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         <button
                                             type="button"
                                             onClick={handleSaveTemplateClick}
-                                            className="text-xs text-blue-600 hover:text-blue-800 hover:underline transition-colors text-left"
-                                            title="Išsaugoti kaip šabloną"
+                                            className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors font-normal text-xs"
+                                            title="Išsaugoti, keisti, ištrinti šabloną"
                                         >
-                                            Išsaugoti kaip šabloną
+                                            Išsaugoti, keisti, ištrinti šabloną
                                         </button>
                                     )}
 
-                                    {!task && (role === 'manager' || role === 'admin') && templates.length > 0 && (
-                                        <div className="relative">
-                                            <select
-                                                onChange={handleFooterTemplateSelect}
-                                                className="appearance-none bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs hover:bg-indigo-100 transition-colors cursor-pointer pr-6 font-medium border border-indigo-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                                                value=""
-                                            >
-                                                <option value="" disabled>Šablonai</option>
-                                                {templates.map(t => (
-                                                    <option key={t.id} value={t.id}>{t.templateName}</option>
-                                                ))}
-                                            </select>
-                                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-1 text-indigo-700">
-                                                <svg className="fill-current h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z" /></svg>
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
 
                                 <button

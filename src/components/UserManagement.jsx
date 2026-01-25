@@ -106,15 +106,17 @@ export default function UserManagement() {
     };
 
     const handleDefaultManagerChange = async (userId, newManagerId) => {
+        console.log(`[UserManagement] Changing default manager for user ${userId} to: ${newManagerId || 'None'}`);
         setError('');
         try {
             const userRef = doc(db, 'users', userId);
             await updateDoc(userRef, {
                 defaultManager: newManagerId
             });
+            console.log("[UserManagement] Default manager updated successfully");
         } catch (err) {
             console.error("Error updating default manager:", err);
-            setError('Nepavyko atnaujinti numatytojo vadovo.');
+            setError('Nepavyko atnaujinti numatytojo vadovo: ' + err.message);
         }
     };
 
@@ -240,7 +242,7 @@ export default function UserManagement() {
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     {user.role === 'admin' || user.role === 'manager' ? (
-                                        <span className="text-xs text-gray-500 italic">Savimi</span>
+                                        <span className="text-xs text-gray-500 italic">Vadovas</span>
                                     ) : (
                                         <select
                                             value={user.defaultManager || ''}

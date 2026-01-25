@@ -226,7 +226,6 @@ export default function WorkerCalendarReport({ users }) {
                             style: {
                                 backgroundColor: '#EFF6FF',
                                 color: '#1E40AF',
-                                borderLeft: '3px solid #3B82F6',
                                 borderRadius: '2px',
                                 fontSize: '11px',
                                 padding: '1px 4px',

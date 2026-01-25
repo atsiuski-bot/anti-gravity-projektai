@@ -5,16 +5,17 @@ export const TASK_TAGS = ['Auto', 'Renginiams', 'Piro'];
 export const filterTasksByVisibility = (tasks) => {
     if (!tasks) return [];
     return tasks.filter(task => {
-        // 1. Basic completion check
-        if (task.completed) return false;
+        // 1. Basic completion check (but allow deleted tasks which are marked as completed)
+        if (task.completed && !task.isDeleted) return false;
 
         // 2. Explicitly hide Quick Work and Call tasks from the main list
         // These should only appear in Reports/History, never in the active "Tasks" tab
         if (task.isQuickWork) return false;
         if (task.isSystemTask) return false; // Covers "Call" tasks
 
-        // 3. Exclude Soft-Deleted tasks
-        if (task.isDeleted || task.status === 'deleted') return false;
+        // 3. Exclude old-style soft-deleted tasks (status === 'deleted')
+        // But allow new-style deleted tasks (status === 'completed' with isDeleted flag)
+        if (task.status === 'deleted') return false;
 
         return true;
     });

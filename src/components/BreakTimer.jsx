@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useTimerState } from '../hooks/useTimerState';
 import { Coffee, Play } from 'lucide-react';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, setDoc, arrayUnion, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -12,76 +13,13 @@ import { stopBreak, stopCall, stopQuickWork } from '../utils/userStateActions';
 
 export default function BreakTimer({ currentUser: propUser, compact = false }) {
     const { currentUser, userData } = useAuth();
-    const [isTakingBreak, setIsTakingBreak] = useState(false);
-    const [accumulatedMinutes, setAccumulatedMinutes] = useState(0);
-    const [currentSessionMinutes, setCurrentSessionMinutes] = useState(0);
-
-    // Real-time break state listener
-    useEffect(() => {
-        if (!currentUser) return;
-
-        const userRef = doc(db, 'users', currentUser.uid);
-
-        // Subscribe to real-time updates
-        const unsubscribe = onSnapshot(userRef, (userSnap) => {
-            if (userSnap.exists()) {
-                const data = userSnap.data().breakState || {};
-                const today = new Date().toISOString().split('T')[0];
-
-                if (data.lastDate !== today) {
-                    setAccumulatedMinutes(0);
-                    if (data.isTakingBreak) {
-                        setIsTakingBreak(true);
-                    }
-                } else {
-                    setAccumulatedMinutes(data.dailyAccumulatedMinutes || 0);
-                    setIsTakingBreak(data.isTakingBreak || false);
-                }
-            }
-        });
-
-        return () => unsubscribe();
-    }, [currentUser]);
-
-    const [startTime, setStartTime] = useState(null);
-
-    useEffect(() => {
-        if (!currentUser) return;
-        if (isTakingBreak) {
-            const fetchStart = async () => {
-                const userRef = doc(db, 'users', currentUser.uid);
-                const snap = await getDoc(userRef);
-                if (snap.exists() && snap.data().breakState?.lastStartedAt) {
-                    setStartTime(new Date(snap.data().breakState.lastStartedAt));
-                }
-            };
-            fetchStart();
-        } else {
-            setStartTime(null);
-            setCurrentSessionMinutes(0);
-        }
-    }, [isTakingBreak, currentUser]);
-
-    useEffect(() => {
-        let interval;
-        if (isTakingBreak && startTime) {
-            interval = setInterval(() => {
-                const now = new Date();
-                const session = (now - startTime) / (1000 * 60);
-                setCurrentSessionMinutes(session);
-            }, 1000);
-
-            // Start sound notification (don't play beep immediately, we'll play Break sound instead)
-            SoundManager.startPeriodicBeep(420000, false);
-        } else {
-            SoundManager.stopPeriodicBeep();
-        }
-        return () => {
-            clearInterval(interval);
-            SoundManager.stopPeriodicBeep();
-        }
-    }, [isTakingBreak, startTime]);
-
+    const {
+        isActive: isTakingBreak,
+        setIsActive: setIsTakingBreak,
+        currentSessionMinutes,
+        accumulatedMinutes,
+        setAccumulatedMinutes
+    } = useTimerState(currentUser, 'breakState', 'isTakingBreak');
 
     const handleToggleBreak = async () => {
         if (!currentUser) return;
@@ -152,7 +90,6 @@ export default function BreakTimer({ currentUser: propUser, compact = false }) {
                 setAccumulatedMinutes(data.dailyAccumulatedMinutes || 0);
 
                 setIsTakingBreak(false);
-                setCurrentSessionMinutes(0);
             }
         } catch (err) {
             console.error("Error toggling break:", err);

@@ -33,6 +33,9 @@ export default function ManagerNotifications() {
             })).filter(n => !n.dismissedBy?.includes(currentUser.uid));
 
             setCalendarNotifications(notifs);
+            setCalendarNotifications(notifs);
+        }, (error) => {
+            console.error("ManagerNotifications: Calendar Listener Error:", error);
         });
 
         return () => unsubscribe();
@@ -55,6 +58,9 @@ export default function ManagerNotifications() {
                 ...doc.data()
             }));
             setTaskNotifications(notifs);
+            setTaskNotifications(notifs);
+        }, (error) => {
+            console.error("ManagerNotifications: Task Notifications Listener Error:", error);
         });
 
         return () => unsubscribe();

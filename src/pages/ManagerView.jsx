@@ -172,11 +172,10 @@ export default function ManagerView() {
     const sortedTasks = React.useMemo(() => {
         // Filter out completed, deleted, and unapproved tasks
         let activeTasks = tasks.filter(t =>
-            !t.completed &&
+            (!t.completed || t.status === 'completed' || t.status === 'confirmed') &&
             !t.isDeleted &&
             t.status !== 'deleted' &&
-            t.status !== 'unapproved' &&
-            t.status !== 'confirmed'
+            t.status !== 'unapproved'
         );
 
         // Apply user filter

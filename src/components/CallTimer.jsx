@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTimerState } from '../hooks/useTimerState';
 import { Phone, Square, PhoneOff } from 'lucide-react';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs, addDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -12,61 +13,12 @@ import { stopBreak, stopQuickWork, stopCall } from '../utils/userStateActions';
 
 export default function CallTimer({ compact = false }) {
     const { currentUser, userData } = useAuth(); // Added userData
-    const [isCalling, setIsCalling] = useState(false);
-    const [currentSessionMinutes, setCurrentSessionMinutes] = useState(0);
-    const [startTime, setStartTime] = useState(null);
 
-    // Real-time call state listener
-    useEffect(() => {
-        if (!currentUser) return;
-
-        const userRef = doc(db, 'users', currentUser.uid);
-
-        // Subscribe to real-time updates
-        const unsubscribe = onSnapshot(userRef, (userSnap) => {
-            if (userSnap.exists()) {
-                const data = userSnap.data().callState || {};
-                if (data.isCalling) {
-                    setIsCalling(true);
-                    if (data.lastStartedAt) {
-                        setStartTime(new Date(data.lastStartedAt));
-                    }
-                } else {
-                    setIsCalling(false);
-                    setStartTime(null);
-                    setCurrentSessionMinutes(0);
-                }
-            }
-        });
-
-        return () => unsubscribe();
-    }, [currentUser]);
-
-    // Timer effect
-    useEffect(() => {
-        let interval;
-        if (isCalling && startTime) {
-            // Update immediately
-            const updateTimer = () => {
-                const now = new Date();
-                const session = (now - startTime) / (1000 * 60);
-                setCurrentSessionMinutes(session);
-            };
-            updateTimer();
-
-            interval = setInterval(updateTimer, 1000);
-
-            // Start sound notification (don't play beep immediately, we'll play Call sound instead)
-            SoundManager.startPeriodicBeep(420000, false);
-        } else {
-            setCurrentSessionMinutes(0);
-            SoundManager.stopPeriodicBeep();
-        }
-        return () => {
-            clearInterval(interval);
-            SoundManager.stopPeriodicBeep();
-        };
-    }, [isCalling, startTime]);
+    const {
+        isActive: isCalling,
+        setIsActive: setIsCalling,
+        currentSessionMinutes,
+    } = useTimerState(currentUser, 'callState', 'isCalling');
 
     const handleToggleCall = async () => {
         if (!currentUser) return;
@@ -127,7 +79,6 @@ export default function CallTimer({ compact = false }) {
                 // Play Call sound
                 SoundManager.playCallSound();
 
-                setStartTime(now);
                 setIsCalling(true);
 
             } else {
@@ -138,8 +89,6 @@ export default function CallTimer({ compact = false }) {
                 SoundManager.playCallSound();
 
                 setIsCalling(false);
-                setStartTime(null);
-                setCurrentSessionMinutes(0);
             }
         } catch (err) {
             console.error("Error toggling call:", err);

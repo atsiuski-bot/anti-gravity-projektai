@@ -10,6 +10,7 @@ import { parseTimeStringToMinutes, formatMinutesToTimeString } from '../utils/ti
 import { pauseOtherTasks, archiveTask, deleteTask } from '../utils/taskActions';
 import { formatDisplayName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
+import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 
 export default function TaskTable({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) {
     const { currentUser, userRole } = useAuth();
@@ -23,13 +24,10 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
     const handleUpdateComment = async (taskId, index, newText) => {
         try {
             const task = tasks.find(t => t.id === taskId);
-            const updatedComments = [...(task.comments || [])];
-            updatedComments[index] = { ...updatedComments[index], text: newText, updatedAt: new Date().toISOString() };
-            await updateDoc(doc(db, 'tasks', taskId), { comments: updatedComments, updatedAt: new Date().toISOString() });
+            await updateComment(taskId, index, newText, task?.comments);
             setEditingComment({ taskId: null, index: null });
             setEditCommentText('');
         } catch (err) {
-            console.error("Error updating comment:", err);
             alert("Nepavyko atnaujinti komentaro.");
         }
     };
@@ -38,10 +36,9 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
         if (!window.confirm("Ar tikrai norite ištrinti komentarą?")) return;
         try {
             const task = tasks.find(t => t.id === taskId);
-            const updatedComments = task.comments.filter((_, i) => i !== index);
-            await updateDoc(doc(db, 'tasks', taskId), { comments: updatedComments, updatedAt: new Date().toISOString() });
+            await deleteComment(taskId, index, task?.comments);
         } catch (err) {
-            console.error("Error deleting comment:", err);
+            // Error managed in utility
         }
     };
 
@@ -134,6 +131,13 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
     };
 
     const handleConfirmTask = async (taskId) => {
+        // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
+        // Task-level managers (who are not system managers) cannot confirm.
+        if (userRole !== 'manager' && userRole !== 'admin') {
+            alert("Tik vadovai gali patvirtinti užduotis.");
+            return;
+        }
+
         try {
             const task = tasks.find(t => t.id === taskId);
             if (!task) return;
@@ -167,8 +171,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                 updatedAt: new Date().toISOString()
             });
         } catch (err) {
-            console.error("Error approving task:", err);
-            alert("Nepavyko patvirtinti užduoties.");
+            // alert("Nepavyko patvirtinti užduoties.");
         }
     };
 
@@ -201,22 +204,11 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
     const handleAddComment = async (taskId, text) => {
         try {
             const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-
-            const comment = {
-                text: text,
-                user: currentUser.displayName || currentUser.email,
-                userId: currentUser.uid,
-                createdAt: new Date().toISOString()
-            };
-
-            const taskRef = doc(db, 'tasks', taskId);
-            await updateDoc(taskRef, {
-                comments: [...(task.comments || []), comment],
-                updatedAt: new Date().toISOString()
-            });
+            // Optimization: if commentActions is robust to null comments, we can simplify, 
+            // but fetching task here is safe if we don't have it passed fully.
+            // However, tasks prop usually has comments.
+            await addComment(taskId, text, currentUser, task?.comments);
         } catch (err) {
-            console.error("Error adding comment:", err);
             alert("Nepavyko pridėti komentaro.");
         }
     };
@@ -247,7 +239,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-14" title="Numatytas laikas">Num.</th>
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Nuorodos</th>
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10 text-center">Kom.</th>
-                            {!isWorker && <th className="px-1 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Patv.</th>}
+                            {(userRole === 'manager' || userRole === 'admin') && <th className="px-1 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Patv.</th>}
                             <th className="px-1 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Veik.</th>
                         </tr>
                     </thead>
@@ -290,10 +282,10 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                                         handleToggleComplete(task.id, task.completed);
                                                     }
                                                 }}
-                                                disabled={!isAssignedToMe}
+                                                disabled={!isAssignedToMe || task.status === 'confirmed'}
                                                 className={clsx(
                                                     "w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500",
-                                                    isAssignedToMe ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+                                                    isAssignedToMe && task.status !== 'confirmed' ? "cursor-pointer" : "cursor-not-allowed opacity-50"
                                                 )}
                                             />
                                         </td>
@@ -498,16 +490,18 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                                 )}
                                             </button>
                                         </td>
-                                        {!isWorker && (
+                                        {(userRole === 'manager' || userRole === 'admin') && (
                                             <td className="px-1 py-3 text-center">
                                                 {task.status === 'completed' && task.status !== 'confirmed' && (
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={false}
-                                                        onChange={() => handleConfirmTask(task.id)}
-                                                        className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
-                                                        title="Patvirtinti atlikimą"
-                                                    />
+                                                    canManage ? (
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={false}
+                                                            onChange={() => handleConfirmTask(task.id)}
+                                                            className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                                                            title="Patvirtinti atlikimą"
+                                                        />
+                                                    ) : null
                                                 )}
                                                 {task.status === 'unapproved' && (
                                                     <button
