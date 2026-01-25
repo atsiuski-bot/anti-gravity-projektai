@@ -243,6 +243,72 @@ export default function CombinedHoursSummary() {
         return { data: stats, max: Math.max(maxVal, 40) }; // Minimum scale 40h
     }, [users, workHours, workSessions, tasks, breakSessions]);
 
+    // Active Sessions Logic
+    const activeSessions = useMemo(() => {
+        return users.map(user => {
+            if (!user.activeSession) return null;
+
+            // Map session type to display properties
+            let displayProps = {
+                label: 'Veikla',
+                colorClass: 'bg-gray-100 text-gray-800',
+                startTime: user.activeSession.startTime
+            };
+
+            switch (user.activeSession.type) {
+                case 'break':
+                    displayProps = {
+                        label: 'Pertrauka',
+                        colorClass: 'bg-orange-100 text-orange-800',
+                        startTime: user.activeSession.startTime
+                    };
+                    break;
+                case 'call':
+                    displayProps = {
+                        label: 'Skambutis',
+                        colorClass: 'bg-sky-100 text-sky-800',
+                        startTime: user.activeSession.startTime
+                    };
+                    break;
+                case 'quick_work':
+                    displayProps = {
+                        label: 'Greitas darbas',
+                        colorClass: 'bg-red-100 text-red-800',
+                        startTime: user.activeSession.startTime
+                    };
+                    break;
+                case 'task':
+                    // Find generic task title if available
+                    let title = user.activeSession.taskTitle || 'Užduotis';
+                    // Try to find specific task in loaded tasks if ID matches
+                    const foundTask = tasks.find(t => t.id === user.activeSession.taskId);
+                    if (foundTask) {
+                        title = foundTask.title;
+                    }
+                    displayProps = {
+                        label: title,
+                        colorClass: 'bg-green-100 text-green-800', // You can customize generic task color here
+                        startTime: user.activeSession.startTime
+                    };
+                    break;
+                default:
+                    // Fallback for unknown types
+                    displayProps = {
+                        label: user.activeSession.type || 'Veikla',
+                        colorClass: 'bg-gray-100 text-gray-800',
+                        startTime: user.activeSession.startTime
+                    };
+            }
+
+            return {
+                userId: user.id,
+                userName: user.displayName || user.email,
+                userColor: user.color || '#3b82f6',
+                ...displayProps
+            };
+        }).filter(Boolean);
+    }, [users, tasks]);
+
     if (loading) return null;
     if (error) return null;
 
@@ -260,56 +326,139 @@ export default function CombinedHoursSummary() {
             </button>
 
             {!isCollapsed && (
-                <div className="p-4 space-y-4">
-                    {combinedStats.data.length === 0 ? (
-                        <p className="text-gray-500 text-sm italic">Nėra duomenų.</p>
-                    ) : (
-                        combinedStats.data.map(user => (
-                            <div key={user.id} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
-                                {/* User Info */}
-                                <div className="sm:w-1/4 min-w-[150px] flex items-center gap-2">
-                                    <div
-                                        className="w-3 h-3 rounded-full flex-shrink-0"
-                                        style={{ backgroundColor: user.color }}
-                                    />
-                                    <span className="text-sm font-medium text-gray-900 truncate" title={user.name}>
-                                        {user.name}
-                                    </span>
-                                </div>
-
-                                {/* Bars Area */}
-                                <div className="flex-1 flex flex-col gap-1.5">
-                                    {/* Planned Bar */}
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] text-gray-500 font-mono w-12 text-right">
-                                            {user.plannedHours.toFixed(1)}h
-                                        </span>
-                                        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
-                                            <div
-                                                className="absolute top-0 left-0 h-full bg-blue-300 rounded-full"
-                                                style={{ width: `${(user.plannedHours / combinedStats.max) * 100}%` }}
-                                            />
-                                        </div>
-                                    </div>
-
-                                    {/* Worked Bar */}
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] text-gray-900 font-bold font-mono w-12 text-right">
-                                            {user.workedHours.toFixed(1)}h
-                                        </span>
-                                        <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
-                                            <div
-                                                className="absolute top-0 left-0 h-full bg-green-500 rounded-full"
-                                                style={{ width: `${(user.workedHours / combinedStats.max) * 100}%` }}
-                                            />
-                                        </div>
-                                    </div>
-                                </div>
+                <div className="p-4 space-y-6">
+                    {/* Active Sessions (Veikla) */}
+                    {activeSessions.length > 0 && (
+                        <div>
+                            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 pl-1">
+                                Veikla
+                            </h4>
+                            <div className="space-y-2">
+                                {activeSessions.map(session => (
+                                    <ActiveSessionRow key={session.userId} session={session} />
+                                ))}
                             </div>
-                        ))
+                        </div>
                     )}
+
+                    {/* Weekly Hours Bars */}
+                    <div>
+                        {combinedStats.data.length > 0 && (
+                            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 pl-1">
+                                Savaitės valandos
+                            </h4>
+                        )}
+
+                        {combinedStats.data.length === 0 ? (
+                            <p className="text-gray-500 text-sm italic">Nėra duomenų.</p>
+                        ) : (
+                            combinedStats.data.map(user => (
+                                <div key={user.id} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mb-3 last:mb-0">
+                                    {/* User Info */}
+                                    <div className="sm:w-1/4 min-w-[150px] flex items-center gap-2">
+                                        <div
+                                            className="w-3 h-3 rounded-full flex-shrink-0"
+                                            style={{ backgroundColor: user.color }}
+                                        />
+                                        <span className="text-sm font-medium text-gray-900 truncate" title={user.name}>
+                                            {user.name}
+                                        </span>
+                                    </div>
+
+                                    {/* Bars Area */}
+                                    <div className="flex-1 flex flex-col gap-1.5">
+                                        {/* Planned Bar */}
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] text-gray-500 font-mono w-12 text-right">
+                                                {user.plannedHours.toFixed(1)}h
+                                            </span>
+                                            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
+                                                <div
+                                                    className="absolute top-0 left-0 h-full bg-blue-300 rounded-full"
+                                                    style={{ width: `${(user.plannedHours / combinedStats.max) * 100}%` }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Worked Bar */}
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] text-gray-900 font-bold font-mono w-12 text-right">
+                                                {user.workedHours.toFixed(1)}h
+                                            </span>
+                                            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
+                                                <div
+                                                    className="absolute top-0 left-0 h-full bg-green-500 rounded-full"
+                                                    style={{ width: `${(user.workedHours / combinedStats.max) * 100}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+// Helper Component for Active Session Row to manage own timer
+function ActiveSessionRow({ session }) {
+    const [durationStr, setDurationStr] = useState('');
+
+    useEffect(() => {
+        const updateTime = () => {
+            if (!session.startTime) {
+                setDurationStr('');
+                return;
+            }
+            const start = new Date(session.startTime);
+            const now = new Date();
+            const diffMs = now - start;
+            if (diffMs < 0) {
+                setDurationStr('0m');
+                return;
+            }
+
+            const diffMinutes = Math.floor(diffMs / (1000 * 60));
+
+            if (diffMinutes < 60) {
+                setDurationStr(`${diffMinutes}m`);
+            } else {
+                const hours = Math.floor(diffMinutes / 60);
+                const mins = diffMinutes % 60;
+                setDurationStr(`${hours}h ${mins}m`);
+            }
+        };
+
+        updateTime(); // Initial
+        // Update every minute (60,000 ms)
+        // Align to minute boundary for better UX? Or just simple interval.
+        // Simple interval is fine for "once a minute" requirement.
+        const interval = setInterval(updateTime, 60000);
+
+        return () => clearInterval(interval);
+    }, [session.startTime]);
+
+    return (
+        <div className={`p-3 rounded-lg flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
+            <div className="flex items-center gap-3 overflow-hidden">
+                <div
+                    className="w-2 h-2 rounded-full flex-shrink-0 bg-current opacity-50"
+                    // Fallback if needed, but usually bg-current works with text color logic or just use user color
+                    style={{ backgroundColor: session.userColor || 'currentColor' }}
+                />
+                <span className="font-semibold text-sm truncate">
+                    {session.userName}
+                </span>
+                <span className="text-sm border-l border-current/20 pl-3 truncate opacity-90">
+                    {session.label}
+                </span>
+            </div>
+            <span className="font-mono font-bold text-sm ml-4 whitespace-nowrap opacity-80">
+                {durationStr}
+            </span>
         </div>
     );
 }

@@ -175,8 +175,7 @@ export default function ManagerView() {
         let activeTasks = tasks.filter(t =>
             (!t.completed || t.status === 'completed' || t.status === 'confirmed') &&
             !t.isDeleted &&
-            t.status !== 'deleted' &&
-            t.status !== 'unapproved'
+            t.status !== 'deleted'
         );
 
         // Apply user filter
@@ -296,72 +295,7 @@ export default function ManagerView() {
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                 <CombinedHoursSummary />
 
-                {/* Unapproved Tasks Section */}
-                {(() => {
-                    const unapprovedTasks = tasks.filter(t =>
-                        t.status === 'unapproved' &&
-                        (t.taskAuditor === currentUser.uid || t.taskManager === currentUser.uid || t.managerId === currentUser.uid)
-                    );
 
-                    const handleApproveTask = async (task) => {
-                        try {
-                            await updateDoc(doc(db, 'tasks', task.id), {
-                                status: 'active',
-                                approvedAt: new Date().toISOString(),
-                                approvedBy: currentUser.uid,
-                                updatedAt: new Date().toISOString()
-                            });
-                        } catch (err) {
-                            console.error('Error approving task:', err);
-                            alert('Klaida patvirtinant užduotį: ' + err.message);
-                        }
-                    };
-
-                    if (unapprovedTasks.length === 0) return null;
-
-                    return (
-                        <div className="mb-6 bg-amber-50 border-2 border-amber-200 rounded-xl p-4">
-                            <div className="flex items-center gap-2 mb-3">
-                                <UserCheck className="w-5 h-5 text-amber-600" />
-                                <h3 className="text-lg font-bold text-amber-900">
-                                    Laukia patvirtinimo ({unapprovedTasks.length})
-                                </h3>
-                            </div>
-                            <div className="space-y-3">
-                                {unapprovedTasks.map(task => {
-                                    const worker = users.find(u => u.id === task.assignedWorkerId);
-                                    const workerName = worker ? (worker.displayName || worker.email) : task.assignedWorkerName || 'Nežinomas';
-
-                                    return (
-                                        <div key={task.id} className="bg-white rounded-lg p-4 border border-amber-200">
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="flex-1">
-                                                    <h4 className="font-bold text-gray-900">{task.title}</h4>
-                                                    {task.description && (
-                                                        <p className="text-sm text-gray-600 mt-1">{task.description}</p>
-                                                    )}
-                                                    <div className="flex flex-wrap gap-2 mt-2 text-xs text-gray-500">
-                                                        <span>Darbuotojas: <span className="font-medium">{formatDisplayName(workerName)}</span></span>
-                                                        {task.estimatedTime && <span>• Planuojamas: {task.estimatedTime}</span>}
-                                                        {task.priority && <span>• Prioritetas: {task.priority}</span>}
-                                                        {task.deadline && <span>• Terminas: {task.deadline}</span>}
-                                                    </div>
-                                                </div>
-                                                <button
-                                                    onClick={() => handleApproveTask(task)}
-                                                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium text-sm whitespace-nowrap flex items-center gap-2"
-                                                >
-                                                    <CheckSquare className="w-4 h-4" />
-                                                    Patvirtinti
-                                                </button>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    );
-                })()}
 
                 {/* Filter and Sort Controls */}
                 <div className="flex flex-wrap gap-3 mb-4 items-center justify-between">

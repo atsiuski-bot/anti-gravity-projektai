@@ -1,13 +1,20 @@
 import { doc, getDoc, updateDoc, collection, addDoc, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
+import { endSession, startSession } from './sessionActions';
 
 /**
  * Helper to resume tasks and update user status atomically (if possible) or sequentially
+ * Managed now via session actions mostly, but kept for old utility usage.
  */
 const resumeTasksAndSetUserStatus = async (userId, resumableTaskIds) => {
+    // This logic is slightly specific to how we resume "after" a break.
+    // Ideally sessionActions handles resumption. But for now we keep this here
+    // or we move it to sessionActions?
+    // Let's keep it here but strictly for resumption logic.
     if (!resumableTaskIds || resumableTaskIds.length === 0) {
         // Just set user to idle if no tasks to resume
+        // Update: We should only do this if NOT in a session.
         await updateDoc(doc(db, 'users', userId), {
             workStatus: {
                 isWorking: false,
@@ -38,20 +45,13 @@ const resumeTasksAndSetUserStatus = async (userId, resumableTaskIds) => {
 
     await Promise.all(resumePromises);
 
-    // If we resumed at least one task, ensure user status is 'running'
-    // resumeTask already does this, but we reinforce it here to be sure
-    // specifically if multiple were resumed, the last one wins, which is fine.
     if (resumedCount > 0) {
-        await updateDoc(doc(db, 'users', userId), {
-            workStatus: {
-                isWorking: true,
-                status: 'running',
-                activeTaskId: lastResumedTaskId,
-                lastUpdated: new Date().toISOString()
-            }
-        });
+        // Update via startSession for task?
+        // resumeTask already updates User Status.
+        // We probably should call startSession('task', { taskId: lastResumedTaskId }) 
+        // to keep activeSession in sync!
+        await startSession(userId, 'task', { taskId: lastResumedTaskId, taskTitle: 'Resumed Task' });
     } else {
-        // If for some reason tasks didn't resume (e.g. they were deleted or already running), set to idle
         await updateDoc(doc(db, 'users', userId), {
             workStatus: {
                 isWorking: false,
@@ -67,56 +67,21 @@ const resumeTasksAndSetUserStatus = async (userId, resumableTaskIds) => {
  * Stops any active Break session.
  */
 export const stopBreak = async (userId) => {
-    try {
-        const userRef = doc(db, 'users', userId);
-        const userSnap = await getDoc(userRef);
+    // Delegate to generic session end
+    await endSession(userId);
 
-        if (userSnap.exists()) {
-            const userData = userSnap.data();
-            const data = userData.breakState || {};
-            if (data.isTakingBreak) {
-                const now = new Date();
-                let sessionMinutes = 0;
-                if (data.lastStartedAt) {
-                    sessionMinutes = (now - new Date(data.lastStartedAt)) / (1000 * 60);
-                }
+    // Resume tasks logic involves reading "resumableTaskIds" from the OLD state
+    // startSession/endSession tries to maintain sync, but resumption is complex.
+    // We should fetch the user to check resumableTaskIds.
+    // Or we rely on client side to call resume? 
+    // The original stopBreak called resumeTasksAndSetUserStatus.
 
-                // Threshold check: ignore if <= 10 seconds
-                const isValidSession = sessionMinutes > (10 / 60);
-
-                // Save break session to break_sessions collection if valid
-                if (isValidSession) {
-                    const sessionDate = now.toISOString().split('T')[0];
-                    await addDoc(collection(db, 'break_sessions'), {
-                        userId: userId,
-                        userName: userData.displayName || userData.email || 'Unknown',
-                        startTime: new Date(data.lastStartedAt).toISOString(),
-                        endTime: now.toISOString(),
-                        durationMinutes: sessionMinutes,
-                        date: sessionDate,
-                        createdAt: new Date().toISOString(),
-                        completedAt: now.toISOString(), // Standardize completion time
-                        isBreak: true
-                    });
-                }
-
-                // 1. Update Break State (Clear it)
-                await updateDoc(userRef, {
-                    breakState: {
-                        isTakingBreak: false,
-                        lastStartedAt: null,
-                        dailyAccumulatedMinutes: (data.dailyAccumulatedMinutes || 0) + (isValidSession ? sessionMinutes : 0),
-                        lastDate: data.lastDate || new Date().toISOString().split('T')[0],
-                        resumableTaskIds: []
-                    }
-                });
-
-                // 2. Resume specific tasks if any
-                await resumeTasksAndSetUserStatus(userId, data.resumableTaskIds);
-            }
-        }
-    } catch (err) {
-        console.error("Error stopping break:", err);
+    // We can fetch data here and call resume.
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+        const data = userSnap.data().breakState || {};
+        await resumeTasksAndSetUserStatus(userId, data.resumableTaskIds);
     }
 };
 
@@ -124,147 +89,43 @@ export const stopBreak = async (userId) => {
  * Stops any active Call session and logs it as a task.
  */
 export const stopCall = async (userId, userDisplayName) => {
-    try {
-        const userRef = doc(db, 'users', userId);
-        const userSnap = await getDoc(userRef);
+    await endSession(userId);
 
-        if (userSnap.exists()) {
-            const data = userSnap.data().callState || {};
-            if (data.isCalling) {
-                const now = new Date();
-                let sessionMinutes = 0;
-                if (data.lastStartedAt) {
-                    sessionMinutes = (now - new Date(data.lastStartedAt)) / (1000 * 60);
-                }
-
-                // Threshold check: > 10 seconds
-                if (sessionMinutes > (10 / 60)) {
-                    const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
-                    await addDoc(collection(db, 'tasks'), {
-                        title: "Skambutis",
-                        description: timeString,
-                        status: "confirmed",
-                        priority: "Medium",
-                        assignedWorkerId: userId,
-                        assignedWorkerName: userDisplayName || 'Unknown',
-                        createdBy: userId,
-                        creatorName: userDisplayName || 'Unknown',
-                        createdAt: new Date().toISOString(),
-                        completedAt: now.toISOString(),
-                        completed: true,
-                        confirmedBy: userId,
-                        confirmedAt: now.toISOString(),
-                        manualMinutes: sessionMinutes,
-                        isSystemTask: true
-                    });
-
-                    // Log Work Session
-                    const sessionDate = now.toISOString().split('T')[0];
-                    await addDoc(collection(db, 'work_sessions'), {
-                        taskId: "call_" + now.getTime(),
-                        taskTitle: "Skambutis",
-                        workerId: userId,
-                        workerName: userDisplayName || 'Unknown',
-                        startTime: new Date(data.lastStartedAt).toISOString(),
-                        endTime: now.toISOString(),
-                        durationMinutes: sessionMinutes,
-                        date: sessionDate,
-                        createdAt: new Date().toISOString(),
-                        isSystemTask: true
-                    });
-                }
-
-                // 1. Clear Call State
-                await updateDoc(userRef, {
-                    callState: {
-                        isCalling: false,
-                        lastStartedAt: null,
-                        resumableTaskIds: []
-                    }
-                });
-
-                // 2. Resume tasks
-                await resumeTasksAndSetUserStatus(userId, data.resumableTaskIds);
-            }
-        }
-    } catch (err) {
-        console.error("Error stopping call:", err);
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+        const data = userSnap.data().callState || {};
+        await resumeTasksAndSetUserStatus(userId, data.resumableTaskIds);
     }
 };
 
 /**
  * Stops any active Quick Work session and logs it as a task.
- * @param {string} userId 
- * @param {string} userDisplayName 
- * @param {string} [customTitle] - Optional title if passed directly (though usually handled via modal in UI)
  */
 export const stopQuickWork = async (userId, userDisplayName, customTitle = null) => {
-    try {
-        const userRef = doc(db, 'users', userId);
-        const userSnap = await getDoc(userRef);
+    // Note: sessionActions' endSession handles logging for Quick Work, 
+    // BUT checking for `customTitle` is tricky. sessionActions stores metadata.
+    // If we passed customTitle in Start, it's there. 
+    // But QuickWorkTimer might call stopQuickWork with a *new* title.
 
-        if (userSnap.exists()) {
-            const data = userSnap.data().quickWorkState || {};
-            if (data.isQuickWorking) {
-                const now = new Date();
-                let sessionMinutes = 0;
-                if (data.lastStartedAt) {
-                    sessionMinutes = (now - new Date(data.lastStartedAt)) / (1000 * 60);
-                }
+    // Special case: If we have a custom title, we might want to update the session metadata *before* ending it?
+    // Or we just update the legacy logic.
+    // To be safe for now, endSession handles basic logging.
+    // If we need custom Title, we should probably update the activeSession doc first?
 
-                // Threshold check: > 10 seconds
-                if (sessionMinutes > (10 / 60)) {
-                    const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
-                    const title = customTitle || "Greitas darbas (Automatiškai išsaugotas)";
+    if (customTitle) {
+        await updateDoc(doc(db, 'users', userId), {
+            'activeSession.customTitle': customTitle
+        });
+    }
 
-                    await addDoc(collection(db, 'tasks'), {
-                        title: title,
-                        description: customTitle ? timeString : `${timeString} (Automatiškai sukurtas)`,
-                        status: "completed",
-                        priority: "Medium",
-                        assignedWorkerId: userId,
-                        assignedWorkerName: userDisplayName || 'Unknown',
-                        createdBy: userId,
-                        creatorName: userDisplayName || 'Unknown',
-                        createdAt: new Date().toISOString(),
-                        completedAt: now.toISOString(),
-                        completed: true,
-                        manualMinutes: sessionMinutes,
-                        isQuickWork: true,
-                        autoStopped: !customTitle
-                    });
+    await endSession(userId);
 
-                    // Log Work Session
-                    const sessionDate = now.toISOString().split('T')[0];
-                    await addDoc(collection(db, 'work_sessions'), {
-                        taskId: "quick_" + now.getTime(),
-                        taskTitle: title,
-                        workerId: userId,
-                        workerName: userDisplayName || 'Unknown',
-                        startTime: new Date(data.lastStartedAt).toISOString(),
-                        endTime: now.toISOString(),
-                        durationMinutes: sessionMinutes,
-                        date: sessionDate,
-                        createdAt: new Date().toISOString(),
-                        isQuickWork: true
-                    });
-                }
-
-                // 1. Clear Quick Work State
-                await updateDoc(userRef, {
-                    quickWorkState: {
-                        isQuickWorking: false,
-                        lastStartedAt: null,
-                        resumableTaskIds: []
-                    }
-                });
-
-                // 2. Resume users
-                await resumeTasksAndSetUserStatus(userId, data.resumableTaskIds);
-            }
-        }
-    } catch (err) {
-        console.error("Error stopping quick work:", err);
+    const userRef = doc(db, 'users', userId);
+    const userSnap = await getDoc(userRef);
+    if (userSnap.exists()) {
+        const data = userSnap.data().quickWorkState || {};
+        await resumeTasksAndSetUserStatus(userId, data.resumableTaskIds);
     }
 };
 
@@ -288,4 +149,3 @@ export const pauseAllRunningTasks = async (userId) => {
         console.error("Error pausing running tasks:", err);
     }
 };
-

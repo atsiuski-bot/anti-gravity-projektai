@@ -6,9 +6,9 @@ import { useAuth } from '../context/AuthContext';
 import { updateDoc } from 'firebase/firestore';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
-import { startOfWeek, subWeeks } from 'date-fns';
+import { startOfWeek, subWeeks, startOfDay } from 'date-fns';
 
-export default function TaskHistory() {
+export default function TaskHistory({ userId }) {
     const { userRole } = useAuth();
     const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
     const [tasks, setTasks] = useState([]);
@@ -35,10 +35,15 @@ export default function TaskHistory() {
         // Start of current week (Monday)
         const startOfCurrentWeek = startOfWeek(now, { weekStartsOn: 1 });
         // Subtract weeks to get the start date window
-        // weeksToShow = 1 -> Start of current week
-        // weeksToShow = 2 -> Start of last week
+        // weeksToShow = 2 -> Current Week + 1 Previous Week
+        // So we subtract 1 week from startOfCurrentWeek
         const start = subWeeks(startOfCurrentWeek, weeksToShow - 1);
-        setStartDate(start.toISOString());
+
+        // Ensure we set time to 00:00:00 explicitly if not already (startOfWeek returns Date at 00:00 usually, but checking `startOfDay` is safer)
+        const startDay = startOfDay(start);
+
+        // Use ISO String for Firestore comparison (assuming archivedAt is stored as ISO string)
+        setStartDate(startDay.toISOString());
     }, [weeksToShow]);
 
     useEffect(() => {
@@ -46,11 +51,19 @@ export default function TaskHistory() {
 
         setLoading(true);
         // Query tasks archived AFTER the calculated start date
-        const q = query(
-            collection(db, 'archived_tasks'),
-            where('archivedAt', '>=', startDate),
-            orderBy('archivedAt', 'desc')
-        );
+        // Note: Filters by 'archivedAt'. 
+        const q = userId && userId !== 'all'
+            ? query(
+                collection(db, 'archived_tasks'),
+                where('archivedAt', '>=', startDate),
+                where('assignedWorkerId', '==', userId),
+                orderBy('archivedAt', 'desc')
+            )
+            : query(
+                collection(db, 'archived_tasks'),
+                where('archivedAt', '>=', startDate),
+                orderBy('archivedAt', 'desc')
+            );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const tasksData = snapshot.docs.map(doc => ({
@@ -58,9 +71,7 @@ export default function TaskHistory() {
                 ...doc.data()
             }));
 
-            // Sort by completion date (newest first) - ALWAYS descending
-            // Note: firestore already sorts by archivedAt desc, but we do manual sort as well 
-            // to ensure consistency if we mix other dates logic later, though firestore order is primary.
+            // Sort manually just in case
             const sortedTasks = [...tasksData].sort((a, b) => {
                 const getTimestamp = (task) => {
                     const dateStr = task.completedAt || task.archivedAt || task.updatedAt;
@@ -72,7 +83,6 @@ export default function TaskHistory() {
                 const timeA = getTimestamp(a);
                 const timeB = getTimestamp(b);
 
-                // Descending (newest first)
                 return timeB - timeA;
             });
 
@@ -84,14 +94,13 @@ export default function TaskHistory() {
         });
 
         return () => unsubscribe();
-    }, [startDate]);
+    }, [startDate, userId]);
 
     const handleLoadMore = () => {
         setWeeksToShow(prev => prev + 1);
     };
 
     const handleExport = () => {
-        // Prepare data for export - remove internal IDs if needed, or keep them
         const exportData = tasks.map(task => ({
             Title: task.title,
             Description: task.description,
@@ -125,7 +134,6 @@ export default function TaskHistory() {
                 await setDoc(doc(db, 'deleted_tasks', taskId), {
                     ...taskData,
                     deletedAt: new Date().toISOString(),
-                    // We don't have current user in this scope but we can get it from context or just leave blank/admin implication
                     deletedFromHistory: true,
                     originalCollection: 'archived_tasks'
                 });
@@ -139,7 +147,6 @@ export default function TaskHistory() {
     const handleRestore = async (task) => {
         if (!window.confirm('Ar norite grąžinti užduotį į aktyvių sąrašą?')) return;
         try {
-            // Restore to tasks with reset status and metadata
             const restoredTask = {
                 ...task,
                 status: 'in-progress',
@@ -157,8 +164,6 @@ export default function TaskHistory() {
             };
 
             await setDoc(doc(db, 'tasks', task.id), restoredTask);
-
-            // Delete from archived_tasks
             await deleteDoc(doc(db, 'archived_tasks', task.id));
         } catch (err) {
             console.error("Error restoring task:", err);
@@ -177,7 +182,6 @@ export default function TaskHistory() {
         }
     };
 
-    // Initial loading state only (if tasks are empty and loading is true)
     if (loading && tasks.length === 0) {
         return <div className="p-8 text-center text-gray-500">Kraunama istorija...</div>;
     }
@@ -330,7 +334,11 @@ export default function TaskHistory() {
                             {tasks.length === 0 && (
                                 <tr>
                                     <td colSpan="7" className="px-6 py-12 text-center text-gray-500 text-sm">
-                                        Istorija tuščia
+                                        {weeksToShow > 5 ? (
+                                            <span>Istorija tuščia (rodome {weeksToShow} sav.)</span>
+                                        ) : (
+                                            <span>Istorija tuščia. Pabandykite "Rodyti daugiau" jei ieškote senesnių užduočių.</span>
+                                        )}
                                     </td>
                                 </tr>
                             )}
@@ -339,23 +347,23 @@ export default function TaskHistory() {
                 </div>
             </div>
 
-            {/* Show More Button */}
-            <div className="flex justify-center pt-2 pb-6">
+            {/* Show More Button - Styled for Mobile Visibility */}
+            <div className="flex justify-start pt-4 pb-[250px]">
                 <button
                     onClick={handleLoadMore}
                     disabled={loading}
-                    className="flex items-center gap-2 px-6 py-2.5 bg-white border border-gray-300 shadow-sm text-gray-700 font-medium rounded-full hover:bg-gray-50 hover:shadow active:scale-95 transition-all text-sm group"
+                    className="flex items-center gap-2 px-6 py-3 bg-white border border-gray-300 shadow-md text-gray-700 font-bold rounded-xl hover:bg-gray-50 hover:shadow-lg active:scale-95 transition-all text-sm group"
                 >
                     {loading ? (
                         <span>Kraunama...</span>
                     ) : (
                         <>
                             <span>Rodyti daugiau</span>
-                            <ChevronDown className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" />
+                            <ChevronDown className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" />
                         </>
                     )}
                 </button>
-                <div className="text-xs text-gray-400 absolute right-4 mt-3">
+                <div className="text-xs text-gray-400 ml-4 mt-3">
                     (+1 savaitė)
                 </div>
             </div>

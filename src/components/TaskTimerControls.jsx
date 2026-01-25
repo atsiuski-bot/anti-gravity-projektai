@@ -172,7 +172,8 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
                     status: 'idle',
                     activeTaskId: null,
                     lastUpdated: new Date().toISOString()
-                }
+                },
+                activeSession: null // Clear generic session
             });
 
             console.log(`Task ${task.id} finished and archived`);

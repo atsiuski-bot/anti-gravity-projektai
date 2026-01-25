@@ -189,13 +189,7 @@ export default function ManagerNotifications() {
                 } else if (notif.source === 'task') {
                     return (
                         <div key={notif.id} className="bg-amber-50 border border-amber-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
-                            <button
-                                onClick={() => handleDismissTask(notif.id)}
-                                className="absolute top-2 right-2 text-amber-400 hover:text-amber-600 p-1 hover:bg-amber-100 rounded transition-colors"
-                                title="Pažymėti kaip perskaitytą"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
+
 
                             <div className="flex flex-col gap-3">
                                 <div className="flex items-start gap-3">

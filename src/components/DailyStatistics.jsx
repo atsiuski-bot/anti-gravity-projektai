@@ -7,10 +7,12 @@ import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../uti
 import { Calendar, Clock, Coffee, User, Briefcase, ChevronLeft, ChevronRight, Zap, Phone, MessageSquare, Check } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
+import TaskHistory from './TaskHistory';
 
 export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     // Managers can see everyone, Workers only themselves
-    const [selectedUserId, setSelectedUserId] = useState(currentUser?.uid);
+    // Managers can see everyone, Workers only themselves
+    const [selectedUserId, setSelectedUserId] = useState((userRole === 'manager' || userRole === 'admin') ? 'all' : currentUser?.uid);
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [loading, setLoading] = useState(false);
 
@@ -120,12 +122,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             const scheduled = allRelevantTasks.filter(t => t.dayOfWeek === weekday);
             setScheduledTasks(scheduled);
 
-            // Filter for finished OR deleted today
+            // Filter for finished OR deleted today OR unconfirmed (status === 'completed' and active)
             const finishedToday = allRelevantTasks.filter(t => {
                 const compDate = t.completedAt?.split('T')[0];
                 const archDate = t.archivedAt?.split('T')[0];
                 const delDate = t.deletedAt?.split('T')[0];
-                return compDate === selectedDate || archDate === selectedDate || delDate === selectedDate;
+
+                const isRelevantDate = compDate === selectedDate || archDate === selectedDate || delDate === selectedDate;
+
+                // Include ALL unconfirmed active tasks (status 'completed') AND confirmed tasks that haven't been archived yet.
+                // This ensures they stay visible after confirmation until the nightly archive job runs.
+                const isActiveUnarchived = !t.archivedAt && !t.isDeleted && (t.status === 'completed' || t.status === 'confirmed');
+
+                return isRelevantDate || isActiveUnarchived;
             });
 
             setFinishedTasks(finishedToday);
@@ -228,8 +237,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
 
+    // Filter out session records that are duplicates of manual tasks (Calls and Quick Work from legacy logging)
+    const validSessions = useMemo(() => sessions.filter(s => !s.isSystemTask && !s.isQuickWork), [sessions]);
+
     // Aggregations
-    const totalTimerMinutes = sessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
+    const totalTimerMinutes = validSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
     const totalBreakMinutes = breakSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
 
     // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
@@ -248,7 +260,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     // Merge sessions and manual tasks for Timeline
     const combinedTimelineItems = useMemo(() => {
-        const items = sessions.map(s => {
+        const items = validSessions.map(s => {
             // Check if this session belongs to a deleted task
             const deletedTask = finishedTasks.find(t => t.id === s.taskId && t.isDeleted);
             let title = s.taskTitle;
@@ -296,7 +308,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
         // Sort by start time
         return items.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-    }, [sessions, manualTasks]);
+    }, [validSessions, manualTasks]);
 
 
     // Find earliest start and latest end from COMBINED items
@@ -465,287 +477,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    // Mobile Stats Card Component
-    const MobileStatsCard = ({ task, onToggleConfirm, onAddComment }) => {
-        const isConfirmed = task.status === 'confirmed';
-        const worker = users.find(u => u.id === task.assignedWorkerId);
-        const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
 
-        return (
-            <div className={clsx(
-                "p-3 rounded-lg border mb-3 shadow-sm",
-                isConfirmed ? "bg-gray-100 border-gray-200" : "bg-white border-gray-200"
-            )}>
-                <div className="flex justify-between items-start mb-2">
-                    <div className="flex-1">
-                        <div className={clsx(
-                            "font-bold text-sm",
-                            task.isDeleted && "line-through text-gray-500"
-                        )}>
-                            {task.title}
-                        </div>
-                        {task.isDeleted && (
-                            <span className="text-[9px] font-bold text-red-600 uppercase bg-red-50 px-1 py-0.5 rounded">Ištrinta</span>
-                        )}
-                    </div>
-
-                    <span
-                        className={clsx(
-                            "px-1.5 py-0.5 text-[10px] font-bold rounded-md border border-black/5 uppercase whitespace-nowrap ml-2"
-                        )}
-                        style={{
-                            backgroundColor: getPriorityColor(task.priority),
-                            color: getPriorityTextColor(task.priority)
-                        }}
-                    >
-                        {getPriorityLabel(task.priority)}
-                    </span>
-                </div>
-
-                {task.description && (
-                    <div className="text-xs text-gray-600 mb-2 whitespace-pre-wrap break-words">
-                        {task.description}
-                    </div>
-                )}
-
-                <div className="flex flex-wrap items-center gap-2 mb-2 text-[10px] text-gray-500">
-                    <div className="bg-gray-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <User className="w-3 h-3" />
-                        <span className="font-medium">{formatDisplayName(workerName)}</span>
-                    </div>
-                    <div className="bg-gray-100 px-1.5 py-0.5 rounded font-mono">
-                        {task.estimatedTime || '-'} / {task.actualTime || formatMinutesToTimeString(task.manualMinutes) || '-'}
-                    </div>
-                    {task.deadline && (
-                        <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                            <Calendar className="w-3 h-3 text-orange-500" />
-                            {task.deadline}
-                        </div>
-                    )}
-                    {task.completedAt && (
-                        <div className="bg-green-50 text-green-700 border border-green-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                            <Check className="w-3 h-3 text-green-500" />
-                            {new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                    )}
-                </div>
-
-                <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100">
-                    <div className="flex items-center gap-2">
-                        {(userRole === 'manager' || userRole === 'admin') ? (
-                            <label className="flex items-center gap-1.5 cursor-pointer">
-                                <input
-                                    type="checkbox"
-                                    checked={isConfirmed}
-                                    onChange={() => onToggleConfirm(task)}
-                                    disabled={task.archivedAt}
-                                    className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
-                                />
-                                <span className={clsx("text-xs font-medium", isConfirmed ? "text-green-700" : "text-gray-600")}>
-                                    {isConfirmed ? "Patvirtinta" : "Nepatvirtinta"}
-                                </span>
-                            </label>
-                        ) : (
-                            <span className={clsx("text-xs font-medium", isConfirmed ? "text-green-700" : "text-gray-500")}>
-                                {isConfirmed ? "Būsena: Patvirtinta" : "Būsena: Laukiama patvirtinimo"}
-                            </span>
-                        )}
-                    </div>
-
-                    <button
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveModal({ type: 'comments', taskId: task.id, task: task });
-                        }}
-                        className="flex items-center gap-1 text-gray-500 hover:text-blue-600 p-1.5 hover:bg-gray-50 rounded"
-                    >
-                        <MessageSquare className="w-4 h-4" />
-                        <span className="text-xs font-bold">{task.comments?.length || 0}</span>
-                    </button>
-                </div>
-
-                {task.comments && task.comments.length > 0 && (
-                    <div className="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-600">
-                        {task.comments.slice(-2).map((c, i) => (
-                            <div key={i} className="mb-1 last:mb-0">
-                                <span className="font-bold">{c.user}:</span> {c.text}
-                            </div>
-                        ))}
-                        {task.comments.length > 2 && (
-                            <div className="text-[10px] text-gray-400 italic mt-1">
-                                + dar {task.comments.length - 2} komentarai...
-                            </div>
-                        )}
-                    </div>
-                )}
-            </div>
-        );
-    };
-
-    // Task List Helper Component
-    const TaskListTable = ({ tasks, title }) => (
-        <div className={clsx("rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-white")}>
-            <div className={clsx("px-4 py-3 bg-gray-50 border-b border-gray-200", viewMode === 'mobile' && "rounded-lg mb-2 border")}>
-                <h3 className="text-sm font-bold text-gray-700">{title} ({tasks.length})</h3>
-            </div>
-
-            {viewMode === 'mobile' ? (
-                <div className="space-y-1">
-                    {tasks.map(task => (
-                        <MobileStatsCard
-                            key={task.id}
-                            task={task}
-                            onToggleConfirm={handleToggleConfirm}
-                            onAddComment={handleAddComment}
-                        />
-                    ))}
-                </div>
-            ) : (
-                <div className="overflow-x-auto">
-                    <table className="w-full md:w-auto divide-y divide-gray-200 text-sm md:table-auto table-fixed">
-                        <thead className="bg-gray-50">
-                            <tr>
-                                {(userRole === 'manager' || userRole === 'admin') && <th className="px-2 py-2 text-center w-8 text-[10px] font-bold text-gray-500 uppercase tracking-wider">OK</th>}
-                                <th className="px-2 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">DARB.</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">PRIO</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-[10px] font-bold text-gray-500 uppercase tracking-wider w-10 md:w-auto">KOM.</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                            {tasks.length === 0 ? (
-                                <tr>
-                                    <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
-                                        Nėra užduočių.
-                                    </td>
-                                </tr>
-                            ) : (
-                                tasks.map((task) => {
-                                    const isConfirmed = task.status === 'confirmed';
-                                    const worker = users.find(u => u.id === task.assignedWorkerId);
-                                    const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
-
-                                    return (
-                                        <tr
-                                            key={task.id}
-                                            className={clsx(
-                                                "transition-colors",
-                                                isConfirmed ? "bg-gray-100" : "bg-white hover:bg-gray-50"
-                                            )}
-                                        >
-                                            {(userRole === 'manager' || userRole === 'admin') && (
-                                                <td className="px-2 py-2 text-center">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={isConfirmed}
-                                                        onChange={() => handleToggleConfirm(task)}
-                                                        disabled={task.archivedAt}
-                                                        className="w-3.5 h-3.5 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
-                                                    />
-                                                </td>
-                                            )}
-                                            <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
-                                                <div className={clsx(
-                                                    "text-sm font-bold text-gray-900 whitespace-normal break-words",
-                                                    (task.isDeleted || task.status === 'deleted') && "line-through text-gray-500"
-                                                )}>
-                                                    {task.title}
-                                                </div>
-                                                {task.deadline && (
-                                                    <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                                                        <Calendar className="w-2.5 h-2.5" />
-                                                        {task.deadline}
-                                                    </div>
-                                                )}
-                                                {task.description && (
-                                                    <div className={clsx(
-                                                        "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
-                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                                    )}>
-                                                        <Briefcase className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
-                                                        {task.description}
-                                                    </div>
-                                                )}
-                                                {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                                    <div className="mt-2 pl-4 border-l-2 border-gray-200">
-                                                        <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
-                                                        {task.comments.map((comment, idx) => (
-                                                            <div key={idx} className="text-[10px] text-gray-600 mb-1">
-                                                                <span className="font-medium">{comment.user}:</span> {comment.text}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
-                                                    {formatDisplayName(workerName).split(' ')[0]}
-                                                </span>
-                                            </td>
-                                            <td className="px-1 py-2 text-right text-gray-900 font-mono text-[10px] whitespace-nowrap">
-                                                <span className="text-blue-600">{task.estimatedTime || '-'}</span>
-                                                <span className="text-gray-400 mx-1">/</span>
-                                                <span>{task.actualTime || formatMinutesToTimeString(task.manualMinutes) || '-'}</span>
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap text-[10px] text-gray-600">
-                                                {task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                <span
-                                                    className={clsx(
-                                                        "px-1.5 py-0.5 inline-flex text-[10px] leading-3 font-semibold rounded-md border border-black/5 uppercase"
-                                                    )}
-                                                    style={{
-                                                        backgroundColor: getPriorityColor(task.priority),
-                                                        color: getPriorityTextColor(task.priority)
-                                                    }}
-                                                >
-                                                    {getPriorityLabel(task.priority)}
-                                                </span>
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                {(task.isDeleted || task.status === 'deleted') ? (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-800 border border-red-200">
-                                                        Ištrinta
-                                                    </span>
-                                                ) : isConfirmed ? (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
-                                                        Patvirt.
-                                                    </span>
-                                                ) : (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-800">
-                                                        Nepatv.
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className="px-1 py-2 text-center whitespace-nowrap">
-                                                <button
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setActiveModal({ type: 'comments', taskId: task.id, task: task });
-                                                    }}
-                                                    className="inline-flex items-center justify-center text-gray-400 hover:text-blue-600 transition-colors p-1"
-                                                    title="Komentarai"
-                                                >
-                                                    <MessageSquare className="w-4 h-4" />
-                                                    {task.comments?.length > 0 && (
-                                                        <span className="ml-0.5 text-[10px] font-bold">{task.comments.length}</span>
-                                                    )}
-                                                </button>
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            )}
-        </div>
-    );
 
     const daysMap = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
     const weekday = daysMap[new Date(selectedDate).getDay()];
@@ -998,16 +730,36 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 <TaskListTable
                     tasks={todayTasks}
                     title={`Užduotys atliktos ${selectedDate} ${weekday}`}
+                    viewMode={viewMode}
+                    onToggleConfirm={handleToggleConfirm}
+                    onAddComment={handleAddComment}
+                    users={users}
+                    userRole={userRole}
+                    expandedTasks={expandedTasks}
+                    toggleExpand={toggleExpand}
+                    setActiveModal={setActiveModal}
                 />
             )}
 
             {earlierTasks.length > 0 && (
-                <TaskListTable tasks={earlierTasks} title="Užduotys atliktos anksčiau, laukia patvirtinimo" />
+                <TaskListTable
+                    tasks={earlierTasks}
+                    title="Užduotys atliktos anksčiau, laukia patvirtinimo"
+                    viewMode={viewMode}
+                    onToggleConfirm={handleToggleConfirm}
+                    onAddComment={handleAddComment}
+                    users={users}
+                    userRole={userRole}
+                    expandedTasks={expandedTasks}
+                    toggleExpand={toggleExpand}
+                    setActiveModal={setActiveModal}
+                />
             )}
 
-            {archivedTasks.length > 0 && (
-                <TaskListTable tasks={archivedTasks} title="Archyvuotos užduotys" />
-            )}
+            {/* Replaced legacy archived table with full TaskHistory component */}
+            <div className="mt-8">
+                <TaskHistory userId={selectedUserId} />
+            </div>
 
             {todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0 && (
                 <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">
@@ -1025,6 +777,293 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     comments={activeModal.task.comments}
                     onAddComment={handleAddComment}
                 />
+            )}
+        </div>
+    );
+}
+
+// Mobile Stats Card Component
+function MobileStatsCard({ task, onToggleConfirm, onAddComment, users, userRole, setActiveModal }) {
+    const isConfirmed = task.status === 'confirmed';
+    const worker = users.find(u => u.id === task.assignedWorkerId);
+    const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
+
+    return (
+        <div className={clsx(
+            "p-3 rounded-lg border mb-3 shadow-sm",
+            isConfirmed ? "bg-gray-100 border-gray-200" : "bg-white border-gray-200"
+        )}>
+            <div className="flex justify-between items-start mb-2">
+                <div className="flex-1">
+                    <div className={clsx(
+                        "font-bold text-sm",
+                        task.isDeleted && "line-through text-gray-500"
+                    )}>
+                        {task.title}
+                    </div>
+                    {task.isDeleted && (
+                        <span className="text-[9px] font-bold text-red-600 uppercase bg-red-50 px-1 py-0.5 rounded">Ištrinta</span>
+                    )}
+                </div>
+
+                <span
+                    className={clsx(
+                        "px-1.5 py-0.5 text-[10px] font-bold rounded-md border border-black/5 uppercase whitespace-nowrap ml-2"
+                    )}
+                    style={{
+                        backgroundColor: getPriorityColor(task.priority),
+                        color: getPriorityTextColor(task.priority)
+                    }}
+                >
+                    {getPriorityLabel(task.priority)}
+                </span>
+            </div>
+
+            {task.description && (
+                <div className="text-xs text-gray-600 mb-2 whitespace-pre-wrap break-words">
+                    {task.description}
+                </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2 mb-2 text-[10px] text-gray-500">
+                <div className="bg-gray-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                    <User className="w-3 h-3" />
+                    <span className="font-medium">{formatDisplayName(workerName)}</span>
+                </div>
+                <div className="bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+                    {task.estimatedTime || '-'} / {task.actualTime || formatMinutesToTimeString(task.manualMinutes) || '-'}
+                </div>
+                {task.deadline && (
+                    <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-orange-500" />
+                        {task.deadline}
+                    </div>
+                )}
+                {task.completedAt && (
+                    <div className="bg-green-50 text-green-700 border border-green-100 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Check className="w-3 h-3 text-green-500" />
+                        {new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                )}
+            </div>
+
+            <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100">
+                <div className="flex items-center gap-2">
+                    {(userRole === 'manager' || userRole === 'admin') ? (
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={isConfirmed}
+                                onChange={() => onToggleConfirm(task)}
+                                disabled={task.archivedAt}
+                                className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500"
+                            />
+                            <span className={clsx("text-xs font-medium", isConfirmed ? "text-green-700" : "text-gray-600")}>
+                                {isConfirmed ? "Patvirtinta" : "Nepatvirtinta"}
+                            </span>
+                        </label>
+                    ) : (
+                        <span className={clsx("text-xs font-medium", isConfirmed ? "text-green-700" : "text-gray-500")}>
+                            {isConfirmed ? "Būsena: Patvirtinta" : "Būsena: Laukiama patvirtinimo"}
+                        </span>
+                    )}
+                </div>
+
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveModal({ type: 'comments', taskId: task.id, task: task });
+                    }}
+                    className="flex items-center gap-1 text-gray-500 hover:text-blue-600 p-1.5 hover:bg-gray-50 rounded"
+                >
+                    <MessageSquare className="w-4 h-4" />
+                    <span className="text-xs font-bold">{task.comments?.length || 0}</span>
+                </button>
+            </div>
+
+            {task.comments && task.comments.length > 0 && (
+                <div className="mt-2 bg-gray-50 rounded p-2 text-xs text-gray-600">
+                    {task.comments.slice(-2).map((c, i) => (
+                        <div key={i} className="mb-1 last:mb-0">
+                            <span className="font-bold">{c.user}:</span> {c.text}
+                        </div>
+                    ))}
+                    {task.comments.length > 2 && (
+                        <div className="text-[10px] text-gray-400 italic mt-1">
+                            + dar {task.comments.length - 2} komentarai...
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
+
+// Task List Helper Component
+function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, users, userRole, expandedTasks, toggleExpand, setActiveModal }) {
+    return (
+        <div className={clsx("rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-white")}>
+            <div className={clsx("px-4 py-3 bg-gray-50 border-b border-gray-200", viewMode === 'mobile' && "rounded-lg mb-2 border")}>
+                <h3 className="text-sm font-bold text-gray-700">{title} ({tasks.length})</h3>
+            </div>
+
+            {viewMode === 'mobile' ? (
+                <div className="space-y-1">
+                    {tasks.map(task => (
+                        <MobileStatsCard
+                            key={task.id}
+                            task={task}
+                            onToggleConfirm={onToggleConfirm}
+                            onAddComment={onAddComment}
+                            users={users}
+                            userRole={userRole}
+                            setActiveModal={setActiveModal}
+                        />
+                    ))}
+                </div>
+            ) : (
+                <div className="overflow-x-auto">
+                    <table className="w-full md:w-auto divide-y divide-gray-200 text-sm md:table-auto table-fixed">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                {(userRole === 'manager' || userRole === 'admin') && <th className="px-2 py-2 text-center w-8 text-[10px] font-bold text-gray-500 uppercase tracking-wider">OK</th>}
+                                <th className="px-2 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">DARB.</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">PRIO</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-[10px] font-bold text-gray-500 uppercase tracking-wider w-10 md:w-auto">KOM.</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-200">
+                            {tasks.length === 0 ? (
+                                <tr>
+                                    <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
+                                        Nėra užduočių.
+                                    </td>
+                                </tr>
+                            ) : (
+                                tasks.map((task) => {
+                                    const isConfirmed = task.status === 'confirmed';
+                                    const worker = users.find(u => u.id === task.assignedWorkerId);
+                                    const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
+
+                                    return (
+                                        <tr
+                                            key={task.id}
+                                            className={clsx(
+                                                "transition-colors",
+                                                isConfirmed ? "bg-gray-100" : "bg-white hover:bg-gray-50"
+                                            )}
+                                        >
+                                            {(userRole === 'manager' || userRole === 'admin') && (
+                                                <td className="px-2 py-2 text-center">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isConfirmed}
+                                                        onChange={() => onToggleConfirm(task)}
+                                                        disabled={task.archivedAt}
+                                                        className="w-3.5 h-3.5 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                                                    />
+                                                </td>
+                                            )}
+                                            <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
+                                                <div className={clsx(
+                                                    "text-sm font-bold text-gray-900 whitespace-normal break-words",
+                                                    (task.isDeleted || task.status === 'deleted') && "line-through text-gray-500"
+                                                )}>
+                                                    {task.title}
+                                                </div>
+                                                {task.deadline && (
+                                                    <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                        <Calendar className="w-2.5 h-2.5" />
+                                                        {task.deadline}
+                                                    </div>
+                                                )}
+                                                {task.description && (
+                                                    <div className={clsx(
+                                                        "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
+                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
+                                                    )}>
+                                                        <Briefcase className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
+                                                        {task.description}
+                                                    </div>
+                                                )}
+                                                {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
+                                                    <div className="mt-2 pl-4 border-l-2 border-gray-200">
+                                                        <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
+                                                        {task.comments.map((comment, idx) => (
+                                                            <div key={idx} className="text-[10px] text-gray-600 mb-1">
+                                                                <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </td>
+                                            <td className="px-1 py-2 whitespace-nowrap">
+                                                <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                                                    {formatDisplayName(workerName).split(' ')[0]}
+                                                </span>
+                                            </td>
+                                            <td className="px-1 py-2 text-right text-gray-900 font-mono text-[10px] whitespace-nowrap">
+                                                <span className="text-blue-600">{task.estimatedTime || '-'}</span>
+                                                <span className="text-gray-400 mx-1">/</span>
+                                                <span>{task.actualTime || formatMinutesToTimeString(task.manualMinutes) || '-'}</span>
+                                            </td>
+                                            <td className="px-1 py-2 whitespace-nowrap text-[10px] text-gray-600">
+                                                {task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                                            </td>
+                                            <td className="px-1 py-2 whitespace-nowrap">
+                                                <span
+                                                    className={clsx(
+                                                        "px-1.5 py-0.5 inline-flex text-[10px] leading-3 font-semibold rounded-md border border-black/5 uppercase"
+                                                    )}
+                                                    style={{
+                                                        backgroundColor: getPriorityColor(task.priority),
+                                                        color: getPriorityTextColor(task.priority)
+                                                    }}
+                                                >
+                                                    {getPriorityLabel(task.priority)}
+                                                </span>
+                                            </td>
+                                            <td className="px-1 py-2 whitespace-nowrap">
+                                                {(task.isDeleted || task.status === 'deleted') ? (
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-800 border border-red-200">
+                                                        Ištrinta
+                                                    </span>
+                                                ) : isConfirmed ? (
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
+                                                        Patvirt.
+                                                    </span>
+                                                ) : (
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-800">
+                                                        Nepatv.
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td className="px-1 py-2 text-center whitespace-nowrap">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setActiveModal({ type: 'comments', taskId: task.id, task: task });
+                                                    }}
+                                                    className="inline-flex items-center justify-center text-gray-400 hover:text-blue-600 transition-colors p-1"
+                                                    title="Komentarai"
+                                                >
+                                                    <MessageSquare className="w-4 h-4" />
+                                                    {task.comments?.length > 0 && (
+                                                        <span className="ml-0.5 text-[10px] font-bold">{task.comments.length}</span>
+                                                    )}
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            )}
+                        </tbody>
+                    </table>
+                </div>
             )}
         </div>
     );

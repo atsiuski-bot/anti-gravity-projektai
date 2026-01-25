@@ -14,7 +14,14 @@ const updateUserWorkStatus = async (userId, isWorking, status, taskId) => {
                 status, // 'running', 'paused', 'idle'
                 activeTaskId: taskId,
                 lastUpdated: new Date().toISOString()
-            }
+            },
+            // Sync with generic Session Logic
+            activeSession: (isWorking && status === 'running') ? {
+                type: 'task',
+                startTime: new Date().toISOString(),
+                taskId: taskId,
+                taskTitle: null // We don't have title here broadly, but it's okay, UI fetches task
+            } : null // Clear if paused/idle
         });
     } catch (err) {
         console.error("Error updating user work status:", err);

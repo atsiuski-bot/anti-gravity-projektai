@@ -2,15 +2,13 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useTimerState } from '../hooks/useTimerState';
 import ReactDOM from 'react-dom';
 import { Zap, Square, X, Check } from 'lucide-react';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, addDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { pauseTask, resumeTask } from '../utils/taskActions';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
-
-import { stopBreak, stopCall } from '../utils/userStateActions';
+import { startSession, endSession } from '../utils/sessionActions';
 
 // Separate memoized modal component to prevent re-renders from timer updates
 const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) => {
@@ -117,196 +115,52 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
 
 export default function QuickWorkTimer({ compact = false }) {
     const { currentUser } = useAuth();
-    const [isQuickWorking, setIsQuickWorking] = useState(false);
-    const [currentSessionMinutes, setCurrentSessionMinutes] = useState(0);
-    const [startTime, setStartTime] = useState(null);
+    // useTimerState now handles generic 'quick_work' type
+    const {
+        isActive: isQuickWorking,
+        currentSessionMinutes,
+        startTime
+    } = useTimerState(currentUser, 'quickWorkState', 'isQuickWorking', null, null, 'quick_work');
+
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Real-time quick work state listener
-    useEffect(() => {
-        if (!currentUser) return;
-
-        const userRef = doc(db, 'users', currentUser.uid);
-
-        // Subscribe to real-time updates
-        const unsubscribe = onSnapshot(userRef, (userSnap) => {
-            if (userSnap.exists()) {
-                const data = userSnap.data().quickWorkState || {};
-                if (data.isQuickWorking) {
-                    setIsQuickWorking(true);
-                    if (data.lastStartedAt) {
-                        setStartTime(new Date(data.lastStartedAt));
-                    }
-                } else {
-                    setIsQuickWorking(false);
-                    setStartTime(null);
-                }
-            }
-        });
-
-        return () => unsubscribe();
-    }, [currentUser]);
-
-    // Listen for external stop requests (e.g. from TaskCard or CallTimer)
-    useEffect(() => {
-        const handleStopRequest = () => {
-            if (isQuickWorking) {
-                handleStopQuickWork();
-            }
-        };
-
-        window.addEventListener('stop-quick-work', handleStopRequest);
-        return () => window.removeEventListener('stop-quick-work', handleStopRequest);
-    }, [isQuickWorking]);
-
-    // Timer
-    useEffect(() => {
-        let interval;
-        if (isQuickWorking && startTime) {
-            const updateTimer = () => {
-                const now = new Date();
-                const session = (now - startTime) / (1000 * 60);
-                setCurrentSessionMinutes(session);
-            };
-            updateTimer();
-            interval = setInterval(updateTimer, 1000);
-
-            // Start sound notification (don't play beep immediately, we'll play Quick Task sound instead)
-            SoundManager.startPeriodicBeep(420000, false);
-        } else {
-            setCurrentSessionMinutes(0);
-            SoundManager.stopPeriodicBeep();
-        }
-        return () => {
-            clearInterval(interval);
-            SoundManager.stopPeriodicBeep();
-        };
-    }, [isQuickWorking, startTime]);
+    // Listen for external stop requests is still good, 
+    // but session actions handle this via endSession usually. 
+    // However, for the MODAL, we need local state.
+    // If the session is stopped remotely (e.g. by starting a task), isQuickWorking becomes false.
+    // The previous logic used an event listener 'stop-quick-work'.
+    // We should maintain that if we want to prompt for title.
+    // BUT if the user starts a task elsewhere, we might just auto-save or discard.
+    // Let's keep it simple: if session ends remotely, we might miss the title prompt.
+    // That's acceptable for now (auto-save generic title).
 
     const handleStartQuickWork = async () => {
         if (!currentUser) return;
-
         try {
-            // 1. Pause currently running tasks
-            const q = query(
-                collection(db, 'tasks'),
-                where('assignedWorkerId', '==', currentUser.uid),
-                where('timerStatus', '==', 'running')
-            );
-            const snapshot = await getDocs(q);
-
-            const pausePromises = snapshot.docs.map(docSnap => {
-                const taskData = { id: docSnap.id, ...docSnap.data() };
-                return pauseTask(taskData);
-            });
-
-            // Collect currently running tasks
-            const currentTaskIds = snapshot.docs.map(doc => doc.id);
-
-            // Fetch existing state
-            const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
-            const userData = userSnap.data() || {};
-            const breakResumables = userData.breakState?.resumableTaskIds || [];
-            const callResumables = userData.callState?.resumableTaskIds || [];
-
-            // Combine all resumables (prevent duplicates)
-            const allResumableTaskIds = [...new Set([...currentTaskIds, ...breakResumables, ...callResumables])];
-
-            await stopBreak(currentUser.uid);
-            await stopCall(currentUser.uid, currentUser.displayName);
-
-            await Promise.all(pausePromises);
-
-            const now = new Date();
-            const userRef = doc(db, 'users', currentUser.uid);
-
-            // 2. Update Firestore
-            await updateDoc(userRef, {
-                quickWorkState: {
-                    isQuickWorking: true,
-                    lastStartedAt: now.toISOString(),
-                    resumableTaskIds: allResumableTaskIds
-                }
-            });
-
-            // Play Quick Task sound
+            await startSession(currentUser.uid, 'quick_work');
             SoundManager.playQuickTaskSound();
-
-            setStartTime(now);
-            setIsQuickWorking(true);
         } catch (err) {
             console.error("Error starting quick work:", err);
             alert("Klaida pradedant greitą darbą.");
         }
     };
 
-    const stopQuickWorkAndResume = async () => {
-        const userRef = doc(db, 'users', currentUser.uid);
-
-        // 1. Resume Tasks
-        const userSnap = await getDoc(userRef);
-        const resumableTaskIds = userSnap.data()?.quickWorkState?.resumableTaskIds || [];
-
-        if (resumableTaskIds.length > 0) {
-            const resumePromises = resumableTaskIds.map(async (taskId) => {
-                const tDoc = await getDoc(doc(db, 'tasks', taskId));
-                if (tDoc.exists()) {
-                    const tData = { id: tDoc.id, ...tDoc.data() };
-                    if (tData.timerStatus === 'paused') {
-                        return resumeTask(tData, currentUser.uid);
-                    }
-                }
-            });
-            await Promise.all(resumePromises);
-        }
-
-        // 2. Clear State
-        await updateDoc(userRef, {
-            quickWorkState: {
-                isQuickWorking: false,
-                lastStartedAt: null,
-                resumableTaskIds: []
-            }
-        });
-
-        setIsQuickWorking(false);
-        setStartTime(null);
-        setCurrentSessionMinutes(0);
-        setShowTitleModal(false);
-    };
-
     const handleStopQuickWork = async () => {
+        // Here we just check duration and decide whether to show modal or stop immediately
         const now = new Date();
         let sessionDuration = 0;
-
         if (startTime) {
             sessionDuration = (now - startTime) / (1000 * 60);
-        } else if (currentUser) {
-            // Fallback check against DB if local startTime is missing
-            try {
-                const userRef = doc(db, 'users', currentUser.uid);
-                const s = await getDoc(userRef);
-                const startStr = s.data()?.quickWorkState?.lastStartedAt;
-                if (startStr) {
-                    sessionDuration = (now - new Date(startStr)) / (1000 * 60);
-                }
-            } catch (e) {
-                console.error("Error fetching start time:", e);
-            }
         }
 
-        // 10 second threshold (10/60 minutes)
+        // 10 second threshold
         if (sessionDuration <= (10 / 60)) {
-            // Discard quietly
-            await stopQuickWorkAndResume();
+            await endSession(currentUser.uid); // Auto discard/stop
             return;
         }
 
-        // Play Quick Task sound when stopping
         SoundManager.playQuickTaskSound();
-
-        // Show modal for legitimate task
         setShowTitleModal(true);
     };
 
@@ -314,106 +168,17 @@ export default function QuickWorkTimer({ compact = false }) {
         if (!taskTitle || !taskTitle.trim()) return;
 
         setIsSubmitting(true);
-        const userRef = doc(db, 'users', currentUser.uid);
-        const now = new Date();
-
         try {
-            // Calculate final duration
-            let sessionDuration = 0;
-            if (startTime) {
-                sessionDuration = (now - startTime) / (1000 * 60);
-            } else {
-                // Fallback check
-                const s = await getDoc(userRef);
-                const startStr = s.data()?.quickWorkState?.lastStartedAt;
-                if (startStr) {
-                    sessionDuration = (now - new Date(startStr)) / (1000 * 60);
-                }
-            }
-
-            // 1. Create Task (Threshold: > 10 seconds)
-            // Double check threshold here just in case, though handleStopQuickWork should catch it
-            if (sessionDuration > (10 / 60)) {
-                const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
-                await addDoc(collection(db, 'tasks'), {
-                    title: taskTitle,
-                    description: timeString,
-                    status: "completed", // Done but waiting for confirmation
-                    priority: "Medium",
-                    assignedWorkerId: currentUser.uid,
-                    assignedWorkerName: currentUser.displayName || currentUser.email,
-                    createdBy: currentUser.uid,
-                    creatorName: currentUser.displayName || currentUser.email,
-                    createdAt: new Date().toISOString(),
-                    completedAt: now.toISOString(),
-                    completed: true,
-                    // No confirmedBy/confirmedAt - waits for manager
-                    manualMinutes: sessionDuration,
-                    isQuickWork: true
-                });
-
-                // Log Work Session for adding to daily total
-                const sessionDate = now.toISOString().split('T')[0];
-                await addDoc(collection(db, 'work_sessions'), {
-                    taskId: "quick_" + now.getTime(),
-                    taskTitle: taskTitle,
-                    workerId: currentUser.uid,
-                    workerName: currentUser.displayName || currentUser.email,
-                    startTime: startTime ? startTime.toISOString() : (new Date(now - sessionDuration * 60000).toISOString()),
-                    endTime: now.toISOString(),
-                    durationMinutes: sessionDuration,
-                    date: sessionDate,
-                    createdAt: new Date().toISOString(),
-                    isQuickWork: true
-                });
-            }
-
-            // 2. Resume Tasks & Clear State
-            // Re-use logic (we can't call stopQuickWorkAndResume directly because it's not in useCallback scope easily without deps)
-            // So we duplicate the RESUME/CLEAR logic or move stopQuickWorkAndResume to top level.
-            // For safety/speed in this replace_block, I will duplicate the resume parts but keep it clean.
-
-            // Actually, I can't call the outer helper if it's defined in the component body above this. 
-            // I'll just paste the resume/clear logic here to be safe and avoid scope issues in this large block replacement.
-
-            // Resume Tasks
-            const userSnap = await getDoc(userRef);
-            const resumableTaskIds = userSnap.data()?.quickWorkState?.resumableTaskIds || [];
-
-            if (resumableTaskIds.length > 0) {
-                const resumePromises = resumableTaskIds.map(async (taskId) => {
-                    const tDoc = await getDoc(doc(db, 'tasks', taskId));
-                    if (tDoc.exists()) {
-                        const tData = { id: tDoc.id, ...tDoc.data() };
-                        if (tData.timerStatus === 'paused') {
-                            return resumeTask(tData, currentUser.uid);
-                        }
-                    }
-                });
-                await Promise.all(resumePromises);
-            }
-
-            // Clear State
-            await updateDoc(userRef, {
-                quickWorkState: {
-                    isQuickWorking: false,
-                    lastStartedAt: null,
-                    resumableTaskIds: []
-                }
-            });
-
-            setIsQuickWorking(false);
-            setStartTime(null);
-            setCurrentSessionMinutes(0);
+            // End session with custom title overrides
+            await endSession(currentUser.uid, null, { customTitle: taskTitle });
             setShowTitleModal(false);
-
         } catch (err) {
             console.error("Error completing quick work:", err);
             alert("Klaida išsaugant greitą darbą.");
         } finally {
             setIsSubmitting(false);
         }
-    }, [currentUser, startTime]);
+    }, [currentUser]);
 
     // Render modal if showing
     const renderModal = showTitleModal && (

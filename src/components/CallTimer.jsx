@@ -1,94 +1,39 @@
 import React, { useState, useEffect } from 'react';
 import { useTimerState } from '../hooks/useTimerState';
 import { Phone, Square, PhoneOff } from 'lucide-react';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs, addDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { pauseTask, resumeTask } from '../utils/taskActions';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
-
-import { stopBreak, stopQuickWork, stopCall } from '../utils/userStateActions';
+import { startSession, endSession } from '../utils/sessionActions';
 
 export default function CallTimer({ compact = false }) {
     const { currentUser, userData } = useAuth(); // Added userData
 
     const {
         isActive: isCalling,
-        setIsActive: setIsCalling,
         currentSessionMinutes,
-    } = useTimerState(currentUser, 'callState', 'isCalling');
+    } = useTimerState(currentUser, 'callState', 'isCalling', null, null, 'call');
 
     const handleToggleCall = async () => {
         if (!currentUser) return;
 
-        const userRef = doc(db, 'users', currentUser.uid);
-
         try {
             if (!isCalling) {
                 // START CALL
-                // 1. Pause currently running tasks
-                const q = query(
-                    collection(db, 'tasks'),
-                    where('assignedWorkerId', '==', currentUser.uid),
-                    where('timerStatus', '==', 'running')
-                );
-                const snapshot = await getDocs(q);
-
-                const pausePromises = snapshot.docs.map(docSnap => {
-                    const taskData = { id: docSnap.id, ...docSnap.data() };
-                    return pauseTask(taskData);
-                });
-
-                // Collect currently running tasks
-                const currentTaskIds = snapshot.docs.map(doc => doc.id);
-
-                // Fetch existing state to see if we need to inherit resumable IDs
-                const userSnap = await getDoc(userRef);
-                const userData = userSnap.data() || {};
-                const breakResumables = userData.breakState?.resumableTaskIds || [];
-                const quickWorkResumables = userData.quickWorkState?.resumableTaskIds || [];
-
-                // Combine all resumables (prevent duplicates)
-                const allResumableTaskIds = [...new Set([...currentTaskIds, ...breakResumables, ...quickWorkResumables])];
-
-                // Check if Quick Work is running
-                if (userData?.quickWorkState?.isQuickWorking) {
-                    window.dispatchEvent(new CustomEvent('stop-quick-work'));
-                    return;
-                }
-
-                await stopBreak(currentUser.uid);
-                // await stopQuickWork(currentUser.uid, currentUser.displayName); // Handled via event
-
-
-                await Promise.all(pausePromises);
-
-                const now = new Date();
-
-                // 2. Update stats in Firestore
-                await updateDoc(userRef, {
-                    callState: {
-                        isCalling: true,
-                        lastStartedAt: now.toISOString(),
-                        resumableTaskIds: allResumableTaskIds
-                    }
-                });
+                await startSession(currentUser.uid, 'call');
 
                 // Play Call sound
                 SoundManager.playCallSound();
 
-                setIsCalling(true);
-
             } else {
                 // STOP CALL
-                await stopCall(currentUser.uid, currentUser.displayName);
+                await endSession(currentUser.uid);
 
                 // Play Call sound when stopping
                 SoundManager.playCallSound();
-
-                setIsCalling(false);
             }
         } catch (err) {
             console.error("Error toggling call:", err);
