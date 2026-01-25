@@ -7,6 +7,7 @@ import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
+import ActiveWorkSessions from '../components/ActiveWorkSessions';
 import AllUsersCalendar from '../components/AllUsersCalendar';
 import WorkPlanner from '../components/WorkPlanner';
 import TaskHistory from '../components/TaskHistory';
@@ -172,11 +173,34 @@ export default function ManagerView() {
     // Sort tasks based on selected criteria
     const sortedTasks = React.useMemo(() => {
         // Filter out completed, deleted, and unapproved tasks
-        let activeTasks = tasks.filter(t =>
-            (!t.completed || t.status === 'completed' || t.status === 'confirmed') &&
-            !t.isDeleted &&
-            t.status !== 'deleted'
-        );
+        let activeTasks = tasks.filter(t => {
+            // Basic exclusion
+            if (t.isDeleted || t.status === 'deleted') return false;
+
+            // Definition of "Today's Work Day" (Starts at 3:00 AM)
+            const now = new Date();
+            const cutoff = new Date(now);
+            cutoff.setHours(3, 0, 0, 0);
+
+            // If it's before 3AM, the work day started at 3AM yesterday
+            if (now.getHours() < 3) {
+                cutoff.setDate(cutoff.getDate() - 1);
+            }
+
+            const isDone = t.completed || t.status === 'completed' || t.status === 'confirmed';
+
+            if (isDone) {
+                // If the task is done, it should only show if it was finished TODAY (after 3AM)
+                const finishedAt = t.completedAt || t.confirmedAt || t.updatedAt;
+                if (!finishedAt) return false; // Should not happen for done tasks
+
+                const finishDate = new Date(finishedAt);
+                return finishDate >= cutoff;
+            }
+
+            // Not done, so it's active
+            return true;
+        });
 
         // Apply user filter
         if (filterUser) {
@@ -294,6 +318,7 @@ export default function ManagerView() {
             {/* Tab Content */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                 <CombinedHoursSummary />
+                <ActiveWorkSessions />
 
 
 

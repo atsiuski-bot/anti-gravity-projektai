@@ -61,10 +61,21 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
 
 
-        // 1. Listen to Break Sessions (New Logic)
+        // 1. Listen to Break Sessions (New Logic: Query by startTime range for robustness)
+        // This ensures we catch historical sessions that might lack the 'date' field
+        const startOfDay = `${selectedDate}T00:00:00`;
+        const endOfDay = `${selectedDate}T23:59:59`;
+
         const breaksQ = selectedUserId === 'all'
-            ? query(collection(db, 'break_sessions'), where('date', '==', selectedDate))
-            : query(collection(db, 'break_sessions'), where('userId', '==', selectedUserId), where('date', '==', selectedDate));
+            ? query(collection(db, 'break_sessions'),
+                where('startTime', '>=', startOfDay),
+                where('startTime', '<=', endOfDay),
+                orderBy('startTime', 'asc'))
+            : query(collection(db, 'break_sessions'),
+                where('userId', '==', selectedUserId),
+                where('startTime', '>=', startOfDay),
+                where('startTime', '<=', endOfDay),
+                orderBy('startTime', 'asc'));
 
         const unsubBreaks = onSnapshot(breaksQ, (snap) => {
             setBreakSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -193,21 +204,37 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     // Split finished tasks into Today, Earlier, and Archived
     const splitTasks = useMemo(() => {
         const cutoff = get3AMCutoff();
+        // nextDayCutoff is exactly 24 hours after current cutoff
+        const nextDayCutoff = new Date(cutoff.getTime() + 24 * 60 * 60 * 1000);
+
         const todayTasksList = [];
         const earlierTasksList = [];
         const archivedTasksList = [];
 
         finishedTasks.forEach(t => {
             if (t.archivedAt) {
+                // For archived tasks, hide them if they were archived AFTER the selected day's window
+                const archDate = new Date(t.archivedAt);
+                if (archDate >= nextDayCutoff) return; // Hide future archived tasks
+
                 archivedTasksList.push(t);
                 return;
             }
 
-            const finishedDate = new Date(t.completedAt || t.updatedAt);
+            const finishedDate = new Date(t.completedAt || t.updatedAt || t.confirmedAt || t.deletedAt);
 
+            // BOUNDING LOGIC:
+            // 1. If finished AFTER this day's 3AM window ends -> Hide entirely
+            if (finishedDate >= nextDayCutoff) {
+                return;
+            }
+
+            // 2. If finished WITHIN this day's 3AM window -> Today
             if (finishedDate >= cutoff) {
                 todayTasksList.push(t);
-            } else {
+            }
+            // 3. If finished BEFORE this day's 3AM window -> Earlier
+            else {
                 earlierTasksList.push(t);
             }
         });
@@ -245,7 +272,22 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     const totalBreakMinutes = breakSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
 
     // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
-    const manualTasks = finishedTasks.filter(t => t.manualMinutes && t.manualMinutes > 0);
+    // AND belong to the selected date's work day (3AM - 3AM)
+    const manualTasks = useMemo(() => {
+        const cutoff = get3AMCutoff();
+        const nextDayCutoff = new Date(cutoff.getTime() + 24 * 60 * 60 * 1000);
+
+        return finishedTasks.filter(t => {
+            if (!t.manualMinutes || t.manualMinutes <= 0) return false;
+
+            const dateStr = t.completedAt || t.deletedAt || t.updatedAt || t.confirmedAt;
+            if (!dateStr) return false;
+
+            const finishedDate = new Date(dateStr);
+            return finishedDate >= cutoff && finishedDate < nextDayCutoff;
+        });
+    }, [finishedTasks, selectedDate]);
+
     const totalManualMinutes = manualTasks.reduce((acc, t) => acc + (t.manualMinutes || 0), 0);
 
     // Sum from actualTime in tasks (including manual entries)
@@ -266,7 +308,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             let title = s.taskTitle;
             if (deletedTask) {
                 title = `Deleted task: ${deletedTask.title}`;
-                // Lithuanian override if preferred: `Ištrinta užduotis: ${deletedTask.title}`
             }
 
             return {
@@ -282,9 +323,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         });
 
         manualTasks.forEach(t => {
-            // For manual tasks, we infer start time from completedAt - duration
-            // This is an approximation for visual timeline
-            const end = new Date(t.completedAt || t.deletedAt || new Date().toISOString());
+            const endStr = t.completedAt || t.deletedAt || t.confirmedAt || new Date().toISOString();
+            const end = new Date(endStr);
             const start = new Date(end.getTime() - (t.manualMinutes * 60000));
 
             let title = t.title;
@@ -753,6 +793,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     expandedTasks={expandedTasks}
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
+                    highlight={true}
                 />
             )}
 
@@ -900,11 +941,15 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment, users, userRole,
 };
 
 // Task List Helper Component
-function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, users, userRole, expandedTasks, toggleExpand, setActiveModal }) {
+function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, users, userRole, expandedTasks, toggleExpand, setActiveModal, highlight = false }) {
     return (
         <div className={clsx("rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-white")}>
-            <div className={clsx("px-4 py-3 bg-gray-50 border-b border-gray-200", viewMode === 'mobile' && "rounded-lg mb-2 border")}>
-                <h3 className="text-sm font-bold text-gray-700">{title} ({tasks.length})</h3>
+            <div className={clsx(
+                "px-4 border-b border-gray-200",
+                highlight ? "bg-blue-600 text-white py-6" : "py-3 bg-gray-50 text-gray-700",
+                viewMode === 'mobile' && "rounded-lg mb-2 border"
+            )}>
+                <h3 className={clsx("font-bold transition-all", highlight ? "text-xl md:text-2xl" : "text-sm")}>{title} ({tasks.length})</h3>
             </div>
 
             {viewMode === 'mobile' ? (

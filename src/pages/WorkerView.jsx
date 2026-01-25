@@ -68,6 +68,21 @@ export default function WorkerView() {
                 // Apply visibility filtering based on day of week and time
                 tasksData = filterTasksByVisibility(tasksData);
 
+                // Additional filter: only show done tasks from "Today's Work Day" (3AM - 3AM)
+                const now = new Date();
+                const cutoff = new Date(now);
+                cutoff.setHours(3, 0, 0, 0);
+                if (now.getHours() < 3) cutoff.setDate(cutoff.getDate() - 1);
+
+                tasksData = tasksData.filter(t => {
+                    if (t.completed || t.status === 'completed' || t.status === 'confirmed') {
+                        const finishedAt = t.completedAt || t.confirmedAt || t.updatedAt;
+                        if (!finishedAt) return false;
+                        return new Date(finishedAt) >= cutoff;
+                    }
+                    return true;
+                });
+
                 // Sort by Day -> Priority
                 tasksData = sortWorkerTasks(tasksData);
 

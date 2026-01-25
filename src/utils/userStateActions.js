@@ -46,11 +46,9 @@ const resumeTasksAndSetUserStatus = async (userId, resumableTaskIds) => {
     await Promise.all(resumePromises);
 
     if (resumedCount > 0) {
-        // Update via startSession for task?
-        // resumeTask already updates User Status.
-        // We probably should call startSession('task', { taskId: lastResumedTaskId }) 
-        // to keep activeSession in sync!
-        await startSession(userId, 'task', { taskId: lastResumedTaskId, taskTitle: 'Resumed Task' });
+        // resumeTask already updates User Status and activeSession.
+        // No need to call startSession again, as it might inadvertently pause the task we just resumed if it detects it as active.
+        console.log(`Resumed ${resumedCount} tasks.`);
     } else {
         await updateDoc(doc(db, 'users', userId), {
             workStatus: {

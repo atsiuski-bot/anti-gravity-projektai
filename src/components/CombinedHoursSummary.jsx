@@ -29,14 +29,10 @@ export default function CombinedHoursSummary() {
         const hours = now.getHours();
         const minutes = now.getMinutes();
 
-        // Custom Week Logic: Reset at Saturday 18:30
+        // Custom Week Logic: Reset at Saturday 18:30 is REMOVED to show current week data on Sunday
         let targetDate = now;
-        // If it's Saturday > 18:30 OR Sunday, we show the next week (starting Monday)
-        if ((day === 6 && (hours > 18 || (hours === 18 && minutes >= 30))) || day === 0) {
-            // Move to next Monday
-            if (day === 6) targetDate = addDays(now, 2);
-            else if (day === 0) targetDate = addDays(now, 1);
-        }
+        // Logic removed to fix "Empty Sunday" issue. We now always show the week corresponding to 'now'.
+
 
         // Standard week starts Monday
         const weekStart = startOfWeek(targetDate, { weekStartsOn: 1 });
@@ -189,16 +185,8 @@ export default function CombinedHoursSummary() {
             // For simplicity in this display component, let's use the same logic:
 
             const now = new Date();
-            const day = now.getDay();
-            const hours = now.getHours();
-            const minutes = now.getMinutes();
-            let targetDate = now;
-            if ((day === 6 && (hours > 18 || (hours === 18 && minutes >= 30))) || day === 0) {
-                if (day === 6) targetDate = addDays(now, 2);
-                else if (day === 0) targetDate = addDays(now, 1);
-            }
-            const wStart = startOfWeek(targetDate, { weekStartsOn: 1 });
-            const wEnd = endOfWeek(targetDate, { weekStartsOn: 1 });
+            const wStart = startOfWeek(now, { weekStartsOn: 1 });
+            const wEnd = endOfWeek(now, { weekStartsOn: 1 });
 
             tasks.forEach(t => {
                 if (t.assignedWorkerId === user.id && t.manualMinutes > 0) {

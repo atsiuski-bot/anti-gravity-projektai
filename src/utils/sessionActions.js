@@ -14,14 +14,24 @@ export const startSession = async (userId, type, metadata = {}) => {
     try {
         const userRef = doc(db, 'users', userId);
 
-        // 1. End current session if exists
-        // We fetch first to know what to do (e.g. if it's a task, we might need to pause it using taskActions)
+        // 1. Fetch current user state
         const userSnap = await getDoc(userRef);
         const userData = userSnap.data();
 
+        // 2. Identify tasks that need to be resumed later
+        let resumableTaskIds = [];
+
+        // Check activeSession for task
+        if (userData?.activeSession?.type === 'task' && userData?.activeSession?.taskId) {
+            resumableTaskIds.push(userData.activeSession.taskId);
+        }
+        // Check legacy workStatus
+        else if (userData?.workStatus?.status === 'running' && userData?.workStatus?.activeTaskId) {
+            resumableTaskIds.push(userData.workStatus.activeTaskId);
+        }
+
+        // 3. End current session if exists and pause tasks
         if (userData?.activeSession?.type) {
-            // Special handling for Tasks: We must PAUSE the task logic (Timer + Document) 
-            // activeSession just tracks the user state.
             if (userData.activeSession.type === 'task' && userData.activeSession.taskId) {
                 const taskDoc = await getDoc(doc(db, 'tasks', userData.activeSession.taskId));
                 if (taskDoc.exists()) {
@@ -29,9 +39,9 @@ export const startSession = async (userId, type, metadata = {}) => {
                 }
                 // After pausing, we can call endSession safely (though pauseTask updates user status too)
                 // endSession will clear the activeSession field if pauseTask didn't already (pauseTask sets it to paused/idle legacy style)
-                await endSession(userId, userData);
+                await endSession(userId, userData, {}, true);
             } else {
-                await endSession(userId, userData);
+                await endSession(userId, userData, {}, true);
             }
         } else {
             // Check legacy states
@@ -47,11 +57,10 @@ export const startSession = async (userId, type, metadata = {}) => {
                         await pauseTask({ id: taskDoc.id, ...taskDoc.data() });
                     }
                 }
-                // No need to call endLegacySession for task as pauseTask handles logging
             }
         }
 
-        // 2. Prepare new session data
+        // 4. Prepare new session data
         const startTime = new Date().toISOString();
         const activeSession = {
             type,
@@ -59,7 +68,7 @@ export const startSession = async (userId, type, metadata = {}) => {
             ...metadata // contains taskId for tasks
         };
 
-        // 3. Update User Doc
+        // 5. Update User Doc
         const updates = {
             activeSession,
             // Legacy Sync (Double Write)
@@ -72,19 +81,19 @@ export const startSession = async (userId, type, metadata = {}) => {
                 lastStartedAt: startTime,
                 dailyAccumulatedMinutes: userData?.breakState?.dailyAccumulatedMinutes || 0,
                 lastDate: new Date().toISOString().split('T')[0],
-                resumableTaskIds: [] // We don't really use this in new logic but keeping structure
+                resumableTaskIds: resumableTaskIds
             };
         } else if (type === 'call') {
             updates.callState = {
                 isCalling: true,
                 lastStartedAt: startTime,
-                resumableTaskIds: []
+                resumableTaskIds: resumableTaskIds
             };
         } else if (type === 'quick_work') {
             updates.quickWorkState = {
                 isQuickWorking: true,
                 lastStartedAt: startTime,
-                resumableTaskIds: []
+                resumableTaskIds: resumableTaskIds
             };
         } else if (type === 'task') {
             updates.workStatus = {
@@ -111,7 +120,7 @@ export const startSession = async (userId, type, metadata = {}) => {
  * @param {Object} [userInfo] - Optional, if we already fetched user doc
  * @param {Object} [sessionOverrides] - Optional, metadata to merge/override (e.g. customTitle)
  */
-export const endSession = async (userId, userInfo = null, sessionOverrides = {}) => {
+export const endSession = async (userId, userInfo = null, sessionOverrides = {}, skipResume = false) => {
     try {
         const userRef = doc(db, 'users', userId);
         let userData = userInfo;
@@ -179,6 +188,28 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {})
         }
 
         await updateDoc(userRef, updates);
+
+        // 4. Task Resumption Logic
+        // Determine resumable IDs from the state we just closed
+        if (!skipResume) {
+            let resumableTaskIds = [];
+            if (session.type === 'break') resumableTaskIds = userData.breakState?.resumableTaskIds || [];
+            else if (session.type === 'call') resumableTaskIds = userData.callState?.resumableTaskIds || [];
+            else if (session.type === 'quick_work') resumableTaskIds = userData.quickWorkState?.resumableTaskIds || [];
+
+            if (resumableTaskIds && resumableTaskIds.length > 0) {
+                const resumePromises = resumableTaskIds.map(async (taskId) => {
+                    const tDoc = await getDoc(doc(db, 'tasks', taskId));
+                    if (tDoc.exists()) {
+                        const tData = { id: tDoc.id, ...tDoc.data() };
+                        if (tData.timerStatus === 'paused') {
+                            await resumeTask(tData, userId);
+                        }
+                    }
+                });
+                await Promise.allSettled(resumePromises);
+            }
+        }
 
     } catch (err) {
         console.error("Error ending session:", err);

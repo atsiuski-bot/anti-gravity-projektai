@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
+import { startOfWeek, endOfWeek } from 'date-fns';
 import { Clock, AlertTriangle } from 'lucide-react';
 import { formatDisplayName, parseTimeToHours } from '../utils/formatters';
 
@@ -59,6 +60,14 @@ export default function DailyHoursSummary() {
     const dailyStats = useMemo(() => {
         const stats = {};
 
+        // Calculate current week range
+        // Note: Using ISO string comparison for simple date matching
+        const now = new Date();
+        const currentParams = { weekStartsOn: 1 };
+        // We want to filter for the CURRENT week, matching the column headers Monday-Sunday
+        const weekStart = startOfWeek(now, currentParams);
+        const weekEnd = endOfWeek(now, currentParams);
+
         users.forEach(user => {
             stats[user.id] = {
                 name: formatDisplayName(user.displayName) || user.email,
@@ -84,27 +93,57 @@ export default function DailyHoursSummary() {
                 });
             }
 
-            // Add planned hours from tasks
+            // A helper to check if a date is in the current week
+            const isInCurrentWeek = (dateObj) => {
+                return dateObj >= weekStart && dateObj <= weekEnd;
+            };
+
+            // Add planned hours from tasks (ONLY if task is scheduled for this week OR generally? 
+            // Usually planned tasks are recurring or just per weekday. 
+            // The existing logic seemed to just check dayOfWeek property. 
+            // If tasks are specific instances, we should check date. 
+            // However, the issue described was regarding "Worked" hours (actual).
+            // Let's keep planned logic as is for now unless requested, as it seems to rely on "recurring" logic possibly?)
+            // Actually, tasks.dayOfWeek implies recurring or specific day planning. 
+            // Let's focus on fixing ACTUAL hours first which is the main bug.
+
             tasks.forEach(task => {
                 if (task.assignedWorkerId === user.id && task.dayOfWeek && stats[user.id].days[task.dayOfWeek] !== undefined) {
+                    // Start fix: If task has a specific date, ensuring it matches this week?
+                    // Currently tasks with dayOfWeek might be recurring or specific. 
+                    // Assuming recurring/general for now as 'planned'.
                     stats[user.id].days[task.dayOfWeek].planned += parseTimeToHours(task.estimatedTime);
                 }
             });
 
-            // Add actual hours from work_sessions
+            // Add actual hours from work_sessions (FILTERED BY CURRENT WEEK)
             workSessions.forEach(session => {
                 try {
                     if (session.workerId === user.id && session.date) {
-                        // Map session date to day name
-                        const daysMap = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
                         const sessionDate = new Date(session.date);
 
-                        if (!isNaN(sessionDate.getTime())) {
-                            const dayName = daysMap[sessionDate.getDay()];
-                            if (stats[user.id].days[dayName]) {
+                        // CRITICAL FIX: Filter by current week
+                        if (!isNaN(sessionDate.getTime()) && isInCurrentWeek(sessionDate)) {
+                            // Map session date to day name
+                            const dayName = dayNames[sessionDate.getDay() === 0 ? 6 : sessionDate.getDay() - 1];
+                            // Note: getDay() 0=Sun. Our dayNames array: 0=Mon, ... 6=Sun.
+                            // Need to map correctly. 
+                            // dayNames index: 0->Mon(1), 1->Tue(2)... 5->Sat(6), 6->Sun(0)
+
+                            let mappedDayName = '';
+                            const dayNum = sessionDate.getDay();
+                            if (dayNum === 0) mappedDayName = 'Sekmadienis';
+                            else if (dayNum === 1) mappedDayName = 'Pirmadienis';
+                            else if (dayNum === 2) mappedDayName = 'Antradienis';
+                            else if (dayNum === 3) mappedDayName = 'Trečiadienis';
+                            else if (dayNum === 4) mappedDayName = 'Ketvirtadienis';
+                            else if (dayNum === 5) mappedDayName = 'Penktadienis';
+                            else if (dayNum === 6) mappedDayName = 'Šeštadienis';
+
+                            if (stats[user.id].days[mappedDayName]) {
                                 const durationHours = (session.durationMinutes || 0) / 60;
                                 if (Number.isFinite(durationHours) && durationHours >= 0) {
-                                    stats[user.id].days[dayName].actual += durationHours;
+                                    stats[user.id].days[mappedDayName].actual += durationHours;
                                 }
                             }
                         }
