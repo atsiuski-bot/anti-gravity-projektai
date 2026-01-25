@@ -44,7 +44,7 @@ export default function Reports({ users }) {
         if (activeTab === 'tasks') {
             fetchTasks();
         }
-    }, [activeTab, taskFilters]); // Refetch when filters change
+    }, [activeTab, taskFilters, taskSort]); // Refetch when filters or sort change
 
     const fetchWorkHours = async () => {
         setLoading(true);
@@ -158,24 +158,35 @@ export default function Reports({ users }) {
                 return true;
             });
 
-            // Sorting
-            allTasks.sort((a, b) => {
-                // Primary: Date
-                const dateA = new Date(a.completedAt || a.updatedAt).getTime();
-                const dateB = new Date(b.completedAt || b.updatedAt).getTime();
+            // CRITICAL: Sort tasks by completion date (newest first)
+            // Force sort to ALWAYS be by completedAt descending
+            const sortedTasks = [...allTasks].sort((a, b) => {
+                const getTimestamp = (task) => {
+                    const dateStr = task.completedAt || task.archivedAt || task.updatedAt;
+                    if (!dateStr) return 0;
+                    const timestamp = new Date(dateStr).getTime();
+                    return isNaN(timestamp) ? 0 : timestamp;
+                };
 
-                if (taskSort === 'date_desc') return dateB - dateA;
-                if (taskSort === 'date_asc') return dateA - dateB;
+                const timeA = getTimestamp(a);
+                const timeB = getTimestamp(b);
 
-                const valA = a.timerMinutes || 0;
-                const valB = b.timerMinutes || 0;
-                if (taskSort === 'time_desc') return valB - valA;
-                if (taskSort === 'time_asc') return valA - valB;
-
-                return 0; // default
+                // Always descending (newest first)
+                return timeB - timeA;
             });
 
-            setFilteredTasks(allTasks);
+            setFilteredTasks(sortedTasks);
+
+            // DEBUG: Log complete task data to see what fields deleted tasks have
+            console.log('FULL TASK DATA (first 3):', sortedTasks.slice(0, 3).map(t => ({
+                title: t.title,
+                status: t.status,
+                isDeleted: t.isDeleted,
+                deletedAt: t.deletedAt,
+                completed: t.completed,
+                completedAt: t.completedAt,
+                isArchived: t.isArchived
+            })));
 
         } catch (error) {
             console.error("Error fetching tasks:", error);
@@ -310,8 +321,8 @@ export default function Reports({ users }) {
         return Math.round(totalMins / daysCount);
     };
 
-    // Split tasks
-    const getSplitTasks = () => {
+    // Split tasks using useMemo to ensure it uses the latest filteredTasks
+    const { todayTasks, earlierTasks } = React.useMemo(() => {
         const cutoff = get3AMCutoff();
 
         const todayTasks = [];
@@ -331,9 +342,7 @@ export default function Reports({ users }) {
         });
 
         return { todayTasks, earlierTasks };
-    };
-
-    const { todayTasks, earlierTasks } = getSplitTasks();
+    }, [filteredTasks]);
 
     // Helper to render table
     const TaskListTable = ({ tasks, title }) => (
@@ -382,10 +391,10 @@ export default function Reports({ users }) {
                                 </td>
                                 <td className="px-2 py-2">
                                     <div className="flex items-center gap-2">
-                                        <div className={`text-sm font-bold text-gray-900 whitespace-normal break-words ${task.isDeleted ? 'line-through' : ''}`}>
+                                        <div className={`text-sm font-bold text-gray-900 whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-gray-500' : ''}`}>
                                             {task.title}
                                         </div>
-                                        {task.isDeleted && (
+                                        {(task.isDeleted || task.status === 'deleted') && (
                                             <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold bg-red-100 text-red-800 border border-red-200 uppercase whitespace-nowrap">
                                                 Ištrinta
                                             </span>
@@ -417,7 +426,11 @@ export default function Reports({ users }) {
                                     </span>
                                 </td>
                                 <td className="px-1 py-2 whitespace-nowrap">
-                                    {isConfirmed ? (
+                                    {(task.isDeleted || task.status === 'deleted') ? (
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-800 border border-red-200">
+                                            Ištrinta
+                                        </span>
+                                    ) : isConfirmed ? (
                                         <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
                                             Patvirt.
                                         </span>

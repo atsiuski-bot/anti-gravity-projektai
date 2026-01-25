@@ -109,28 +109,33 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         let deletedTasks = [];
 
         const updateAggregatedTasks = () => {
-            const allRelevantTasks = [...activeTasks, ...archivedTasks, ...deletedTasks];
+            // deduplicate tasks by ID to avoid duplicate key warnings
+            const taskMap = new Map();
+            [...activeTasks, ...archivedTasks, ...deletedTasks].forEach(t => {
+                if (t.id) taskMap.set(t.id, t);
+            });
+            const allRelevantTasks = Array.from(taskMap.values());
 
-            // Filter for scheduled (planned for this weekday) - Only if single user? 
-            // In Team mode, "Scheduled" might be confusing, user asked for "done tasks" specifically.
+            // Filter for scheduled (planned for this weekday)
             const scheduled = allRelevantTasks.filter(t => t.dayOfWeek === weekday);
             setScheduledTasks(scheduled);
 
-            // Filter for finished OR deleted today (to show in timeline)
+            // Filter for finished OR deleted today
             const finishedToday = allRelevantTasks.filter(t => {
                 const compDate = t.completedAt?.split('T')[0];
                 const archDate = t.archivedAt?.split('T')[0];
                 const delDate = t.deletedAt?.split('T')[0];
                 return compDate === selectedDate || archDate === selectedDate || delDate === selectedDate;
             });
+
             setFinishedTasks(finishedToday);
             setLoading(false);
         };
 
         const unsubActive = onSnapshot(activeQ, (snap) => {
-            activeTasks = snap.docs
-                .map(d => ({ id: d.id, ...d.data() }))
-                .filter(t => !t.isDeleted && t.status !== 'deleted');
+            const allActiveTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+            activeTasks = allActiveTasks.filter(t => !t.isDeleted && t.status !== 'deleted');
             updateAggregatedTasks();
         }, (error) => {
             console.error("Error fetching active tasks:", error);
@@ -139,7 +144,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
         const unsubArchived = onSnapshot(archivedQ, (snap) => {
             archivedTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            archivedTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
             updateAggregatedTasks();
             setLoading(false);
         });
@@ -179,31 +184,46 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     // Split finished tasks into Today, Earlier, and Archived
     const splitTasks = useMemo(() => {
         const cutoff = get3AMCutoff();
-        const todayTasks = [];
-        const earlierTasks = [];
-        const archivedTasks = [];
+        const todayTasksList = [];
+        const earlierTasksList = [];
+        const archivedTasksList = [];
 
         finishedTasks.forEach(t => {
-            // Archived tasks go to their own list
             if (t.archivedAt) {
-                archivedTasks.push(t);
+                archivedTasksList.push(t);
                 return;
             }
 
             const finishedDate = new Date(t.completedAt || t.updatedAt);
 
-            // Check if task finished AFTER cutoff (today)
             if (finishedDate >= cutoff) {
-                todayTasks.push(t);
+                todayTasksList.push(t);
             } else {
-                // For earlier tasks, ONLY include unconfirmed ones
-                if (t.status !== 'confirmed') {
-                    earlierTasks.push(t);
-                }
+                earlierTasksList.push(t);
             }
         });
 
-        return { todayTasks, earlierTasks, archivedTasks };
+        // Robust descending sort helper
+        const sortByFinishedTime = (tasks) => {
+            return [...tasks].sort((a, b) => {
+                const getTime = (task) => {
+                    const dateStr = task.completedAt || task.archivedAt || task.updatedAt || task.deletedAt;
+                    if (!dateStr) return 0;
+                    const d = new Date(dateStr);
+                    return isNaN(d.getTime()) ? 0 : d.getTime();
+                };
+                const timeA = getTime(a);
+                const timeB = getTime(b);
+                if (timeA === timeB) return (b.id || "").localeCompare(a.id || "");
+                return timeB - timeA;
+            });
+        };
+
+        return {
+            todayTasks: sortByFinishedTime(todayTasksList),
+            earlierTasks: sortByFinishedTime(earlierTasksList),
+            archivedTasks: sortByFinishedTime(archivedTasksList)
+        };
     }, [finishedTasks, selectedDate]);
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
@@ -334,21 +354,58 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     const handleToggleConfirm = async (task) => {
         const isCurrentlyConfirmed = task.status === 'confirmed';
-        const newStatus = isCurrentlyConfirmed ? 'completed' : 'confirmed';
+
+        // Determine if it's a deleted task
+        const isDeletedTask = task.isDeleted || task.status === 'deleted';
+
+        // Logical new status
+        let newStatus;
+        if (isDeletedTask) {
+            // For deleted tasks: toggle between 'confirmed' and 'deleted'
+            // We interpret 'confirmed' on a deleted task as "Deleted-Confirmed"
+            newStatus = isCurrentlyConfirmed ? 'deleted' : 'confirmed';
+        } else {
+            // Normal tasks: toggle between 'confirmed' and 'completed' (unconfirmed)
+            newStatus = isCurrentlyConfirmed ? 'completed' : 'confirmed';
+        }
 
         try {
-            // Determine collection based on whether it's already archived
-            const collectionName = task.archivedAt ? 'archived_tasks' : 'tasks';
+            // Determine collection based on whether it's archived OR deleted
+            // Deleted tasks are moved to archived_tasks collection by default now
+            const collectionName = (task.archivedAt || task.isDeleted || task.status === 'deleted') ? 'archived_tasks' : 'tasks';
 
-            await updateDoc(doc(db, collectionName, task.id), {
+            const updates = {
                 status: newStatus,
                 confirmedAt: newStatus === 'confirmed' ? new Date().toISOString() : null,
                 confirmedBy: newStatus === 'confirmed' ? currentUser.uid : null,
                 updatedAt: new Date().toISOString()
-            });
+            };
+
+            // CRITICAL: If it was a deleted task, ensure isDeleted is TRUE even if status becomes 'confirmed'.
+            // This prevents it from accidentally appearing as an active task.
+            if (isDeletedTask) {
+                updates.isDeleted = true;
+                // Preserve deletedAt if present, or set it if missing
+                if (!task.deletedAt) {
+                    updates.deletedAt = new Date().toISOString();
+                }
+            }
+
+            await updateDoc(doc(db, collectionName, task.id), updates);
+
+            // Optimistic update for UI responsiveness
+            setFinishedTasks(prev => prev.map(t =>
+                t.id === task.id ? { ...t, ...updates } : t
+            ));
+
         } catch (err) {
             console.error("Error confirming task:", err);
-            alert("Klaida keičiant statusą: " + err.message);
+            // Try to recover - maybe it's in the other collection?
+            if (err.code === 'not-found') {
+                alert("Klaida: Dokumentas nerastas. Pabandykite perkrauti puslapį.");
+            } else {
+                alert("Klaida keičiant statusą: " + err.message);
+            }
         }
     };
 
@@ -591,7 +648,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                                 </td>
                                             )}
                                             <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
-                                                <div className="text-sm font-bold text-gray-900 whitespace-normal break-words">
+                                                <div className={clsx(
+                                                    "text-sm font-bold text-gray-900 whitespace-normal break-words",
+                                                    (task.isDeleted || task.status === 'deleted') && "line-through text-gray-500"
+                                                )}>
                                                     {task.title}
                                                 </div>
                                                 {task.deadline && (
@@ -647,7 +707,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                                 </span>
                                             </td>
                                             <td className="px-1 py-2 whitespace-nowrap">
-                                                {isConfirmed ? (
+                                                {(task.isDeleted || task.status === 'deleted') ? (
+                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-800 border border-red-200">
+                                                        Ištrinta
+                                                    </span>
+                                                ) : isConfirmed ? (
                                                     <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
                                                         Patvirt.
                                                     </span>
@@ -682,6 +746,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             )}
         </div>
     );
+
+    const daysMap = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
+    const weekday = daysMap[new Date(selectedDate).getDay()];
 
     return (
         <div className="space-y-6">
@@ -928,11 +995,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
 
             {todayTasks.length > 0 && (
-                <TaskListTable tasks={todayTasks} title="Užduotys atliktos ŠIANDIEN (nuo 3:00 ryto)" />
+                <TaskListTable
+                    tasks={todayTasks}
+                    title={`Užduotys atliktos ${selectedDate} ${weekday}`}
+                />
             )}
 
             {earlierTasks.length > 0 && (
-                <TaskListTable tasks={earlierTasks} title="Užduotys atliktos ANKSČIAU (Nepatvirtintos)" />
+                <TaskListTable tasks={earlierTasks} title="Užduotys atliktos anksčiau, laukia patvirtinimo" />
             )}
 
             {archivedTasks.length > 0 && (

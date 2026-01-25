@@ -95,6 +95,7 @@ export const stopBreak = async (userId) => {
                         durationMinutes: sessionMinutes,
                         date: sessionDate,
                         createdAt: new Date().toISOString(),
+                        completedAt: now.toISOString(), // Standardize completion time
                         isBreak: true
                     });
                 }

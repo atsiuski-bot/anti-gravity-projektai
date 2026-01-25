@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc } from 'firebase/firestore';
-import { FileText, Download, Trash2, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase } from 'lucide-react';
+import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where } from 'firebase/firestore';
+import { FileText, Download, Trash2, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase, ChevronDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { updateDoc } from 'firebase/firestore';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
+import { startOfWeek, subWeeks } from 'date-fns';
 
 export default function TaskHistory() {
     const { userRole } = useAuth();
@@ -13,6 +14,10 @@ export default function TaskHistory() {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
+
+    // Pagination state: Default to 2 weeks (Current + Last)
+    const [weeksToShow, setWeeksToShow] = useState(2);
+    const [startDate, setStartDate] = useState(null);
 
     const toggleExpand = (taskId) => {
         const newExpanded = new Set(expandedTasks);
@@ -24,19 +29,66 @@ export default function TaskHistory() {
         setExpandedTasks(newExpanded);
     };
 
+    // Calculate start date when weeksToShow changes
     useEffect(() => {
-        const q = query(collection(db, 'archived_tasks'), orderBy('archivedAt', 'desc'));
+        const now = new Date();
+        // Start of current week (Monday)
+        const startOfCurrentWeek = startOfWeek(now, { weekStartsOn: 1 });
+        // Subtract weeks to get the start date window
+        // weeksToShow = 1 -> Start of current week
+        // weeksToShow = 2 -> Start of last week
+        const start = subWeeks(startOfCurrentWeek, weeksToShow - 1);
+        setStartDate(start.toISOString());
+    }, [weeksToShow]);
+
+    useEffect(() => {
+        if (!startDate) return;
+
+        setLoading(true);
+        // Query tasks archived AFTER the calculated start date
+        const q = query(
+            collection(db, 'archived_tasks'),
+            where('archivedAt', '>=', startDate),
+            orderBy('archivedAt', 'desc')
+        );
+
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const tasksData = snapshot.docs.map(doc => ({
                 id: doc.id,
                 ...doc.data()
             }));
-            setTasks(tasksData);
+
+            // Sort by completion date (newest first) - ALWAYS descending
+            // Note: firestore already sorts by archivedAt desc, but we do manual sort as well 
+            // to ensure consistency if we mix other dates logic later, though firestore order is primary.
+            const sortedTasks = [...tasksData].sort((a, b) => {
+                const getTimestamp = (task) => {
+                    const dateStr = task.completedAt || task.archivedAt || task.updatedAt;
+                    if (!dateStr) return 0;
+                    const timestamp = new Date(dateStr).getTime();
+                    return isNaN(timestamp) ? 0 : timestamp;
+                };
+
+                const timeA = getTimestamp(a);
+                const timeB = getTimestamp(b);
+
+                // Descending (newest first)
+                return timeB - timeA;
+            });
+
+            setTasks(sortedTasks);
+            setLoading(false);
+        }, (error) => {
+            console.error("Error subscribing to archived tasks:", error);
             setLoading(false);
         });
 
         return () => unsubscribe();
-    }, []);
+    }, [startDate]);
+
+    const handleLoadMore = () => {
+        setWeeksToShow(prev => prev + 1);
+    };
 
     const handleExport = () => {
         // Prepare data for export - remove internal IDs if needed, or keep them
@@ -98,6 +150,9 @@ export default function TaskHistory() {
                 confirmedBy: null,
                 archivedAt: null,
                 archivedBy: null,
+                isDeleted: false,
+                deletedAt: null,
+                deletedBy: null,
                 updatedAt: new Date().toISOString()
             };
 
@@ -122,7 +177,8 @@ export default function TaskHistory() {
         }
     };
 
-    if (loading) {
+    // Initial loading state only (if tasks are empty and loading is true)
+    if (loading && tasks.length === 0) {
         return <div className="p-8 text-center text-gray-500">Kraunama istorija...</div>;
     }
 
@@ -130,13 +186,18 @@ export default function TaskHistory() {
         <div className="space-y-4">
             <div className="flex justify-between items-center">
                 <h2 className="text-lg font-semibold text-gray-900">Užduočių istorija ({tasks.length})</h2>
-                <button
-                    onClick={handleExport}
-                    className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-                >
-                    <Download className="w-4 h-4" />
-                    Atsisiųsti AI analizei (JSON)
-                </button>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500">
+                        {weeksToShow === 1 ? 'Ši savaitė' : `Paskutinės ${weeksToShow} savaitės`}
+                    </span>
+                    <button
+                        onClick={handleExport}
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                    >
+                        <Download className="w-4 h-4" />
+                        Atsisiųsti AI analizei (JSON)
+                    </button>
+                </div>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -156,7 +217,10 @@ export default function TaskHistory() {
                             {tasks.map((task) => (
                                 <tr key={task.id} className="group hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0">
                                     <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
-                                        <div className="text-sm font-bold text-gray-900 whitespace-normal break-words">
+                                        <div className={clsx(
+                                            "text-sm font-bold text-gray-900 whitespace-normal break-words",
+                                            (task.isDeleted || task.status === 'deleted') && "line-through text-gray-500"
+                                        )}>
                                             {task.title}
                                         </div>
                                         {task.deadline && (
@@ -219,7 +283,11 @@ export default function TaskHistory() {
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         <div className="flex items-center gap-1">
-                                            {task.status === 'confirmed' ? (
+                                            {(task.isDeleted || task.status === 'deleted') ? (
+                                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-800 border border-red-200">
+                                                    Ištrinta
+                                                </span>
+                                            ) : task.status === 'confirmed' ? (
                                                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
                                                     Patvirt.
                                                 </span>
@@ -268,6 +336,27 @@ export default function TaskHistory() {
                             )}
                         </tbody>
                     </table>
+                </div>
+            </div>
+
+            {/* Show More Button */}
+            <div className="flex justify-center pt-2 pb-6">
+                <button
+                    onClick={handleLoadMore}
+                    disabled={loading}
+                    className="flex items-center gap-2 px-6 py-2.5 bg-white border border-gray-300 shadow-sm text-gray-700 font-medium rounded-full hover:bg-gray-50 hover:shadow active:scale-95 transition-all text-sm group"
+                >
+                    {loading ? (
+                        <span>Kraunama...</span>
+                    ) : (
+                        <>
+                            <span>Rodyti daugiau</span>
+                            <ChevronDown className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" />
+                        </>
+                    )}
+                </button>
+                <div className="text-xs text-gray-400 absolute right-4 mt-3">
+                    (+1 savaitė)
                 </div>
             </div>
         </div>

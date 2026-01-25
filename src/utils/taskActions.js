@@ -315,17 +315,32 @@ export const deleteTask = async (task, userId) => {
     if (!task || !task.id) return;
 
     try {
-        // 1. Create copy in deleted_tasks (Safety backup)
-        await setDoc(doc(db, 'deleted_tasks', task.id), {
-            ...task,
-            deletedAt: new Date().toISOString(),
-            deletedBy: userId
-        });
+        // 0. Handle Active Session if Running
+        if (task.timerStatus === 'running') {
+            try {
+                // a. Pause to log session and calculate time
+                await pauseTask(task);
 
-        // 2. Mark task as completed with deleted flag
-        // This makes it appear in Done Tasks window where it can be confirmed by manager
-        await updateDoc(doc(db, 'tasks', task.id), {
-            status: 'completed',
+                // b. Force User Status to Idle
+                // pauseTask sets user to 'paused' on this task, but we are deleting it.
+                // So we must reset user to idle.
+                // We use the helper logic directly or the same update structure.
+                if (task.assignedWorkerId) {
+                    await updateUserWorkStatus(task.assignedWorkerId, false, 'idle', null);
+                }
+
+            } catch (pErr) {
+                console.error("Error pausing active task before deletion:", pErr);
+                // Continue with deletion even if pause fails, to avoid "undead" tasks
+            }
+        }
+
+        // 1. Move to archived_tasks immediately with deleted flag
+        const { id, ...taskData } = task;
+
+        await setDoc(doc(db, 'archived_tasks', id), {
+            ...taskData,
+            status: 'deleted',
             completed: true,
             completedAt: new Date().toISOString(),
             isDeleted: true,
@@ -336,6 +351,8 @@ export const deleteTask = async (task, userId) => {
             updatedAt: new Date().toISOString()
         });
 
+        // 2. Delete from active tasks
+        await deleteDoc(doc(db, 'tasks', id));
 
     } catch (err) {
         console.error("Error deleting task:", err);

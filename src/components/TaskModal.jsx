@@ -11,7 +11,7 @@ import { getPriorityOptions, normalizePriority, DEFAULT_PRIORITY } from '../util
 import { compressImage } from '../utils/imageUtils';
 
 export default function TaskModal({ isOpen, onClose, task, role }) {
-    const { currentUser, userRole } = useAuth();
+    const { currentUser, userRole, userData } = useAuth();
     const [loading, setLoading] = useState(false);
     const [workers, setWorkers] = useState([]);
 
@@ -350,6 +350,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             // Keep the first URL as 'attachmentUrl' for backward compatibility, if any
             const primaryAttachmentUrl = currentAttachmentUrls.length > 0 ? currentAttachmentUrls[0] : '';
 
+            let activeAuditorId = formData.managerId;
+            // Check if user assigned THEMSELVES as the manager (Auditor)
+            // If so, and they have a default manager, the Default Manager becomes the Auditor (for approval purposes)
+            // BUT we keep the visible managerId as the user themselves (as requested).
+            if (activeAuditorId === currentUser.uid && userData?.defaultManager) {
+                console.log("User selected themselves as auditor. Routing approval to default manager:", userData.defaultManager);
+                activeAuditorId = userData.defaultManager;
+            }
+
             const taskData = {
                 ...formData,
                 attachmentUrl: primaryAttachmentUrl,
@@ -365,14 +374,13 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             } else {
                 // Determine if user is a manager/admin based on Context OR Prop
                 const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || role === 'manager' || role === 'admin';
-                const isSelfAssigned = formData.assignedWorkerId === currentUser.uid;
-                const isOtherManagerAssigned = formData.managerId && formData.managerId !== currentUser.uid;
+                // const isSelfAssigned = formData.assignedWorkerId === currentUser.uid; // Unused
+                // const isOtherManagerAssigned = formData.managerId && formData.managerId !== currentUser.uid; // Unused
 
 
 
                 // Determine initial status:
                 // - If manager/admin creates: active (no approval needed)
-                // - If worker creates: unapproved (needs approval)
                 let initialStatus = 'active';
                 if (!isManagerOrAdmin) {
                     initialStatus = 'unapproved';
@@ -382,17 +390,18 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 docRef = await addDoc(collection(db, 'tasks'), {
                     ...taskData,
                     status: initialStatus,
-                    taskManager: formData.managerId, // Store as taskManager for approval/confirmation
+                    taskAuditor: activeAuditorId, // Store activeAuditorId as taskAuditor for approval/confirmation visibility
                     createdAt: new Date().toISOString(),
                     createdBy: currentUser.uid,
                     creatorName: currentUser.displayName || currentUser.email
                 });
 
                 // Create notification if task needs approval
-                if (initialStatus === 'unapproved' && formData.managerId) {
+                // Use activeAuditorId here to ensure the notification goes to the CORRECT person (Default Manager)
+                if (initialStatus === 'unapproved' && activeAuditorId) {
                     try {
                         await addDoc(collection(db, 'request_notifications'), {
-                            recipientId: formData.managerId,
+                            recipientId: activeAuditorId,
                             type: 'task_approval',
                             taskId: docRef.id,
                             taskTitle: taskData.title,

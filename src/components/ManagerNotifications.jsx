@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { startOfWeek, format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle, Check, Trash2 } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
+import { deleteTask } from '../utils/taskActions';
 
 export default function ManagerNotifications() {
     const { currentUser } = useAuth();
@@ -87,6 +88,51 @@ export default function ManagerNotifications() {
         }
     };
 
+    const handleApproveTask = async (notificationId, taskId) => {
+        if (!taskId) return;
+        try {
+            // 1. Approve the task
+            const taskRef = doc(db, 'tasks', taskId);
+            await updateDoc(taskRef, {
+                status: 'approved',
+                isApproved: true, // Redundant but explicit
+                approvedAt: new Date().toISOString(),
+                approvedBy: currentUser.uid
+            });
+
+            // 2. Dismiss notification
+            await handleDismissTask(notificationId);
+        } catch (err) {
+            console.error("Error approving task:", err);
+            alert("Nepavyko patvirtinti užduoties: " + err.message);
+        }
+    };
+
+    const handleDeleteTaskAction = async (notificationId, taskId) => {
+        if (!taskId) return;
+        if (!window.confirm("Ar tikrai norite ištrinti šią užduotį?")) return;
+
+        try {
+            // Fetch the full task data first so we can archive it properly
+            const taskRef = doc(db, 'tasks', taskId);
+            const taskSnap = await getDoc(taskRef);
+
+            if (taskSnap.exists()) {
+                const taskData = { id: taskSnap.id, ...taskSnap.data() };
+                // Use the centralized deleteTask function which now archives the task
+                await deleteTask(taskData, currentUser.uid);
+            } else {
+                console.warn("Task to delete not found, maybe already deleted?", taskId);
+            }
+
+            // Dismiss notification regardless (so it doesn't get stuck)
+            await handleDismissTask(notificationId);
+        } catch (err) {
+            console.error("Error deleting task:", err);
+            alert("Nepavyko ištrinti užduoties: " + err.message);
+        }
+    };
+
     const allNotifications = [...calendarNotifications, ...taskNotifications];
 
     if (allNotifications.length === 0) return null;
@@ -142,28 +188,46 @@ export default function ManagerNotifications() {
                     );
                 } else if (notif.source === 'task') {
                     return (
-                        <div key={notif.id} className="bg-amber-50 border border-amber-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2">
+                        <div key={notif.id} className="bg-amber-50 border border-amber-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                             <button
                                 onClick={() => handleDismissTask(notif.id)}
-                                className="absolute top-2 right-2 text-amber-400 hover:text-amber-600 p-1"
+                                className="absolute top-2 right-2 text-amber-400 hover:text-amber-600 p-1 hover:bg-amber-100 rounded transition-colors"
                                 title="Pažymėti kaip perskaitytą"
                             >
                                 <X className="w-5 h-5" />
                             </button>
 
-                            <div className="flex items-start gap-3">
-                                <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
-                                <div>
-                                    <h4 className="font-medium text-amber-900">
-                                        Nauja užduotis laukia patvirtinimo
-                                    </h4>
-                                    <div className="mt-1 text-sm text-amber-800">
-                                        <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> priskyrė Jus vadovu užduočiai:</p>
-                                        <p className="font-medium mt-1">"{notif.taskTitle}"</p>
-                                        <p className="mt-2 text-xs opacity-75">
-                                            Norėdami patvirtinti, raskite užduotį sąraše (ji bus pažymėta kaip "Nepatvirtinta").
-                                        </p>
+                            <div className="flex flex-col gap-3">
+                                <div className="flex items-start gap-3">
+                                    <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <div className="text-sm text-amber-800">
+                                            <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> priskyrė Jus vadovu užduočiai:</p>
+                                            <p className="font-medium mt-1">"{notif.taskTitle}"</p>
+                                        </div>
                                     </div>
+                                </div>
+
+                                <div className="flex items-center justify-between mt-3 mb-1 px-2 gap-2">
+                                    <div className="w-8 shrink-0"></div> {/* Left spacer to offset center */}
+
+                                    <button
+                                        onClick={() => handleApproveTask(notif.id, notif.taskId)}
+                                        className="flex items-center justify-center gap-2 px-6 py-2 bg-green-100 text-green-700 hover:bg-green-200 rounded-lg transition-colors text-base font-semibold shadow-sm whitespace-nowrap"
+                                        title="Patvirtinti užduotį"
+                                    >
+                                        <Check className="w-5 h-5" />
+                                        Taip, patvirtinti
+                                    </button>
+
+                                    <button
+                                        onClick={() => handleDeleteTaskAction(notif.id, notif.taskId)}
+                                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-600 hover:bg-red-200 rounded transition-colors text-xs font-medium shrink-0 whitespace-nowrap"
+                                        title="Ištrinti užduotį"
+                                    >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                        Ne, ištrinti
+                                    </button>
                                 </div>
                             </div>
                         </div>

@@ -19,6 +19,7 @@ import { useNavigation } from '../context/NavigationContext';
 
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
 import { getPriorityRank, PRIORITIES, getPriorityLabel } from '../utils/priority';
+import { migrateOldDeletedTasks } from '../utils/migrateDeletedTasks';
 
 export default function ManagerView() {
     const { userRole, currentUser } = useAuth();
@@ -299,7 +300,7 @@ export default function ManagerView() {
                 {(() => {
                     const unapprovedTasks = tasks.filter(t =>
                         t.status === 'unapproved' &&
-                        (t.taskManager === currentUser.uid || t.managerId === currentUser.uid)
+                        (t.taskAuditor === currentUser.uid || t.taskManager === currentUser.uid || t.managerId === currentUser.uid)
                     );
 
                     const handleApproveTask = async (task) => {
