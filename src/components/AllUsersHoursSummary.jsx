@@ -4,6 +4,7 @@ import { collection, query, onSnapshot, getDocs } from 'firebase/firestore';
 import { Users, Clock } from 'lucide-react';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { parseTimeToHours } from '../utils/formatters';
+import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 
 export default function AllUsersHoursSummary() {
     const [userHours, setUserHours] = useState([]);
@@ -12,10 +13,10 @@ export default function AllUsersHoursSummary() {
     useEffect(() => {
         const fetchAllUserHours = async () => {
             try {
-                // Get current week range (Sunday to Saturday)
-                const now = new Date();
-                const weekStart = startOfWeek(now, { weekStartsOn: 0 });
-                const weekEnd = endOfWeek(now, { weekStartsOn: 0 });
+                // Get current week range (Monday to Sunday)
+                const now = getLithuanianNow();
+                const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+                const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
 
                 // Fetch all work hours (no date filtering to avoid index issues)
                 const workHoursQuery = query(collection(db, 'work_hours'));

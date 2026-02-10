@@ -1,6 +1,7 @@
 import { db } from '../firebase';
 import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { archiveTask } from './taskActions';
+import { getLithuanianNow, getLithuanianDateString } from './timeUtils';
 
 /**
  * Checks all active tasks and promotes their priority based on deadline proximity.
@@ -21,8 +22,9 @@ export async function checkAndPromoteTasks() {
         const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
         // Get today's date at midnight for comparison
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const now = getLithuanianNow();
+        const todayStr = getLithuanianDateString(now);
+        const today = new Date(todayStr); // 00:00 local time on that date
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
         const dayAfterTomorrow = new Date(today);
@@ -84,7 +86,7 @@ export async function checkAndPromoteTasks() {
  */
 export function shouldRunAutomation() {
     const lastRun = localStorage.getItem('lastAutomationRun');
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const today = getLithuanianDateString(); // YYYY-MM-DD
 
     if (lastRun !== today) {
         localStorage.setItem('lastAutomationRun', today);
@@ -111,12 +113,12 @@ export async function archiveOldTasks() {
         const tasks = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
 
         // Archive rule: Flip "today" at 3:00 AM
-        const now = new Date();
+        const now = getLithuanianNow();
         const cutOff = new Date(now);
         if (now.getHours() < 3) {
             cutOff.setDate(cutOff.getDate() - 1);
         }
-        const cutOffStr = cutOff.toISOString().split('T')[0];
+        const cutOffStr = getLithuanianDateString(cutOff);
 
         let archivedCount = 0;
 

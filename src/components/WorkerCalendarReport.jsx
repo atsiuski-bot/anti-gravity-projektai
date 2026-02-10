@@ -7,6 +7,7 @@ import { collection, query, where, getDocs } from 'firebase/firestore';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { formatDisplayName } from '../utils/formatters';
 import { Download, User, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Clock } from 'lucide-react';
+import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 
 const locales = {
@@ -23,7 +24,7 @@ const localizer = dateFnsLocalizer({
 
 export default function WorkerCalendarReport({ users }) {
     const [selectedUserId, setSelectedUserId] = useState('');
-    const [viewDate, setViewDate] = useState(new Date());
+    const [viewDate, setViewDate] = useState(getLithuanianNow());
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(false);
     const [dailyTotals, setDailyTotals] = useState({});
@@ -51,8 +52,8 @@ export default function WorkerCalendarReport({ users }) {
             start.setDate(start.getDate() - 7);
             end.setDate(end.getDate() + 7);
 
-            const startStr = start.toISOString().split('T')[0];
-            const endStr = end.toISOString().split('T')[0];
+            const startStr = getLithuanianDateString(start);
+            const endStr = getLithuanianDateString(end);
 
             const q = query(
                 collection(db, 'work_sessions'),

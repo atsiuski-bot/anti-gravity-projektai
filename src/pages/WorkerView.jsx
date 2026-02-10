@@ -11,6 +11,8 @@ import AllUsersCalendar from '../components/AllUsersCalendar';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import { filterTasksByVisibility, sortWorkerTasks } from '../utils/taskUtils';
 import DailyStatistics from '../components/DailyStatistics';
+import Reports from '../components/Reports';
+import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
 import { History, Plus } from 'lucide-react';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -69,10 +71,7 @@ export default function WorkerView() {
                 tasksData = filterTasksByVisibility(tasksData);
 
                 // Additional filter: only show done tasks from "Today's Work Day" (3AM - 3AM)
-                const now = new Date();
-                const cutoff = new Date(now);
-                cutoff.setHours(3, 0, 0, 0);
-                if (now.getHours() < 3) cutoff.setDate(cutoff.getDate() - 1);
+                const cutoff = getLithuanian3AMCutoff(getLithuanianDateString());
 
                 tasksData = tasksData.filter(t => {
                     if (t.completed || t.status === 'completed' || t.status === 'confirmed') {
@@ -131,6 +130,9 @@ export default function WorkerView() {
         setIsModalOpen(true);
     };
 
+    // Sorting state
+    const [sortBy, setSortBy] = useState('none');
+
     // Scroll restoration logic
     useEffect(() => {
         requestAnimationFrame(() => {
@@ -138,6 +140,34 @@ export default function WorkerView() {
             window.scrollTo(0, savedScroll);
         });
     }, [activeTab]);
+
+    const sortedTasks = useMemo(() => {
+        let result = [...tasks];
+
+        if (sortBy === 'status') {
+            result.sort((a, b) => {
+                const getStatusRank = (task) => {
+                    const status = task.status || 'pending';
+                    if (status === 'in-progress') return 1;
+                    if (status === 'pending') return 2;
+                    if (status === 'unapproved') return 3;
+                    if (status === 'completed') return 4;
+                    if (status === 'confirmed') return 5;
+                    return 6;
+                };
+                const rankA = getStatusRank(a);
+                const rankB = getStatusRank(b);
+                if (rankA !== rankB) return rankA - rankB;
+
+                // Within same status, sort by priority
+                const prioA = (a.priority === 'Urgent' ? 4 : a.priority === 'High' ? 3 : a.priority === 'Medium' ? 2 : 1);
+                const prioB = (b.priority === 'Urgent' ? 4 : b.priority === 'High' ? 3 : b.priority === 'Medium' ? 2 : 1);
+                return prioB - prioA;
+            });
+        }
+
+        return result;
+    }, [tasks, sortBy]);
 
     return (
         <div className="pt-1">
@@ -152,14 +182,29 @@ export default function WorkerView() {
 
             {/* Tasks Tab */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
-                <div className="flex justify-between items-center mb-4 sm:mb-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 sm:mb-6">
                     <h2 className="text-xl font-bold text-gray-900 hidden sm:block">Mano užduotys</h2>
+
+                    {/* Sort dropdown */}
+                    <div className="relative w-full sm:w-auto">
+                        <div className="relative">
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <select
+                                value={sortBy}
+                                onChange={(e) => setSortBy(e.target.value)}
+                                className="w-full sm:w-auto pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                            >
+                                <option value="none">Numatyta tvarka</option>
+                                <option value="status">Pagal būseną</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
-                <DailyWorkProgress currentUser={currentUser} tasks={tasks} />
+                <DailyWorkProgress currentUser={currentUser} tasks={sortedTasks} />
 
 
-                {tasks.length === 0 ? (
+                {sortedTasks.length === 0 ? (
                     <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-200">
                         <p className="text-gray-500">Jums dar nepriskirta jokių užduočių.</p>
                     </div>
@@ -196,11 +241,7 @@ export default function WorkerView() {
             </div>
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
-                <DailyStatistics
-                    currentUser={currentUser}
-                    userRole="worker"
-                    users={[]} // Workers don't see other users
-                />
+                <Reports users={[currentUser]} />
             </div>
 
             {isModalOpen && (

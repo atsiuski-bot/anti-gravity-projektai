@@ -1,23 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where } from 'firebase/firestore';
-import { FileText, Download, Trash2, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase, ChevronDown } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase, ChevronDown, Filter, X } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { updateDoc } from 'firebase/firestore';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
-import { startOfWeek, subWeeks, startOfDay } from 'date-fns';
+import { startOfWeek, subWeeks, startOfDay, endOfDay, format } from 'date-fns';
+import { formatDisplayName } from '../utils/formatters';
+import { TASK_TAGS } from '../utils/taskUtils';
+import { getLithuanianDateString, getLithuanianNow } from '../utils/timeUtils';
 
-export default function TaskHistory({ userId }) {
-    const { userRole } = useAuth();
+export default function TaskHistory({ userId, users = [] }) {
+    const { userRole, currentUser } = useAuth();
     const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
 
-    // Pagination state: Default to 2 weeks (Current + Last)
-    const [weeksToShow, setWeeksToShow] = useState(2);
-    const [startDate, setStartDate] = useState(null);
+    // Filter States
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [filterUser, setFilterUser] = useState('all');
+    const [filterTag, setFilterTag] = useState('all');
+    const [sortBy, setSortBy] = useState('date'); // 'date' | 'status'
 
     const toggleExpand = (taskId) => {
         const newExpanded = new Set(expandedTasks);
@@ -29,41 +35,55 @@ export default function TaskHistory({ userId }) {
         setExpandedTasks(newExpanded);
     };
 
-    // Calculate start date when weeksToShow changes
+    // Initialize dates on mount (Last 2 weeks)
     useEffect(() => {
-        const now = new Date();
-        // Start of current week (Monday)
+        const now = getLithuanianNow();
         const startOfCurrentWeek = startOfWeek(now, { weekStartsOn: 1 });
-        // Subtract weeks to get the start date window
-        // weeksToShow = 2 -> Current Week + 1 Previous Week
-        // So we subtract 1 week from startOfCurrentWeek
-        const start = subWeeks(startOfCurrentWeek, weeksToShow - 1);
+        const start = subWeeks(startOfCurrentWeek, 1); // Current week + 1 previous
 
-        // Ensure we set time to 00:00:00 explicitly if not already (startOfWeek returns Date at 00:00 usually, but checking `startOfDay` is safer)
-        const startDay = startOfDay(start);
+        setDateFrom(getLithuanianDateString(start));
+        setDateTo(getLithuanianDateString(now));
+    }, []);
 
-        // Use ISO String for Firestore comparison (assuming archivedAt is stored as ISO string)
-        setStartDate(startDay.toISOString());
-    }, [weeksToShow]);
-
+    // Fetch tasks based on filters
     useEffect(() => {
-        if (!startDate) return;
+        if (!dateFrom || !dateTo) return;
 
         setLoading(true);
-        // Query tasks archived AFTER the calculated start date
-        // Note: Filters by 'archivedAt'. 
-        const q = userId && userId !== 'all'
-            ? query(
-                collection(db, 'archived_tasks'),
-                where('archivedAt', '>=', startDate),
-                where('assignedWorkerId', '==', userId),
-                orderBy('archivedAt', 'desc')
-            )
-            : query(
-                collection(db, 'archived_tasks'),
-                where('archivedAt', '>=', startDate),
-                orderBy('archivedAt', 'desc')
-            );
+
+        const start = new Date(dateFrom);
+        start.setHours(0, 0, 0, 0); // Start of day
+
+        const end = new Date(dateTo);
+        end.setHours(23, 59, 59, 999); // End of day
+
+        const startIso = start.toISOString();
+        const endIso = end.toISOString();
+
+        // Determine effective user ID to query
+        // If explicit 'userId' prop is passed (e.g. from Worker view), use it.
+        // If 'userId' prop is 'all' (Manager view), use the local 'filterUser' state.
+        let targetUserId = 'all';
+        if (userId && userId !== 'all') {
+            targetUserId = userId; // Worker view or specific user prop
+        } else {
+            targetUserId = filterUser; // Manager view dropdown selection
+        }
+
+        let q;
+
+        // Base Query constraints
+        const constraints = [
+            where('archivedAt', '>=', startIso),
+            where('archivedAt', '<=', endIso),
+            orderBy('archivedAt', 'desc')
+        ];
+
+        if (targetUserId !== 'all') {
+            constraints.splice(1, 0, where('assignedWorkerId', '==', targetUserId));
+        }
+
+        q = query(collection(db, 'archived_tasks'), ...constraints);
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const tasksData = snapshot.docs.map(doc => ({
@@ -71,8 +91,26 @@ export default function TaskHistory({ userId }) {
                 ...doc.data()
             }));
 
-            // Sort manually just in case
-            const sortedTasks = [...tasksData].sort((a, b) => {
+            // Client-side filtering for Tag (Firestore limitation on multiple inequality/array-contains with inequalities)
+            // And any other refinement
+            const filteredTasks = tasksData.filter(task => {
+                if (filterTag !== 'all' && task.tag !== filterTag) return false;
+                return true;
+            });
+
+            // Sort manually ensuring robust timestamp handling
+            const sortedTasks = filteredTasks.sort((a, b) => {
+                if (sortBy === 'status') {
+                    const getStatusRank = (task) => {
+                        if (task.isDeleted || task.status === 'deleted') return 3;
+                        if (task.status === 'confirmed') return 2;
+                        return 1; // 'completed' / unconfirmed
+                    };
+                    const rankA = getStatusRank(a);
+                    const rankB = getStatusRank(b);
+                    if (rankA !== rankB) return rankA - rankB; // Ascending rank
+                }
+
                 const getTimestamp = (task) => {
                     const dateStr = task.completedAt || task.archivedAt || task.updatedAt;
                     if (!dateStr) return 0;
@@ -94,11 +132,7 @@ export default function TaskHistory({ userId }) {
         });
 
         return () => unsubscribe();
-    }, [startDate, userId]);
-
-    const handleLoadMore = () => {
-        setWeeksToShow(prev => prev + 1);
-    };
+    }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy]);
 
     const handleExport = () => {
         const exportData = tasks.map(task => ({
@@ -119,30 +153,13 @@ export default function TaskHistory({ userId }) {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `task_history_${new Date().toISOString().split('T')[0]}.json`;
+        link.download = `task_history_${dateFrom}_to_${dateTo}.json`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
     };
 
-    const handleDelete = async (taskId) => {
-        if (!window.confirm('Ar tikrai norite ištrinti šį įrašą?')) return;
-        try {
-            const taskToDelete = tasks.find(t => t.id === taskId);
-            if (taskToDelete) {
-                const { id, ...taskData } = taskToDelete;
-                await setDoc(doc(db, 'deleted_tasks', taskId), {
-                    ...taskData,
-                    deletedAt: new Date().toISOString(),
-                    deletedFromHistory: true,
-                    originalCollection: 'archived_tasks'
-                });
-            }
-            await deleteDoc(doc(db, 'archived_tasks', taskId));
-        } catch (err) {
-            console.error("Error deleting archived task:", err);
-        }
-    };
+
 
     const handleRestore = async (task) => {
         if (!window.confirm('Ar norite grąžinti užduotį į aktyvių sąrašą?')) return;
@@ -182,26 +199,122 @@ export default function TaskHistory({ userId }) {
         }
     };
 
+    const resetFilters = () => {
+        const now = getLithuanianNow();
+        const startOfCurrentWeek = startOfWeek(now, { weekStartsOn: 1 });
+        const start = subWeeks(startOfCurrentWeek, 1);
+        setDateFrom(getLithuanianDateString(start));
+        setDateTo(getLithuanianDateString(now));
+        setFilterUser('all');
+        setFilterTag('all');
+    };
+
     if (loading && tasks.length === 0) {
         return <div className="p-8 text-center text-gray-500">Kraunama istorija...</div>;
     }
 
     return (
         <div className="space-y-4">
-            <div className="flex justify-between items-center">
-                <h2 className="text-lg font-semibold text-gray-900">Užduočių istorija ({tasks.length})</h2>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                    Užduočių istorija <span className="text-gray-500 text-sm font-normal">({tasks.length})</span>
+                </h2>
                 <div className="flex items-center gap-2">
-                    <span className="text-xs text-gray-500">
-                        {weeksToShow === 1 ? 'Ši savaitė' : `Paskutinės ${weeksToShow} savaitės`}
-                    </span>
                     <button
                         onClick={handleExport}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
                     >
                         <Download className="w-4 h-4" />
                         Atsisiųsti AI analizei (JSON)
                     </button>
                 </div>
+            </div>
+
+            {/* Filters */}
+            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col md:flex-row gap-4 items-end md:items-center flex-wrap">
+
+                {/* Date Range */}
+                <div className="flex items-center gap-2">
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-gray-500">Nuo</label>
+                        <input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => setDateFrom(e.target.value)}
+                            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5"
+                        />
+                    </div>
+                    <span className="text-gray-400 mt-5">-</span>
+                    <div className="flex flex-col gap-1">
+                        <label className="text-[10px] uppercase font-bold text-gray-500">Iki</label>
+                        <input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => setDateTo(e.target.value)}
+                            max={getLithuanianDateString()}
+                            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5"
+                        />
+                    </div>
+                </div>
+
+                {/* User Filter (Manager Only) */}
+                {(isManagerOrAdmin && userId === 'all') && (
+                    <div className="flex flex-col gap-1 min-w-[150px]">
+                        <label className="text-[10px] uppercase font-bold text-gray-500">Darbuotojas</label>
+                        <select
+                            value={filterUser}
+                            onChange={(e) => setFilterUser(e.target.value)}
+                            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5"
+                        >
+                            <option value="all">Visi</option>
+                            {users.map(u => (
+                                <option key={u.id} value={u.id}>
+                                    {formatDisplayName(u.displayName || u.email)}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
+                {/* Tag Filter */}
+                <div className="flex flex-col gap-1 min-w-[120px]">
+                    <label className="text-[10px] uppercase font-bold text-gray-500">Žyma</label>
+                    <select
+                        value={filterTag}
+                        onChange={(e) => setFilterTag(e.target.value)}
+                        className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5"
+                    >
+                        <option value="all">Visos</option>
+                        {TASK_TAGS.map(tag => (
+                            <option key={tag} value={tag}>{tag}</option>
+                        ))}
+                    </select>
+                </div>
+
+                {/* Sort By */}
+                <div className="flex flex-col gap-1 min-w-[120px]">
+                    <label className="text-[10px] uppercase font-bold text-gray-500">Rikiuoti</label>
+                    <div className="relative">
+                        <select
+                            value={sortBy}
+                            onChange={(e) => setSortBy(e.target.value)}
+                            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5 pl-8"
+                        >
+                            <option value="date">Pagal datą</option>
+                            <option value="status">Pagal būseną</option>
+                        </select>
+                        <Filter className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 transform -translate-y-1/2" />
+                    </div>
+                </div>
+
+                {/* Reset Button */}
+                <button
+                    onClick={resetFilters}
+                    className="md:ml-auto p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 rounded-lg transition-colors"
+                    title="Išvalyti filtrus"
+                >
+                    <RotateCcw className="w-5 h-5" />
+                </button>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -226,6 +339,11 @@ export default function TaskHistory({ userId }) {
                                             (task.isDeleted || task.status === 'deleted') && "line-through text-gray-500"
                                         )}>
                                             {task.title}
+                                            {task.tag && (
+                                                <span className="ml-2 inline-block px-1.5 py-0.5 text-[9px] font-medium bg-blue-50 text-blue-600 rounded border border-blue-100 align-middle">
+                                                    {task.tag}
+                                                </span>
+                                            )}
                                         </div>
                                         {task.deadline && (
                                             <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
@@ -259,11 +377,17 @@ export default function TaskHistory({ userId }) {
                                                 ))}
                                             </div>
                                         )}
+                                        {(task.managerName || task.creatorName) && (
+                                            <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
+                                                <UserCheck className="w-2.5 h-2.5" />
+                                                <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                            </div>
+                                        )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         {task.assignedWorkerName && (
                                             <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
-                                                {task.assignedWorkerName.split(' ')[0]}
+                                                {formatDisplayName(task.assignedWorkerName).split(' ')[0]}
                                             </span>
                                         )}
                                     </td>
@@ -320,13 +444,7 @@ export default function TaskHistory({ userId }) {
                                             >
                                                 <RotateCcw className="w-3.5 h-3.5" />
                                             </button>
-                                            <button
-                                                onClick={() => handleDelete(task.id)}
-                                                className="p-1 text-red-600 hover:bg-red-50 rounded"
-                                                title="Ištrinti negrįžtamai"
-                                            >
-                                                <Trash2 className="w-3.5 h-3.5" />
-                                            </button>
+
                                         </div>
                                     </td>
                                 </tr>
@@ -334,37 +452,12 @@ export default function TaskHistory({ userId }) {
                             {tasks.length === 0 && (
                                 <tr>
                                     <td colSpan="7" className="px-6 py-12 text-center text-gray-500 text-sm">
-                                        {weeksToShow > 5 ? (
-                                            <span>Istorija tuščia (rodome {weeksToShow} sav.)</span>
-                                        ) : (
-                                            <span>Istorija tuščia. Pabandykite "Rodyti daugiau" jei ieškote senesnių užduočių.</span>
-                                        )}
+                                        <span>Istorija tuščia pagal pasirinktus filtrus.</span>
                                     </td>
                                 </tr>
                             )}
                         </tbody>
                     </table>
-                </div>
-            </div>
-
-            {/* Show More Button - Styled for Mobile Visibility */}
-            <div className="flex justify-start pt-4 pb-[250px]">
-                <button
-                    onClick={handleLoadMore}
-                    disabled={loading}
-                    className="flex items-center gap-2 px-6 py-3 bg-white border border-gray-300 shadow-md text-gray-700 font-bold rounded-xl hover:bg-gray-50 hover:shadow-lg active:scale-95 transition-all text-sm group"
-                >
-                    {loading ? (
-                        <span>Kraunama...</span>
-                    ) : (
-                        <>
-                            <span>Rodyti daugiau</span>
-                            <ChevronDown className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" />
-                        </>
-                    )}
-                </button>
-                <div className="text-xs text-gray-400 ml-4 mt-3">
-                    (+1 savaitė)
                 </div>
             </div>
         </div>

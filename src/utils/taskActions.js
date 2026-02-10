@@ -1,6 +1,6 @@
 import { doc, updateDoc, collection, query, where, getDocs, addDoc, setDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
-import { parseTimeStringToMinutes, formatMinutesToTimeString } from './timeUtils';
+import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString } from './timeUtils';
 
 /**
  * Updates the user's work status in Firestore.
@@ -65,7 +65,7 @@ export const pauseTask = async (task) => {
     if (!task.timerStartedAt || task.timerStatus !== 'running') return;
 
     try {
-        const now = new Date();
+        const now = getLithuanianNow();
         const start = new Date(task.timerStartedAt);
         const elapsedMinutes = (now - start) / (1000 * 60); // minutes using float for precision
 
@@ -97,7 +97,7 @@ export const pauseTask = async (task) => {
         // 4. Log Work Session (NEW)
         if (elapsedMinutes > (10 / 60)) { // Only log meaningful sessions (> 10 seconds)
             try {
-                const sessionDate = start.toISOString().split('T')[0];
+                const sessionDate = getLithuanianDateString(start);
                 await addDoc(collection(db, 'work_sessions'), {
                     taskId: task.id,
                     taskTitle: task.title || 'Unknown Task',

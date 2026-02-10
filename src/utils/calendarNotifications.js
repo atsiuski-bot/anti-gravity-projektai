@@ -2,9 +2,10 @@ import { db } from '../firebase';
 import { doc, setDoc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { startOfWeek, format } from 'date-fns';
 import { formatDisplayName } from './formatters';
+import { getLithuanianNow } from './timeUtils';
 
 export const logCalendarChange = async (currentUser, type, start, end) => {
-    const now = new Date();
+    const now = getLithuanianNow();
     const day = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
     const hour = now.getHours();
     const minute = now.getMinutes();

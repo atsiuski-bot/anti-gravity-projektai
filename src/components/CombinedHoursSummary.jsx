@@ -4,6 +4,7 @@ import { collection, query, onSnapshot } from 'firebase/firestore';
 import { Users, ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
 import { startOfWeek, endOfWeek, addDays } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
+import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 
 export default function CombinedHoursSummary() {
     const { currentUser } = useAuth();
@@ -24,10 +25,15 @@ export default function CombinedHoursSummary() {
 
         setLoading(true);
 
-        const now = new Date();
-        const day = now.getDay(); // 0=Sun, 6=Sat
-        const hours = now.getHours();
-        const minutes = now.getMinutes();
+        const now = getLithuanianNow();
+        const ltDateParts = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Europe/Vilnius',
+            hour: 'numeric',
+            minute: 'numeric',
+            hour12: false
+        }).formatToParts(now);
+        const hours = parseInt(ltDateParts.find(p => p.type === 'hour').value);
+        const minutes = parseInt(ltDateParts.find(p => p.type === 'minute').value);
 
         // Custom Week Logic: Reset at Saturday 18:30 is REMOVED to show current week data on Sunday
         let targetDate = now;
@@ -129,6 +135,9 @@ export default function CombinedHoursSummary() {
     const combinedStats = useMemo(() => {
         const stats = [];
         let maxVal = 0;
+        const now = getLithuanianNow();
+        const wStart = startOfWeek(now, { weekStartsOn: 1 });
+        const wEnd = endOfWeek(now, { weekStartsOn: 1 });
 
         users.forEach(user => {
             let plannedHours = 0;
@@ -137,9 +146,9 @@ export default function CombinedHoursSummary() {
             // Calculate weekly scheduled hours (Calendar)
             workHours.forEach(wh => {
                 if (wh.userId === user.id) {
-                    const start = new Date(wh.start);
-                    const end = new Date(wh.end);
-                    const duration = (end - start) / (1000 * 60 * 60);
+                    const whStart = new Date(wh.start);
+                    const whEnd = new Date(wh.end);
+                    const duration = (whEnd - whStart) / (1000 * 60 * 60);
                     plannedHours += duration;
                 }
             });
@@ -153,41 +162,6 @@ export default function CombinedHoursSummary() {
             });
 
             // 2. From Tasks (Quick Work / Calls - Manual Minutes)
-            // Filter tasks for this user AND completed/archived within this week
-            // Note: We need to filter `tasks` state which contains both active and archived
-            tasks.forEach(t => {
-                const isAssigned = t.assignedWorkerId === user.id;
-                const hasManual = t.manualMinutes && t.manualMinutes > 0;
-
-                if (isAssigned && hasManual) {
-                    const compDate = t.completedAt ? new Date(t.completedAt) : (t.archivedAt ? new Date(t.archivedAt) : null);
-                    // Check if date falls within weekStart and weekEnd
-                    // Note: weekStart and weekEnd are defined in scope above, we need to pass them or rely on closure
-                    // weekStart/weekEnd are in useEffect scope. We need them in useMemo.
-                    // Actually, weekStart/weekEnd are calculated inside useEffect and used for querying only.
-                    // We need to recalculate them or store them in state to use here correctly.
-
-                    // QUICK FIX: Since we filter queries by weekStart/weekEnd, `workSessions` are already filtered.
-                    // BUT `tasks` are NOT filtered by date in the listener (we fetch all active and archived? No, fetch ALL).
-                    // We fetch ALL tasks in collection? `onSnapshot(collection(db, 'tasks'))`. Yes.
-                    // So we MUST check the date here.
-
-                    // We need week range here.
-                    // To avoid complexity, we can re-calculate week range inside this loop or move calculation out.
-                    // Let's deduce if it fits.
-                }
-            });
-            // ... Actually, I need to properly filter by date.
-            // Let's refactor useMemo to include date checking.
-
-            // Re-calc week boundaries for filtering inside useMemo
-            // We assume 'targetDate' from useEffect logic is roughly 'now' or 'next week' logic.
-            // For simplicity in this display component, let's use the same logic:
-
-            const now = new Date();
-            const wStart = startOfWeek(now, { weekStartsOn: 1 });
-            const wEnd = endOfWeek(now, { weekStartsOn: 1 });
-
             tasks.forEach(t => {
                 if (t.assignedWorkerId === user.id && t.manualMinutes > 0) {
                     const compDate = t.completedAt ? new Date(t.completedAt) : (t.archivedAt ? new Date(t.archivedAt) : null);
@@ -206,9 +180,8 @@ export default function CombinedHoursSummary() {
 
             // Add current active break time if user is taking a break right now
             if (user.breakState?.isTakingBreak && user.breakState?.lastStartedAt) {
-                const start = new Date(user.breakState.lastStartedAt);
-                const now = new Date();
-                const currentDiff = (now - start) / (1000 * 60);
+                const bStart = new Date(user.breakState.lastStartedAt);
+                const currentDiff = (now - bStart) / (1000 * 60);
                 if (currentDiff > 0) {
                     workedMinutes += currentDiff;
                 }
@@ -402,7 +375,7 @@ function ActiveSessionRow({ session }) {
                 return;
             }
             const start = new Date(session.startTime);
-            const now = new Date();
+            const now = getLithuanianNow();
             const diffMs = now - start;
             if (diffMs < 0) {
                 setDurationStr('0m');

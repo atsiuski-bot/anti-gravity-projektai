@@ -1,8 +1,10 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { auth, db } from '../firebase';
 import {
     GoogleAuthProvider,
     signInWithPopup,
+    signInWithRedirect,
+    getRedirectResult,
     signOut,
     onAuthStateChanged,
     setPersistence,
@@ -23,15 +25,32 @@ export function AuthProvider({ children }) {
     const [breakState, setBreakState] = useState(null);
     const [workStatus, setWorkStatus] = useState(null);
     const [loading, setLoading] = useState(true);
+    const isProcessingRedirect = useRef(false);
+    const isProcessingAuth = useRef(false);
+
+    // Helper function to detect Opera browser
+    function isOperaBrowser() {
+        return (
+            (!!window.opr && !!window.opr.addons) ||
+            !!window.opera ||
+            navigator.userAgent.indexOf(' OPR/') >= 0
+        );
+    }
 
     async function login() {
-        console.log("Auth: Starting Google Login with popup...");
+        const isOpera = isOperaBrowser();
+        console.log(`Auth: Starting Google Login with popup...`);
         const provider = new GoogleAuthProvider();
         try {
             // Use browserLocalPersistence to allow session to persist across browser restarts for 4 days
             await setPersistence(auth, browserLocalPersistence);
 
-            // Use popup - now safe because we are on HTTP (no COOP/SSL errors)
+            // Use popup for all browsers (including Opera)
+            // Note: Opera works fine with popup. Redirect requires Firebase Console configuration.
+            if (isOpera) {
+                console.log('Auth: Opera browser detected, using popup (works reliably)');
+            }
+
             const result = await signInWithPopup(auth, provider);
             const user = result.user;
             console.log("Auth: Google Sign-In successful for:", user.email);
@@ -101,6 +120,29 @@ export function AuthProvider({ children }) {
         let unsubscribeSnapshot = null;
         let expirationCheckInterval = null;
 
+        // Handle redirect result (for Opera browser and mobile/fallback)
+        getRedirectResult(auth)
+            .then(async (result) => {
+                if (result && !isProcessingAuth.current) {
+                    isProcessingAuth.current = true;
+                    try {
+                        const user = result.user;
+                        console.log("Auth: Redirect Sign-In successful for:", user.email);
+                        await processUserAfterLogin(user);
+                    } finally {
+                        // Reset after a short delay to allow state updates
+                        setTimeout(() => {
+                            isProcessingAuth.current = false;
+                        }, 1000);
+                    }
+                }
+            })
+            .catch((error) => {
+                console.error("Auth: Redirect Login Error:", error.code, error.message);
+                isProcessingAuth.current = false;
+            });
+
+
         const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
 
 
@@ -138,12 +180,17 @@ export function AuthProvider({ children }) {
                         const data = docSnap.data();
 
                         if (data.isDisabled) {
-
-                            await signOut(auth);
+                            console.log("Auth: User account is disabled, logging out...");
+                            // Clear state first
                             setCurrentUser(null);
                             setUserRole(null);
                             setUserData(null);
-                            window.location.reload();
+                            setBreakState(null);
+                            setWorkStatus(null);
+                            setLoading(false);
+                            // Then sign out (this will trigger onAuthStateChanged again)
+                            await signOut(auth);
+                            // Do NOT reload - let React Router handle navigation
                             return;
                         }
 
@@ -158,15 +205,15 @@ export function AuthProvider({ children }) {
                     } else {
 
                         // Document doesn't exist - create it if not already processing redirect
-                        if (!isProcessingRedirect) {
-                            isProcessingRedirect = true;
+                        if (!isProcessingRedirect.current) {
+                            isProcessingRedirect.current = true;
                             try {
                                 await processUserAfterLogin(user);
                             } catch (error) {
                                 console.error("Auth: Error creating user document:", error);
                                 setLoading(false);
                             } finally {
-                                isProcessingRedirect = false;
+                                isProcessingRedirect.current = false;
                             }
                         }
                     }

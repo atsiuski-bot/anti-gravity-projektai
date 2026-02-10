@@ -1,21 +1,25 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString } from '../utils/timeUtils';
-import { formatDisplayName } from '../utils/formatters';
-import { BarChart, Calendar, Filter, Download, ChevronDown, ChevronUp, Clock, Tag, Briefcase, MessageSquare, RotateCcw } from 'lucide-react';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
+import { formatDisplayName, formatTime } from '../utils/formatters';
+import { BarChart, Calendar, Filter, Download, ChevronDown, ChevronUp, Clock, Tag, Briefcase, MessageSquare, RotateCcw, Coffee } from 'lucide-react';
 
-import WorkerCalendarReport from './WorkerCalendarReport';
+
+
+import DailyStatistics from './DailyStatistics';
 import { CommentsModal } from './TaskDetailsModals';
 import { useAuth } from '../context/AuthContext';
+import { TASK_TAGS } from '../utils/taskUtils';
 
+// Force rebuild
 export default function Reports({ users }) {
     const { currentUser, userRole } = useAuth();
-    const [activeTab, setActiveTab] = useState('hours'); // 'hours' | 'tasks'
+    const [activeTab, setActiveTab] = useState((userRole === 'manager' || userRole === 'admin') ? 'daily-stats' : 'hours');
     const [loading, setLoading] = useState(false);
 
     // --- HOURS REPORT STATE ---
-    const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7)); // YYYY-MM
+    const [selectedMonth, setSelectedMonth] = useState(getLithuanianDateString().slice(0, 7)); // YYYY-MM
     const [workData, setWorkData] = useState([]); // Array of { userId, name, totalMinutes, days: { date: minutes } }
     const [expandedUser, setExpandedUser] = useState(null);
 
@@ -23,8 +27,8 @@ export default function Reports({ users }) {
     const [taskFilters, setTaskFilters] = useState({
         userId: 'all',
         tag: 'all',
-        startDate: new Date(new Date().setDate(new Date().getDate() - 30)).toISOString().split('T')[0],
-        endDate: new Date().toISOString().split('T')[0],
+        startDate: getLithuanianDateString(),
+        endDate: getLithuanianDateString(),
     });
     const [filteredTasks, setFilteredTasks] = useState([]);
     const [taskSort, setTaskSort] = useState('date_desc'); // date_desc, date_asc, time_desc, time_asc
@@ -46,41 +50,148 @@ export default function Reports({ users }) {
         }
     }, [activeTab, taskFilters, taskSort]); // Refetch when filters or sort change
 
+    const [expandedDays, setExpandedDays] = useState({}); // { userId: { dateString: boolean } }
+
+    const toggleDayExpand = (userId, date) => {
+        setExpandedDays(prev => ({
+            ...prev,
+            [userId]: {
+                ...prev[userId],
+                [date]: !prev[userId]?.[date]
+            }
+        }));
+    };
+
     const fetchWorkHours = async () => {
         setLoading(true);
         try {
-            const startStr = `${selectedMonth}-01`;
+            let startStr = `${selectedMonth}-01`;
+            // Special exception for January 2026: Start from 19th
+            if (selectedMonth === '2026-01') {
+                startStr = '2026-01-19';
+            }
             const endStr = `${selectedMonth}-31`;
 
-            const q = query(
+            // NOTE: We are fetching ALL data for the date range and filtering client-side
+            // because adding 'where(workerId == ...)' with 'where(date >= ...)' requires a composite index
+            // which we cannot easily create for the user right now.
+
+            const workQ = query(
                 collection(db, 'work_sessions'),
                 where('date', '>=', startStr),
                 where('date', '<=', endStr)
             );
 
-            const snapshot = await getDocs(q);
-            const sessions = snapshot.docs.map(d => d.data());
+            // break_sessions uses 'startTime' field, not 'date'
+            // Query by startTime range (ISO datetime strings)
+            const breakQ = query(
+                collection(db, 'break_sessions'),
+                where('startTime', '>=', `${startStr}T00:00:00`),
+                where('startTime', '<=', `${endStr}T23:59:59`)
+            );
+
+            const [workSnap, breakSnap] = await Promise.all([
+                getDocs(workQ),
+                getDocs(breakQ)
+            ]);
+
+            const workSessions = workSnap.docs.map(d => ({ ...d.data(), id: d.id, _type: 'work' }));
+            const breakSessions = breakSnap.docs.map(d => ({ ...d.data(), id: d.id, _type: 'break' }));
 
             // Aggregation
             const userMap = {};
-            sessions.forEach(session => {
-                const uid = session.workerId;
+
+            // Helper to get best available name
+            const getUserName = (uid, sessionName) => {
+                const u = users?.find(user => user.id === uid);
+                if (u) return u.displayName || u.email;
+                if (sessionName && sessionName !== 'Unknown') return sessionName;
+                return 'Unknown';
+            };
+
+            // Helper to init user map
+            const initUser = (uid, sessionName) => {
                 if (!userMap[uid]) {
-                    const u = users?.find(user => user.id === uid);
                     userMap[uid] = {
                         userId: uid,
-                        name: u ? (u.displayName || u.email) : (session.workerName || 'Unknown'),
+                        name: getUserName(uid, sessionName),
                         totalMinutes: 0,
-                        days: {}
+                        days: {} // { date: { totalWork: 0, totalBreak: 0, sessions: [] } }
                     };
                 }
+            };
 
-                userMap[uid].totalMinutes += (session.durationMinutes || 0);
+            const isManager = userRole === 'manager' || userRole === 'admin';
 
-                if (!userMap[uid].days[session.date]) {
-                    userMap[uid].days[session.date] = 0;
+            // Helper to check for duplicates
+            const isDuplicate = (existingSessions, newSession) => {
+                return existingSessions.some(existing =>
+                    existing.startTime === newSession.startTime &&
+                    existing._type === newSession._type
+                );
+            };
+
+            // Process Work
+            workSessions.forEach(s => {
+                const uid = s.workerId;
+                if (!isManager && uid !== currentUser.uid) return;
+
+                initUser(uid, s.workerName);
+
+                if (!userMap[uid].days[s.date]) {
+                    userMap[uid].days[s.date] = { totalWork: 0, totalBreak: 0, sessions: [] };
                 }
-                userMap[uid].days[session.date] += (session.durationMinutes || 0);
+
+                // Deduplicate work sessions
+                if (isDuplicate(userMap[uid].days[s.date].sessions, s)) {
+                    return;
+                }
+
+                userMap[uid].totalMinutes += (s.durationMinutes || 0);
+                userMap[uid].days[s.date].totalWork += (s.durationMinutes || 0);
+                userMap[uid].days[s.date].sessions.push(s);
+            });
+
+            // Process Breaks
+            breakSessions.forEach(s => {
+                const uid = s.userId;
+                if (!isManager && uid !== currentUser.uid) return;
+
+                // Only add breaks if user exists (or should we create? usually user has work too)
+                // Let's create if missing to be safe
+                if (!userMap[uid]) {
+                    initUser(uid, s.userName);
+                }
+
+                if (!userMap[uid].days[s.date]) {
+                    userMap[uid].days[s.date] = { totalWork: 0, totalBreak: 0, sessions: [] };
+                }
+
+                // Deduplicate break sessions
+                if (isDuplicate(userMap[uid].days[s.date].sessions, s)) {
+                    return;
+                }
+
+                userMap[uid].days[s.date].totalBreak += (s.durationMinutes || 0);
+                userMap[uid].days[s.date].sessions.push(s);
+            });
+
+            // Post-process: Sort sessions by time for each day
+            Object.values(userMap).forEach(user => {
+                Object.values(user.days).forEach(dayData => {
+                    dayData.sessions.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+                    if (dayData.sessions.length > 0) {
+                        dayData.dayStart = dayData.sessions[0].startTime;
+                        // Find the latest end time (usually the last session, but let's be safe if sorting is by start)
+                        // Actually, sorting by start is enough if we assume no huge overlaps where an earlier task ends later than a later task.
+                        // But for correctness, let's find the max end time.
+                        const maxEnd = dayData.sessions.reduce((max, s) => {
+                            return new Date(s.endTime) > new Date(max) ? s.endTime : max;
+                        }, dayData.sessions[0].endTime);
+                        dayData.dayEnd = maxEnd;
+                    }
+                });
             });
 
             // Convert to array
@@ -97,6 +208,8 @@ export default function Reports({ users }) {
     const fetchTasks = async () => {
         setLoading(true);
         try {
+            const isManager = userRole === 'manager' || userRole === 'admin';
+
             // Query 1: Archived - Respects date filter
             const archivedQ = query(
                 collection(db, 'archived_tasks'),
@@ -106,6 +219,8 @@ export default function Reports({ users }) {
             // Query 2: Active - Completed or Confirmed
             // We fetch ALL 'completed' (unconfirmed) tasks to ensure "Done Earlier" list is complete
             // And all recent tasks based on update time
+            // NOTE: Client-side filtering handles the 'assignedWorkerId' check for non-managers
+
             const activeUnconfirmedQ = query(
                 collection(db, 'tasks'),
                 where('status', '==', 'completed')
@@ -154,6 +269,9 @@ export default function Reports({ users }) {
 
                 if (taskFilters.userId !== 'all' && t.assignedWorkerId !== taskFilters.userId) return false;
                 if (taskFilters.tag !== 'all' && t.tag !== taskFilters.tag) return false;
+
+                // Security: Force filter by user for non-managers
+                if (!isManager && t.assignedWorkerId !== currentUser.uid) return false;
 
                 return true;
             });
@@ -306,13 +424,7 @@ export default function Reports({ users }) {
     };
 
     const get3AMCutoff = () => {
-        const now = new Date();
-        const cutoff = new Date(now);
-        if (now.getHours() < 3) {
-            cutoff.setDate(cutoff.getDate() - 1);
-        }
-        cutoff.setHours(3, 0, 0, 0);
-        return cutoff;
+        return getLithuanian3AMCutoff(getLithuanianDateString());
     };
 
     const getAvg = (totalMins, daysObj) => {
@@ -321,27 +433,27 @@ export default function Reports({ users }) {
         return Math.round(totalMins / daysCount);
     };
 
-    // Split tasks using useMemo to ensure it uses the latest filteredTasks
-    const { todayTasks, earlierTasks } = React.useMemo(() => {
-        const cutoff = get3AMCutoff();
+    // Group tasks by date
+    const groupedTasks = React.useMemo(() => {
+        const groups = {};
 
-        const todayTasks = [];
-        const earlierTasks = [];
+        // Helper to get date string (YYYY-MM-DD)
+        const getDateStr = (t) => {
+            const dateStr = t.completedAt || t.archivedAt || t.updatedAt;
+            if (!dateStr) return 'No Date';
+            return dateStr.split('T')[0];
+        };
 
         filteredTasks.forEach(t => {
-            const finishedDate = new Date(t.completedAt || t.updatedAt);
-            // Check if task finished AFTER cutoff
-            if (finishedDate >= cutoff) {
-                todayTasks.push(t);
-            } else {
-                // For earlier tasks, ONLY include unconfirmed ones
-                if (t.status !== 'confirmed') {
-                    earlierTasks.push(t);
-                }
+            const dateKey = getDateStr(t);
+            if (!groups[dateKey]) {
+                groups[dateKey] = [];
             }
+            groups[dateKey].push(t);
         });
 
-        return { todayTasks, earlierTasks };
+        // Sort groups by date descending
+        return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
     }, [filteredTasks]);
 
     // Helper to render table
@@ -378,7 +490,7 @@ export default function Reports({ users }) {
                         return (
                             <tr
                                 key={task.id}
-                                className={`border-b border-gray-100 last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-gray-100' : 'bg-white'}`}
+                                className={`border-b border-gray-100 last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-white' : 'bg-blue-50'}`}
                             >
                                 <td className="px-2 py-2 text-center">
                                     <input
@@ -435,7 +547,7 @@ export default function Reports({ users }) {
                                             Patvirt.
                                         </span>
                                     ) : (
-                                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-800">
+                                        <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-white text-gray-800 border border-gray-200 shadow-sm">
                                             Nepatv.
                                         </span>
                                     )}
@@ -476,13 +588,21 @@ export default function Reports({ users }) {
             <h2 className="text-xl font-bold text-gray-900">Ataskaitos ir Duomenys</h2>
 
             {/* TABS */}
-            <div className="flex border-b border-gray-200">
+            <div className="flex border-b border-gray-200 overflow-x-auto">
+
                 <button
-                    onClick={() => setActiveTab('hours')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${activeTab === 'hours' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                    onClick={() => setActiveTab('daily-stats')}
+                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'daily-stats' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
                         }`}
                 >
-                    Darbo Valandos
+                    Dienos Ataskaita
+                </button>
+                <button
+                    onClick={() => setActiveTab('hours')}
+                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'hours' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                        }`}
+                >
+                    Detali Darbo Suvestinė
                 </button>
                 <button
                     onClick={() => setActiveTab('tasks')}
@@ -491,18 +611,25 @@ export default function Reports({ users }) {
                 >
                     Užduočių Analizė
                 </button>
-                <button
-                    onClick={() => setActiveTab('calendar')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${activeTab === 'calendar' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
-                        }`}
-                >
-                    Darbuotojo Kalendorius
-                </button>
+
             </div>
+
+
+
+            {/* --- DAILY STATISTICS TAB CONTENT --- */}
+            {activeTab === 'daily-stats' && (
+                <DailyStatistics
+                    currentUser={currentUser}
+                    userRole={userRole}
+                    users={users}
+                />
+            )}
 
             {/* --- HOURS TAB CONTENT --- */}
             {activeTab === 'hours' && (
                 <div className="space-y-4">
+                    {/* (MonthlyHours removed from here to separate tab) */}
+
                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap gap-4 items-center">
                         <div>
                             <label className="block text-xs font-semibold text-gray-500 mb-1">Pasirinkite mėnesį</label>
@@ -515,15 +642,15 @@ export default function Reports({ users }) {
                         </div>
                     </div>
 
-                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    <th className="px-6 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Darbuotojas</th>
-                                    <th className="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Viso Valandų (Mėn)</th>
-                                    <th className="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Dirbta Dienų</th>
-                                    <th className="px-6 py-3 text-right text-xs font-bold text-gray-500 uppercase tracking-wider">Vidut. / Diena</th>
-                                    <th className="px-6 py-3 w-10"></th>
+                                    <th className="px-1 py-2 text-left text-[10px] uppercase tracking-wider font-bold text-gray-500 md:px-6 md:py-3 md:text-xs">Darb.</th>
+                                    <th className="px-1 py-2 text-right text-[10px] uppercase tracking-wider font-bold text-gray-500 md:px-6 md:py-3 md:text-xs">Viso</th>
+                                    <th className="px-1 py-2 text-right text-[10px] uppercase tracking-wider font-bold text-gray-500 md:px-6 md:py-3 md:text-xs">Dienų</th>
+                                    <th className="px-1 py-2 text-right text-[10px] uppercase tracking-wider font-bold text-gray-500 md:px-6 md:py-3 md:text-xs">Vid.</th>
+                                    <th className="px-1 py-2 w-6 md:px-6 md:py-3 md:w-10"></th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
@@ -539,39 +666,107 @@ export default function Reports({ users }) {
                                             className={`hover:bg-gray-50 cursor-pointer transition-colors ${expandedUser === userStats.userId ? 'bg-blue-50' : ''}`}
                                             onClick={() => setExpandedUser(expandedUser === userStats.userId ? null : userStats.userId)}
                                         >
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                                {formatDisplayName(userStats.name)}
+                                            <td className="px-1 py-2 whitespace-nowrap text-[11px] font-bold text-gray-900 md:px-6 md:py-4 md:text-sm md:font-medium">
+                                                {formatDisplayName(userStats.name).split(' ')[0]}
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-blue-600 font-bold">
+                                            <td className="px-1 py-2 whitespace-nowrap text-[11px] text-right text-blue-600 font-bold md:px-6 md:py-4 md:text-sm">
                                                 {formatMinutesToTimeString(userStats.totalMinutes)}
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-600">
+                                            <td className="px-1 py-2 whitespace-nowrap text-[11px] text-right text-gray-600 md:px-6 md:py-4 md:text-sm">
                                                 {Object.keys(userStats.days).length} d.
                                             </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-500">
+                                            <td className="px-1 py-2 whitespace-nowrap text-[11px] text-right text-gray-500 md:px-6 md:py-4 md:text-sm">
                                                 {formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}
                                             </td>
-                                            <td className="px-6 py-4 text-right text-gray-400">
-                                                {expandedUser === userStats.userId ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                            <td className="px-1 py-2 text-right text-gray-400 md:px-6 md:py-4">
+                                                {expandedUser === userStats.userId ? <ChevronUp className="w-3 h-3 md:w-4 md:h-4" /> : <ChevronDown className="w-3 h-3 md:w-4 md:h-4" />}
                                             </td>
                                         </tr>
                                         {expandedUser === userStats.userId && (
                                             <tr className="bg-gray-50/50">
-                                                <td colSpan="5" className="px-6 py-4">
-                                                    <div className="bg-white border rounded-lg p-4">
-                                                        <h4 className="text-sm font-bold text-gray-700 mb-3">Dienos Išklotinė</h4>
-                                                        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                                                <td colSpan="5" className="px-4 py-4 md:px-6">
+                                                    <div className="bg-white border rounded-lg overflow-hidden">
+                                                        <div className="px-4 py-2 bg-gray-50 border-b flex justify-between items-center">
+                                                            <h4 className="text-sm font-bold text-gray-700">Dienos Išklotinė</h4>
+                                                            <span className="text-xs text-gray-500">Spauskite ant dienos detalesnei informacijai</span>
+                                                        </div>
+                                                        <div className="divide-y divide-gray-100">
                                                             {Object.entries(userStats.days)
-                                                                .sort((a, b) => new Date(a[0]) - new Date(b[0]))
-                                                                .map(([date, mins]) => (
-                                                                    <div key={date} className="border border-gray-200 rounded p-2 text-center hover:shadow-sm">
-                                                                        <div className="text-xs text-gray-500 mb-1">{date}</div>
-                                                                        <div className="font-mono text-sm font-semibold text-blue-600">
-                                                                            {formatMinutesToTimeString(mins)}
+                                                                .sort((a, b) => new Date(b[0]) - new Date(a[0])) // Descending date
+                                                                .map(([date, dayData]) => {
+                                                                    const isDayExpanded = expandedDays[userStats.userId]?.[date];
+
+                                                                    return (
+                                                                        <div key={date} className="group">
+                                                                            {/* Day Header Row */}
+                                                                            <div
+                                                                                onClick={() => toggleDayExpand(userStats.userId, date)}
+                                                                                className={`p-2 flex items-center justify-between cursor-pointer hover:bg-blue-50 transition-colors border-b border-gray-100 last:border-0 ${isDayExpanded ? 'bg-blue-50/50' : ''}`}
+                                                                            >
+                                                                                <div className="flex items-center gap-2">
+                                                                                    <div className="p-1.5 bg-white border rounded text-gray-400 group-hover:text-blue-500 group-hover:border-blue-200 transition-colors">
+                                                                                        {isDayExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                                                                                    </div>
+                                                                                    <span className="text-xs font-bold text-gray-700">{date}</span>
+                                                                                </div>
+
+                                                                                <div className="flex items-center gap-2 text-[10px] font-mono">
+                                                                                    {dayData.dayStart && dayData.dayEnd && (
+                                                                                        <div className="text-gray-500 mr-2 hidden sm:block">
+                                                                                            <span className="text-gray-400 mr-1">Laikas:</span>
+                                                                                            <span className="font-medium text-gray-700">{formatTime(dayData.dayStart)} - {formatTime(dayData.dayEnd)}</span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                    {dayData.totalBreak > 0 && (
+                                                                                        <div className="text-amber-600 flex items-center gap-1" title="Pertraukos">
+                                                                                            <Coffee className="w-3 h-3" />
+                                                                                            <span className="font-bold">{formatMinutesToTimeString(dayData.totalBreak)}</span>
+                                                                                        </div>
+                                                                                    )}
+                                                                                    <div className="text-blue-700 flex items-center gap-1">
+                                                                                        <Briefcase className="w-3 h-3" />
+                                                                                        <span className="font-bold">{formatMinutesToTimeString(dayData.totalWork)}</span>
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+
+                                                                            {/* Expanded Sessions List */}
+                                                                            {isDayExpanded && (
+                                                                                <div className="bg-gray-50 px-4 py-2 border-t border-gray-100 shadow-inner">
+                                                                                    <div className="space-y-1 pl-2 md:pl-10">
+                                                                                        {dayData.sessions.map((session, idx) => {
+                                                                                            const isBreak = session._type === 'break';
+
+                                                                                            return ( // Display each session
+                                                                                                <div key={session.id || idx} className={`text-xs flex items-center gap-3 py-1.5 border-b border-gray-100 last:border-0 ${isBreak ? 'text-amber-700' : 'text-gray-600'}`}>
+                                                                                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isBreak ? 'bg-amber-400' : 'bg-blue-400'}`}></div>
+                                                                                                    <div className="font-mono text-gray-500 w-24 flex-shrink-0">
+                                                                                                        {formatTime(session.startTime)} - {formatTime(session.endTime)}
+                                                                                                    </div>
+                                                                                                    <div className="font-medium flex-grow truncate">
+                                                                                                        {isBreak ? (
+                                                                                                            <span className="flex items-center gap-1.5">
+                                                                                                                <Coffee className="w-3 h-3" /> Pertrauka
+                                                                                                            </span>
+                                                                                                        ) : (
+                                                                                                            session.taskTitle || 'Darbas'
+                                                                                                        )}
+                                                                                                    </div>
+                                                                                                    <div className={`font-mono font-bold w-12 text-right ${isBreak ? 'text-amber-600' : 'text-blue-600'}`}>
+                                                                                                        {formatMinutesToTimeString(session.durationMinutes)}
+                                                                                                    </div>
+                                                                                                </div>
+                                                                                            );
+                                                                                        })}
+                                                                                        {dayData.sessions.length === 0 && (
+                                                                                            <div className="text-xs text-gray-400 italic py-1">Nėra detalių įrašų.</div>
+                                                                                        )}
+                                                                                    </div>
+                                                                                </div>
+                                                                            )}
                                                                         </div>
-                                                                    </div>
-                                                                ))
-                                                            }
+                                                                    );
+                                                                })}
                                                         </div>
                                                     </div>
                                                 </td>
@@ -584,6 +779,7 @@ export default function Reports({ users }) {
                     </div>
                 </div>
             )}
+
 
             {/* --- TASKS TAB CONTENT --- */}
             {activeTab === 'tasks' && (
@@ -615,25 +811,26 @@ export default function Reports({ users }) {
                                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
                             >
                                 <option value="all">Visos Žymos</option>
-                                <option value="Design">Design</option>
-                                <option value="Development">Development</option>
-                                <option value="Marketing">Marketing</option>
-                                <option value="Other">Other</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Filtruoti pagal Darbuotoją</label>
-                            <select
-                                value={taskFilters.userId}
-                                onChange={(e) => setTaskFilters(prev => ({ ...prev, userId: e.target.value }))}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
-                            >
-                                <option value="all">Visi Darbuotojai</option>
-                                {users?.filter(u => !u.isDisabled).map(u => (
-                                    <option key={u.id} value={u.id}>{formatDisplayName(u.displayName || u.email)}</option>
+                                {TASK_TAGS.map(tag => (
+                                    <option key={tag} value={tag}>{tag}</option>
                                 ))}
                             </select>
                         </div>
+                        {(userRole === 'manager' || userRole === 'admin') && (
+                            <div>
+                                <label className="block text-xs font-semibold text-gray-500 mb-1">Filtruoti pagal Darbuotoją</label>
+                                <select
+                                    value={taskFilters.userId}
+                                    onChange={(e) => setTaskFilters(prev => ({ ...prev, userId: e.target.value }))}
+                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                >
+                                    <option value="all">Visi Darbuotojai</option>
+                                    {users?.filter(u => !u.isDisabled).map(u => (
+                                        <option key={u.id} value={u.id}>{formatDisplayName(u.displayName || u.email)}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
                         <div className="col-span-2 md:col-span-4 flex justify-end">
                             <select
                                 value={taskSort}
@@ -652,15 +849,15 @@ export default function Reports({ users }) {
                         <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">Kraunami duomenys...</div>
                     ) : (
                         <>
-                            {todayTasks.length > 0 && (
-                                <TaskListTable tasks={todayTasks} title="Užduotys atliktos ŠIANDIEN (nuo 3:00 ryto)" />
-                            )}
+                            {groupedTasks.length > 0 && groupedTasks.map(([date, tasks]) => (
+                                <TaskListTable
+                                    key={date}
+                                    tasks={tasks}
+                                    title={`Užduotys: ${date}`}
+                                />
+                            ))}
 
-                            {earlierTasks.length > 0 && (
-                                <TaskListTable tasks={earlierTasks} title="Užduotys atliktos ANKSČIAU (Nepatvirtintos)" />
-                            )}
-
-                            {todayTasks.length === 0 && earlierTasks.length === 0 && (
+                            {groupedTasks.length === 0 && (
                                 <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">
                                     Nerasta užduočių pagal pasirinktus filtrus.
                                 </div>
@@ -670,10 +867,7 @@ export default function Reports({ users }) {
                 </div>
             )}
 
-            {/* --- WORKER CALENDAR TAB CONTENT --- */}
-            {activeTab === 'calendar' && (
-                <WorkerCalendarReport users={users} />
-            )}
+
 
             {activeModal.type === 'comments' && activeModal.task && (
                 <CommentsModal

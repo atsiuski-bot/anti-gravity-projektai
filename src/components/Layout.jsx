@@ -1,10 +1,11 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { LogOut, User } from 'lucide-react';
 import BottomNavigation from './BottomNavigation';
 import InstallPrompt from './InstallPrompt';
 import { checkAndPromoteTasks, shouldRunAutomation } from '../utils/automationUtils';
 import { formatDisplayName } from '../utils/formatters';
+import { useSessionNotification } from '../hooks/useSessionNotification';
 
 export default function Layout({ children }) {
     const { currentUser, userData, userRole, logout, isTakingBreak, workStatus } = useAuth(); // userData added
@@ -37,31 +38,26 @@ export default function Layout({ children }) {
         };
     }, []);
 
-    // Determine background color based on state priority
+    // Extract state values with memoization to prevent unnecessary re-renders
+    const isCalling = useMemo(() => userData?.callState?.isCalling || false, [userData?.callState?.isCalling]);
+    const isQuickWorking = useMemo(() => userData?.quickWorkState?.isQuickWorking || false, [userData?.quickWorkState?.isQuickWorking]);
+    const isRunning = useMemo(() => workStatus?.status === 'running', [workStatus?.status]);
+
+    // Determine background color based on state priority (memoized for performance)
     // Priority: Quick Work (Red) > Call (Blue) > Break (Amber) > Working (Green) > Default (White)
-
-    // Using userData from context which is a real-time Firestore object
-    const callState = userData?.callState || {};
-    const quickWorkState = userData?.quickWorkState || {};
-    const isCalling = callState.isCalling;
-    const isQuickWorking = quickWorkState.isQuickWorking;
-
-    // Check work session status
-    const taskStatus = workStatus?.status;
-    const isRunning = taskStatus === 'running';
-
-    const getBackgroundColor = () => {
+    const bgColor = useMemo(() => {
         if (isQuickWorking) return 'bg-red-500'; // Much more intense red for Quick Work
         if (isCalling) return 'bg-blue-100'; // Light Blue for Call
         if (isTakingBreak) return 'bg-amber-100'; // Break
         if (isRunning) return 'bg-green-200'; // Actively working
         return 'bg-white'; // Default (idle or paused)
-    };
+    }, [isQuickWorking, isCalling, isTakingBreak, isRunning]);
 
-    const bgColor = getBackgroundColor();
+    // Use system notification hook to show notification in phone's status bar
+    useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning });
 
     return (
-        <div className={`min-h-screen ${bgColor} transition-colors duration-300 pb-20 sm:pb-24`}>
+        <div className={`min-h-screen ${bgColor} transition-colors duration-300 pb-32 sm:pb-36`}>
             {/* Offline Banner */}
             {!isOnline && (
                 <div className="bg-red-500 text-white px-4 py-1 text-xs text-center font-medium shadow-sm z-50 relative animate-in fade-in slide-in-from-top-2">

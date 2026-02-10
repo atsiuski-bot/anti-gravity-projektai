@@ -34,8 +34,12 @@ const resumeTasksAndSetUserStatus = async (userId, resumableTaskIds) => {
         const tDoc = await getDoc(doc(db, 'tasks', taskId));
         if (tDoc.exists()) {
             const tData = { id: tDoc.id, ...tDoc.data() };
-            // Only resume if it's still paused
-            if (tData.timerStatus === 'paused') {
+            // Only resume if task is paused AND not completed/confirmed/deleted
+            if (tData.timerStatus === 'paused' &&
+                !tData.completed &&
+                tData.status !== 'completed' &&
+                tData.status !== 'confirmed' &&
+                tData.status !== 'deleted') {
                 await resumeTask(tData, userId);
                 resumedCount++;
                 lastResumedTaskId = taskId;

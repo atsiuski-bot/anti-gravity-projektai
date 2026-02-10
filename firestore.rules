@@ -35,9 +35,9 @@ service cloud.firestore {
       return isAdmin() || isManager();
     }
 
-    // USERS - Allow users to read their own document without additional checks to avoid circular dependency
+    // USERS - Allow authenticated users to read user documents (needed for AuthContext and viewing coworkers)
     match /users/{userId} {
-      // Allow authenticated users to read their own data (needed for AuthContext to work)
+      // Allow authenticated users to read user data (needed for viewing coworker info, calendars, etc.)
       allow read: if isAuthenticated();
       allow create: if isAuthenticated(); 
       allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin() || isManager());
@@ -86,6 +86,11 @@ service cloud.firestore {
 
     // NOTIFICATIONS
     match /calendar_notifications/{notifId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // REQUEST NOTIFICATIONS (Task approval requests)
+    match /request_notifications/{notifId} {
       allow read, write: if isAuthenticated();
     }
 

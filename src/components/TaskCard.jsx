@@ -122,6 +122,8 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                 e.preventDefault();
                 e.stopPropagation();
 
+                const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
+
                 if (taskStatus === 'pending') {
                     await updateDoc(doc(db, 'tasks', task.id), {
                         status: 'in-progress',
@@ -132,7 +134,7 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                         status: 'pending',
                         updatedAt: new Date().toISOString()
                     });
-                } else if (taskStatus === 'unapproved' && isManager) {
+                } else if (taskStatus === 'unapproved' && isManagerOrAdmin) {
                     await updateDoc(doc(db, 'tasks', task.id), {
                         status: 'pending',
                         updatedAt: new Date().toISOString()
@@ -152,7 +154,7 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
 
         // Swipe left: Mark as completed
         try {
-            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
+            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
             const taskData = {
                 ...task,
                 status: isManagerOrAdmin ? 'confirmed' : 'completed',
@@ -213,7 +215,7 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
         }
 
         try {
-            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
+            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
 
             const taskData = {
                 ...task,
@@ -293,6 +295,21 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                                         {getPriorityLabel(task.priority)}
                                     </span>
                                 )}
+                                {(() => {
+                                    const statusLabels = {
+                                        'pending': 'Nepradėtas',
+                                        'in-progress': 'Pradėtas',
+                                        'completed': 'Užbaigtas, nepriduotas',
+                                        'confirmed': 'Užbaigtas, priduotas',
+                                        'unapproved': 'Laukia patvirtinimo'
+                                    };
+                                    const label = statusLabels[taskStatus] || taskStatus;
+                                    return (
+                                        <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
+                                            {label}
+                                        </span>
+                                    );
+                                })()}
                                 {isManager && (
                                     <button
                                         onClick={(e) => {

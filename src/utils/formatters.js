@@ -43,3 +43,21 @@ export const parseTimeToHours = (timeStr) => {
         return 0;
     }
 };
+
+/**
+ * Formats a date string or Date object to HH:MM (24h) format.
+ * 
+ * @param {string|Date} dateOrString - ISO string or Date object
+ * @returns {string} Formatted time string (e.g. "14:30") or "-" if invalid
+ */
+export const formatTime = (dateOrString) => {
+    if (!dateOrString) return '-';
+    const date = new Date(dateOrString);
+    if (isNaN(date.getTime())) return '-';
+    return date.toLocaleTimeString('lt-LT', {
+        timeZone: 'Europe/Vilnius',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    });
+};

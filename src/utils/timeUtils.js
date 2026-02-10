@@ -77,3 +77,78 @@ export const calculateCurrentTotalMinutes = (task) => {
         return 0;
     }
 };
+
+/**
+ * Returns a Date object representing the current moment, 
+ * but ensures operations can be performed in Lithuanian context.
+ */
+export const getLithuanianNow = () => {
+    return new Date();
+};
+
+/**
+ * Returns YYYY-MM-DD string according to Lithuania's current time.
+ */
+export const getLithuanianDateString = (date = new Date()) => {
+    const d = typeof date === 'string' ? new Date(date) : date;
+    const options = { timeZone: 'Europe/Vilnius', year: 'numeric', month: '2-digit', day: '2-digit' };
+    const parts = new Intl.DateTimeFormat('en-CA', options).formatToParts(d);
+    const year = parts.find(p => p.type === 'year').value;
+    const month = parts.find(p => p.type === 'month').value;
+    const day = parts.find(p => p.type === 'day').value;
+    return `${year}-${month}-${day}`;
+};
+
+/**
+ * Returns the weekday in Lithuanian (e.g. "Pirmadienis") according to Lithuania's time.
+ */
+export const getLithuanianWeekday = (date = new Date()) => {
+    const d = typeof date === 'string' ? new Date(date) : date;
+
+    const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Vilnius', weekday: 'long' });
+    const enWeekday = formatter.format(d);
+    const enToLtMap = {
+        'Sunday': 'Sekmadienis',
+        'Monday': 'Pirmadienis',
+        'Tuesday': 'Antradienis',
+        'Wednesday': 'Trečiadienis',
+        'Thursday': 'Ketvirtadienis',
+        'Friday': 'Penktadienis',
+        'Saturday': 'Šeštadienis'
+    };
+    return enToLtMap[enWeekday] || 'Nežinoma';
+};
+
+/**
+ * Returns a Date object for the same day at 03:00 Lithuania time.
+ */
+export const getLithuanian3AMCutoff = (dateStr) => {
+    // dateStr is 'YYYY-MM-DD'
+    const [y, m, d] = dateStr.split('-').map(Number);
+    // Create a date in local time first
+    const date = new Date(y, m - 1, d, 3, 0, 0, 0);
+
+    // We need this date to represent 3 AM in VILNIUS.
+    // A trick to get the offset:
+    const formatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Europe/Vilnius',
+        year: 'numeric', month: 'numeric', day: 'numeric',
+        hour: 'numeric', minute: 'numeric', second: 'numeric',
+        hour12: false
+    });
+
+    // Iteratively adjust until the formatted time is 03:00:00
+    // But usually, just creating it and adjusting for timezone difference is enough.
+    // More robustly: 
+    const targetISO = `${dateStr}T03:00:00`;
+    // We want the moment where Lithuania says it's 3AM.
+    // We can use the fact that Europe/Vilnius is either +02:00 or +03:00.
+    // Let's use a simpler approach: get the offset in minutes.
+
+    const parts = formatter.formatToParts(date);
+    const fHour = parseInt(parts.find(p => p.type === 'hour').value);
+
+    const diff = fHour - 3;
+    date.setHours(date.getHours() - diff);
+    return date;
+};

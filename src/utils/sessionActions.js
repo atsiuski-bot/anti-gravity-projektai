@@ -1,6 +1,7 @@
 import { doc, getDoc, updateDoc, collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
+import { getLithuanianNow, getLithuanianDateString } from './timeUtils';
 
 /**
  * Starts a new session for the user.
@@ -61,7 +62,8 @@ export const startSession = async (userId, type, metadata = {}) => {
         }
 
         // 4. Prepare new session data
-        const startTime = new Date().toISOString();
+        const nowMoment = getLithuanianNow();
+        const startTime = nowMoment.toISOString();
         const activeSession = {
             type,
             startTime,
@@ -80,7 +82,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                 isTakingBreak: true,
                 lastStartedAt: startTime,
                 dailyAccumulatedMinutes: userData?.breakState?.dailyAccumulatedMinutes || 0,
-                lastDate: new Date().toISOString().split('T')[0],
+                lastDate: getLithuanianDateString(),
                 resumableTaskIds: resumableTaskIds
             };
         } else if (type === 'call') {
@@ -141,10 +143,10 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
 
         if (!session.type && !userData?.activeSession) return; // Should not happen if logic is correct
 
-        const now = new Date();
+        const now = getLithuanianNow();
         const start = new Date(session.startTime);
         const durationMinutes = (now - start) / (1000 * 60);
-        const sessionDate = now.toISOString().split('T')[0];
+        const sessionDate = getLithuanianDateString(now);
 
         // 1. Log to generic 'sessions'
         if (durationMinutes > (10 / 60)) { // Minimal threshold
@@ -160,13 +162,17 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
                     metadata: session
                 });
             } catch (logErr) {
-                console.warn("Failed to log generic session (likely permissions):", logErr);
-                // Continue execution to ensure legacy logging and state clearing works
+                // Silently ignore permission errors for generic sessions as they are optional/beta
+                // console.debug("Failed to log generic session (likely permissions):", logErr);
             }
         }
 
         // 2. Double Write to Legacy Collections
-        await handleLegacyLogging(userId, userData, session, now, durationMinutes);
+        try {
+            await handleLegacyLogging(userId, userData, session, now, durationMinutes);
+        } catch (legacyLogErr) {
+            console.warn("Failed to log legacy session:", legacyLogErr);
+        }
 
         // 3. Clear User State
         const updates = {
@@ -202,7 +208,12 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
                     const tDoc = await getDoc(doc(db, 'tasks', taskId));
                     if (tDoc.exists()) {
                         const tData = { id: tDoc.id, ...tDoc.data() };
-                        if (tData.timerStatus === 'paused') {
+                        // Only resume if task is paused AND not completed/confirmed/deleted
+                        if (tData.timerStatus === 'paused' &&
+                            !tData.completed &&
+                            tData.status !== 'completed' &&
+                            tData.status !== 'confirmed' &&
+                            tData.status !== 'deleted') {
                             await resumeTask(tData, userId);
                         }
                     }
@@ -218,30 +229,56 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
 
 // Helper: End legacy session types if we drift out of sync
 const endLegacySession = async (userId, type, userData) => {
-    // This calls the OLD actions to purely clean up if we found ourselves in a legacy state without activeSession
-    // We import these dynamically or just duplicate logic to avoid circular deps if needed.
-    // For now, simpler to just manually log and clear based on userData.
-    // Use handleLegacyLogging logic.
+    try {
+        // Construct a fake session object to pass to legacy logger
+        let startTime;
+        if (type === 'break') startTime = userData.breakState?.lastStartedAt;
+        else if (type === 'call') startTime = userData.callState?.lastStartedAt;
+        else if (type === 'quick_work') startTime = userData.quickWorkState?.lastStartedAt;
 
-    // Construct a fake session object to pass to legacy logger
-    let startTime;
-    if (type === 'break') startTime = userData.breakState?.lastStartedAt;
-    else if (type === 'call') startTime = userData.callState?.lastStartedAt;
-    else if (type === 'quick_work') startTime = userData.quickWorkState?.lastStartedAt;
-    // Task handling is complex because of activeTaskId. 
-    // Usually existing pauseTask handles this.
+        let duration = 0;
+        const nowMoment = getLithuanianNow();
+        let now = nowMoment;
 
-    if (startTime) {
-        const fakeSession = { type, startTime };
-        const now = new Date();
-        const duration = (now - new Date(startTime)) / (1000 * 60);
-        await handleLegacyLogging(userId, userData, fakeSession, now, duration);
+        if (startTime) {
+            const fakeSession = { type, startTime };
+            now = getLithuanianNow(); // Update now
+            duration = (now - new Date(startTime)) / (1000 * 60);
+
+            // Log session (safely)
+            try {
+                await handleLegacyLogging(userId, userData, fakeSession, now, duration);
+            } catch (loggingErr) {
+                console.warn(`Failed to log legacy session (${type}):`, loggingErr);
+            }
+        }
+
+        // CRITICAL FIX: Clear the legacy state flags so the user doesn't get stuck
+        const userRef = doc(db, 'users', userId);
+        const updates = {};
+
+        if (type === 'break') {
+            updates['breakState.isTakingBreak'] = false;
+            // Accumulate minutes so daily counter is correct
+            updates['breakState.dailyAccumulatedMinutes'] = (userData.breakState?.dailyAccumulatedMinutes || 0) + duration;
+        } else if (type === 'call') {
+            updates['callState.isCalling'] = false;
+        } else if (type === 'quick_work') {
+            updates['quickWorkState.isQuickWorking'] = false;
+        }
+
+        if (Object.keys(updates).length > 0) {
+            await updateDoc(userRef, updates);
+        }
+
+    } catch (err) {
+        console.error("Error in endLegacySession:", err);
     }
 };
 
 const handleLegacyLogging = async (userId, userData, session, now, durationMinutes) => {
     if (durationMinutes <= (10 / 60)) return; // Ignore short
-    const sessionDate = now.toISOString().split('T')[0];
+    const sessionDate = getLithuanianDateString(now);
 
     if (session.type === 'break') {
         await addDoc(collection(db, 'break_sessions'), {

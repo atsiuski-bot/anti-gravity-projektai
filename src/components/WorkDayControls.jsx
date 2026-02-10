@@ -3,6 +3,7 @@ import { Play, Square, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../firebase';
 import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
+import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 
 export default function WorkDayControls() {
     const { currentUser, workStatus, isTakingBreak } = useAuth();
@@ -17,8 +18,8 @@ export default function WorkDayControls() {
         if (!currentUser) return;
         setLoading(true);
         try {
-            const now = new Date();
-            const today = now.toISOString().split('T')[0];
+            const now = getLithuanianNow();
+            const today = getLithuanianDateString(now);
 
             // 1. Create new shift log
             const shiftRef = await addDoc(collection(db, 'shift_logs'), {
@@ -56,7 +57,7 @@ export default function WorkDayControls() {
 
         setLoading(true);
         try {
-            const now = new Date();
+            const now = getLithuanianNow();
 
             // 1. Update shift log
             const shiftRef = doc(db, 'shift_logs', workStatus.currentShiftId);

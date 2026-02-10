@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Play, Pause, Square } from 'lucide-react';
 import { doc, updateDoc, collection, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask, archiveTask } from '../utils/taskActions';
 import { useAuth } from '../context/AuthContext';
 
@@ -113,7 +113,7 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
             let finalTimerMinutes = task.timerMinutes || 0;
             let currentManualMinutes = task.manualMinutes || 0;
             const start = task.timerStartedAt ? new Date(task.timerStartedAt) : null;
-            const now = new Date();
+            const now = getLithuanianNow();
 
             // 1. If running, calculate elapsed and update records
             if (isRunning && start) {
@@ -123,7 +123,7 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
                 // Log work session
                 if (elapsedMinutes > 0.1) {
                     try {
-                        const sessionDate = start.toISOString().split('T')[0];
+                        const sessionDate = getLithuanianDateString(start);
                         await addDoc(collection(db, 'work_sessions'), {
                             taskId: task.id,
                             taskTitle: task.title || 'Unknown Task',
@@ -143,7 +143,7 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
             }
 
             // 2. Prepare task data for completion
-            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
+            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
             const totalMinutes = finalTimerMinutes + currentManualMinutes;
             const formattedTime = formatMinutesToTimeString(totalMinutes);
 

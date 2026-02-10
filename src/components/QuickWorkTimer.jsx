@@ -4,7 +4,7 @@ import ReactDOM from 'react-dom';
 import { Zap, Square, X, Check } from 'lucide-react';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { formatMinutesToTimeString } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianNow } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
@@ -148,7 +148,7 @@ export default function QuickWorkTimer({ compact = false }) {
 
     const handleStopQuickWork = async () => {
         // Here we just check duration and decide whether to show modal or stop immediately
-        const now = new Date();
+        const now = getLithuanianNow();
         let sessionDuration = 0;
         if (startTime) {
             sessionDuration = (now - startTime) / (1000 * 60);

@@ -1,9 +1,9 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import ManagerView from './ManagerView';
-import WorkerView from './WorkerView';
 import AdminBootstrap from '../components/AdminBootstrap';
-import { checkAndPromoteTasks, shouldRunAutomation, archiveOldTasks } from '../utils/automationUtils';
+import { shouldRunAutomation, checkAndPromoteTasks, archiveOldTasks } from '../utils/automationUtils';
+const ManagerView = React.lazy(() => import('./ManagerView'));
+const WorkerView = React.lazy(() => import('./WorkerView'));
 
 export default function Dashboard() {
     const { userRole } = useAuth();
@@ -22,7 +22,13 @@ export default function Dashboard() {
     return (
         <>
             <AdminBootstrap />
-            {userRole === 'manager' || userRole === 'admin' ? <ManagerView /> : <WorkerView />}
+            <React.Suspense fallback={
+                <div className="flex items-center justify-center p-8">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+                </div>
+            }>
+                {userRole === 'manager' || userRole === 'admin' ? <ManagerView /> : <WorkerView />}
+            </React.Suspense>
         </>
     );
 }

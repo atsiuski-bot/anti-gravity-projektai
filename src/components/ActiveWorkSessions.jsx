@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { Users, ChevronDown, ChevronUp, Activity } from 'lucide-react';
+import SessionTypeIcon from './SessionTypeIcon';
 
 export default function ActiveWorkSessions() {
     const [users, setUsers] = useState([]);
@@ -133,7 +134,7 @@ export default function ActiveWorkSessions() {
 }
 
 // Helper Component for Active Session Row to manage own timer
-function ActiveSessionRow({ session }) {
+const ActiveSessionRow = React.memo(({ session }) => {
     const [durationStr, setDurationStr] = useState('');
 
     useEffect(() => {
@@ -170,21 +171,25 @@ function ActiveSessionRow({ session }) {
 
     return (
         <div className={`p-3 rounded-lg flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
-            <div className="flex items-center gap-3 overflow-hidden">
-                <div
-                    className="w-2 h-2 rounded-full flex-shrink-0 bg-current opacity-50"
-                    style={{ backgroundColor: session.userColor || 'currentColor' }}
-                />
-                <span className="font-semibold text-sm truncate">
-                    {session.userName}
-                </span>
-                <span className="text-sm border-l border-current/20 pl-3 truncate opacity-90">
+            <div className="flex-shrink-0">
+                <SessionTypeIcon type={session.type} className="w-5 h-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                    <span className="font-semibold text-sm truncate">
+                        {session.userName}
+                    </span>
+                </div>
+                <div className="text-xs truncate opacity-90">
                     {session.label}
-                </span>
+                </div>
             </div>
             <span className="font-mono font-bold text-sm ml-4 whitespace-nowrap opacity-80">
                 {durationStr}
             </span>
         </div>
     );
-}
+});
+
+ActiveSessionRow.displayName = 'ActiveSessionRow';
+

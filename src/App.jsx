@@ -1,11 +1,21 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { NavigationProvider } from './context/NavigationContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Layout from './components/Layout';
-import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
 
-import { NavigationProvider } from './context/NavigationContext';
+// Lazy load pages
+const Login = React.lazy(() => import('./pages/Login'));
+const Dashboard = React.lazy(() => import('./pages/Dashboard'));
+
+const LoadingFallback = () => (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+        <div className="text-center">
+            <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+            <p className="text-gray-600 font-medium">Loading...</p>
+        </div>
+    </div>
+);
 
 const ProtectedRoute = ({ children }) => {
     const { currentUser, loading } = useAuth();
@@ -37,20 +47,23 @@ function App() {
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AuthProvider>
                 <NavigationProvider>
-                    <Routes>
-                        <Route path="/login" element={<Login />} />
-                        <Route path="/" element={
-                            <ProtectedRoute>
-                                <Layout>
-                                    <Dashboard />
-                                </Layout>
-                            </ProtectedRoute>
-                        } />
-                    </Routes>
+                    <React.Suspense fallback={<LoadingFallback />}>
+                        <Routes>
+                            <Route path="/login" element={<Login />} />
+                            <Route path="/" element={
+                                <ProtectedRoute>
+                                    <Layout>
+                                        <Dashboard />
+                                    </Layout>
+                                </ProtectedRoute>
+                            } />
+                        </Routes>
+                    </React.Suspense>
                 </NavigationProvider>
             </AuthProvider>
         </BrowserRouter>
     );
 }
 
+// Force rebuild
 export default App;

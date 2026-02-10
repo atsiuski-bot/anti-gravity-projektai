@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { db } from '../firebase';
 import { doc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { Link as LinkIcon, MessageCircle, FileText, CheckCircle2, MessageSquare, Calendar, Archive, Trash2, ArrowUp, ArrowDown, ImageIcon } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
-import { parseTimeStringToMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { parseTimeStringToMinutes, formatMinutesToTimeString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { pauseOtherTasks, archiveTask, deleteTask } from '../utils/taskActions';
 import { formatDisplayName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
@@ -16,10 +16,31 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
     const { currentUser, userRole } = useAuth();
     const [expandedComments, setExpandedComments] = useState({});
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null }); // { type: 'description'|'links'|'comments', taskId: string }
+    const [refreshTick, setRefreshTick] = useState(0);
 
     // Comment Editing State
     const [editingComment, setEditingComment] = useState({ taskId: null, index: null });
     const [editCommentText, setEditCommentText] = useState('');
+
+    // Auto-refresh timer for running tasks (every 60 seconds)
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setRefreshTick(prev => prev + 1);
+        }, 60000); // 60 seconds
+        return () => clearInterval(interval);
+    }, []);
+
+    // Helper to format duration in "3h 17min" or "17min" format
+    const formatDuration = (minutes) => {
+        const totalMinutes = Math.floor(minutes);
+        if (totalMinutes < 60) {
+            return `${totalMinutes}min`;
+        }
+        const h = Math.floor(totalMinutes / 60);
+        const m = totalMinutes % 60;
+        if (m === 0) return `${h}h`;
+        return `${h}h ${m}min`;
+    };
 
     const handleUpdateComment = async (taskId, index, newText) => {
         try {
@@ -97,7 +118,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
             const task = tasks.find(t => t.id === taskId);
             if (!task) return;
 
-            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
+            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
             const willBeCompleted = !currentStatus;
 
             if (willBeCompleted && !window.confirm("Ar tikrai norite užbaigti užduotį?")) {
@@ -431,12 +452,22 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                             </span>
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
-                                            <span className={clsx(
-                                                "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full max-w-[100px] truncate",
-                                                statusColors[task.status || 'pending']
-                                            )}>
-                                                {statusLabels[task.status || 'pending']}
-                                            </span>
+                                            <div className="flex flex-col gap-0.5">
+                                                <span className={clsx(
+                                                    "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full max-w-[100px] truncate",
+                                                    statusColors[task.status || 'pending']
+                                                )}>
+                                                    {statusLabels[task.status || 'pending']}
+                                                </span>
+                                                {task.status === 'in-progress' && (() => {
+                                                    const totalMinutes = calculateCurrentTotalMinutes(task);
+                                                    return totalMinutes > 0 ? (
+                                                        <span className="text-[9px] text-gray-500 font-medium">
+                                                            {formatDuration(totalMinutes)}
+                                                        </span>
+                                                    ) : null;
+                                                })()}
+                                            </div>
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap text-xs text-gray-500">
                                             {task.estimatedTime || '-'}

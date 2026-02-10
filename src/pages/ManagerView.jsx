@@ -1,6 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../firebase';
-import { collection, onSnapshot, query, orderBy, getDocs, doc, getDoc, setDoc, where, updateDoc } from 'firebase/firestore';
 import { Plus, Users, LayoutDashboard, CheckSquare, Layout, Calendar as CalendarIcon, Users as UsersIcon, ListTodo, ArrowUpDown, History, UserCheck, Filter } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
@@ -22,48 +20,24 @@ import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/ta
 import { getPriorityRank, PRIORITIES, getPriorityLabel } from '../utils/priority';
 import { migrateOldDeletedTasks } from '../utils/migrateDeletedTasks';
 
+import { useManagerData } from '../hooks/useManagerData';
+import { useTaskFiltering } from '../hooks/useTaskFiltering';
+
 export default function ManagerView() {
     const { userRole, currentUser } = useAuth();
     const { activeTab, scrollPositions } = useNavigation();
-    const [tasks, setTasks] = useState([]);
-    const [users, setUsers] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     const [viewMode, setViewMode] = useState('desktop');
-    const [sortBy, setSortBy] = useState('none');
-    const [manualTaskOrder, setManualTaskOrder] = useState([]);
-    const [filterUser, setFilterUser] = useState('');
-    const [filterPriority, setFilterPriority] = useState('');
 
-    const [error, setError] = useState(null);
-
-    // Fetch manual task order
-    useEffect(() => {
-        if (!currentUser) return;
-        const fetchSettings = async () => {
-            try {
-                const docRef = doc(db, 'user_settings', currentUser.uid);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists() && docSnap.data().manualTaskOrder) {
-                    setManualTaskOrder(docSnap.data().manualTaskOrder);
-                }
-            } catch (err) {
-                console.error("Error fetching user settings:", err);
-            }
-        };
-        fetchSettings();
-    }, [currentUser]);
-
-    const saveManualOrder = async (newOrder) => {
-        setManualTaskOrder(newOrder);
-        try {
-            await setDoc(doc(db, 'user_settings', currentUser.uid), {
-                manualTaskOrder: newOrder
-            }, { merge: true });
-        } catch (err) {
-            console.error("Error saving manual order:", err);
-        }
-    };
+    // Use custom hooks
+    const { tasks, users, manualTaskOrder, saveManualOrder, error, loading } = useManagerData(currentUser);
+    const {
+        sortedTasks,
+        filterUser, setFilterUser,
+        filterPriority, setFilterPriority,
+        sortBy, setSortBy
+    } = useTaskFiltering(tasks, manualTaskOrder);
 
     const handleMoveUp = (taskId) => {
         const currentList = [...sortedTasks];
@@ -90,58 +64,6 @@ export default function ManagerView() {
     };
 
     useEffect(() => {
-        let unsubscribe = () => { };
-
-        try {
-            const q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
-            unsubscribe = onSnapshot(q, async (snapshot) => {
-                let tasksData = snapshot.docs.map(doc => ({
-                    id: doc.id,
-                    ...doc.data()
-                }));
-
-                // Fetch worker names for assigned tasks
-                try {
-                    const usersSnapshot = await getDocs(collection(db, 'users'));
-                    const usersMap = {};
-                    const usersList = [];
-                    usersSnapshot.docs.forEach(doc => {
-                        const userData = { id: doc.id, ...doc.data() };
-                        usersMap[doc.id] = userData;
-                        if (!userData.isDisabled) { // Filter out blocked users from the list passed to components
-                            usersList.push(userData);
-                        }
-                    });
-                    setUsers(usersList);
-
-                    // Enrich tasks with worker names and colors
-                    tasksData = tasksData.map(task => ({
-                        ...task,
-                        assignedWorkerName: task.assignedWorkerId && usersMap[task.assignedWorkerId]
-                            ? (usersMap[task.assignedWorkerId].displayName || usersMap[task.assignedWorkerId].email)
-                            : null,
-                        assignedWorkerColor: task.assignedWorkerId && usersMap[task.assignedWorkerId]
-                            ? (usersMap[task.assignedWorkerId].color || null)
-                            : null,
-                        creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
-                            ? (usersMap[task.createdBy].displayName || usersMap[task.createdBy].email)
-                            : null)
-                    }));
-                } catch (err) {
-                    console.error("Error fetching user names:", err);
-                }
-
-                setTasks(tasksData);
-                setError(null);
-            }, (err) => {
-                console.error("Error fetching tasks:", err);
-                setError("Nepavyko užkrauti užduočių. Patikrinkite teises arba bandykite vėliau.");
-            });
-        } catch (err) {
-            console.error("Error setting up tasks listener:", err);
-            setError("Įvyko klaida. Bandykite perkrauti puslapį.");
-        }
-
         // Simple responsive check
         const handleResize = () => {
             setViewMode(window.innerWidth < 768 ? 'mobile' : 'desktop');
@@ -154,7 +76,6 @@ export default function ManagerView() {
         window.addEventListener('open-task-modal', handleOpenModalEvent);
 
         return () => {
-            unsubscribe();
             window.removeEventListener('resize', handleResize);
             window.removeEventListener('open-task-modal', handleOpenModalEvent);
         };
@@ -164,132 +85,6 @@ export default function ManagerView() {
         setEditingTask(null);
         setIsModalOpen(true);
     };
-
-    const formatDisplayName = (name) => {
-        if (!name) return 'Nežinomas';
-        return name.split('@')[0];
-    };
-
-    // Sort tasks based on selected criteria
-    const sortedTasks = React.useMemo(() => {
-        // Filter out completed, deleted, and unapproved tasks
-        let activeTasks = tasks.filter(t => {
-            // Basic exclusion
-            if (t.isDeleted || t.status === 'deleted') return false;
-
-            // Definition of "Today's Work Day" (Starts at 3:00 AM)
-            const now = new Date();
-            const cutoff = new Date(now);
-            cutoff.setHours(3, 0, 0, 0);
-
-            // If it's before 3AM, the work day started at 3AM yesterday
-            if (now.getHours() < 3) {
-                cutoff.setDate(cutoff.getDate() - 1);
-            }
-
-            const isDone = t.completed || t.status === 'completed' || t.status === 'confirmed';
-
-            if (isDone) {
-                // If the task is done, it should only show if it was finished TODAY (after 3AM)
-                const finishedAt = t.completedAt || t.confirmedAt || t.updatedAt;
-                if (!finishedAt) return false; // Should not happen for done tasks
-
-                const finishDate = new Date(finishedAt);
-                return finishDate >= cutoff;
-            }
-
-            // Not done, so it's active
-            return true;
-        });
-
-        // Apply user filter
-        if (filterUser) {
-            activeTasks = activeTasks.filter(t => t.assignedWorkerId === filterUser);
-        }
-
-        // Apply priority filter
-        if (filterPriority) {
-            activeTasks = activeTasks.filter(t => t.priority === filterPriority);
-        }
-
-        if (sortBy === 'none') return activeTasks;
-
-
-        const comparePriority = (a, b) => {
-            const rankA = getPriorityRank(a.priority);
-            const rankB = getPriorityRank(b.priority);
-            return rankB - rankA; // Descending rank (Urgent > Low)
-        };
-
-        const sorted = [...activeTasks];
-
-
-        const compareUser = (a, b) => {
-            const nameA = a.assignedWorkerName || '';
-            const nameB = b.assignedWorkerName || '';
-            if (!nameA && !nameB) return 0;
-            if (!nameA) return 1;
-            if (!nameB) return -1;
-            return nameA.localeCompare(nameB);
-        };
-
-        const compareDeadline = (a, b) => {
-            const dateA = a.deadline || '9999-99-99'; // No deadline goes last
-            const dateB = b.deadline || '9999-99-99';
-            return dateA.localeCompare(dateB);
-        };
-
-        if (sortBy === 'user') {
-            sorted.sort((a, b) => {
-                const userDiff = compareUser(a, b);
-                if (userDiff !== 0) return userDiff;
-                return comparePriority(a, b);
-            });
-        } else if (sortBy === 'deadline-user') {
-            sorted.sort((a, b) => {
-                const deadlineDiff = compareDeadline(a, b);
-                if (deadlineDiff !== 0) return deadlineDiff;
-                return compareUser(a, b);
-            });
-        } else if (sortBy === 'user-priority') {
-            sorted.sort((a, b) => {
-                const userDiff = compareUser(a, b);
-                if (userDiff !== 0) return userDiff;
-                return comparePriority(a, b);
-            });
-        } else if (sortBy === 'manual') {
-            const orderMap = new Map(manualTaskOrder.map((id, index) => [id, index]));
-            sorted.sort((a, b) => {
-                const idxA = orderMap.has(a.id) ? orderMap.get(a.id) : 999999;
-                const idxB = orderMap.has(b.id) ? orderMap.get(b.id) : 999999;
-
-                if (idxA !== idxB) return idxA - idxB;
-                return 0;
-            });
-        } else if (sortBy.startsWith('tag-')) {
-            const tag = sortBy.replace('tag-', '');
-            sorted.sort((a, b) => {
-                // Users should already be fetched by the main component effect
-
-
-                // Placeholder Function for mobile nav (BottomNavigation usually handles this in mobile layout, 
-                // but here we are describing the Desktop Manager View mostly)h (Selected tag first)
-                const isTagA = a.tag === tag;
-                const isTagB = b.tag === tag;
-                if (isTagA && !isTagB) return -1;
-                if (!isTagA && isTagB) return 1;
-
-                // 2. Priority
-                const prioDiff = comparePriority(a, b);
-                if (prioDiff !== 0) return prioDiff;
-
-                // 3. User
-                return compareUser(a, b);
-            });
-        }
-
-        return sorted;
-    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority]);
 
     const handleEditTask = (task) => {
         setEditingTask(task);
@@ -367,6 +162,7 @@ export default function ManagerView() {
                             className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
                         >
                             <option value="none">Numatyta tvarka</option>
+                            <option value="status">Pagal būseną</option>
                             <option value="user">Pagal vartotoją</option>
                             <option value="deadline-user">Pagal terminą-vartotoją</option>
                             <option value="user-priority">Pagal vartotoją-prioritetą</option>
@@ -454,11 +250,7 @@ export default function ManagerView() {
             </div>
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
-                <DailyStatistics
-                    currentUser={currentUser}
-                    userRole={userRole}
-                    users={users}
-                />
+                <Reports users={users} />
             </div>
 
             <div className={activeTab === 'my-reports' ? 'block' : 'hidden'}>

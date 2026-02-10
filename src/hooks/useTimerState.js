@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { SoundManager } from '../utils/soundUtils';
-import { calculateCurrentTotalMinutes } from '../utils/timeUtils';
+import { calculateCurrentTotalMinutes, getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 
 /**
  * Custom hook to manage timer state for Break, Call, and QuickWork.
@@ -21,6 +21,10 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
     const [startTime, setStartTime] = useState(null);
     const [stateData, setStateData] = useState({});
 
+    // Use refs to track previous values and avoid unnecessary updates
+    const prevIsActiveRef = useRef(false);
+    const prevStartTimeRef = useRef(null);
+
     // 1. Real-time state subscription
     useEffect(() => {
         if (!currentUser) return;
@@ -32,8 +36,6 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
                 const userData = userSnap.data();
                 const data = userData[stateKey] || {};
                 const activeSession = userData.activeSession;
-
-                setStateData(data); // Store full data for consumption
 
                 // Logic Selection: New Active Session vs Legacy Flag
                 let isCurrentlyActive = false;
@@ -56,35 +58,50 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
                 }
 
                 const lastDate = data.lastDate;
-                const today = new Date().toISOString().split('T')[0];
+                const today = getLithuanianDateString();
+
+                // Update state data reference
+                setStateData(data);
 
                 // Handle daily reset logic if applicable (mostly for BreakTimer)
                 if (lastDate && lastDate !== today) {
                     setAccumulatedMinutes(0);
-                    if (isCurrentlyActive) {
-                        setIsActive(true);
-                    } else {
-                        setIsActive(false);
+                    if (isCurrentlyActive !== prevIsActiveRef.current) {
+                        setIsActive(isCurrentlyActive);
+                        prevIsActiveRef.current = isCurrentlyActive;
                     }
                 } else {
-                    setAccumulatedMinutes(data.dailyAccumulatedMinutes || 0);
-                    setIsActive(isCurrentlyActive);
+                    const newAccumulated = data.dailyAccumulatedMinutes || 0;
+                    setAccumulatedMinutes(newAccumulated);
+
+                    if (isCurrentlyActive !== prevIsActiveRef.current) {
+                        setIsActive(isCurrentlyActive);
+                        prevIsActiveRef.current = isCurrentlyActive;
+                    }
                 }
 
-                setStartTime(fetchedStartTime);
+                // Only update startTime if it changed
+                const startTimeStr = fetchedStartTime?.getTime();
+                const prevStartTimeStr = prevStartTimeRef.current?.getTime();
+                if (startTimeStr !== prevStartTimeStr) {
+                    setStartTime(fetchedStartTime);
+                    prevStartTimeRef.current = fetchedStartTime;
+                }
 
                 // Clear session if not active
                 if (!isCurrentlyActive) {
                     setCurrentSessionMinutes(0);
                 }
 
-                // Optional callback
-                if (onStateChange) onStateChange(data, isCurrentlyActive);
+                // Optional callback - only call if state actually changed
+                if (onStateChange && isCurrentlyActive !== prevIsActiveRef.current) {
+                    onStateChange(data, isCurrentlyActive);
+                }
             }
         });
 
         return () => unsubscribe();
-    }, [currentUser, stateKey, activeFlagKey, sessionType]);
+    }, [currentUser, stateKey, activeFlagKey, sessionType, selectStartTime, onStateChange]);
 
     // 2. Timer Interval & Sound Management
     useEffect(() => {
@@ -93,7 +110,7 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
         if (isActive && startTime) {
             // Initial update
             const updateTimer = () => {
-                const now = new Date();
+                const now = getLithuanianNow();
                 const session = (now - startTime) / (1000 * 60);
                 setCurrentSessionMinutes(session);
             };

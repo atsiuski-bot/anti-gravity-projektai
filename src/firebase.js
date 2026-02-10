@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, getDoc, doc, getFirestore } from "firebase/firestore";
+import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -16,22 +16,22 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Initialize Firestore with persistent local cache
-let db;
-try {
-    db = initializeFirestore(app, {
-        localCache: persistentLocalCache({
-            tabManager: persistentMultipleTabManager()
-        })
-    });
-} catch (error) {
-    if (error.code === 'failed-precondition') {
-        db = getFirestore(app);
-    } else {
-        throw error;
+// Clear old corrupted Firestore cache from IndexedDB
+// This prevents "INTERNAL ASSERTION FAILED: Unexpected state" errors
+if (typeof indexedDB !== 'undefined') {
+    try {
+        // Delete old persistent cache databases
+        indexedDB.deleteDatabase('firestore/darbo-planavimas/default');
+        indexedDB.deleteDatabase('firestore/[DEFAULT]/darbo-planavimas/main');
+        console.log('Cleared old Firestore cache');
+    } catch (e) {
+        console.warn('Could not clear old cache:', e);
     }
 }
-export { db };
+
+// Initialize Firestore with standard configuration
+// Note: Removed persistentLocalCache due to internal SDK errors
+export const db = getFirestore(app);
 
 export const storage = getStorage(app);
 
