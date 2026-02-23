@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanian3AMCutoff, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime } from '../utils/formatters';
 import { BarChart, Calendar, Filter, Download, ChevronDown, ChevronUp, Clock, Tag, Briefcase, MessageSquare, RotateCcw, Coffee } from 'lucide-react';
 
@@ -95,7 +95,10 @@ export default function Reports({ users }) {
                 getDocs(breakQ)
             ]);
 
-            const workSessions = workSnap.docs.map(d => ({ ...d.data(), id: d.id, _type: 'work' }));
+            const workSessions = workSnap.docs
+                .map(d => ({ ...d.data(), id: d.id, _type: 'work' }))
+                .filter(session => !session.isDeleted);
+
             const breakSessions = breakSnap.docs.map(d => ({ ...d.data(), id: d.id, _type: 'break' }));
 
             // Aggregation
@@ -530,7 +533,7 @@ export default function Reports({ users }) {
                                 <td className="px-1 py-2 whitespace-nowrap text-right text-[10px] font-medium font-mono">
                                     <span className="text-blue-600">{task.estimatedTime || '-'}</span>
                                     <span className="text-gray-400 mx-1">/</span>
-                                    <span className="text-gray-900">{formatMinutesToTimeString(task.timerMinutes || 0)}</span>
+                                    <span className="text-gray-900">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
                                 </td>
                                 <td className="px-1 py-2 whitespace-nowrap">
                                     <span className="px-1.5 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600 font-medium border border-gray-200 uppercase">

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase, ChevronDown, Filter, X } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase, ChevronDown, Filter, X, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { updateDoc } from 'firebase/firestore';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
@@ -9,7 +9,9 @@ import clsx from 'clsx';
 import { startOfWeek, subWeeks, startOfDay, endOfDay, format } from 'date-fns';
 import { formatDisplayName } from '../utils/formatters';
 import { TASK_TAGS } from '../utils/taskUtils';
-import { getLithuanianDateString, getLithuanianNow } from '../utils/timeUtils';
+import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { deleteTask } from '../utils/taskActions';
+import { DeleteConfirmationModal } from './TaskDetailsModals';
 
 export default function TaskHistory({ userId, users = [] }) {
     const { userRole, currentUser } = useAuth();
@@ -17,6 +19,7 @@ export default function TaskHistory({ userId, users = [] }) {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
+    const [deleteModalTask, setDeleteModalTask] = useState(null);
 
     // Filter States
     const [dateFrom, setDateFrom] = useState('');
@@ -184,6 +187,21 @@ export default function TaskHistory({ userId, users = [] }) {
             await deleteDoc(doc(db, 'archived_tasks', task.id));
         } catch (err) {
             console.error("Error restoring task:", err);
+        }
+    };
+
+    const handleDelete = (task) => {
+        setDeleteModalTask(task);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteModalTask) return;
+        try {
+            await deleteTask(deleteModalTask, currentUser.uid);
+            setDeleteModalTask(null);
+        } catch (err) {
+            console.error("Error deleting task:", err);
+            alert("Nepavyko ištrinti užduoties: " + err.message);
         }
     };
 
@@ -394,7 +412,7 @@ export default function TaskHistory({ userId, users = [] }) {
                                     <td className="px-1 py-2 whitespace-nowrap text-right text-[10px] font-medium text-gray-900 align-top font-mono">
                                         <span className="text-blue-600">{task.estimatedTime || '-'}</span>
                                         <span className="text-gray-400 mx-1">/</span>
-                                        <span className="text-gray-900">{task.actualTime || '-'}</span>
+                                        <span className="text-gray-900">{calculateCurrentTotalMinutes(task) > 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         <span
@@ -444,6 +462,15 @@ export default function TaskHistory({ userId, users = [] }) {
                                             >
                                                 <RotateCcw className="w-3.5 h-3.5" />
                                             </button>
+                                            {(isManagerOrAdmin) && (
+                                                <button
+                                                    onClick={() => handleDelete(task)}
+                                                    className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                                    title="Ištrinti"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
 
                                         </div>
                                     </td>
@@ -460,6 +487,12 @@ export default function TaskHistory({ userId, users = [] }) {
                     </table>
                 </div>
             </div>
+            <DeleteConfirmationModal
+                isOpen={!!deleteModalTask}
+                onClose={() => setDeleteModalTask(null)}
+                onConfirm={confirmDelete}
+                taskTitle={deleteModalTask?.title}
+            />
         </div>
     );
 }

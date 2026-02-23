@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, getDoc, orderBy, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { Calendar, Clock, Coffee, User, Briefcase, ChevronLeft, ChevronRight, Zap, Phone, MessageSquare, Check, Filter, RotateCcw } from 'lucide-react';
@@ -101,7 +101,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         }
 
         const unsubSessions = onSnapshot(sessionsQ, (snap) => {
-            setSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            const sessionsData = snap.docs
+                .map(d => ({ id: d.id, ...d.data() }))
+                .filter(session => !session.isDeleted);
+            setSessions(sessionsData);
         }, (error) => {
             console.error("Error fetching sessions:", error);
             setLoading(false);
@@ -941,7 +944,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment, onRestore, users
                     <span className="font-medium">{formatDisplayName(workerName)}</span>
                 </div>
                 <div className="bg-gray-100 px-1.5 py-0.5 rounded font-mono">
-                    {task.estimatedTime || '-'} / {task.actualTime || formatMinutesToTimeString(task.manualMinutes) || '-'}
+                    {task.estimatedTime || '-'} / {calculateCurrentTotalMinutes(task) > 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}
                 </div>
                 {task.deadline && (
                     <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
@@ -1143,7 +1146,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                             <td className="px-1 py-2 text-right text-gray-900 font-mono text-[10px] whitespace-nowrap">
                                                 <span className="text-blue-600">{task.estimatedTime || '-'}</span>
                                                 <span className="text-gray-400 mx-1">/</span>
-                                                <span>{task.actualTime || formatMinutesToTimeString(task.manualMinutes) || '-'}</span>
+                                                <span>{calculateCurrentTotalMinutes(task) > 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
                                             </td>
                                             <td className="px-1 py-2 whitespace-nowrap text-[10px] text-gray-600">
                                                 {task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
