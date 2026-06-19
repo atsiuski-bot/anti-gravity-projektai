@@ -134,27 +134,20 @@ export const getLithuanianWeekday = (date = new Date()) => {
  */
 export const getLithuanian3AMCutoff = (dateStr) => {
     const [y, m, d] = dateStr.split('-').map(Number);
-    // 01:00 UTC is either 03:00 or 04:00 LT
-    let date = new Date(Date.UTC(y, m - 1, d, 1, 0, 0));
-    
-    const formatter = new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Europe/Vilnius',
-        hour: 'numeric',
-        hour12: false
-    });
-    
-    // Step towards 03:00 local time
-    for (let i = 0; i < 5; i++) {
-        let currentHour = parseInt(formatter.format(date), 10);
-        if (currentHour === 24) currentHour = 0;
-        if (currentHour === 3) break;
-        
-        let diff = 3 - currentHour;
-        if (diff > 12) diff -= 24;
-        if (diff < -12) diff += 24;
-        
-        date.setUTCHours(date.getUTCHours() + diff);
-    }
-    
-    return date;
+    // 03:00 Vilnius is 01:00 UTC in winter (UTC+2) and 00:00 UTC in summer (UTC+3).
+    // Read the day's offset from a noon reference (noon is never inside the DST
+    // spring-forward gap) so the result is deterministic - the previous
+    // step-towards-03:00 loop could oscillate on the spring-forward day, when 03:00
+    // local time does not exist, and return an off-by-one-hour cutoff.
+    const noonUTC = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
+    const localNoonHour = parseInt(
+        new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/Vilnius',
+            hour: 'numeric',
+            hour12: false
+        }).format(noonUTC),
+        10
+    );
+    const offsetHours = localNoonHour - 12; // 2 (winter) or 3 (summer)
+    return new Date(Date.UTC(y, m - 1, d, 3 - offsetHours, 0, 0));
 };
