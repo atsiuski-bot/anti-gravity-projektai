@@ -70,10 +70,6 @@ export function AuthProvider({ children }) {
     // Helper function to process user after successful login
     async function processUserAfterLogin(user) {
 
-
-        // Set login timestamp for 4-day expiration
-        localStorage.setItem('auth_login_timestamp', Date.now().toString());
-
         // Check if user exists in Firestore
 
         const userRef = doc(db, 'users', user.uid);
@@ -107,7 +103,6 @@ export function AuthProvider({ children }) {
     }
 
     function logout() {
-        localStorage.removeItem('auth_login_timestamp');
         return signOut(auth);
     }
 
@@ -143,20 +138,20 @@ export function AuthProvider({ children }) {
 
 
             if (user) {
-                // Check session expiration (4 days = 4 * 24 * 60 * 60 * 1000 ms)
+                // Auto-logout 4 days after the last actual sign-in. We read Firebase's
+                // own user.metadata.lastSignInTime instead of a localStorage timestamp,
+                // so clearing localStorage can no longer reset the clock (the previous
+                // logic re-seeded a missing timestamp to "now", a trivial fail-open).
+                // NOTE: this is a UX convenience, not a hard security boundary - a
+                // client-only app cannot truly enforce session lifetime; real revocation
+                // is server-side (Firebase token revoke / disabling the account).
                 const FOUR_DAYS_MS = 4 * 24 * 60 * 60 * 1000;
-                let loginTimestamp = localStorage.getItem('auth_login_timestamp');
-
-                if (!loginTimestamp) {
-                    // If missing (migration or cleared), set it now to start the 4-day timer
-                    loginTimestamp = Date.now().toString();
-                    localStorage.setItem('auth_login_timestamp', loginTimestamp);
-                }
 
                 const checkExpiration = () => {
-                    const now = Date.now();
-                    if (now - parseInt(loginTimestamp) > FOUR_DAYS_MS) {
-
+                    const lastSignIn = user.metadata?.lastSignInTime
+                        ? new Date(user.metadata.lastSignInTime).getTime()
+                        : null;
+                    if (lastSignIn && Date.now() - lastSignIn > FOUR_DAYS_MS) {
                         logout();
                     }
                 };
