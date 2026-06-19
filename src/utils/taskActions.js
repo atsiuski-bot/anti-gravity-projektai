@@ -125,7 +125,10 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
 
         // Log Work Session (fire alongside task update)
         if (elapsedMinutes > (10 / 60)) {
-            const sessionDate = getLithuanianDateString(start);
+            // Attribute the session to the date the work ENDED (now), matching every
+            // other work_sessions writer (sessionActions, time-correction). Using the
+            // start date previously mis-bucketed sessions that ran across midnight.
+            const sessionDate = getLithuanianDateString(now);
             parallelOps.push(
                 addDoc(collection(db, 'work_sessions'), {
                     taskId: task.id,

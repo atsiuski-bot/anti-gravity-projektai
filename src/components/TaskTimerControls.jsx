@@ -193,7 +193,9 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
                 const elapsedMinutes = (now - start) / (1000 * 60);
                 if (elapsedMinutes > 0.1) {
                     // Fire and forget work session log
-                    const sessionDate = getLithuanianDateString(start);
+                    // Attribute to the end date (now), consistent with the other
+                    // work_sessions writers - start-based mis-bucketed midnight-spanning work.
+                    const sessionDate = getLithuanianDateString(now);
                     addDoc(collection(db, 'work_sessions'), {
                         taskId: task.id,
                         taskTitle: task.title || 'Unknown Task',
