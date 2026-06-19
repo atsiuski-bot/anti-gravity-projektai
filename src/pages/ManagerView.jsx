@@ -20,7 +20,6 @@ import { useNavigation } from '../context/NavigationContext';
 
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
 import { getPriorityRank, PRIORITIES, getPriorityLabel } from '../utils/priority';
-import { migrateOldDeletedTasks } from '../utils/migrateDeletedTasks';
 
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
