@@ -39,69 +39,72 @@ service cloud.firestore {
     match /users/{userId} {
       // Allow authenticated users to read user data (needed for viewing coworker info, calendars, etc.)
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated(); 
-      allow update: if isAuthenticated() && (request.auth.uid == userId || isAdmin() || isManager());
+      allow create: if isAuthenticated() && request.auth.uid == userId; 
+      allow update: if isAuthenticated()
+                    && (request.auth.uid == userId || isManagerOrAdmin())
+                    && (isAdmin() || request.resource.data.role == resource.data.role)
+                    && (isManagerOrAdmin() || request.resource.data.isDisabled == resource.data.isDisabled);
       allow delete: if isAdmin();
     }
 
     // TASKS
     match /tasks/{taskId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // SHIFT LOGS (New)
     match /shift_logs/{logId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // WORK SESSIONS
     match /work_sessions/{sessionId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // BREAK SESSIONS
     match /break_sessions/{sessionId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // DAILY STATS
     match /daily_stats/{statId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // WORK HOURS (Planner)
     match /work_hours/{docId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // ARCHIVED TASKS
     match /archived_tasks/{taskId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // DELETED TASKS
     match /deleted_tasks/{taskId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // NOTIFICATIONS
     match /calendar_notifications/{notifId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // CALENDAR REQUESTS (Approval workflow)
     match /calendar_requests/{requestId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // REQUEST NOTIFICATIONS (Task approval requests)
     match /request_notifications/{notifId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // TASK TEMPLATES
     match /task_templates/{templateId} {
-      allow read, write: if isAuthenticated();
+      allow read, write: if isUserActive();
     }
 
     // USER SETTINGS
