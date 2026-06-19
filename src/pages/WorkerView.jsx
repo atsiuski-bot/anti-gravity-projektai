@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useUsers } from '../context/UsersContext';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -9,16 +10,23 @@ import TaskModal from '../components/TaskModal';
 import WorkPlanner from '../components/WorkPlanner';
 import AllUsersCalendar from '../components/AllUsersCalendar';
 import DailyWorkProgress from '../components/DailyWorkProgress';
-import { filterTasksByVisibility, sortWorkerTasks } from '../utils/taskUtils';
+import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
+import { getPriorityRank } from '../utils/priority';
 import DailyStatistics from '../components/DailyStatistics';
 import Reports from '../components/Reports';
 import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
-import { History, Plus } from 'lucide-react';
+import { History, Plus, Filter } from 'lucide-react';
+import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
+import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
+import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
+import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
 
 import { useNavigation } from '../context/NavigationContext';
 
+
 export default function WorkerView() {
-    const { currentUser } = useAuth();
+    const { currentUser, userRole } = useAuth();
+    const { usersMap, loading: usersLoading } = useUsers();
     const { activeTab, scrollPositions } = useNavigation();
     const [tasks, setTasks] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -27,45 +35,40 @@ export default function WorkerView() {
 
     const [error, setError] = useState(null);
 
+    // Task time monitoring — 80% warning and 100% limit
+    const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(tasks);
+
 
     useEffect(() => {
-        if (!currentUser) return;
+        if (!currentUser || usersLoading) return;
 
         let unsubscribe = () => { };
 
         try {
             const q = query(
                 collection(db, 'tasks'),
-                where('assignedWorkerId', '==', currentUser.uid)
+                where('assignedUserId', '==', currentUser.uid)
             );
 
-            unsubscribe = onSnapshot(q, async (snapshot) => {
+            unsubscribe = onSnapshot(q, (snapshot) => {
                 let tasksData = snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
                 }));
 
-                // Fetch worker names for assigned tasks
-                try {
-                    const usersSnapshot = await getDocs(collection(db, 'users'));
-                    const usersMap = {};
-                    usersSnapshot.docs.forEach(doc => {
-                        usersMap[doc.id] = doc.data();
-                    });
-
-                    // Enrich tasks with worker names
-                    tasksData = tasksData.map(task => ({
-                        ...task,
-                        assignedWorkerName: task.assignedWorkerId && usersMap[task.assignedWorkerId]
-                            ? usersMap[task.assignedWorkerId].displayName || usersMap[task.assignedWorkerId].email
-                            : null,
-                        creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
-                            ? usersMap[task.createdBy].displayName || usersMap[task.createdBy].email
-                            : null)
-                    }));
-                } catch (err) {
-                    console.error("Error fetching user names:", err);
-                }
+                // Enrich tasks with worker names
+                tasksData = tasksData.map(task => ({
+                    ...task,
+                    assignedUserName: task.assignedUserId && usersMap[task.assignedUserId]
+                        ? usersMap[task.assignedUserId].displayName || usersMap[task.assignedUserId].email
+                        : null,
+                    assignedWorkerColor: task.assignedUserId && usersMap[task.assignedUserId]
+                        ? usersMap[task.assignedUserId].color || null
+                        : null,
+                    creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
+                        ? usersMap[task.createdBy].displayName || usersMap[task.createdBy].email
+                        : null)
+                }));
 
                 // Apply visibility filtering based on day of week and time
                 tasksData = filterTasksByVisibility(tasksData);
@@ -109,11 +112,17 @@ export default function WorkerView() {
         };
         window.addEventListener('open-task-modal', handleOpenTaskModal);
 
-        // Set up interval to re-filter tasks every minute (to handle time-based visibility changes)
         const filterInterval = setInterval(() => {
             setTasks(currentTasks => {
                 const filtered = filterTasksByVisibility(currentTasks);
-                return sortWorkerTasks(filtered);
+                const newlySorted = sortWorkerTasks(filtered);
+
+                // Only update state if length or order changed
+                if (currentTasks.length !== newlySorted.length) return newlySorted;
+                for (let i = 0; i < currentTasks.length; i++) {
+                    if (currentTasks[i].id !== newlySorted[i].id) return newlySorted;
+                }
+                return currentTasks; // No change, prevent re-render
             });
         }, 60000); // Every minute
 
@@ -123,15 +132,16 @@ export default function WorkerView() {
             window.removeEventListener('open-task-modal', handleOpenTaskModal);
             clearInterval(filterInterval);
         };
-    }, [currentUser]);
+    }, [currentUser, usersLoading, usersMap]);
 
-    const handleEditTask = (task) => {
+    const handleEditTask = React.useCallback((task) => {
         setEditingTask(task);
         setIsModalOpen(true);
-    };
+    }, []);
 
-    // Sorting state
+    // Sorting and filtering state
     const [sortBy, setSortBy] = useState('none');
+    const [filterTag, setFilterTag] = useState('');
 
     // Scroll restoration logic
     useEffect(() => {
@@ -143,6 +153,10 @@ export default function WorkerView() {
 
     const sortedTasks = useMemo(() => {
         let result = [...tasks];
+
+        if (filterTag) {
+            result = result.filter(t => t.tag === filterTag);
+        }
 
         if (sortBy === 'status') {
             result.sort((a, b) => {
@@ -160,14 +174,20 @@ export default function WorkerView() {
                 if (rankA !== rankB) return rankA - rankB;
 
                 // Within same status, sort by priority
-                const prioA = (a.priority === 'Urgent' ? 4 : a.priority === 'High' ? 3 : a.priority === 'Medium' ? 2 : 1);
-                const prioB = (b.priority === 'Urgent' ? 4 : b.priority === 'High' ? 3 : b.priority === 'Medium' ? 2 : 1);
+                const prioA = getPriorityRank(a.priority);
+                const prioB = getPriorityRank(b.priority);
+                return prioB - prioA;
+            });
+        } else if (sortBy === 'priority') {
+            result.sort((a, b) => {
+                const prioA = getPriorityRank(a.priority);
+                const prioB = getPriorityRank(b.priority);
                 return prioB - prioA;
             });
         }
 
         return result;
-    }, [tasks, sortBy]);
+    }, [tasks, sortBy, filterTag]);
 
     return (
         <div className="pt-1">
@@ -178,6 +198,10 @@ export default function WorkerView() {
                     </div>
                 )}
             </div>
+            
+            <div className="mb-6">
+                <CalendarRequestStatusBanner />
+            </div>
 
 
             {/* Tasks Tab */}
@@ -186,7 +210,7 @@ export default function WorkerView() {
                     <h2 className="text-xl font-bold text-gray-900 hidden sm:block">Mano užduotys</h2>
 
                     {/* Sort dropdown */}
-                    <div className="relative w-full sm:w-auto">
+                    <div className="relative w-full sm:w-auto flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
                         <div className="relative">
                             <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
                             <select
@@ -196,6 +220,20 @@ export default function WorkerView() {
                             >
                                 <option value="none">Numatyta tvarka</option>
                                 <option value="status">Pagal būseną</option>
+                                <option value="priority">Pagal prioritetą</option>
+                            </select>
+                        </div>
+                        <div className="relative">
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <select
+                                value={filterTag}
+                                onChange={(e) => setFilterTag(e.target.value)}
+                                className="w-full sm:w-auto pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                            >
+                                <option value="">Visi Tagai</option>
+                                {TASK_TAGS.map(tag => (
+                                    <option key={`filter-${tag}`} value={tag}>{tag}</option>
+                                ))}
                             </select>
                         </div>
                     </div>
@@ -210,7 +248,7 @@ export default function WorkerView() {
                     </div>
                 ) : viewMode === 'mobile' ? (
                     <div className="space-y-4">
-                        {tasks.map(task => (
+                        {sortedTasks.map(task => (
                             <TaskCard
                                 key={task.id}
                                 task={task}
@@ -221,9 +259,10 @@ export default function WorkerView() {
                     </div>
                 ) : (
                     <TaskTable
-                        tasks={tasks}
+                        tasks={sortedTasks}
                         onEdit={handleEditTask}
                         role="worker"
+                        hideCheckboxes={true}
                     />
                 )}
             </div>
@@ -249,9 +288,27 @@ export default function WorkerView() {
                     isOpen={isModalOpen}
                     onClose={() => setIsModalOpen(false)}
                     task={editingTask}
-                    role={currentUser?.role || "worker"}
+                    role={userRole || "worker"}
+                />
+            )}
+
+            {/* Time monitoring popups */}
+            {warningPopup && (
+                <TaskTimeWarningPopup
+                    task={warningPopup.task}
+                    remaining={warningPopup.remaining}
+                    onDismiss={dismissWarning}
+                />
+            )}
+            {limitPopup && (
+                <TaskTimeLimitPopup
+                    task={limitPopup.task}
+                    estimatedTime={limitPopup.estimatedTime}
+                    actualMinutes={limitPopup.actualMinutes}
+                    onDismiss={dismissLimit}
                 />
             )}
         </div>
     );
 }
+

@@ -20,7 +20,9 @@ export default function MonthlyHours({ users }) {
         const q = query(collection(db, 'work_sessions'));
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const data = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(session => !session.isDeleted);
             setSessions(data);
             setLoading(false);
         }, (error) => {
@@ -53,7 +55,7 @@ export default function MonthlyHours({ users }) {
                 };
             }
 
-            const uid = session.workerId;
+            const uid = session.userId;
             // Filter out invalid duration
             const duration = Number(session.durationMinutes) || 0;
 
@@ -64,7 +66,7 @@ export default function MonthlyHours({ users }) {
                 const user = users.find(u => u.id === uid);
                 stats[key].users[uid] = {
                     userId: uid,
-                    name: user ? (user.displayName || user.email) : (session.workerName || 'Nežinomas'),
+                    name: user ? (user.displayName || user.email) : (session.userName || 'Nežinomas'),
                     minutes: 0
                 };
             }

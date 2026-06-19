@@ -103,14 +103,30 @@ export function shouldRunAutomation() {
  */
 export async function archiveOldTasks() {
     try {
-        console.log("[Automation] Checking for confirmed tasks to archive...");
-        const tasksQ = query(
+        console.log("[Automation] Checking for confirmed/deleted tasks to archive...");
+
+        // 1. Archive old confirmed tasks
+        const confirmedQ = query(
             collection(db, 'tasks'),
             where('status', '==', 'confirmed')
         );
 
-        const snapshot = await getDocs(tasksQ);
-        const tasks = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        // 2. Also archive old deleted-but-kept tasks (from "keep work hours" deletion)
+        const deletedQ = query(
+            collection(db, 'tasks'),
+            where('isDeleted', '==', true)
+        );
+
+        const [confirmedSnap, deletedSnap] = await Promise.all([
+            getDocs(confirmedQ),
+            getDocs(deletedQ)
+        ]);
+
+        // Merge and deduplicate by ID
+        const taskMap = new Map();
+        confirmedSnap.docs.forEach(d => taskMap.set(d.id, { id: d.id, ...d.data() }));
+        deletedSnap.docs.forEach(d => taskMap.set(d.id, { id: d.id, ...d.data() }));
+        const tasks = Array.from(taskMap.values());
 
         // Archive rule: Flip "today" at 3:00 AM
         const now = getLithuanianNow();
@@ -123,8 +139,7 @@ export async function archiveOldTasks() {
         let archivedCount = 0;
 
         for (const task of tasks) {
-            // Only confirmed tasks are archived
-            const relevantDate = task.confirmedAt || task.updatedAt;
+            const relevantDate = task.deletedAt || task.confirmedAt || task.updatedAt;
             if (!relevantDate) continue;
 
             const dateStr = relevantDate.split('T')[0];
@@ -136,7 +151,7 @@ export async function archiveOldTasks() {
         }
 
         if (archivedCount > 0) {
-            console.log(`[Automation] Archived ${archivedCount} old confirmed tasks.`);
+            console.log(`[Automation] Archived ${archivedCount} old confirmed/deleted tasks.`);
         }
     } catch (error) {
         console.error("[Automation] Error archiving tasks:", error);

@@ -1,29 +1,32 @@
-import React, { useState } from 'react';
-// Force rebuild
-import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText, Check, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText, Check, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2 } from 'lucide-react';
 import clsx from 'clsx';
-import { doc, updateDoc, deleteDoc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useSwipeable } from 'react-swipeable';
-import { LinksModal, CommentsModal, DescriptionModal, ImageModal } from './TaskDetailsModals';
+import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirmationModal } from './TaskDetailsModals';
 import { InlineEditModal } from './InlineEditModal';
 import TaskTimerControls from './TaskTimerControls';
-import { startTask, resumeTask, pauseTask, pauseOtherTasks, archiveTask, deleteTask } from '../utils/taskActions';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
-import { formatDisplayName } from '../utils/formatters';
+import { deleteTask, revertTask } from '../utils/taskActions';
+import { toggleTaskCompletion, completeTask } from '../utils/taskCompletionActions';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
+import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
+import { STATUS_LABELS, STATUS_STYLES } from '../utils/taskConstants';
+import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 
 
-export default function TaskCard({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) {
-    const { currentUser, userRole } = useAuth();
+const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) => {
+    const { currentUser, userRole, userData } = useAuth();
     const [activeModal, setActiveModal] = useState(null);
     const [editingField, setEditingField] = useState(null);
-    const [workerColor, setWorkerColor] = useState(null);
     const [lastTap, setLastTap] = useState(0);
     const [editingCommentIndex, setEditingCommentIndex] = useState(null);
     const [editCommentText, setEditCommentText] = useState('');
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [spentMinutes, setSpentMinutes] = useState(0);
 
     const handleUpdateComment = async (index, newText) => {
         try {
@@ -44,45 +47,28 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
         }
     };
 
-    const displayColor = task.assignedWorkerColor || workerColor;
+    const displayColor = task.assignedWorkerColor;
     const isWorker = role === 'worker';
-    const isManager = role === 'manager' || role === 'admin' || userRole === 'manager' || userRole === 'admin';
-    const isAssignedToMe = currentUser?.uid === task.assignedWorkerId;
-
-    React.useEffect(() => {
-        if (!task.assignedWorkerColor && task.assignedWorkerId && !workerColor) {
-            const fetchWorkerColor = async () => {
-                try {
-                    const userDoc = await getDoc(doc(db, 'users', task.assignedWorkerId));
-                    if (userDoc.exists()) {
-                        setWorkerColor(userDoc.data().color);
-                    }
-                } catch (err) {
-                    console.error("Error fetching worker color:", err);
-                }
-            };
-            fetchWorkerColor();
-        }
-    }, [task.assignedWorkerId, task.assignedWorkerColor]);
-
-    // Priority colors are now handled dynamically via utility
-    /* const priorityColors = {
-        Low: 'bg-gray-800 text-white',
-        Medium: 'bg-gray-500 text-white',
-        High: 'bg-gray-200 text-gray-800',
-        Urgent: 'bg-yellow-50 text-black border border-yellow-200'
-    }; */
-
-    const statusStyles = {
-        'pending': 'bg-white border-gray-200',
-        'in-progress': 'bg-white border-gray-200',
-        'completed': 'bg-gray-200 border-gray-300',
-        'confirmed': 'bg-gray-100 border-gray-200',
-        'unapproved': 'bg-amber-50 border-amber-200'
-    };
+    const isManager = isManagerRole(role) || isManagerRole(userRole);
+    const isAssignedToMe = currentUser?.uid === task.assignedUserId;
 
     const taskStatus = task.status || 'pending';
     const isUnapproved = taskStatus === 'unapproved';
+
+    // Strict UI logic: activeSession is the PRIMARY source of truth, workStatus is the fallback.
+    const isRunning = useIsTaskRunning(task);
+
+    useEffect(() => {
+        const updateSpentTime = () => {
+            setSpentMinutes(calculateCurrentTotalMinutes(task));
+        };
+        updateSpentTime();
+        
+        // Update more frequently for running tasks, but only if running
+        const intervalTime = isRunning ? 1000 : 10000;
+        const interval = setInterval(updateSpentTime, intervalTime);
+        return () => clearInterval(interval);
+    }, [task, isRunning]);
 
 
     const handleAddComment = async (text) => {
@@ -93,13 +79,14 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
         }
     };
 
-    const handleDeleteTask = async () => {
-        if (!window.confirm(`Ar tikrai norite ištrinti užduotį "${task.title}"?`)) {
-            return;
-        }
+    const handleDeleteTask = () => {
+        setShowDeleteModal(true);
+    };
 
+    const confirmDelete = async ({ keepWorkHours }) => {
         try {
-            await deleteTask(task, currentUser.uid);
+            await deleteTask(task, currentUser.uid, { keepWorkHours });
+            setShowDeleteModal(false);
         } catch (err) {
             console.error("Error deleting task:", err);
             alert("Nepavyko ištrinti užduoties: " + err.message);
@@ -115,14 +102,14 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
         const DOUBLE_TAP_DELAY = 300;
 
         if (now - lastTap < DOUBLE_TAP_DELAY) {
-            const canInteract = (isAssignedToMe && taskStatus !== 'confirmed') || (isManager && taskStatus === 'unapproved');
+            const canInteract = (isAssignedToMe && taskStatus !== 'confirmed' && taskStatus !== 'unapproved') || (isManager && taskStatus === 'unapproved');
 
             if (canInteract) {
                 // Double tap detected
                 e.preventDefault();
                 e.stopPropagation();
 
-                const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
+                const isManagerOrAdmin = isManagerRole(userRole) || currentUser?.uid === task.managerId;
 
                 if (taskStatus === 'pending') {
                     await updateDoc(doc(db, 'tasks', task.id), {
@@ -148,35 +135,19 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
 
     // Swipe handlers for mobile gestures
     const handleSwipeLeft = async () => {
-        if (!isAssignedToMe || taskStatus === 'confirmed') return;
+        if (!isAssignedToMe || taskStatus === 'confirmed' || taskStatus === 'unapproved') return;
 
         if (!window.confirm("Ar tikrai norite užbaigti užduotį?")) return;
 
-        // Swipe left: Mark as completed
         try {
-            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
-            const taskData = {
-                ...task,
-                status: isManagerOrAdmin ? 'confirmed' : 'completed',
-                confirmedBy: isManagerOrAdmin ? currentUser.uid : null,
-                confirmedAt: isManagerOrAdmin ? new Date().toISOString() : null,
-                completed: true,
-                completedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-
-            // Sanitize data to remove undefined values
-            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
-
-            // Do NOT archive immediately
-            await updateDoc(doc(db, 'tasks', task.id), taskData);
+            await completeTask(task, currentUser.uid, userRole, task.managerId);
         } catch (error) {
             console.error('Error completing task via swipe:', error);
         }
     };
 
     const handleSwipeRight = async () => {
-        if (!isAssignedToMe || taskStatus === 'confirmed') return;
+        if (!isAssignedToMe || taskStatus === 'confirmed' || taskStatus === 'unapproved') return;
 
         // Swipe right: Toggle between pending and in-progress
         try {
@@ -208,34 +179,21 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
         e.stopPropagation();
         if (!isAssignedToMe) return;
 
-        const willBeCompleted = !task.completed;
-
-        if (willBeCompleted && !window.confirm("Ar tikrai norite užbaigti užduotį?")) {
+        if (!task.completed && !window.confirm("Ar tikrai norite užbaigti užduotį?")) {
             return;
         }
 
         try {
-            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
-
-            const taskData = {
-                ...task,
-                completed: willBeCompleted,
-                completedAt: willBeCompleted ? new Date().toISOString() : null,
-                status: willBeCompleted ? (isManagerOrAdmin ? 'confirmed' : 'completed') : 'pending',
-                confirmedBy: willBeCompleted && isManagerOrAdmin ? currentUser.uid : null,
-                confirmedAt: willBeCompleted && isManagerOrAdmin ? new Date().toISOString() : null,
-                updatedAt: new Date().toISOString()
-            };
-
-            // Sanitize data to remove undefined values
-            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
-
-            // Do NOT archive immediately
-            await updateDoc(doc(db, 'tasks', task.id), taskData);
+            await toggleTaskCompletion(task, currentUser.uid, userRole, task.managerId);
         } catch (error) {
             console.error('Error toggling completion:', error);
         }
     };
+
+    // Compute dynamic limit state based on raw math instead of just the task.timeLimitReached flag.
+    // This allows manual time reduction to instantly un-red the card without needing a flag wipe.
+    const estMinutes = parseTimeStringToMinutes(task.estimatedTime || '0');
+    const isLimitExceeded = estMinutes > 0 && spentMinutes >= estMinutes;
 
     return (
         <>
@@ -244,8 +202,11 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                 onTouchEnd={isWorker ? handleDoubleTap : undefined}
                 className={clsx(
                     "rounded-xl border-[3px] shadow-sm p-3 transition-all duration-200 mb-2", // Reduced padding (p-4->p-3) and margin (mb-4->mb-2)
-                    statusStyles[taskStatus],
-                    taskStatus !== 'confirmed' && !task.completed && "cursor-pointer hover:shadow-md",
+                    isRunning ? "bg-green-200 border-green-300"
+                        : task.inspectionStatus === 'inspecting' ? "bg-blue-100 border-blue-300"
+                        : isLimitExceeded ? "bg-red-50 border-red-300"
+                        : (STATUS_STYLES[taskStatus] || "bg-white border-gray-200"),
+                    taskStatus !== 'confirmed' && taskStatus !== 'unapproved' && !task.completed && "cursor-pointer hover:shadow-md",
                     task.completed && "opacity-75"
                 )}
             >
@@ -274,11 +235,16 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                             <div
                                 className={clsx(
                                     "font-bold text-sm leading-tight text-left flex-1 px-2 py-1 rounded",
-                                    task.completed ? "line-through text-gray-500" : "text-gray-900",
+                                    (task.completed || task.isDeleted) ? "line-through text-gray-500" : "text-gray-900",
                                     taskStatus === 'unapproved' ? "bg-gray-200 text-gray-700" : ""
                                 )}
                             >
                                 {task.title}
+                                {task.isDeleted && (
+                                    <span className="ml-2 inline-block px-1.5 py-0.5 text-[9px] font-bold bg-red-100 text-red-600 rounded border border-red-200 align-middle" style={{ textDecoration: 'none' }}>
+                                        Ištrintas
+                                    </span>
+                                )}
                             </div>
 
                             <div className="flex items-center gap-1.5 flex-shrink-0"> {/* Reduced gap */}
@@ -295,21 +261,9 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                                         {getPriorityLabel(task.priority)}
                                     </span>
                                 )}
-                                {(() => {
-                                    const statusLabels = {
-                                        'pending': 'Nepradėtas',
-                                        'in-progress': 'Pradėtas',
-                                        'completed': 'Užbaigtas, nepriduotas',
-                                        'confirmed': 'Užbaigtas, priduotas',
-                                        'unapproved': 'Laukia patvirtinimo'
-                                    };
-                                    const label = statusLabels[taskStatus] || taskStatus;
-                                    return (
-                                        <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
-                                            {label}
-                                        </span>
-                                    );
-                                })()}
+                                <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
+                                    {STATUS_LABELS[taskStatus] || taskStatus}
+                                </span>
                                 {isManager && (
                                     <button
                                         onClick={(e) => {
@@ -328,13 +282,13 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                         {/* Meta Row: Worker, Deadline, Time, Manager */}
                         <div className="flex flex-wrap items-center gap-2 mb-1.5 min-h-[20px]"> {/* Reduced gap and margin */}
                             {/* Worker Pill */}
-                            {task.assignedWorkerName && (isManager || !isAssignedToMe) && (
+                            {task.assignedUserName && (isManager || !isAssignedToMe) && (
                                 <div
                                     className="inline-flex items-center justify-center p-[2px] rounded-full"
                                     style={{ backgroundColor: displayColor || '#3b82f6' }}
                                 >
                                     <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-gray-800 border border-white/50">
-                                        👤 {formatDisplayName(task.assignedWorkerName)}
+                                        👤 {formatDisplayName(task.assignedUserName)}
                                     </span>
                                 </div>
                             )}
@@ -352,6 +306,14 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                                 <div className={clsx("inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-100 border border-gray-200", task.completed ? "text-gray-400" : "text-gray-700")}>
                                     <Clock className="w-3 h-3" />
                                     {task.estimatedTime}
+                                </div>
+                            )}
+
+                            {/* Spent Time */}
+                            {(spentMinutes > 0 || (task.status && task.status !== 'pending')) && (
+                                <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+                                    <Clock className="w-3 h-3" />
+                                    {formatMinutesToTimeString(spentMinutes)}
                                 </div>
                             )}
 
@@ -547,14 +509,35 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                         role={role}
                     />
 
-                    {isManager && taskStatus === 'unapproved' && (
+                    <div className="flex items-center gap-2">
+                        {(task.completed || task.isDeleted) && isManager && (
+                            <button
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (!window.confirm('Ar tikrai norite grąžinti šią užduotį?')) return;
+                                    try {
+                                        await revertTask(task);
+                                    } catch (err) {
+                                        alert('Nepavyko grąžinti užduoties: ' + err.message);
+                                    }
+                                }}
+                                className="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-lg font-medium shadow-sm active:scale-95 transition-all flex items-center gap-1"
+                                title="Grąžinti užduotį"
+                            >
+                                <Undo2 className="w-3.5 h-3.5" />
+                                Grąžinti
+                            </button>
+                        )}
+
+                        {isManager && taskStatus === 'unapproved' && (
                         <button
                             onClick={(e) => {
                                 e.stopPropagation();
                                 const confirmApprove = window.confirm("Patvirtinti šią užduotį?");
                                 if (confirmApprove) {
                                     updateDoc(doc(db, 'tasks', task.id), {
-                                        status: 'active',
+                                        status: 'in-progress',
+                                        isApproved: true,
                                         approvedAt: new Date().toISOString(),
                                         approvedBy: currentUser.uid,
                                         updatedAt: new Date().toISOString()
@@ -568,6 +551,7 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                     )}
 
 
+                    </div>
                 </div>
             </div >
 
@@ -604,6 +588,33 @@ export default function TaskCard({ task, onEdit, role, showReorderControls, onMo
                 field={editingField?.field}
                 label={editingField?.label}
             />
+
+            <DeleteConfirmationModal
+                isOpen={showDeleteModal}
+                onClose={() => setShowDeleteModal(false)}
+                onConfirm={confirmDelete}
+                taskTitle={task.title}
+            />
         </>
     );
-}
+};
+
+export default React.memo(TaskCard, (prevProps, nextProps) => {
+    if (prevProps.role !== nextProps.role) return false;
+    if (prevProps.showReorderControls !== nextProps.showReorderControls) return false;
+    const prev = prevProps.task;
+    const next = nextProps.task;
+    if (!prev || !next) return prev === next;
+    if (prev.id !== next.id) return false;
+    if (prev.updatedAt !== next.updatedAt) return false;
+    if (prev.status !== next.status) return false;
+    if (prev.timerStatus !== next.timerStatus) return false;
+    if (prev.timerStartedAt !== next.timerStartedAt) return false;
+    if (prev.comments?.length !== next.comments?.length) return false;
+    if (prev.timeChanged !== next.timeChanged) return false;
+    if (prev.timeLimitReached !== next.timeLimitReached) return false;
+    if (prev.estimatedTime !== next.estimatedTime) return false;
+    if (prev.title !== next.title) return false;
+    if (prev.priority !== next.priority) return false;
+    return true;
+});

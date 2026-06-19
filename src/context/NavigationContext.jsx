@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useAuth } from './AuthContext';
+import { isManagerRole } from '../utils/formatters';
 
 const NavigationContext = createContext();
 
@@ -14,7 +15,11 @@ export function NavigationProvider({ children }) {
 
     // Reset tab when role changes (e.g. login/logout)
     useEffect(() => {
-        setActiveTabState('tasks');
+        if (isManagerRole(userRole)) {
+            setActiveTabState('my-tasks');
+        } else {
+            setActiveTabState('tasks');
+        }
         scrollPositions.current = {};
     }, [userRole]);
 

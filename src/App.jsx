@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { NavigationProvider } from './context/NavigationContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { UsersProvider } from './context/UsersContext';
 import Layout from './components/Layout';
 
 // Lazy load pages
@@ -46,20 +47,22 @@ function App() {
     return (
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AuthProvider>
-                <NavigationProvider>
-                    <React.Suspense fallback={<LoadingFallback />}>
-                        <Routes>
-                            <Route path="/login" element={<Login />} />
-                            <Route path="/" element={
-                                <ProtectedRoute>
-                                    <Layout>
-                                        <Dashboard />
-                                    </Layout>
-                                </ProtectedRoute>
-                            } />
-                        </Routes>
-                    </React.Suspense>
-                </NavigationProvider>
+                <UsersProvider>
+                    <NavigationProvider>
+                        <React.Suspense fallback={<LoadingFallback />}>
+                            <Routes>
+                                <Route path="/login" element={<Login />} />
+                                <Route path="/" element={
+                                    <ProtectedRoute>
+                                        <Layout>
+                                            <Dashboard />
+                                        </Layout>
+                                    </ProtectedRoute>
+                                } />
+                            </Routes>
+                        </React.Suspense>
+                    </NavigationProvider>
+                </UsersProvider>
             </AuthProvider>
         </BrowserRouter>
     );

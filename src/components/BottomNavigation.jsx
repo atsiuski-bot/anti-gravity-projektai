@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
+import { isManagerRole } from '../utils/formatters';
 import {
     ListTodo,
     UserCheck,
@@ -39,10 +40,10 @@ const BottomNavigation = () => {
             { id: 'team-calendar', label: 'Kom. Kalendorius', icon: UsersIcon },
         ];
 
-        return userRole === 'manager' || userRole === 'admin' ? managerTabs : workerTabs;
+        return isManagerRole(userRole) ? managerTabs : workerTabs;
     }, [userRole]);
 
-    const showCreateButton = (userRole === 'worker') || (userRole === 'manager' || userRole === 'admin');
+    const showCreateButton = (userRole === 'worker') || isManagerRole(userRole);
 
     const CreateButton = () => (
         <button

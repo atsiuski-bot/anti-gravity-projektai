@@ -4,20 +4,24 @@ import { db, storage } from '../firebase';
 import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDocs, query, where, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { X, Plus, Trash2, ExternalLink } from 'lucide-react';
-import { formatDisplayName } from '../utils/formatters';
+import { useUsers } from '../context/UsersContext';
+import { X, Plus, Trash2, ExternalLink, Clock } from 'lucide-react';
+import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { getPriorityOptions, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { TASK_TAGS } from '../utils/taskUtils';
 
 export default function TaskModal({ isOpen, onClose, task, role }) {
     const { currentUser, userRole, userData } = useAuth();
+    const { activeUsers } = useUsers();
+    const workers = activeUsers || [];
     const [loading, setLoading] = useState(false);
-    const [workers, setWorkers] = useState([]);
 
     const [formData, setFormData] = useState({
         title: '',
-        assignedWorkerId: '',
+        assignedUserId: '',
         managerId: '',
         priority: 'Medium',
         estimatedTime: '',
@@ -48,7 +52,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         description: true,
         tag: true,
         links: true,
-        assignedWorkerId: false,
+        assignedUserId: false,
         managerId: false,
         deadline: false
     });
@@ -56,9 +60,9 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const sortedTemplates = useMemo(() => {
         return [...templates].sort((a, b) => {
             const getWorkerName = (tmpl) => {
-                const workerId = tmpl.data?.assignedWorkerId;
-                if (!workerId) return null;
-                const worker = workers.find(w => w.id === workerId);
+                const userId = tmpl.data?.assignedUserId;
+                if (!userId) return null;
+                const worker = workers.find(w => w.id === userId);
                 if (!worker) return null;
                 return formatDisplayName(worker.displayName || worker.email);
             };
@@ -90,7 +94,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
             setFormData({
                 title: task.title || '',
-                assignedWorkerId: task.assignedWorkerId || '',
+                assignedUserId: task.assignedUserId || '',
                 managerId: task.managerId || '',
                 priority: normalizePriority(task.priority),
                 estimatedTime: task.estimatedTime || '',
@@ -122,7 +126,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
                 setFormData({
                     title: '',
-                    assignedWorkerId: role === 'worker' ? currentUser.uid : '',
+                    assignedUserId: currentUser.uid,
                     managerId: defaultManagerId,
                     priority: DEFAULT_PRIORITY,
                     estimatedTime: '',
@@ -139,11 +143,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             })();
         }
         setSelectedFiles([]);
-        fetchWorkers();
     }, [task, role, currentUser]);
 
     useEffect(() => {
-        if (role === 'manager' || role === 'admin') {
+        if (isManagerRole(role)) {
             fetchTemplates();
         }
     }, [role, isOpen]);
@@ -184,7 +187,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             description: !!formData.description,
             tag: !!formData.tag,
             links: formData.links.length > 0,
-            assignedWorkerId: !!formData.assignedWorkerId,
+            assignedUserId: !!formData.assignedUserId,
             managerId: !!formData.managerId,
             deadline: !!formData.deadline
         });
@@ -247,22 +250,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         handleLoadTemplate(e.target.value);
     };
 
-    async function fetchWorkers() {
-        try {
-
-            const q = query(collection(db, 'users'));
-            const snapshot = await getDocs(q);
-            const workersData = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            })).filter(w => !w.isDisabled);
-
-            setWorkers(workersData);
-        } catch (error) {
-            console.error("Error fetching workers:", error);
-            alert("Klaida gaunant darbuotojų sąrašą: " + error.message);
-        }
-    }
+    // workers is provided by context
 
     const handleFileSelect = (e) => {
         const files = Array.from(e.target.files);
@@ -367,21 +355,34 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 updatedAt: new Date().toISOString()
             };
 
+            // Capture assignment time if the worker changed or is newly set
+            if (!task || task.assignedUserId !== formData.assignedUserId) {
+                taskData.assignedAt = new Date().toISOString();
+            }
+
             let docRef;
             if (task) {
                 docRef = doc(db, 'tasks', task.id);
+                
+                // If estimated time is altered by manager, lift any time blocking flags
+                if (task.estimatedTime !== formData.estimatedTime) {
+                    taskData.timeLimitReached = false;
+                    taskData.warningShown80 = false;
+                    taskData.warningShown70 = false;
+                }
+                
                 await updateDoc(docRef, taskData);
             } else {
                 // Determine if user is a manager/admin based on Context OR Prop
-                const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || role === 'manager' || role === 'admin';
-                // const isSelfAssigned = formData.assignedWorkerId === currentUser.uid; // Unused
+                const isManagerOrAdmin = isManagerRole(userRole) || isManagerRole(role);
+                // const isSelfAssigned = formData.assignedUserId === currentUser.uid; // Unused
                 // const isOtherManagerAssigned = formData.managerId && formData.managerId !== currentUser.uid; // Unused
 
 
 
                 // Determine initial status:
-                // - If manager/admin creates: active (no approval needed)
-                let initialStatus = 'active';
+                // - If manager/admin creates: pending (no approval needed)
+                let initialStatus = 'pending';
                 if (!isManagerOrAdmin) {
                     initialStatus = 'unapproved';
 
@@ -405,6 +406,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             type: 'task_approval',
                             taskId: docRef.id,
                             taskTitle: taskData.title,
+                            estimatedTime: taskData.estimatedTime || null,
+                            description: taskData.description || null,
                             isRead: false,
                             createdAt: new Date().toISOString(),
                             createdBy: currentUser.uid,
@@ -456,7 +459,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     if (!isOpen) return null;
 
-    const isManager = role === 'manager' || role === 'admin' || userRole === 'manager' || userRole === 'admin';
+    const isManager = isManagerRole(role) || isManagerRole(userRole);
     const isCreator = String(task?.createdBy) === String(currentUser?.uid);
 
     // Filter to only allow Managers, Admins, and the current user (so they can assign to themselves).
@@ -471,7 +474,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Sukurti užduotį')}
                     </h2>
                     <div className="flex items-center gap-2">
-                        {!isSavingTemplate && !task && (role === 'manager' || role === 'admin') && templates.length > 0 && (
+                        {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
                             <select
                                 onChange={(e) => handleLoadTemplate(e.target.value)}
                                 className="mr-2 px-3 py-1 border border-gray-300 rounded-lg text-sm"
@@ -541,7 +544,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 className="w-4 h-4 text-blue-600 rounded"
                                             />
                                             <span className="capitalize">{
-                                                key === 'assignedWorkerId' ? 'Priskirtas darbuotojas' :
+                                                key === 'assignedUserId' ? 'Priskirtas darbuotojas' :
                                                     key === 'managerId' ? 'Priskirtas vadovas' :
                                                         key === 'estimatedTime' ? 'Planuojamas laikas' :
                                                             key === 'deadline' ? 'Terminas' :
@@ -564,7 +567,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     type="text"
                                     value={formData.title}
                                     onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                                    disabled={!isManager && !!task && !isCreator}
+                                    disabled={!isManager && !!task}
                                     placeholder="Pavadinimas"
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 text-base"
                                     required
@@ -574,7 +577,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 <select
                                     value={formData.priority}
                                     onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
-                                    disabled={!isManager && !!task && !isCreator}
+                                    disabled={!isManager && !!task}
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
                                 >
                                     {getPriorityOptions().map(p => (
@@ -592,7 +595,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     onFocus={(e) => e.target.type = 'date'}
                                     onBlur={(e) => !e.target.value && (e.target.type = 'text')}
                                     placeholder="Atlikti iki"
-                                    disabled={!isManager && !!task && !isCreator}
+                                    disabled={!isManager && !!task}
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
                                 />
 
@@ -600,10 +603,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 <select
                                     value={formData.estimatedTime}
                                     onChange={(e) => setFormData({ ...formData, estimatedTime: e.target.value })}
-                                    disabled={!isManager && !!task && !isCreator}
+                                    disabled={!isManager && !!task}
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
+                                    required
                                 >
-                                    <option value="">Planuojamas laikas...</option>
+                                    <option value="" disabled>Planuojamas laikas...</option>
                                     <option value="5min">5min</option>
                                     <option value="15min">15min</option>
                                     <option value="30min">30min</option>
@@ -611,6 +615,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     <option value="1h">1h</option>
                                     <option value="1,5h">1,5h</option>
                                     <option value="2h">2h</option>
+                                    <option value="2,5h">2,5h</option>
                                     <option value="3h">3h</option>
                                     <option value="4h">4h</option>
                                     <option value="5h">5h</option>
@@ -624,12 +629,21 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     <option value="30h">30h</option>
                                     <option value="40h">40h</option>
                                     <option value="50h">50h</option>
+                                    <option value="60h">60h</option>
+                                    <option value="70h">70h</option>
+                                    <option value="80h">80h</option>
+                                    <option value="90h">90h</option>
+                                    <option value="100h">100h</option>
+                                    <option value="110h">110h</option>
+                                    <option value="120h">120h</option>
+                                    <option value="150h">150h</option>
+                                    <option value="200h">200h</option>
                                 </select>
 
                                 <select
                                     value={formData.managerId}
                                     onChange={(e) => setFormData({ ...formData, managerId: e.target.value })}
-                                    disabled={(!isManager && !isCreator) && !!task}
+                                    disabled={!isManager && !!task}
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
                                 >
                                     <option value="">Priskirti vadovą...</option>
@@ -642,8 +656,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
                                 {/* Select: Assigned Worker */}
                                 <select
-                                    value={formData.assignedWorkerId}
-                                    onChange={(e) => setFormData({ ...formData, assignedWorkerId: e.target.value })}
+                                    value={formData.assignedUserId}
+                                    onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
                                     disabled={!isManager}
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
                                 >
@@ -712,7 +726,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
                                 >
                                     <option value="">Pasirinkti žymą...</option>
-                                    {['Auto', 'Renginiams', 'Piro'].map(tag => (
+                                    {TASK_TAGS.map(tag => (
                                         <option key={tag} value={tag}>{tag}</option>
                                     ))}
                                 </select>
@@ -790,10 +804,28 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             {/* Timestamps - Read Only */}
                             {
                                 task && (
-                                    <div className="text-xs text-gray-400 border-t border-gray-100 pt-4 flex flex-col gap-1">
-                                        <p>Sukurta: {new Date(task.createdAt).toLocaleString()}</p>
-                                        {task.updatedAt && <p>Atnaujinta: {new Date(task.updatedAt).toLocaleString()}</p>}
-                                        {task.id && <p className="font-mono text-[10px]">ID: {task.id}</p>}
+                                    <div className="text-xs text-gray-500 border-t border-gray-100 pt-4 flex flex-col gap-1.5">
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                            {task.createdAt && <div><span className="font-semibold text-gray-700">Sukurta:</span> {new Date(task.createdAt).toLocaleString('lt-LT')}{task.creatorName && <span className="ml-1 text-gray-600">({task.creatorName})</span>}</div>}
+                                            {task.assignedAt && <div><span className="font-semibold text-gray-700">Priskirta:</span> {new Date(task.assignedAt).toLocaleString('lt-LT')}</div>}
+                                            {task.startedAt && <div><span className="font-semibold text-gray-700">Pradėta:</span> {new Date(task.startedAt).toLocaleString('lt-LT')}</div>}
+                                            {task.completedAt && <div><span className="font-semibold text-gray-700">Užbaigta:</span> {new Date(task.completedAt).toLocaleString('lt-LT')}</div>}
+                                            {task.approvedAt && <div><span className="font-semibold text-gray-700">Patvirtinta:</span> {new Date(task.approvedAt).toLocaleString('lt-LT')}</div>}
+                                            {task.confirmedAt && !task.approvedAt && <div><span className="font-semibold text-gray-700">Patvirtinta:</span> {new Date(task.confirmedAt).toLocaleString('lt-LT')}</div>}
+                                        </div>
+                                        {(() => {
+                                            const spent = calculateCurrentTotalMinutes(task);
+                                            if (spent > 0) {
+                                                return (
+                                                    <div className="flex items-center gap-1 font-bold text-blue-600 mt-1">
+                                                        <Clock className="w-3.5 h-3.5" />
+                                                        Praleistas laikas: {formatMinutesToTimeString(spent)}
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
+                                        {task.id && <div className="font-mono text-[9px] text-gray-400 mt-1">ID: {task.id}</div>}
                                     </div>
                                 )
                             }
@@ -825,7 +857,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         <>
                             <>
                                 <div className="flex-1 flex items-center justify-start gap-2">
-                                    {!task && (role === 'manager' || role === 'admin') && (
+                                    {!task && isManagerRole(role) && (
                                         <button
                                             type="button"
                                             onClick={handleSaveTemplateClick}

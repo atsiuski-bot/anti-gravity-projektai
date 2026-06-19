@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Link as LinkIcon, MessageCircle, FileText, ImageIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { X, Link as LinkIcon, MessageCircle, FileText, ImageIcon, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -65,24 +65,56 @@ export function LinksModal({ isOpen, onClose, links }) {
 
 export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
     const [newComment, setNewComment] = React.useState('');
+    const [optimisticComments, setOptimisticComments] = React.useState([]);
+    const [isSubmitting, setIsSubmitting] = React.useState(false);
 
-    const handleSubmit = (e) => {
+    // When the real comments update from Firestore, clear our optimistic ones
+    React.useEffect(() => {
+        setOptimisticComments([]);
+    }, [comments]);
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
-        if (newComment.trim()) {
-            onAddComment(newComment);
+        const text = newComment.trim();
+        if (text && !isSubmitting) {
+            setIsSubmitting(true);
+
+            // 1. Optimistic Update instantly
+            setOptimisticComments(prev => [...prev, {
+                text: text,
+                user: "Saugoma...", // Temporary status indicating it's saving
+                createdAt: new Date().toISOString(),
+                isOptimistic: true
+            }]);
+
+            // 2. Clear input
             setNewComment('');
+
+            // 3. Fire to backend
+            try {
+                // Not awaiting this fully to let UI remain responsive
+                await onAddComment(text);
+            } catch (err) {
+                console.error(err);
+            } finally {
+                setIsSubmitting(false);
+            }
         }
     };
+
+    const displayComments = [...(comments || []), ...optimisticComments];
 
     return (
         <DetailsModal isOpen={isOpen} onClose={onClose} title="Komentarai" icon={MessageCircle}>
             <div className="flex flex-col h-full max-h-[60vh]">
                 <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
-                    {comments && comments.length > 0 ? (
-                        comments.map((comment, idx) => (
-                            <div key={idx} className="bg-gray-50 p-4 rounded-lg">
+                    {displayComments.length > 0 ? (
+                        displayComments.map((comment, idx) => (
+                            <div key={idx} className={`bg-gray-50 p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
                                 <div className="flex justify-between items-start mb-2">
-                                    <span className="font-medium text-gray-900">{formatDisplayName(comment.user)}</span>
+                                    <span className="font-medium text-gray-900">
+                                        {comment.isOptimistic ? <span className="text-blue-500 italic text-sm">{comment.user}</span> : formatDisplayName(comment.user)}
+                                    </span>
                                     <span className="text-xs text-gray-500">
                                         {new Date(comment.createdAt).toLocaleString()}
                                     </span>
@@ -102,13 +134,14 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
                         onChange={(e) => setNewComment(e.target.value)}
                         placeholder="Rašyti komentarą..."
                         className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        disabled={isSubmitting}
                     />
                     <button
                         type="submit"
-                        disabled={!newComment.trim()}
+                        disabled={!newComment.trim() || isSubmitting}
                         className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                        Skelbti
+                        {isSubmitting ? 'Saugoma...' : 'Skelbti'}
                     </button>
                 </form>
             </div>
@@ -124,6 +157,117 @@ export function DescriptionModal({ isOpen, onClose, description }) {
             ) : (
                 <p className="text-gray-500">Nėra aprašymo</p>
             )}
+        </DetailsModal>
+    );
+}
+
+export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, onDeleteAdjustment }) {
+    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+    const [hours, setHours] = useState(0);
+    const [mins, setMins] = useState(0);
+    const [reason, setReason] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    if (!isOpen || !task) return null;
+
+    const adjustments = task.timeAdjustments || [];
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        const h = parseInt(hours) || 0;
+        const m = parseInt(mins) || 0;
+        if (h === 0 && m === 0) return;
+
+        setIsSubmitting(true);
+        try {
+            await onAddAdjustment(task.id, date, h, m, reason);
+            setHours(0);
+            setMins(0);
+            setReason('');
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <DetailsModal isOpen={isOpen} onClose={onClose} title="Papildomi laiko įrašai" icon={Clock}>
+            <div className="flex flex-col h-full max-h-[60vh]">
+                <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
+                    {adjustments.length > 0 ? (
+                        adjustments.map((adj, idx) => (
+                            <div key={idx} className="bg-gray-50 p-4 rounded-lg flex justify-between items-center group">
+                                <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                        <span className="font-semibold text-gray-900">{adj.date}</span>
+                                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                            {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
+                                        </span>
+                                    </div>
+                                    <p className="text-gray-600 text-sm">{adj.reason || 'Be priežasties'}</p>
+                                </div>
+                                <button
+                                    onClick={() => onDeleteAdjustment(task.id, adj)}
+                                    className="p-2 text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                                    title="Ištrinti šį įrašą"
+                                >
+                                    <Trash2 className="w-5 h-5" />
+                                </button>
+                            </div>
+                        ))
+                    ) : (
+                        <p className="text-gray-500 text-center py-4">Nėra papildomų laiko įrašų</p>
+                    )}
+                </div>
+
+                <form onSubmit={handleSubmit} className="mt-auto pt-4 border-t border-gray-100 flex flex-col gap-3">
+                    <h4 className="text-sm font-semibold text-gray-700">Pridėti naują įrašą</h4>
+                    <div className="flex flex-wrap gap-2">
+                        <input
+                            type="date"
+                            value={date}
+                            onChange={(e) => setDate(e.target.value)}
+                            max={new Date().toISOString().split('T')[0]}
+                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm flex-1 min-w-[120px]"
+                            required
+                        />
+                        <div className="flex items-center gap-1">
+                            <input
+                                type="number"
+                                value={hours}
+                                onChange={(e) => setHours(e.target.value)}
+                                placeholder="Valandos"
+                                className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm text-center"
+                            />
+                            <span className="text-sm text-gray-500 font-medium">h</span>
+                            <input
+                                type="number"
+                                value={mins}
+                                onChange={(e) => setMins(e.target.value)}
+                                placeholder="Minutės"
+                                className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm text-center"
+                            />
+                            <span className="text-sm text-gray-500 font-medium">m</span>
+                        </div>
+                    </div>
+                    <div className="flex gap-2">
+                        <input
+                            type="text"
+                            value={reason}
+                            onChange={(e) => setReason(e.target.value)}
+                            placeholder="Priežastis (pvz. 'Pamiršo įjungti taimerį')"
+                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        />
+                        <button
+                            type="submit"
+                            disabled={isSubmitting || (parseInt(hours) === 0 && parseInt(mins) === 0)}
+                            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                        >
+                            {isSubmitting ? 'Saugoma...' : 'Pridėti'}
+                        </button>
+                    </div>
+                    <p className="text-xs text-gray-500">Patarimas: norėdami atimti laiką, naudokite minuso ženklą (pvz. -1 valanda).</p>
+                </form>
+            </div>
         </DetailsModal>
     );
 }
@@ -281,4 +425,63 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     );
 
     return createPortal(modalContent, document.body);
+}
+
+export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true }) {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50 p-4 animate-in fade-in duration-200">
+            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 duration-200">
+                <div className="p-6">
+                    <div className="flex items-center gap-3 mb-4 text-red-600">
+                        <div className="p-2 bg-red-50 rounded-full">
+                            <AlertTriangle className="w-6 h-6" />
+                        </div>
+                        <h3 className="text-xl font-bold">{isTask ? 'Ištrinti užduotį' : 'Ištrinti įrašą'}</h3>
+                    </div>
+
+                    <div className="space-y-4 mb-6">
+                        <p className="text-gray-600">
+                            {isTask ? (
+                                <>Pasirinkite, kaip norite ištrinti įrašą <span className="font-semibold text-gray-900">"{taskTitle}"</span>:</>
+                            ) : (
+                                <>Ar tikrai norite ištrinti įrašą <span className="font-semibold text-gray-900">"{taskTitle}"</span>? Šio veiksmo atšaukti nebus galima.</>
+                            )}
+                        </p>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                        <button
+                            onClick={onClose}
+                            className="w-full px-4 py-3 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-left text-center"
+                        >
+                            Atšaukti{isTask ? ' trynimą' : ''}
+                        </button>
+                        
+                        {isTask && (
+                            <button
+                                onClick={() => {
+                                    onConfirm({ keepWorkHours: true });
+                                }}
+                                className="w-full px-4 py-3 bg-yellow-50 text-yellow-800 border border-yellow-200 text-sm font-medium rounded-lg hover:bg-yellow-100 transition-colors text-left"
+                            >
+                                Palikti darbo valandas, perbraukti užduotį ir ją užbaigti
+                            </button>
+                        )}
+                        
+                        <button
+                            onClick={() => {
+                                onConfirm({ keepWorkHours: false });
+                            }}
+                            className={`w-full px-4 py-3 bg-red-50 text-red-700 border border-red-200 text-sm font-bold rounded-lg hover:bg-red-100 transition-colors flex items-center gap-3 ${isTask ? 'text-left' : 'justify-center'} leading-tight`}
+                        >
+                            <Trash2 className="w-5 h-5 flex-shrink-0" />
+                            <span>{isTask ? 'IŠTRINTI DARBO VALANDAS ir visą užduotį' : 'IŠTRINTI'}</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
 }

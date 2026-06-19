@@ -35,7 +35,8 @@ export default function AllWorkersCalendars() {
                         const usersSnapshot = await getDocs(collection(db, 'users'));
                         const usersMap = {};
                         usersSnapshot.docs.forEach(doc => {
-                            usersMap[doc.id] = doc.data();
+                            const data = doc.data();
+                            usersMap[doc.id] = data;
                         });
 
                         // Group work hours by user

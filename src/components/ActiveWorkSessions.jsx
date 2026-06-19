@@ -1,33 +1,23 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { Users, ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import SessionTypeIcon from './SessionTypeIcon';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { useUsers } from '../context/UsersContext';
 
 export default function ActiveWorkSessions() {
-    const [users, setUsers] = useState([]);
+    const { users: allUsers, loading: usersLoading } = useUsers();
     const [tasks, setTasks] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [isCollapsed, setIsCollapsed] = useState(false); // Default expanded for visibility
+    const [isCollapsed, setIsCollapsed] = useState(false);
+
+    // Filter out disabled users
+    const users = useMemo(() => allUsers.filter(u => !u.isDisabled), [allUsers]);
 
     useEffect(() => {
-        setLoading(true);
-
-        // 1. Listen to Users (for activeSession field)
-        const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-            const usersData = snap.docs
-                .map(doc => ({ id: doc.id, ...doc.data() }))
-                .filter(u => !u.isDisabled);
-            setUsers(usersData);
-            setLoading(false);
-        }, (error) => {
-            console.error("ActiveWorkSessions: Users Listener Error:", error);
-            setLoading(false);
-        });
-
-        // 2. Listen to Tasks (to resolve Task Titles)
-        // We fetch all active tasks to be able to resolve titles referenced in activeSession
-        const unsubTasks = onSnapshot(collection(db, 'tasks'), (snap) => {
+        // Only need tasks listener for currently active or pending tasks to map titles
+        const tasksQuery = query(collection(db, 'tasks'), where('status', 'in', ['pending', 'in-progress']));
+        const unsubTasks = onSnapshot(tasksQuery, (snap) => {
             const tasksData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setTasks(tasksData);
         }, (error) => {
@@ -35,7 +25,6 @@ export default function ActiveWorkSessions() {
         });
 
         return () => {
-            unsubUsers();
             unsubTasks();
         };
     }, []);
@@ -67,7 +56,7 @@ export default function ActiveWorkSessions() {
                         startTime: user.activeSession.startTime
                     };
                     break;
-                case 'quick_work':
+                case 'quickWork':
                     displayProps = {
                         label: 'Greitas darbas',
                         colorClass: 'bg-red-100 text-red-800',
@@ -83,9 +72,11 @@ export default function ActiveWorkSessions() {
                         title = foundTask.title;
                     }
                     displayProps = {
+                        type: 'task',
                         label: title,
                         colorClass: 'bg-green-100 text-green-800',
-                        startTime: user.activeSession.startTime
+                        startTime: user.activeSession.startTime,
+                        task: foundTask || null
                     };
                     break;
                 default:
@@ -106,7 +97,7 @@ export default function ActiveWorkSessions() {
         }).filter(Boolean);
     }, [users, tasks]);
 
-    if (loading) return null;
+    if (usersLoading) return null;
     if (activeSessions.length === 0) return null; // Hide completely if empty? Or show empty state? Let's hide to reduce clutter.
 
     return (
@@ -139,6 +130,14 @@ const ActiveSessionRow = React.memo(({ session }) => {
 
     useEffect(() => {
         const updateTime = () => {
+            if (session.type === 'task' && session.task) {
+                // Use global task total time calculation for accurate cross-device time
+                const totalMinutes = calculateCurrentTotalMinutes(session.task);
+                setDurationStr(formatMinutesToTimeString(totalMinutes));
+                return;
+            }
+
+            // Fallback for non-task sessions (breaks, calls, quick_work)
             if (!session.startTime) {
                 setDurationStr('');
                 return;
@@ -163,11 +162,11 @@ const ActiveSessionRow = React.memo(({ session }) => {
         };
 
         updateTime(); // Initial
-        // Update every minute (60,000 ms)
-        const interval = setInterval(updateTime, 60000);
+        // Update more frequently (every 10 seconds) to ensure synchronization with other timers
+        const interval = setInterval(updateTime, 10000);
 
         return () => clearInterval(interval);
-    }, [session.startTime]);
+    }, [session.startTime, session.task]);
 
     return (
         <div className={`p-3 rounded-lg flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>

@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, getDoc, orderBy, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, orderBy, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, calculateCurrentTotalMinutes } from '../utils/timeUtils';
-import { formatDisplayName, formatTime } from '../utils/formatters';
+import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
+import { addComment } from '../utils/commentActions';
+import { STATUS_COLORS, STATUS_LABELS } from '../utils/taskConstants';
 import { Calendar, Clock, Coffee, User, Briefcase, ChevronLeft, ChevronRight, Zap, Phone, MessageSquare, Check, Filter, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
@@ -12,8 +14,7 @@ import SessionTypeIcon from './SessionTypeIcon';
 
 export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     // Managers can see everyone, Workers only themselves
-    // Managers can see everyone, Workers only themselves
-    const [selectedUserId, setSelectedUserId] = useState((userRole === 'manager' || userRole === 'admin') ? 'all' : currentUser?.uid);
+    const [selectedUserId, setSelectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
     const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
     const [loading, setLoading] = useState(false);
 
@@ -23,7 +24,17 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     const [sessions, setSessions] = useState([]); // From work_sessions collection
     const [scheduledTasks, setScheduledTasks] = useState([]); // Tasks planned for this weekday
     const [finishedTasks, setFinishedTasks] = useState([]); // Tasks finished on this specific date
-    const [allDeletedTasks, setAllDeletedTasks] = useState([]); // Keep track of all deleted tasks for timeline lookup
+
+    // Ticker for active sessions
+    const [currentTime, setCurrentTime] = useState(new Date());
+
+    useEffect(() => {
+        if (selectedDate !== getLithuanianDateString()) return;
+        const interval = setInterval(() => {
+            setCurrentTime(new Date());
+        }, 60000); // Update every minute
+        return () => clearInterval(interval);
+    }, [selectedDate]);
 
     // Modal state
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null, task: null });
@@ -66,19 +77,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         const startOfDay = `${selectedDate}T00:00:00`;
         const endOfDay = `${selectedDate}T23:59:59`;
 
-        const breaksQ = selectedUserId === 'all'
-            ? query(collection(db, 'break_sessions'),
-                where('startTime', '>=', startOfDay),
-                where('startTime', '<=', endOfDay),
-                orderBy('startTime', 'asc'))
-            : query(collection(db, 'break_sessions'),
-                where('userId', '==', selectedUserId),
-                where('startTime', '>=', startOfDay),
-                where('startTime', '<=', endOfDay),
-                orderBy('startTime', 'asc'));
+        const breaksQ = query(collection(db, 'break_sessions'),
+            where('startTime', '>=', startOfDay),
+            where('startTime', '<=', endOfDay),
+            orderBy('startTime', 'asc'));
 
         const unsubBreaks = onSnapshot(breaksQ, (snap) => {
-            setBreakSessions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            const breaksData = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(brk => {
+                const brkUserId = resolveUserId(brk);
+                if (selectedUserId !== 'all' && brkUserId !== selectedUserId) return false;
+                return true;
+            });
+            setBreakSessions(breaksData);
         }, (error) => {
             console.error("Error fetching break sessions:", error);
         });
@@ -93,17 +103,17 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
         // 2. Listen to Work Sessions
         const sessionsBaseQ = collection(db, 'work_sessions');
-        let sessionsQ;
-        if (selectedUserId === 'all') {
-            sessionsQ = query(sessionsBaseQ, where('date', '==', selectedDate), orderBy('startTime', 'asc'));
-        } else {
-            sessionsQ = query(sessionsBaseQ, where('workerId', '==', selectedUserId), where('date', '==', selectedDate), orderBy('startTime', 'asc'));
-        }
+        const sessionsQ = query(sessionsBaseQ, where('date', '==', selectedDate), orderBy('startTime', 'asc'));
 
         const unsubSessions = onSnapshot(sessionsQ, (snap) => {
             const sessionsData = snap.docs
                 .map(d => ({ id: d.id, ...d.data() }))
-                .filter(session => !session.isDeleted);
+                .filter(session => {
+                    if (session.isDeleted) return false;
+                    const sessionUserId = resolveUserId(session);
+                    if (selectedUserId !== 'all' && sessionUserId !== selectedUserId) return false;
+                    return true;
+                });
             setSessions(sessionsData);
         }, (error) => {
             console.error("Error fetching sessions:", error);
@@ -112,13 +122,23 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
         // 3. Listen to Tasks (Active & Archived)
         let activeQ, archivedQ;
-        if (selectedUserId === 'all') {
-            activeQ = collection(db, 'tasks');
-            archivedQ = collection(db, 'archived_tasks');
-        } else {
-            activeQ = query(collection(db, 'tasks'), where('assignedWorkerId', '==', selectedUserId));
-            archivedQ = query(collection(db, 'archived_tasks'), where('assignedWorkerId', '==', selectedUserId));
-        }
+
+        // Limit query to selectedDate + 2 days to capture anything archived shortly after completion
+        const rangeStartDate = new Date(selectedDate);
+        // Start from beginning of selected day
+        const startIso = `${selectedDate}T00:00:00`;
+
+        // End 2 days later at end of day (handles weekend archives or delayed archiving)
+        const rangeEndDate = new Date(selectedDate);
+        rangeEndDate.setDate(rangeEndDate.getDate() + 2);
+        const endIso = `${rangeEndDate.toISOString().split('T')[0]}T23:59:59`;
+
+        activeQ = collection(db, 'tasks');
+        archivedQ = query(
+            collection(db, 'archived_tasks'),
+            where('archivedAt', '>=', startIso),
+            where('archivedAt', '<=', endIso)
+        );
 
         let activeTasks = [];
         let archivedTasks = [];
@@ -130,7 +150,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             [...activeTasks, ...archivedTasks, ...deletedTasks].forEach(t => {
                 if (t.id) taskMap.set(t.id, t);
             });
-            const allRelevantTasks = Array.from(taskMap.values());
+            const allRelevantTasks = Array.from(taskMap.values()).filter(t => {
+                const taskUserId = resolveUserId(t);
+                if (selectedUserId !== 'all' && taskUserId !== selectedUserId) return false;
+                return true;
+            });
 
             // Filter for scheduled (planned for this weekday)
             const scheduled = allRelevantTasks.filter(t => t.dayOfWeek === weekday);
@@ -173,12 +197,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         });
 
         // Listen to Deleted Tasks
-        let deletedQ;
-        if (selectedUserId === 'all') {
-            deletedQ = collection(db, 'deleted_tasks');
-        } else {
-            deletedQ = query(collection(db, 'deleted_tasks'), where('assignedWorkerId', '==', selectedUserId));
-        }
+        const deletedQ = collection(db, 'deleted_tasks');
 
         const unsubDeleted = onSnapshot(deletedQ, (snap) => {
             deletedTasks = snap.docs.map(d => ({ id: d.id, ...d.data(), isDeleted: true }));
@@ -289,12 +308,77 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
 
-    // Filter out session records that are duplicates of manual tasks (Calls and Quick Work from legacy logging)
-    const validSessions = useMemo(() => sessions.filter(s => !s.isSystemTask && !s.isQuickWork), [sessions]);
+    // ALL sessions go into the timeline — Quick Work and Calls are regular work sessions,
+    // they were previously excluded to avoid double-count with manualTasks but that caused them to vanish.
+    const validSessions = useMemo(() => sessions, [sessions]);
+
+    // Active Sessions Integration
+    const activeTaskSessionsForToday = useMemo(() => {
+        const active = [];
+        if (selectedDate !== getLithuanianDateString()) return active;
+        
+        users.forEach(u => {
+            if (u.activeSession && u.activeSession.type === 'task') {
+                const start = new Date(u.activeSession.startTime);
+                const durationMinutes = (currentTime - start) / (1000 * 60);
+                if (durationMinutes > 0) {
+                    active.push({
+                        id: `active_${u.id}`,
+                        taskId: u.activeSession.taskId,
+                        taskTitle: u.activeSession.taskTitle || 'Vykdoma užduotis',
+                        userId: u.id,
+                        userName: u.displayName || u.email,
+                        startTime: u.activeSession.startTime,
+                        endTime: currentTime.toISOString(),
+                        durationMinutes,
+                        date: getLithuanianDateString(start),
+                        isActive: true
+                    });
+                }
+            }
+        });
+        
+        if (selectedUserId !== 'all') {
+            return active.filter(s => s.userId === selectedUserId);
+        }
+        return active;
+    }, [users, selectedDate, selectedUserId, currentTime]);
+
+    const activeBreaksForToday = useMemo(() => {
+        const active = [];
+        if (selectedDate !== getLithuanianDateString()) return active;
+        
+        users.forEach(u => {
+            if (u.activeSession && u.activeSession.type === 'break') {
+                const start = new Date(u.activeSession.startTime);
+                const durationMinutes = (currentTime - start) / (1000 * 60);
+                if (durationMinutes > 0) {
+                    active.push({
+                        id: `active_break_${u.id}`,
+                        userId: u.id,
+                        userName: u.displayName || u.email,
+                        startTime: u.activeSession.startTime,
+                        endTime: currentTime.toISOString(),
+                        durationMinutes,
+                        date: getLithuanianDateString(start),
+                        isActive: true
+                    });
+                }
+            }
+        });
+
+        if (selectedUserId !== 'all') {
+            return active.filter(s => s.userId === selectedUserId);
+        }
+        return active;
+    }, [users, selectedDate, selectedUserId, currentTime]);
+
+    const allValidSessions = useMemo(() => [...validSessions, ...activeTaskSessionsForToday], [validSessions, activeTaskSessionsForToday]);
+    const allBreakSessions = useMemo(() => [...breakSessions, ...activeBreaksForToday], [breakSessions, activeBreaksForToday]);
 
     // Aggregations
-    const totalTimerMinutes = validSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
-    const totalBreakMinutes = breakSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
+    const totalTimerMinutes = allValidSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
+    const totalBreakMinutes = allBreakSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
 
     // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
     // AND belong to the selected date's work day (3AM - 3AM)
@@ -302,17 +386,34 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         const cutoff = get3AMCutoff();
         const nextDayCutoff = new Date(cutoff.getTime() + 24 * 60 * 60 * 1000);
 
-        return finishedTasks.filter(t => {
-            if (!t.manualMinutes || t.manualMinutes <= 0) return false;
+        // Build a set of taskIds that already have explicit work_sessions
+        const taskIdsWithSessions = new Set(sessions.map(s => s.taskId).filter(Boolean));
 
-            // Exclude updatedAt here as well
+        return finishedTasks.filter(t => {
+            if (!t.manualMinutes) return false;
+
+            // Call tasks (isSystemTask) and Quick Work tasks (isQuickWork) always have
+            // a dedicated work_session logged alongside the task. Including manualMinutes
+            // from these tasks would double-count because the session already carries
+            // the same duration. The taskId on those sessions uses synthetic IDs
+            // (e.g. "call_xxx", "quick_xxx") that never match the task's Firestore ID,
+            // so the generic taskIdsWithSessions check below doesn't catch them.
+            if (t.isSystemTask || t.isQuickWork) return false;
+
+            // If this task already has real work_sessions tracked, skip it here —
+            // the sessions themselves carry the accurate split data.
+            if (taskIdsWithSessions.has(t.id)) return false;
+
+            // If time was adjusted via work_sessions (timeChanged), skip to avoid double-count
+            if (t.timeChanged) return false;
+
             const dateStr = t.completedAt || t.deletedAt || t.confirmedAt;
             if (!dateStr) return false;
 
             const finishedDate = new Date(dateStr);
             return finishedDate >= cutoff && finishedDate < nextDayCutoff;
         });
-    }, [finishedTasks, selectedDate]);
+    }, [finishedTasks, sessions, selectedDate]);
 
     const totalManualMinutes = manualTasks.reduce((acc, t) => acc + (t.manualMinutes || 0), 0);
 
@@ -324,12 +425,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     // Merge sessions and manual tasks for Timeline
     const combinedTimelineItems = useMemo(() => {
-        const items = validSessions.map(s => {
+        const items = allValidSessions.map(s => {
             // Check if this session belongs to a deleted task
             const deletedTask = finishedTasks.find(t => t.id === s.taskId && t.isDeleted);
-            let title = s.taskTitle;
+            let title = s.isActive ? `⏳ (Vykdoma) ${s.taskTitle}` : s.taskTitle;
             if (deletedTask) {
-                title = `Deleted task: ${deletedTask.title}`;
+                title = `Ištrinta užduotis: ${deletedTask.title}`;
             }
 
             return {
@@ -339,8 +440,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 endTime: s.endTime,
                 title: title,
                 duration: s.durationMinutes,
-                workerId: s.workerId,
-                workerName: s.workerName
+                userId: resolveUserId(s),
+                userName: resolveUserName(s) || 'Nežinomas',
+                isSystemTask: s.isSystemTask || (s.taskId && String(s.taskId).startsWith('call_')),
+                isQuickWork: s.isQuickWork || (s.taskId && String(s.taskId).startsWith('quick_'))
             };
         });
 
@@ -361,16 +464,63 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 endTime: end.toISOString(),
                 title: title,
                 duration: t.manualMinutes,
-                workerId: t.assignedWorkerId,
-                workerName: t.assignedWorkerName,
+                userId: resolveUserId(t),
+                userName: resolveUserName(t),
                 isSystemTask: t.isSystemTask,
                 isQuickWork: t.isQuickWork
             });
         });
 
+        allBreakSessions.forEach(brk => {
+            const userId = resolveUserId(brk);
+            const userName = resolveUserName(brk) || userId;
+
+            items.push({
+                id: brk.id,
+                type: 'break',
+                startTime: brk.startTime,
+                endTime: brk.endTime,
+                title: 'Pertrauka',
+                duration: brk.durationMinutes,
+                userId: userId,
+                userName: userName
+            });
+        });
+
         // Sort by start time
-        return items.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
-    }, [validSessions, manualTasks]);
+        const sortedItems = items.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+
+        // Inject inactive gaps for individual mode (matches Reports.jsx logic)
+        if (selectedUserId !== 'all' && sortedItems.length > 0) {
+             const withGaps = [];
+             for (let i = 0; i < sortedItems.length; i++) {
+                 const current = sortedItems[i];
+                 withGaps.push(current);
+
+                 if (i < sortedItems.length - 1) {
+                     const next = sortedItems[i + 1];
+                     const currentEnd = new Date(current.endTime);
+                     const nextStart = new Date(next.startTime);
+                     const gapMs = nextStart.getTime() - currentEnd.getTime();
+                     const gapMinutes = Math.floor(gapMs / 60000);
+
+                     if (gapMinutes > 1) { // Only show gaps > 1 minute
+                         withGaps.push({
+                             id: `gap-${current.id}`,
+                             type: 'inactive',
+                             startTime: current.endTime,
+                             endTime: next.startTime,
+                             title: 'Neaktyvus',
+                             duration: gapMinutes,
+                         });
+                     }
+                 }
+             }
+             return withGaps;
+        }
+
+        return sortedItems;
+    }, [allValidSessions, manualTasks, allBreakSessions, selectedUserId]);
 
 
     // Find earliest start and latest end from COMBINED items
@@ -380,12 +530,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     // Group sessions by worker for Team mode
     const workerSummaries = selectedUserId === 'all' ? combinedTimelineItems.reduce((acc, s) => {
-        if (!acc[s.workerId]) {
-            const worker = users.find(u => u.id === s.workerId);
-            const rawName = worker ? (worker.displayName || worker.email) : (s.workerName || 'Nežinomas');
+        if (!acc[s.userId]) {
+            const worker = users.find(u => u.id === s.userId);
+            const rawName = worker ? (worker.displayName || worker.email) : (s.userName || 'Nežinomas');
             const displayName = formatDisplayName(rawName);
 
-            acc[s.workerId] = {
+            acc[s.userId] = {
                 name: displayName,
                 earliestStart: s.startTime,
                 latestEnd: s.endTime,
@@ -394,35 +544,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 // We'll sum breaks later
             };
         }
-        acc[s.workerId].taskTimeMinutes += (s.duration || 0);
-        if (s.startTime < acc[s.workerId].earliestStart) acc[s.workerId].earliestStart = s.startTime;
-        if (s.endTime > acc[s.workerId].latestEnd) acc[s.workerId].latestEnd = s.endTime;
+        if (s.type === 'break') {
+            acc[s.userId].breakMinutes += (s.duration || 0);
+        } else {
+            acc[s.userId].taskTimeMinutes += (s.duration || 0);
+        }
+        if (s.startTime && (!acc[s.userId].earliestStart || s.startTime < acc[s.userId].earliestStart)) acc[s.userId].earliestStart = s.startTime;
+        if (s.endTime && (!acc[s.userId].latestEnd || s.endTime > acc[s.userId].latestEnd)) acc[s.userId].latestEnd = s.endTime;
 
         return acc;
     }, {}) : null;
-
-    // Helper to add breaks to worker summaries in 'all' view
-    if (selectedUserId === 'all' && workerSummaries) {
-        breakSessions.forEach(brk => {
-            // brk has userId, we need to associate it
-            const uid = brk.userId;
-            if (!workerSummaries[uid]) {
-                // If worker has NO work sessions but has breaks, we should probably still show them?
-                // Or just skip. Usually they have work.
-                // Let's create entry if missing to be safe
-                const worker = users.find(u => u.id === uid);
-                const rawName = worker ? (worker.displayName || worker.email) : (brk.userName || 'Nežinomas');
-                workerSummaries[uid] = {
-                    name: formatDisplayName(rawName),
-                    earliestStart: null, // No work start
-                    latestEnd: null,
-                    taskTimeMinutes: 0,
-                    breakMinutes: 0
-                };
-            }
-            workerSummaries[uid].breakMinutes += (brk.durationMinutes || 0);
-        });
-    }
 
     const workerList = workerSummaries ? Object.entries(workerSummaries) : [];
 
@@ -510,15 +641,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
             // Determine collection based on archival status
             const collectionName = task.archivedAt ? 'archived_tasks' : 'tasks';
-            // Also check if it might be a deleted task? (User probably shouldn't comment on deleted tasks, but finishedTasks usually are active/archived)
 
-            const taskRef = doc(db, collectionName, task.id);
-
-            await updateDoc(taskRef, {
-                comments: updatedComments,
-                updatedAt: new Date().toISOString()
-            });
-
+            await addComment(task.id, text, currentUser, task.comments || [], collectionName);
         } catch (err) {
             console.error("Error adding comment:", err);
             alert("Nepavyko pridėti komentaro.");
@@ -563,6 +687,69 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         }
     };
 
+    const handleTimeChange = async (task, newTotalMinutes) => {
+        try {
+            const collectionName = (task.archivedAt || task.isDeleted || task.status === 'deleted') ? 'archived_tasks' : 'tasks';
+            
+            // Calculate how much time is already accounted for in timeAdjustments
+            let adjustmentsTotal = 0;
+            if (task.timeAdjustments && Array.isArray(task.timeAdjustments)) {
+                task.timeAdjustments.forEach(adj => {
+                    adjustmentsTotal += (adj.durationMinutes || 0);
+                });
+            }
+
+            // The user intends for the new absolute total to be newTotalMinutes.
+            // Since `calculateCurrentTotalMinutes` calculates total = manualMinutes + timeAdjustments,
+            // we must subtract the existing timeAdjustments from newTotalMinutes to get the correct manualMinutes.
+            // Exception: if manualMinutes drops below 0, it means the correction exceeds the total (prevent negative base time).
+            const newManualMinutes = Math.max(0, (newTotalMinutes || 0) - adjustmentsTotal);
+
+            const updates = {
+                timerMinutes: 0,
+                manualMinutes: newManualMinutes,
+                timeChanged: true,
+                timeChangedBy: currentUser?.uid || 'unknown',
+                timeChangedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+            
+            if (!task.id) throw new Error("Missing task ID");
+            await updateDoc(doc(db, collectionName, task.id), updates);
+
+            // True database update to ensure time goes to statistics
+            const currentTotal = Math.round(calculateCurrentTotalMinutes(task)) || 0;
+            const difference = (newTotalMinutes || 0) - currentTotal;
+
+            if (difference !== 0) {
+                const completedDateDate = task.completedAt ? new Date(task.completedAt) : new Date();
+                
+                // Construct payload explicitly removing undefined to prevent Firestore assertions
+                const payload = {
+                    taskId: task.id || 'unknown_id',
+                    taskTitle: `🕒 Laiko korekcija: ${task.title || 'Užduotis'}`,
+                    userId: task.assignedUserId || task.creatorId || 'unknown',
+                    userName: task.assignedUserName || task.creatorName || 'Nežinomas darbuotojas',
+                    startTime: completedDateDate.toISOString(),
+                    endTime: new Date().toISOString(),
+                    durationMinutes: difference,
+                    date: getLithuanianDateString(completedDateDate) || new Date().toISOString().split('T')[0],
+                    createdAt: new Date().toISOString(),
+                    isManualAdjustment: true
+                };
+                
+                await addDoc(collection(db, 'work_sessions'), payload);
+            }
+
+            setFinishedTasks(prev => prev.map(t =>
+                t.id === task.id ? { ...t, ...updates } : t
+            ));
+        } catch (err) {
+            console.error('Error changing task time:', err);
+            alert('Nepavyko pakeisti laiko: ' + err.message);
+        }
+    };
+
     // View mode state for responsive design
     const [viewMode, setViewMode] = useState('desktop');
 
@@ -599,7 +786,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     </button>
                 </div>
 
-                {(userRole === 'manager' || userRole === 'admin') && users.length > 0 && (
+                {(isManagerRole(userRole)) && users.length > 0 && (
                     <div className="relative">
                         <select
                             value={selectedUserId}
@@ -607,9 +794,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                             className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-white min-w-[200px]"
                         >
                             <option value="all">Už visą komandą</option>
-                            {users.filter(u => !u.isDisabled).map(u => (
+                            {users.map(u => (
                                 <option key={u.id} value={u.id}>
-                                    {u.displayName || u.email}
+                                    {formatDisplayName(u.displayName || u.email)}
                                 </option>
                             ))}
                         </select>
@@ -671,6 +858,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     </div>
                 </div>
 
+                <div className="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
+                    <div className="flex items-center gap-3 mb-2 text-blue-600 text-sm font-medium">
+                        <Zap className="w-4 h-4" />
+                        Viso (D+P)
+                    </div>
+                    <div className="text-2xl font-bold text-blue-700">
+                        {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                        Darbas + Pertraukos
+                    </div>
+                </div>
+
 
 
             </div>
@@ -696,11 +896,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                     <th className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-gray-500">Pabaiga</th>
                                     <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500">Pertraukos</th>
                                     <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500">Užduotims</th>
+                                    <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-900">Viso(D+P)</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
-                                {workerList.map(([workerId, summary]) => (
-                                    <tr key={workerId} className="hover:bg-gray-50">
+                                {workerList.map(([userId, summary]) => (
+                                    <tr key={userId} className="hover:bg-gray-50">
                                         <td className="px-4 py-3 text-gray-900 font-medium">
                                             {summary.name}
                                         </td>
@@ -716,6 +917,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                         <td className="px-4 py-3 text-right text-indigo-600 font-mono font-semibold">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes)}
                                         </td>
+                                        <td className="px-4 py-3 md:px-2 md:py-2 text-right text-gray-900 font-mono font-bold bg-blue-50/10">
+                                            {formatMinutesToTimeString(summary.taskTimeMinutes + summary.breakMinutes)}
+                                        </td>
                                     </tr>
                                 ))}
                                 <tr className="bg-gray-50 font-bold">
@@ -727,6 +931,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                     </td>
                                     <td className="px-4 py-3 md:px-2 md:py-2 text-right text-indigo-700">
                                         {formatMinutesToTimeString(totalWorkedMinutes)}
+                                    </td>
+                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-gray-900 font-bold bg-blue-50/30">
+                                        {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
                                     </td>
                                 </tr>
                             </tbody>
@@ -744,19 +951,27 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
-                                {combinedTimelineItems.map((item) => (
-                                    <tr key={item.id} className={clsx("hover:bg-gray-50", item.type === 'task' ? 'bg-blue-50/30' : '')}>
-                                        <td className="px-4 py-3 text-gray-600 font-mono text-xs">
+                                {combinedTimelineItems.map((item, idx) => (
+                                    <tr key={item.id || idx} className={`text-xs hover:bg-gray-50 border-b border-gray-100 last:border-0 ${item.type === 'break' ? 'text-amber-700 bg-amber-50/10' : item.type === 'inactive' ? 'text-gray-400 italic' : 'text-gray-600'}`}>
+                                        <td className="px-4 py-3 font-mono text-gray-500 w-24">
                                             {formatTime(item.startTime)} - {formatTime(item.endTime)}
                                         </td>
-                                        <td className="px-4 py-3 text-gray-900 font-medium flex items-center gap-2 text-xs">
-                                            <SessionTypeIcon
-                                                type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quick_work' : 'task')}
-                                                className="w-4 h-4"
-                                            />
-                                            {item.title}
+                                        <td className="px-4 py-3 font-medium flex-grow truncate">
+                                            {item.type === 'break' ? (
+                                                <span className="flex items-center gap-1.5"><SessionTypeIcon type="break" className="w-3.5 h-3.5" /> Pertrauka</span>
+                                            ) : item.type === 'inactive' ? (
+                                                <span className="flex items-center gap-1.5 text-gray-400">{item.title || 'Neaktyvus'}</span>
+                                            ) : (
+                                                <span className="flex items-center gap-1.5">
+                                                    <SessionTypeIcon 
+                                                        type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')} 
+                                                        className="w-3.5 h-3.5 flex-shrink-0" 
+                                                    />
+                                                    {item.title || 'Darbas'}
+                                                </span>
+                                            )}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-gray-900 font-mono">
+                                        <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-amber-600' : item.type === 'inactive' ? 'text-gray-400' : 'text-blue-600'}`}>
                                             {formatMinutesToTimeString(item.duration)}
                                         </td>
                                     </tr>
@@ -775,49 +990,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 )}
             </div>
 
-            {/* Breaks Timeline */}
-            {(selectedUserId !== 'all' && breakSessions.length > 0) && (
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 text-gray-900">
-                        <h3 className="font-semibold">Pertraukos ({breakSessions.length})</h3>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="w-full md:w-auto divide-y divide-gray-200 text-sm">
-                            <thead className="bg-gray-50">
-                                <tr>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-gray-500 w-24">Laikas</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-gray-500">Aprašymas</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500 w-32">Trukmė</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-200">
-                                {breakSessions.sort((a, b) => new Date(a.startTime) - new Date(b.startTime)).map((brk, idx) => (
-                                    <tr key={brk.id || idx} className="hover:bg-gray-50">
-                                        <td className="px-4 py-3 text-gray-600 font-mono text-xs">
-                                            {formatTime(brk.startTime)} - {formatTime(brk.endTime)}
-                                        </td>
-                                        <td className="px-4 py-3 text-gray-900 font-medium flex items-center gap-2">
-                                            <SessionTypeIcon type="break" className="w-4 h-4" />
-                                            Pertrauka #{idx + 1}
-                                        </td>
-                                        <td className="px-4 py-3 text-right text-amber-600 font-mono">
-                                            {formatMinutesToTimeString(brk.durationMinutes)}
-                                        </td>
-                                    </tr>
-                                ))}
-                                <tr className="bg-gray-50 font-semibold">
-                                    <td colSpan="2" className="px-4 py-3 text-right text-gray-900">
-                                        Viso pertraukų:
-                                    </td>
-                                    <td className="px-4 py-3 text-right text-amber-600">
-                                        {formatMinutesToTimeString(totalBreakMinutes)}
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
+            {/* Removed separate Breaks Timeline as they are now integrated into the main timeline */}
 
             {(selectedUserId === 'all') && (
                 /* Optional: Add Breaks Breakdown for Team if requested, but for now only adding for individual user as per "user has had a break today" request interpretation */
@@ -837,8 +1010,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
                     onRestore={handleRestore}
+                    onTimeChange={handleTimeChange}
                     users={users}
                     userRole={userRole}
+                    currentUser={currentUser}
                     expandedTasks={expandedTasks}
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
@@ -853,8 +1028,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
                     onRestore={handleRestore}
+                    onTimeChange={handleTimeChange}
                     users={users}
                     userRole={userRole}
+                    currentUser={currentUser}
                     expandedTasks={expandedTasks}
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
@@ -889,10 +1066,27 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 }
 
 // Mobile Stats Card Component
-function MobileStatsCard({ task, onToggleConfirm, onAddComment, onRestore, users, userRole, setActiveModal }) {
+function MobileStatsCard({ task, onToggleConfirm, onAddComment, onRestore, users, userRole, setActiveModal, onTimeChange, currentUser }) {
     const isConfirmed = task.status === 'confirmed';
-    const worker = users.find(u => u.id === task.assignedWorkerId);
-    const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
+    const worker = users.find(u => u.id === task.assignedUserId);
+    const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '—');
+    const [editingTime, setEditingTime] = useState(false);
+    const [editHours, setEditHours] = useState(0);
+    const [editMins, setEditMins] = useState(0);
+    const canEditTime = (userRole === 'admin');
+
+    const startTimeEdit = () => {
+        const totalMins = Math.round(calculateCurrentTotalMinutes(task));
+        setEditHours(Math.floor(totalMins / 60));
+        setEditMins(totalMins % 60);
+        setEditingTime(true);
+    };
+
+    const saveTimeEdit = () => {
+        const newTotal = (editHours * 60) + editMins;
+        onTimeChange(task, newTotal);
+        setEditingTime(false);
+    };
 
     return (
         <div className={clsx(
@@ -941,10 +1135,29 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment, onRestore, users
             <div className="flex flex-wrap items-center gap-2 mb-2 text-[10px] text-gray-500">
                 <div className="bg-gray-100 px-1.5 py-0.5 rounded flex items-center gap-1">
                     <User className="w-3 h-3" />
-                    <span className="font-medium">{formatDisplayName(workerName)}</span>
+                    <span className="font-medium">{formatDisplayName(userName)}</span>
                 </div>
                 <div className="bg-gray-100 px-1.5 py-0.5 rounded font-mono">
-                    {task.estimatedTime || '-'} / {calculateCurrentTotalMinutes(task) > 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}
+                    {editingTime ? (
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                            <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} className="w-10 px-1 py-0.5 border rounded text-center text-[10px]" />h
+                            <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} className="w-10 px-1 py-0.5 border rounded text-center text-[10px]" />m
+                            <button onClick={saveTimeEdit} className="px-1.5 py-0.5 text-[9px] bg-green-600 text-white rounded hover:bg-green-700">✓</button>
+                            <button onClick={() => setEditingTime(false)} className="px-1.5 py-0.5 text-[9px] bg-gray-400 text-white rounded hover:bg-gray-500">✗</button>
+                        </div>
+                    ) : (
+                        <span className="flex items-center gap-1">
+                            {task.estimatedTime || '-'} / {calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}
+                            {canEditTime && (
+                                <button onClick={startTimeEdit} className="text-blue-500 hover:text-blue-700 ml-0.5" title="Keisti laiką">
+                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                </button>
+                            )}
+                        </span>
+                    )}
+                    {task.timeChanged && (
+                        <span className="block text-red-600 font-bold text-[10px] uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</span>
+                    )}
                 </div>
                 {task.deadline && (
                     <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
@@ -962,7 +1175,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment, onRestore, users
 
             <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100">
                 <div className="flex items-center gap-2">
-                    {(userRole === 'manager' || userRole === 'admin') ? (
+                    {(isManagerRole(userRole)) ? (
                         <label className="flex items-center gap-1.5 cursor-pointer">
                             <input
                                 type="checkbox"
@@ -1025,7 +1238,25 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment, onRestore, users
 };
 
 // Task List Helper Component
-function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, users, userRole, expandedTasks, toggleExpand, setActiveModal, highlight = false }) {
+function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, onTimeChange, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false }) {
+    const [editingTimeTaskId, setEditingTimeTaskId] = useState(null);
+    const [editHours, setEditHours] = useState(0);
+    const [editMins, setEditMins] = useState(0);
+    const canEditTime = (userRole === 'admin');
+
+    const startTimeEdit = (task) => {
+        const totalMins = Math.round(calculateCurrentTotalMinutes(task));
+        setEditHours(Math.floor(totalMins / 60));
+        setEditMins(totalMins % 60);
+        setEditingTimeTaskId(task.id);
+    };
+
+    const saveTimeEdit = (task) => {
+        const newTotal = (editHours * 60) + editMins;
+        onTimeChange(task, newTotal);
+        setEditingTimeTaskId(null);
+    };
+
     return (
         <div className={clsx("rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-white")}>
             <div className={clsx(
@@ -1045,8 +1276,10 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                             onToggleConfirm={onToggleConfirm}
                             onAddComment={onAddComment}
                             onRestore={onRestore}
+                            onTimeChange={onTimeChange}
                             users={users}
                             userRole={userRole}
+                            currentUser={currentUser}
                             setActiveModal={setActiveModal}
                         />
                     ))}
@@ -1056,7 +1289,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                     <table className="w-full md:w-auto divide-y divide-gray-200 text-sm md:table-auto table-fixed">
                         <thead className="bg-gray-50">
                             <tr>
-                                {(userRole === 'manager' || userRole === 'admin') && <th className="px-2 py-2 text-center w-8 text-[10px] font-bold text-gray-500 uppercase tracking-wider">OK</th>}
+                                {(isManagerRole(userRole)) && <th className="px-2 py-2 text-center w-8 text-[10px] font-bold text-gray-500 uppercase tracking-wider">OK</th>}
                                 <th className="px-2 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
                                 <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">DARB.</th>
                                 <th className="px-1 py-2 md:px-2 md:py-1 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
@@ -1077,8 +1310,8 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                             ) : (
                                 tasks.map((task) => {
                                     const isConfirmed = task.status === 'confirmed';
-                                    const worker = users.find(u => u.id === task.assignedWorkerId);
-                                    const workerName = worker ? (worker.displayName || worker.email) : (task.assignedWorkerName || '—');
+                                    const worker = users.find(u => u.id === task.assignedUserId);
+                                    const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '—');
 
                                     return (
                                         <tr
@@ -1088,7 +1321,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                 isConfirmed ? "bg-gray-100" : "bg-white hover:bg-gray-50"
                                             )}
                                         >
-                                            {(userRole === 'manager' || userRole === 'admin') && (
+                                            {(isManagerRole(userRole)) && (
                                                 <td className="px-2 py-2 text-center">
                                                     <input
                                                         type="checkbox"
@@ -1112,15 +1345,16 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         {task.deadline}
                                                     </div>
                                                 )}
-                                                {task.description && (
-                                                    <div className={clsx(
-                                                        "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
-                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                                    )}>
-                                                        <Briefcase className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
-                                                        {task.description}
-                                                    </div>
-                                                )}
+                                                <div className={clsx(
+                                                    "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
+                                                    expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
+                                                )}>
+                                                    <SessionTypeIcon
+                                                        type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
+                                                        className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+                                                    />
+                                                    {task.description}
+                                                </div>
                                                 {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
                                                     <div className="mt-2 pl-4 border-l-2 border-gray-200">
                                                         <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
@@ -1140,13 +1374,32 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                             </td>
                                             <td className="px-1 py-2 whitespace-nowrap">
                                                 <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
-                                                    {formatDisplayName(workerName).split(' ')[0]}
+                                                    {formatDisplayName(userName).split(' ')[0]}
                                                 </span>
                                             </td>
                                             <td className="px-1 py-2 text-right text-gray-900 font-mono text-[10px] whitespace-nowrap">
-                                                <span className="text-blue-600">{task.estimatedTime || '-'}</span>
-                                                <span className="text-gray-400 mx-1">/</span>
-                                                <span>{calculateCurrentTotalMinutes(task) > 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
+                                                {editingTimeTaskId === task.id ? (
+                                                    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                                                        <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} className="w-10 px-1 py-0.5 border rounded text-center text-[10px]" autoFocus />h
+                                                        <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} className="w-10 px-1 py-0.5 border rounded text-center text-[10px]" />m
+                                                        <button onClick={() => saveTimeEdit(task)} className="px-1.5 py-0.5 text-[9px] bg-green-600 text-white rounded hover:bg-green-700">✓</button>
+                                                        <button onClick={() => setEditingTimeTaskId(null)} className="px-1.5 py-0.5 text-[9px] bg-gray-400 text-white rounded hover:bg-gray-500">✗</button>
+                                                    </div>
+                                                ) : (
+                                                    <>
+                                                        <span className="text-blue-600">{task.estimatedTime || '-'}</span>
+                                                        <span className="text-gray-400 mx-1">/</span>
+                                                        <span>{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
+                                                        {canEditTime && (
+                                                            <button onClick={(e) => { e.stopPropagation(); startTimeEdit(task); }} className="text-blue-500 hover:text-blue-700 ml-1 inline-flex" title="Keisti laiką">
+                                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                            </button>
+                                                        )}
+                                                    </>
+                                                )}
+                                                {task.timeChanged && (
+                                                    <div className="text-red-600 font-bold text-[10px] uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</div>
+                                                )}
                                             </td>
                                             <td className="px-1 py-2 whitespace-nowrap text-[10px] text-gray-600">
                                                 {task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}

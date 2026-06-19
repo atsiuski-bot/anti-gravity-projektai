@@ -89,6 +89,11 @@ service cloud.firestore {
       allow read, write: if isAuthenticated();
     }
 
+    // CALENDAR REQUESTS (Approval workflow)
+    match /calendar_requests/{requestId} {
+      allow read, write: if isAuthenticated();
+    }
+
     // REQUEST NOTIFICATIONS (Task approval requests)
     match /request_notifications/{notifId} {
       allow read, write: if isAuthenticated();

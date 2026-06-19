@@ -1,6 +1,7 @@
-import { doc, updateDoc, collection, query, where, getDocs, addDoc, setDoc, deleteDoc, orderBy } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString } from './timeUtils';
+import { isManagerRole } from './formatters';
 
 /**
  * Updates the user's work status in Firestore.
@@ -14,14 +15,12 @@ const updateUserWorkStatus = async (userId, isWorking, status, taskId) => {
                 status, // 'running', 'paused', 'idle'
                 activeTaskId: taskId,
                 lastUpdated: new Date().toISOString()
-            },
-            // Sync with generic Session Logic
-            activeSession: (isWorking && status === 'running') ? {
-                type: 'task',
-                startTime: new Date().toISOString(),
-                taskId: taskId,
-                taskTitle: null // We don't have title here broadly, but it's okay, UI fetches task
-            } : null // Clear if paused/idle
+            }
+            // NOTE: activeSession is managed exclusively by sessionActions.js (startSession/endSession).
+            // Previously this function also set activeSession, which caused a race condition:
+            // startSession() would set activeSession to the new session (break/call/quick_work)
+            // with the task stored in pausedSession, but then pauseTask() would fire and
+            // overwrite activeSession to null, killing all session tracking.
         });
     } catch (err) {
         console.error("Error updating user work status:", err);
@@ -35,20 +34,40 @@ const updateUserWorkStatus = async (userId, isWorking, status, taskId) => {
  */
 export const startTask = async (task, userId) => {
     try {
-        // 1. Pause others
+        // 1. Pause others (must complete before starting new task)
         await pauseOtherTasks(userId, task.id);
 
-        // 2. Update Task
-        await updateDoc(doc(db, 'tasks', task.id), {
-            timerStatus: 'running',
-            timerStartedAt: new Date().toISOString(),
-            status: 'in-progress',
-            updatedAt: new Date().toISOString()
-        });
+        const now = new Date().toISOString();
 
-        // 3. Update User Status
-        await updateUserWorkStatus(userId, true, 'running', task.id);
-
+        // 2. Update Task + User Status + activeSession in PARALLEL
+        await Promise.all([
+            updateDoc(doc(db, 'tasks', task.id), {
+                timerStatus: 'running',
+                timerStartedAt: now,
+                startedAt: task.startedAt || now,
+                status: 'in-progress',
+                updatedAt: now
+            }),
+            updateDoc(doc(db, 'users', userId), {
+                workStatus: {
+                    isWorking: true,
+                    status: 'running',
+                    activeTaskId: task.id,
+                    lastUpdated: now
+                },
+                // Set activeSession so ActiveWorkSessions widget shows the task immediately
+                activeSession: {
+                    type: 'task',
+                    startTime: now,
+                    taskId: task.id,
+                    taskTitle: task.title || 'Užduotis'
+                },
+                // Clear any orphaned legacy session flags to prevent UI deadlocks
+                'breakState.isTakingBreak': false,
+                'callState.isCalling': false,
+                'quickWorkState.isQuickWorking': false
+            })
+        ]);
 
     } catch (err) {
         console.error("Error starting task:", err);
@@ -61,7 +80,7 @@ export const startTask = async (task, userId) => {
  * @param {Object} task - The task object to pause.
  * @returns {Promise<void>}
  */
-export const pauseTask = async (task) => {
+export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => {
     if (!task.timerStartedAt || task.timerStatus !== 'running') return;
 
     try {
@@ -81,39 +100,48 @@ export const pauseTask = async (task) => {
             ? task.manualMinutes
             : Math.max(0, totalCurrentMinutes - currentTimerMinutes);
 
-        await updateDoc(doc(db, 'tasks', task.id), {
-            timerStatus: 'paused',
-            timerStartedAt: null,
-            timerMinutes: newTimerMinutes,
-            manualMinutes: currentManualMinutes,
-            updatedAt: new Date().toISOString()
-        });
+        // Run task update, user status update, and work session log in PARALLEL
+        const parallelOps = [
+            updateDoc(doc(db, 'tasks', task.id), {
+                timerStatus: 'paused',
+                timerStartedAt: null,
+                timerMinutes: newTimerMinutes,
+                manualMinutes: currentManualMinutes,
+                updatedAt: new Date().toISOString()
+            })
+        ];
 
-        // Update User Status to Paused
-        // We assume if we pause a task, we go to "paused" state.
-        // If pauseOtherTasks called this, the subsequent startTask will overwrite this to running.
-        await updateUserWorkStatus(task.assignedWorkerId, false, 'paused', task.id);
+        // Update User Status to Paused — SKIP when called from pauseOtherTasks
+        // because startTask/resumeTask will immediately overwrite this to 'running'.
+        if (!skipUserStatusUpdate) {
+            parallelOps.push(updateUserWorkStatus(task.assignedUserId, false, 'paused', task.id));
+            // Also clear activeSession so ActiveWorkSessions stops showing user as busy
+            if (task.assignedUserId) {
+                parallelOps.push(
+                    updateDoc(doc(db, 'users', task.assignedUserId), { activeSession: null })
+                );
+            }
+        }
 
-        // 4. Log Work Session (NEW)
-        if (elapsedMinutes > (10 / 60)) { // Only log meaningful sessions (> 10 seconds)
-            try {
-                const sessionDate = getLithuanianDateString(start);
-                await addDoc(collection(db, 'work_sessions'), {
+        // Log Work Session (fire alongside task update)
+        if (elapsedMinutes > (10 / 60)) {
+            const sessionDate = getLithuanianDateString(start);
+            parallelOps.push(
+                addDoc(collection(db, 'work_sessions'), {
                     taskId: task.id,
                     taskTitle: task.title || 'Unknown Task',
-                    workerId: task.assignedWorkerId,
-                    workerName: task.assignedWorkerName || null,
+                    userId: task.assignedUserId,
+                    userName: task.assignedUserName || null,
                     startTime: start.toISOString(),
                     endTime: now.toISOString(),
                     durationMinutes: elapsedMinutes,
                     date: sessionDate,
                     createdAt: new Date().toISOString()
-                });
-
-            } catch (logErr) {
-                console.error("Error logging work session:", logErr);
-            }
+                }).catch(logErr => console.error("Error logging work session:", logErr))
+            );
         }
+
+        await Promise.all(parallelOps);
 
 
     } catch (err) {
@@ -130,25 +158,42 @@ export const pauseTask = async (task) => {
  */
 export const resumeTask = async (task, userId) => {
     try {
-        // 1. Pause others
+        // 1. Pause others (must complete before resuming)
         await pauseOtherTasks(userId, task.id);
 
-        // 2. Update Task
-        await updateDoc(doc(db, 'tasks', task.id), {
-            timerStatus: 'running',
-            timerStartedAt: new Date().toISOString(),
-            status: 'in-progress',
-            updatedAt: new Date().toISOString()
-        });
+        const now = new Date().toISOString();
 
-        // 3. Update User Status
-        await updateUserWorkStatus(userId, true, 'running', task.id);
-
+        // 2. Update Task + User Status + activeSession in PARALLEL
+        await Promise.all([
+            updateDoc(doc(db, 'tasks', task.id), {
+                timerStatus: 'running',
+                timerStartedAt: now,
+                startedAt: task.startedAt || now,
+                status: 'in-progress',
+                updatedAt: now
+            }),
+            updateDoc(doc(db, 'users', userId), {
+                workStatus: {
+                    isWorking: true,
+                    status: 'running',
+                    activeTaskId: task.id,
+                    lastUpdated: now
+                },
+                activeSession: {
+                    type: 'task',
+                    startTime: now,
+                    taskId: task.id,
+                    taskTitle: task.title || 'Užduotis'
+                },
+                // Clear any orphaned legacy session flags to prevent UI deadlocks
+                'breakState.isTakingBreak': false,
+                'callState.isCalling': false,
+                'quickWorkState.isQuickWorking': false
+            })
+        ]);
 
     } catch (err) {
         console.error("Error resuming task:", err);
-        // Even if resume fails (e.g. network), we might want to suppress if it's just sync issue?
-        // But for now, throw so UI can show error or we can catch it there.
         throw err;
     }
 };
@@ -184,7 +229,7 @@ export const pauseOtherTasks = async (userId, currentTaskId) => {
     try {
         const q = query(
             collection(db, 'tasks'),
-            where('assignedWorkerId', '==', userId),
+            where('assignedUserId', '==', userId),
             where('timerStatus', '==', 'running')
         );
 
@@ -195,7 +240,7 @@ export const pauseOtherTasks = async (userId, currentTaskId) => {
             .filter(doc => doc.id !== currentTaskId)
             .map(docSnap => {
                 const taskData = { id: docSnap.id, ...docSnap.data() };
-                return pauseTask(taskData);
+                return pauseTask(taskData, { skipUserStatusUpdate: true });
             });
 
         if (pausePromises.length > 0) {
@@ -313,12 +358,13 @@ export const updateTaskTemplate = async (templateId, templateName, selectedData,
 };
 
 /**
- * Deletes a task by marking it as completed with a deleted flag.
- * This allows it to appear in the Done Tasks window for manager confirmation.
+ * Deletes a task by.
+ * Depending on options, it either archives it as deleted (keeping hours) or hard-deletes it and marks sessions as deleted.
  * @param {Object} task - The task to delete.
  * @param {string} userId - The user ID.
+ * @param {Object} options - Options for deletion, e.g. { keepWorkHours: boolean }
  */
-export const deleteTask = async (task, userId) => {
+export const deleteTask = async (task, userId, options = { keepWorkHours: false }) => {
     if (!task || !task.id) return;
 
     try {
@@ -329,11 +375,8 @@ export const deleteTask = async (task, userId) => {
                 await pauseTask(task);
 
                 // b. Force User Status to Idle
-                // pauseTask sets user to 'paused' on this task, but we are deleting it.
-                // So we must reset user to idle.
-                // We use the helper logic directly or the same update structure.
-                if (task.assignedWorkerId) {
-                    await updateUserWorkStatus(task.assignedWorkerId, false, 'idle', null);
+                if (task.assignedUserId) {
+                    await updateUserWorkStatus(task.assignedUserId, false, 'idle', null);
                 }
 
             } catch (pErr) {
@@ -342,27 +385,150 @@ export const deleteTask = async (task, userId) => {
             }
         }
 
-        // 1. Move to archived_tasks immediately with deleted flag
-        const { id, ...taskData } = task;
+        const { id } = task;
 
-        await setDoc(doc(db, 'archived_tasks', id), {
-            ...taskData,
-            status: 'deleted',
-            completed: true,
-            completedAt: new Date().toISOString(),
-            isDeleted: true,
-            deletedAt: new Date().toISOString(),
-            deletedBy: userId,
-            timerStatus: 'stopped',
-            timerStartedAt: null,
-            updatedAt: new Date().toISOString()
-        });
+        // Discover role to auto-confirm deleted tasks if manager
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        const userRole = userDoc.exists() ? userDoc.data().role : 'worker';
+        const isManager = isManagerRole(userRole);
 
-        // 2. Delete from active tasks
-        await deleteDoc(doc(db, 'tasks', id));
+        if (options.keepWorkHours) {
+            // Option B: Mark the task as completed+deleted IN the tasks collection.
+            // It will show with strikethrough in today's completed tasks,
+            // then the nightly archiving process will move it to archived_tasks naturally.
+            const now = new Date().toISOString();
+
+            if (task.isArchived) {
+                // Already in archived_tasks — just update it there
+                await updateDoc(doc(db, 'archived_tasks', id), {
+                    status: 'deleted',
+                    completed: true,
+                    completedAt: now,
+                    isDeleted: true,
+                    deletedAt: now,
+                    deletedBy: userId,
+                    timerStatus: 'stopped',
+                    timerStartedAt: null,
+                    updatedAt: now
+                });
+            } else {
+                // Still in active tasks — update in place so it shows in completed tasks today
+                await updateDoc(doc(db, 'tasks', id), {
+                    status: isManager ? 'confirmed' : 'completed',
+                    completed: true,
+                    completedAt: now,
+                    confirmedBy: isManager ? userId : null,
+                    confirmedAt: isManager ? now : null,
+                    isDeleted: true,
+                    deletedAt: now,
+                    deletedBy: userId,
+                    timerStatus: 'stopped',
+                    timerStartedAt: null,
+                    updatedAt: now
+                });
+            }
+        } else {
+            // Option C: Completely remove from both collections, and delete/mark sessions as deleted.
+            if (!task.isArchived) {
+                await deleteDoc(doc(db, 'tasks', id));
+            }
+            // If it was already in archived_tasks, or we want to make sure it's gone:
+            await deleteDoc(doc(db, 'archived_tasks', id));
+            
+            // Mark all associated work_sessions as deleted
+            const sessionsQuery = query(
+                collection(db, 'work_sessions'),
+                where('taskId', '==', id)
+            );
+
+            try {
+                const sessionsSnap = await getDocs(sessionsQuery);
+                const updatePromises = sessionsSnap.docs.map(sessionDoc =>
+                    updateDoc(doc(db, 'work_sessions', sessionDoc.id), {
+                        isDeleted: true,
+                        deletedAt: new Date().toISOString()
+                    })
+                );
+                await Promise.all(updatePromises);
+            } catch (sessionErr) {
+                console.error("Error marking work sessions as deleted:", sessionErr);
+            }
+        }
 
     } catch (err) {
         console.error("Error deleting task:", err);
+        throw err;
+    }
+};
+
+
+/**
+ * Reverts a completed or deleted task back to active (pending) state.
+ * Clears completion, deletion, and confirmation flags so the user can continue working.
+ * @param {Object} task - The task to revert.
+ * @returns {Promise<void>}
+ */
+export const revertTask = async (task) => {
+    if (!task || !task.id) return;
+
+    try {
+        await updateDoc(doc(db, 'tasks', task.id), {
+            status: 'pending',
+            completed: false,
+            completedAt: null,
+            completedBy: null,
+            confirmedBy: null,
+            confirmedAt: null,
+            isDeleted: false,
+            deletedAt: null,
+            deletedBy: null,
+            timerStatus: task.timerMinutes > 0 ? 'paused' : null,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error("Error reverting task:", err);
+        throw err;
+    }
+};
+
+export const extendTaskTime = async (taskId, additionalTimeString, extendedBy) => {
+    if (!taskId || !additionalTimeString) return;
+
+    try {
+        const taskRef = doc(db, 'tasks', taskId);
+        const taskSnap = await getDoc(taskRef);
+        if (!taskSnap.exists()) throw new Error('Task not found');
+
+        const taskData = taskSnap.data();
+        const currentEstimatedMinutes = parseTimeStringToMinutes(taskData.estimatedTime || '0m');
+        const additionalMinutes = parseTimeStringToMinutes(additionalTimeString);
+
+        if (additionalMinutes <= 0) throw new Error('Invalid time extension');
+
+        const newTotalMinutes = currentEstimatedMinutes + additionalMinutes;
+        const newEstimatedTime = formatMinutesToTimeString(newTotalMinutes);
+
+        // Build extension history entry
+        const extensionEntry = {
+            amount: additionalTimeString,
+            amountMinutes: additionalMinutes,
+            addedAt: new Date().toISOString(),
+            addedBy: extendedBy,
+            previousEstimate: taskData.estimatedTime
+        };
+
+        await updateDoc(taskRef, {
+            estimatedTime: newEstimatedTime,
+            estimatedTimeMinutes: newTotalMinutes,
+            timeLimitReached: false,
+            warningShown70: false,
+            inspectionStatus: null,
+            timeExtensions: [...(taskData.timeExtensions || []), extensionEntry],
+            updatedAt: new Date().toISOString()
+        });
+
+    } catch (err) {
+        console.error('Error extending task time:', err);
         throw err;
     }
 };

@@ -67,14 +67,14 @@ export default function AllUsersHoursSummary() {
                         tasksSnap.docs.forEach(doc => {
                             try {
                                 const task = doc.data();
-                                if (task.assignedWorkerId && task.estimatedTime) {
+                                if (task.assignedUserId && task.estimatedTime) {
                                     const hours = parseTimeToHours(task.estimatedTime);
 
                                     if (hours > 0) { // Already validated in parseTimeToHours
-                                        if (!hoursByUser[task.assignedWorkerId]) {
-                                            hoursByUser[task.assignedWorkerId] = { workHours: 0, taskDuration: 0 };
+                                        if (!hoursByUser[task.assignedUserId]) {
+                                            hoursByUser[task.assignedUserId] = { workHours: 0, taskDuration: 0 };
                                         }
-                                        hoursByUser[task.assignedWorkerId].taskDuration += hours;
+                                        hoursByUser[task.assignedUserId].taskDuration += hours;
                                     }
                                 }
                             } catch (error) {
@@ -86,7 +86,8 @@ export default function AllUsersHoursSummary() {
                         const usersSnapshot = await getDocs(collection(db, 'users'));
                         const usersMap = {};
                         usersSnapshot.docs.forEach(doc => {
-                            usersMap[doc.id] = doc.data();
+                            const data = doc.data();
+                            usersMap[doc.id] = data;
                         });
 
                         // Combine user info with hours

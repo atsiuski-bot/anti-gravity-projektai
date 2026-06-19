@@ -61,3 +61,36 @@ export const formatTime = (dateOrString) => {
         hour12: false
     });
 };
+
+/**
+ * Checks if a role string represents a manager or admin.
+ * Eliminates repeated `role === 'manager' || role === 'admin'` checks.
+ * 
+ * @param {string} role - The role to check
+ * @returns {boolean}
+ */
+export const isManagerRole = (role) => role === 'manager' || role === 'admin';
+
+/**
+ * Resolves the user ID from a record that may use different field names
+ * due to legacy schema variations.
+ * 
+ * @param {Object} record - A session, task, or break record
+ * @returns {string} The resolved user ID
+ */
+export const resolveUserId = (record) => {
+    if (!record) return 'unknown';
+    return record.assignedUserId || record.assignedTo || record.workerId || record.userId || 'unknown';
+};
+
+/**
+ * Resolves the user display name from a record that may use different field names.
+ * 
+ * @param {Object} record - A session, task, or break record
+ * @param {string} [fallback='Nežinomas'] - Fallback value if no name found
+ * @returns {string} The resolved user name
+ */
+export const resolveUserName = (record, fallback = 'Nežinomas') => {
+    if (!record) return fallback;
+    return record.userName || record.workerName || record.assignedUserName || record.creatorName || fallback;
+};

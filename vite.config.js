@@ -9,17 +9,30 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['logo.jpg'],
+      includeAssets: ['logo.jpg', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
         name: 'Viduramžiai.LT wORKZ',
         short_name: 'wORKZ',
         description: 'Productivity App',
         theme_color: '#ffffff',
+        background_color: '#ffffff',
+        display: 'standalone',
         icons: [
           {
-            src: 'logo.jpg',
-            sizes: '64x64 32x32 24x24 16x16 192x192 512x512',
-            type: 'image/jpeg'
+            src: 'pwa-192x192.png',
+            sizes: '192x192',
+            type: 'image/png'
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png'
+          },
+          {
+            src: 'pwa-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
           }
         ]
       },
@@ -32,18 +45,39 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('firebase')) {
-              return 'firebase';
+          // React core
+          if (id.includes('node_modules/react/') || 
+              id.includes('node_modules/react-dom/') || 
+              id.includes('node_modules/react-router') ||
+              id.includes('node_modules/scheduler/')) {
+            return 'react-vendor';
+          }
+          // Firebase Auth
+          if (id.includes('node_modules/firebase/') || 
+              id.includes('node_modules/@firebase/')) {
+            if (id.includes('/auth/') || id.includes('/auth-')) {
+              return 'firebase-auth';
             }
-            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
-              return 'react-vendor';
+            if (id.includes('/storage/') || id.includes('/storage-')) {
+              return 'firebase-storage';
             }
-            return 'vendor';
+            // Firestore + core firebase
+            return 'firebase-firestore';
+          }
+          // lucide icons
+          if (id.includes('node_modules/lucide-react/')) {
+            return 'lucide-icons';
+          }
+          // Other smaller vendor libs
+          if (id.includes('node_modules/clsx/') ||
+              id.includes('node_modules/tailwind-merge/') ||
+              id.includes('node_modules/react-swipeable/')) {
+            return 'utils-vendor';
           }
         }
       }
-    }
+    },
+    chunkSizeWarningLimit: 500
   },
   server: {
     host: true // Allow access from network (for mobile testing)

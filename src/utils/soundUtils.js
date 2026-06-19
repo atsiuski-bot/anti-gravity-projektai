@@ -4,8 +4,20 @@ export const SoundManager = {
 
     init() {
         if (!this.audioContext) {
-            this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            try {
+                this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (e) {
+                console.warn("AudioContext creation failed:", e);
+            }
         }
+    },
+
+    canPlaySound() {
+        // Prevent console spam if the browser hasn't registered a user interaction yet
+        if (navigator.userActivation && !navigator.userActivation.hasBeenActive) {
+            return false;
+        }
+        return true;
     },
 
     async requestPermission() {
@@ -20,13 +32,16 @@ export const SoundManager = {
         }
     },
 
-    playBeep(type = 'default') {
+    playBeep() {
         try {
+            if (!this.canPlaySound()) return;
+            
             this.init();
+            if (!this.audioContext) return;
 
             // Resume context if suspended
             if (this.audioContext.state === 'suspended') {
-                this.audioContext.resume();
+                this.audioContext.resume().catch(() => {});
             }
 
             const oscillator = this.audioContext.createOscillator();
@@ -75,12 +90,12 @@ export const SoundManager = {
 
         if (Notification.permission === "granted") {
             try {
-                // Check if we are on mobile (simple check)
-                const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
-                // Vibrate if available
-                if (navigator.vibrate) {
-                    navigator.vibrate([200, 100, 200, 100, 400]);
+                // Vibrate if available and allowed
+                if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
+                    try {
+                        navigator.vibrate([200, 100, 200, 100, 400]);
+                    } catch (e) { /* ignore */ }
                 }
 
                 const notification = new Notification("Laikas!", {
@@ -105,8 +120,14 @@ export const SoundManager = {
     // Simple sound for Quick Task - sharp "ding"
     playQuickTaskSound() {
         try {
+            if (!this.canPlaySound()) return;
+
             this.init();
-            if (this.audioContext.state === 'suspended') this.audioContext.resume();
+            if (!this.audioContext) return;
+
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume().catch(() => {});
+            }
 
             const oscillator = this.audioContext.createOscillator();
             const gainNode = this.audioContext.createGain();
@@ -135,8 +156,14 @@ export const SoundManager = {
     // Simple sound for Call - phone-like dual tone
     playCallSound() {
         try {
+            if (!this.canPlaySound()) return;
+
             this.init();
-            if (this.audioContext.state === 'suspended') this.audioContext.resume();
+            if (!this.audioContext) return;
+
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume().catch(() => {});
+            }
 
             const now = this.audioContext.currentTime;
 
@@ -172,8 +199,14 @@ export const SoundManager = {
     // Simple sound for Break - relaxed lower chime
     playBreakSound() {
         try {
+            if (!this.canPlaySound()) return;
+
             this.init();
-            if (this.audioContext.state === 'suspended') this.audioContext.resume();
+            if (!this.audioContext) return;
+
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume().catch(() => {});
+            }
 
             const oscillator = this.audioContext.createOscillator();
             const gainNode = this.audioContext.createGain();
@@ -197,6 +230,118 @@ export const SoundManager = {
 
         } catch (error) {
             console.error("Error playing Break sound:", error);
+        }
+    },
+
+    playOldBeepSound() {
+        try {
+            if (!this.canPlaySound()) return;
+
+            this.init();
+            if (!this.audioContext) return;
+
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume().catch(() => {});
+            }
+
+            const oscillator = this.audioContext.createOscillator();
+            const gainNode = this.audioContext.createGain();
+
+            oscillator.connect(gainNode);
+            gainNode.connect(this.audioContext.destination);
+
+            oscillator.type = 'sine';
+            const now = this.audioContext.currentTime;
+            oscillator.frequency.setValueAtTime(800, now); // 800Hz beep
+
+            // Double beep pattern
+            // First beep
+            gainNode.gain.setValueAtTime(0.1, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+
+            // Second beep (slightly higher pitch)
+            oscillator.frequency.setValueAtTime(1000, now + 0.15);
+            gainNode.gain.setValueAtTime(0.1, now + 0.15);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+            oscillator.start(now);
+            oscillator.stop(now + 0.3);
+        } catch (error) {
+            console.error("Error playing old beep sound:", error);
+        }
+    },
+
+    // Warning sound for 80% time usage — gentle but noticeable two-tone chime
+    playTimeWarningSound() {
+        this.playOldBeepSound();
+
+        // System notification
+        if (Notification.permission === 'granted') {
+            try {
+                new Notification('⚠️ 80% laiko panaudota', {
+                    body: 'Jūsų užduoties planuojamas laikas baigiasi!',
+                    icon: '/favicon.ico',
+                    tag: 'time-warning-80',
+                    renotify: true
+                });
+            } catch (e) { /* ignore */ }
+        }
+    },
+
+    // Urgent alarm for 100% time limit reached
+    playTimeLimitAlarmSound() {
+        this.playOldBeepSound();
+
+        try {
+            // Vibrate
+            if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
+                try {
+                    navigator.vibrate([300, 100, 300, 100, 300, 100, 600]);
+                } catch (e) { /* ignore */ }
+            }
+
+            // System notification
+            if (Notification.permission === 'granted') {
+                try {
+                    new Notification('🛑 Laikas baigėsi!', {
+                        body: 'Užduoties planuojamas laikas baigėsi. Darbas sustabdytas.',
+                        icon: '/favicon.ico',
+                        tag: 'time-limit-reached',
+                        renotify: true,
+                        requireInteraction: true
+                    });
+                } catch (e) { /* ignore */ }
+            }
+        } catch (error) {
+            console.error('Error playing time limit alarm:', error);
+        }
+    },
+
+    // Warning sound for 70% time usage
+    playTimeWarning70Sound() {
+        this.playOldBeepSound();
+    },
+
+    // Repeating alarm every 60 seconds until stopped
+    timeLimitRepeatId: null,
+
+    startTimeLimitRepeat() {
+        this.stopTimeLimitRepeat(); // Clear any existing
+        
+        // Play immediately
+        this.playTimeLimitAlarmSound(); 
+        
+        // Play exactly once more after 3 seconds (making it play twice total)
+        this.timeLimitRepeatId = setTimeout(() => {
+            this.playTimeLimitAlarmSound();
+            this.timeLimitRepeatId = null;
+        }, 3000); 
+    },
+
+    stopTimeLimitRepeat() {
+        if (this.timeLimitRepeatId) {
+            clearTimeout(this.timeLimitRepeatId);
+            this.timeLimitRepeatId = null;
         }
     },
 

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import ReactDOM from 'react-dom';
 import { Zap, Square, X, Check } from 'lucide-react';
@@ -114,13 +115,16 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
 });
 
 export default function QuickWorkTimer({ compact = false }) {
-    const { currentUser } = useAuth();
-    // useTimerState now handles generic 'quick_work' type
+    const { currentUser, userData, setOptimisticUserData } = useAuth();
+    const { isSecondarySessionActive } = useActiveSessionStatus();
+    // useTimerState now handles generic 'quickWork' type
     const {
         isActive: isQuickWorking,
         currentSessionMinutes,
         startTime
-    } = useTimerState(currentUser, 'quickWorkState', 'isQuickWorking', null, null, 'quick_work');
+    } = useTimerState(currentUser, 'quickWorkState', 'isQuickWorking', null, null, 'quickWork');
+
+    const isDisabled = isSecondarySessionActive && !isQuickWorking;
 
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -136,12 +140,23 @@ export default function QuickWorkTimer({ compact = false }) {
     // That's acceptable for now (auto-save generic title).
 
     const handleStartQuickWork = async () => {
-        if (!currentUser) return;
+        if (!currentUser || isDisabled) return;
         try {
-            await startSession(currentUser.uid, 'quick_work');
+            // Optimistic UI Update: Instantly assume Quick Work started, clear other sessions
+            setOptimisticUserData({
+                ...userData,
+                activeSession: { type: 'quickWork', startTime: new Date().toISOString() },
+                quickWorkState: { ...userData?.quickWorkState, isQuickWorking: true, lastStartedAt: new Date().toISOString() },
+                breakState: { ...userData?.breakState, isTakingBreak: false },
+                callState: { ...userData?.callState, isCalling: false },
+                workStatus: { ...userData?.workStatus, isWorking: false, status: 'paused' }
+            });
+
+            await startSession(currentUser.uid, 'quickWork');
             SoundManager.playQuickTaskSound();
         } catch (err) {
             console.error("Error starting quick work:", err);
+            setOptimisticUserData(null); // Revert on error
             alert("Klaida pradedant greitą darbą.");
         }
     };
@@ -169,16 +184,33 @@ export default function QuickWorkTimer({ compact = false }) {
 
         setIsSubmitting(true);
         try {
+            // Determine if a task will be resumed
+            const resumableTasks = userData?.quickWorkState?.resumableTaskIds || [];
+            const activeTaskId = resumableTasks.length > 0 ? resumableTasks[0] : null;
+
+            // Optimistic UI Update: Instantly assume Quick Work ended and task resumed
+            setOptimisticUserData({
+                ...userData,
+                activeSession: activeTaskId ? { type: 'task', startTime: new Date().toISOString(), taskId: activeTaskId } : null,
+                quickWorkState: { ...userData?.quickWorkState, isQuickWorking: false },
+                workStatus: activeTaskId ? {
+                    isWorking: true,
+                    status: 'running',
+                    activeTaskId: activeTaskId,
+                } : userData?.workStatus
+            });
+
             // End session with custom title overrides
             await endSession(currentUser.uid, null, { customTitle: taskTitle });
             setShowTitleModal(false);
         } catch (err) {
             console.error("Error completing quick work:", err);
+            setOptimisticUserData(null); // Revert on error
             alert("Klaida išsaugant greitą darbą.");
         } finally {
             setIsSubmitting(false);
         }
-    }, [currentUser]);
+    }, [currentUser, userData, setOptimisticUserData]);
 
     // Render modal if showing
     const renderModal = showTitleModal && (
@@ -209,13 +241,16 @@ export default function QuickWorkTimer({ compact = false }) {
 
                 <button
                     onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
+                    disabled={isDisabled}
                     className={clsx(
                         "p-2 rounded-lg transition-all active:scale-95 flex items-center justify-center",
-                        isQuickWorking
-                            ? 'bg-red-500 text-white ring-2 ring-red-200 shadow-lg shadow-red-500/20'
-                            : 'text-gray-600 hover:bg-gray-100'
+                        isDisabled
+                            ? "opacity-50 cursor-not-allowed bg-gray-50 text-gray-400"
+                            : isQuickWorking
+                                ? 'bg-red-500 text-white ring-2 ring-red-200 shadow-lg shadow-red-500/20'
+                                : 'text-gray-600 hover:bg-gray-100'
                     )}
-                    title={isQuickWorking ? "Baigti greitą darbą" : "Greitas darbas"}
+                    title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Greitas darbas")}
                 >
                     {isQuickWorking ? (
                         <Square className="w-5 h-5 fill-current" />
@@ -234,12 +269,15 @@ export default function QuickWorkTimer({ compact = false }) {
         <>
             <button
                 onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
+                disabled={isDisabled}
                 className={clsx(
                     "flex-1 flex items-center justify-between px-4 py-3 rounded-xl transition-all shadow-sm active:scale-95 border min-w-[140px]",
-                    isQuickWorking
-                        ? 'bg-red-50 border-red-200 text-red-900 ring-1 ring-red-200'
-                        : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300'
+                    isDisabled ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200" :
+                        isQuickWorking
+                            ? 'bg-red-50 border-red-200 text-red-900 ring-1 ring-red-200'
+                            : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300'
                 )}
+                title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
             >
                 <div className="flex items-center gap-3">
                     <div className={clsx("p-1.5 rounded-lg", isQuickWorking ? "bg-red-200 text-red-700" : "bg-gray-100 text-gray-500")}>

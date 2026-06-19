@@ -1,60 +1,35 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Users, ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
 import { startOfWeek, endOfWeek, addDays } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
+import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 
 export default function CombinedHoursSummary() {
     const { currentUser } = useAuth();
-    const [users, setUsers] = useState([]);
+    const { users: allUsers, loading: usersLoading } = useUsers();
+    const users = allUsers;
     const [tasks, setTasks] = useState([]);
     const [workHours, setWorkHours] = useState([]);
     const [workSessions, setWorkSessions] = useState([]);
     const [breakSessions, setBreakSessions] = useState([]);
-    const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [isCollapsed, setIsCollapsed] = useState(true);
 
     useEffect(() => {
-        if (!currentUser) {
-            setLoading(false);
-            return;
-        }
-
-        setLoading(true);
+        if (!currentUser || usersLoading) return;
 
         const now = getLithuanianNow();
-        const ltDateParts = new Intl.DateTimeFormat('en-US', {
-            timeZone: 'Europe/Vilnius',
-            hour: 'numeric',
-            minute: 'numeric',
-            hour12: false
-        }).formatToParts(now);
-        const hours = parseInt(ltDateParts.find(p => p.type === 'hour').value);
-        const minutes = parseInt(ltDateParts.find(p => p.type === 'minute').value);
-
-        // Custom Week Logic: Reset at Saturday 18:30 is REMOVED to show current week data on Sunday
-        let targetDate = now;
-        // Logic removed to fix "Empty Sunday" issue. We now always show the week corresponding to 'now'.
-
 
         // Standard week starts Monday
-        const weekStart = startOfWeek(targetDate, { weekStartsOn: 1 });
-        const weekEnd = endOfWeek(targetDate, { weekStartsOn: 1 });
+        const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+        const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
+        const weekStartStr = getLithuanianDateString(weekStart);
+        const weekEndStr = getLithuanianDateString(weekEnd);
 
-        // 1. Listen to Users
-        const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-            const usersData = snap.docs
-                .map(doc => ({ id: doc.id, ...doc.data() }))
-                .filter(u => !u.isDisabled);
-            setUsers(usersData);
-            setLoading(false);
-        }, (error) => {
-            console.error("CombinedHoursSummary: Users Listener Error:", error);
-            setLoading(false);
-        });
+        // 1. Users come from UsersContext — no listener needed here
 
         // 2. Listen to Tasks (Active)
         let activeTasks = [];
@@ -70,7 +45,10 @@ export default function CombinedHoursSummary() {
             console.error("CombinedHoursSummary: Active Tasks Listener Error:", error);
         });
 
-        const unsubArchived = onSnapshot(collection(db, 'archived_tasks'), (snap) => {
+        // Add query to limit archived tasks to the current week
+        const archivedQuery = query(collection(db, 'archived_tasks'), where('archivedAt', '>=', weekStartStr));
+
+        const unsubArchived = onSnapshot(archivedQuery, (snap) => {
             archivedTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             updateAllTasks();
         }, (error) => {
@@ -94,42 +72,43 @@ export default function CombinedHoursSummary() {
             setError('Nepavyko užkrauti duomenų');
         });
 
-        // 4. Listen to Work Sessions (Actual Worked Time)
-        // 4. Listen to Work Sessions (Actual Worked Time)
-        const unsubSessions = onSnapshot(collection(db, 'work_sessions'), (snapshot) => {
+        // 4. Listen to Work Sessions — server-side date filter
+        const sessionsQuery = query(
+            collection(db, 'work_sessions'),
+            where('date', '>=', weekStartStr),
+            where('date', '<=', weekEndStr)
+        );
+        const unsubSessions = onSnapshot(sessionsQuery, (snapshot) => {
             const sessionsData = snapshot.docs
                 .map(doc => ({ id: doc.id, ...doc.data() }))
-                .filter(s => {
-                    const start = new Date(s.startTime);
-                    return start >= weekStart && start <= weekEnd;
-                });
+                .filter(s => !s.isDeleted);
             setWorkSessions(sessionsData);
         }, (error) => {
             console.error("CombinedHoursSummary: Work Sessions Listener Error:", error);
         });
 
-        // 5. Listen to Break Sessions (for progress bars only)
-        const unsubBreakSessions = onSnapshot(collection(db, 'break_sessions'), (snapshot) => {
+        // 5. Listen to Break Sessions — server-side date filter
+        const breakQuery = query(
+            collection(db, 'break_sessions'),
+            where('date', '>=', weekStartStr),
+            where('date', '<=', weekEndStr)
+        );
+        const unsubBreakSessions = onSnapshot(breakQuery, (snapshot) => {
             const breakData = snapshot.docs
-                .map(doc => ({ id: doc.id, ...doc.data() }))
-                .filter(s => {
-                    const start = new Date(s.startTime);
-                    return start >= weekStart && start <= weekEnd;
-                });
+                .map(doc => ({ id: doc.id, ...doc.data() }));
             setBreakSessions(breakData);
         }, (error) => {
             console.error("CombinedHoursSummary: Break Sessions Listener Error:", error);
         });
 
         return () => {
-            unsubUsers();
             unsubActive();
             unsubArchived();
             unsubWorkHours();
             unsubSessions();
             unsubBreakSessions();
         };
-    }, [currentUser]);
+    }, [currentUser, usersLoading]);
 
     // Calculate stats
     const combinedStats = useMemo(() => {
@@ -156,14 +135,16 @@ export default function CombinedHoursSummary() {
             // Calculate weekly actual worked minutes
             // 1. From Sessions
             workSessions.forEach(session => {
-                if (session.workerId === user.id) {
+                if (session.userId === user.id) {
                     workedMinutes += (session.durationMinutes || 0);
                 }
             });
 
-            // 2. From Tasks (Quick Work / Calls - Manual Minutes)
+            // 2. From Tasks (Manual Minutes only — NOT Quick Work / Calls)
+            // Call and Quick Work tasks already have dedicated work_sessions logged,
+            // so including their manualMinutes here would double-count.
             tasks.forEach(t => {
-                if (t.assignedWorkerId === user.id && t.manualMinutes > 0) {
+                if (t.assignedUserId === user.id && t.manualMinutes > 0 && !t.isSystemTask && !t.isQuickWork) {
                     const compDate = t.completedAt ? new Date(t.completedAt) : (t.archivedAt ? new Date(t.archivedAt) : null);
                     if (compDate && compDate >= wStart && compDate <= wEnd) {
                         workedMinutes += t.manualMinutes;
@@ -231,7 +212,7 @@ export default function CombinedHoursSummary() {
                         startTime: user.activeSession.startTime
                     };
                     break;
-                case 'quick_work':
+                case 'quickWork':
                     displayProps = {
                         label: 'Greitas darbas',
                         colorClass: 'bg-red-100 text-red-800',
@@ -270,7 +251,7 @@ export default function CombinedHoursSummary() {
         }).filter(Boolean);
     }, [users, tasks]);
 
-    if (loading) return null;
+    if (usersLoading) return null;
     if (error) return null;
 
     return (

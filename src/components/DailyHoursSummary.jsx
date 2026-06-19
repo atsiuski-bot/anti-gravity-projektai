@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { Clock, AlertTriangle } from 'lucide-react';
 import { formatDisplayName, parseTimeToHours } from '../utils/formatters';
@@ -38,14 +38,21 @@ export default function DailyHoursSummary() {
             updateAllTasks();
         });
 
-        const unsubArchived = onSnapshot(collection(db, 'archived_tasks'), (snap) => {
+        const now = new Date();
+        const weekStartStr = startOfWeek(now, { weekStartsOn: 1 }).toISOString();
+        const archivedQuery = query(collection(db, 'archived_tasks'), where('archivedAt', '>=', weekStartStr));
+
+        const unsubArchived = onSnapshot(archivedQuery, (snap) => {
             archivedTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             updateAllTasks();
         });
 
         // 4. Listen to Work Sessions (Actual task time)
         const unsubSessions = onSnapshot(collection(db, 'work_sessions'), (snap) => {
-            setWorkSessions(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+            const sessionsData = snap.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(session => !session.isDeleted);
+            setWorkSessions(sessionsData);
         });
 
         return () => {
@@ -108,7 +115,7 @@ export default function DailyHoursSummary() {
             // Let's focus on fixing ACTUAL hours first which is the main bug.
 
             tasks.forEach(task => {
-                if (task.assignedWorkerId === user.id && task.dayOfWeek && stats[user.id].days[task.dayOfWeek] !== undefined) {
+                if (task.assignedUserId === user.id && task.dayOfWeek && stats[user.id].days[task.dayOfWeek] !== undefined) {
                     // Start fix: If task has a specific date, ensuring it matches this week?
                     // Currently tasks with dayOfWeek might be recurring or specific. 
                     // Assuming recurring/general for now as 'planned'.
@@ -119,7 +126,7 @@ export default function DailyHoursSummary() {
             // Add actual hours from work_sessions (FILTERED BY CURRENT WEEK)
             workSessions.forEach(session => {
                 try {
-                    if (session.workerId === user.id && session.date) {
+                    if (session.userId === user.id && session.date) {
                         const sessionDate = new Date(session.date);
 
                         // CRITICAL FIX: Filter by current week

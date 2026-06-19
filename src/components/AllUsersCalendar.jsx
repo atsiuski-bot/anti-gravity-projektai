@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, onSnapshot, getDocs } from 'firebase/firestore';
+import { collection, query, onSnapshot, getDocs, where } from 'firebase/firestore';
 import { format, addDays, isSameDay, startOfWeek, getDay } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, Clock, Users } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
+import { useUsers } from '../context/UsersContext';
 
 // Constants
 const START_HOUR = 7;
@@ -59,53 +60,50 @@ export default function AllUsersCalendar() {
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
+    const { activeUsers, usersMap } = useUsers();
+
+    // using usersMap from context
+
+    // Listen to Work Hours for the specific currentDate
     useEffect(() => {
-        const fetchData = async () => {
-            try {
-                // 1. Fetch Users
-                const usersSnapshot = await getDocs(collection(db, 'users'));
-                const usersMap = {};
-                usersSnapshot.docs.forEach(doc => {
-                    usersMap[doc.id] = doc.data();
-                });
-                setUsers(usersMap);
+        if (Object.keys(usersMap).length === 0) return;
 
-                // 2. Listen to Work Hours
-                const workHoursQuery = query(collection(db, 'work_hours'));
-                const unsubscribe = onSnapshot(workHoursQuery, (snapshot) => {
-                    const allEvents = snapshot.docs.map(doc => {
-                        const data = doc.data();
-                        const user = usersMap[data.userId];
-                        return {
-                            id: doc.id,
-                            title: data.title || 'Darbas',
-                            start: new Date(data.start),
-                            end: new Date(data.end),
-                            userId: data.userId,
-                            userName: user ? formatDisplayName(user.displayName || user.email) : 'Nežinomas',
-                            color: user?.color || '#3b82f6', // Default blue
-                            isWorkFromHome: data.isWorkFromHome || false,
-                            isVacation: data.isVacation || false,
-                        };
-                    });
-                    setEvents(allEvents);
-                }, (err) => {
-                    console.error("Error fetching work hours:", err);
-                    setError("Nepavyko užkrauti darbo valandų.");
-                });
+        const startOfDay = new Date(currentDate);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(currentDate);
+        endOfDay.setHours(23, 59, 59, 999);
 
-                return unsubscribe;
-            } catch (err) {
-                console.error("Error setting up listener:", err);
-                setError("Įvyko klaida.");
-            }
-        };
+        // We use where('start', ...) assuming work shifts start on the day they are displayed.
+        const workHoursQuery = query(
+            collection(db, 'work_hours'),
+            where('start', '>=', startOfDay.toISOString()),
+            where('start', '<=', endOfDay.toISOString())
+        );
 
-        const unsubscribePromise = fetchData();
-        return () => {
-            unsubscribePromise.then(unsub => unsub && unsub());
-        };
-    }, []);
+        const unsubscribe = onSnapshot(workHoursQuery, (snapshot) => {
+            const allEvents = snapshot.docs.map(doc => {
+                const data = doc.data();
+                const user = usersMap[data.userId];
+                return {
+                    id: doc.id,
+                    title: data.title || 'Darbas',
+                    start: new Date(data.start),
+                    end: new Date(data.end),
+                    userId: data.userId,
+                    userName: user ? formatDisplayName(user.displayName || user.email) : 'Nežinomas',
+                    color: user?.color || '#3b82f6',
+                    isWorkFromHome: data.isWorkFromHome || false,
+                    isVacation: data.isVacation || false,
+                };
+            });
+            setEvents(allEvents);
+        }, (err) => {
+            console.error("Error fetching work hours:", err);
+            setError("Nepavyko užkrauti darbo valandų.");
+        });
+
+        return () => unsubscribe();
+    }, [currentDate, usersMap]);
 
     const dayEvents = useMemo(() => {
         return events.filter(event => isSameDay(event.start, currentDate));
@@ -113,11 +111,27 @@ export default function AllUsersCalendar() {
 
     // Group by User
     const usersWithEvents = useMemo(() => {
-        const userList = Object.keys(users).map(id => ({
-            id,
-            ...users[id],
-            displayName: formatDisplayName(users[id].displayName || users[id].email)
+        const userList = activeUsers.map(user => ({
+            ...user,
+            displayName: formatDisplayName(user.displayName || user.email)
         })).sort((a, b) => a.displayName.localeCompare(b.displayName));
+
+        // Let's add any BLOCKED user who has events TODAY to the list, so their historical shift shows up
+        const activeUserIds = new Set(userList.map(u => u.id));
+        dayEvents.forEach(e => {
+            if (!activeUserIds.has(e.userId) && usersMap[e.userId]) {
+                const u = usersMap[e.userId];
+                userList.push({
+                    ...u,
+                    id: e.userId,
+                    displayName: formatDisplayName(u.displayName || u.email)
+                });
+                activeUserIds.add(e.userId);
+            }
+        });
+
+        // Sort again in case blocked users were added
+        userList.sort((a, b) => a.displayName.localeCompare(b.displayName));
 
         return userList.map(user => ({
             ...user,

@@ -4,7 +4,7 @@ import clsx from 'clsx';
 
 export default function SessionTypeIcon({ type, className }) {
     switch (type) {
-        case 'quick_work':
+        case 'quickWork':
             return <Zap className={clsx("text-red-500", className)} />;
         case 'call':
             return <Phone className={clsx("text-sky-500", className)} />;

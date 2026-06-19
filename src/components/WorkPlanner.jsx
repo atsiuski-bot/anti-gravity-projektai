@@ -6,9 +6,11 @@ import { lt } from 'date-fns/locale';
 import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { isManagerRole } from '../utils/formatters';
 import { Clock, Plus, Trash2, AlertCircle, Info, ChevronLeft, ChevronRight, Home, Palmtree } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
+import { DeleteConfirmationModal } from './TaskDetailsModals';
 
 const locales = {
     'lt': lt,
@@ -98,7 +100,7 @@ const CustomToolbar = (toolbar) => {
 };
 
 export default function WorkPlanner() {
-    const { currentUser } = useAuth();
+    const { currentUser, userData, userRole } = useAuth();
     const [events, setEvents] = useState([]);
     const [showManualInput, setShowManualInput] = useState(false);
     const [manualDate, setManualDate] = useState('');
@@ -108,8 +110,16 @@ export default function WorkPlanner() {
     const [editingEvent, setEditingEvent] = useState(null);
     const [manualIsWorkFromHome, setManualIsWorkFromHome] = useState(false);
     const [manualIsVacation, setManualIsVacation] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+    // Approval workflow states
+    const [showReasonModal, setShowReasonModal] = useState(false);
+    const [reasonValue, setReasonValue] = useState('');
+    const [pendingAction, setPendingAction] = useState(null); // { type: 'add'|'edit'|'delete', data: {} }
+    const [showApprovalFeedback, setShowApprovalFeedback] = useState(false);
 
     useEffect(() => {
+
         if (!currentUser) return;
 
         const q = query(
@@ -176,6 +186,70 @@ export default function WorkPlanner() {
         });
     };
 
+    const isApprovalFeatureActive = () => {
+        const now = new Date();
+        const day = now.getDay(); // 0 is Sunday, 5 is Friday
+        const hour = now.getHours();
+        
+        // Disable from Friday 13:00 to Sunday 21:00 inclusive
+        if (day === 5 && hour >= 13) return false; // Friday after 13:00
+        if (day === 6) return false; // Saturday all day
+        if (day === 0 && hour < 21) return false; // Sunday before 21:00
+        
+        return true;
+    };
+
+    const executeDirectCalendarUpdate = async (action) => {
+        try {
+            if (action.type === 'add') {
+                await addDoc(collection(db, 'work_hours'), {
+                    ...action.data,
+                    userId: currentUser.uid,
+                    type: 'planned'
+                });
+            } else if (action.type === 'edit') {
+                await updateDoc(doc(db, 'work_hours', action.data.id), {
+                    start: action.data.start,
+                    end: action.data.end,
+                    title: action.data.title,
+                    isWorkFromHome: action.data.isWorkFromHome,
+                    isVacation: action.data.isVacation
+                });
+            } else if (action.type === 'delete') {
+                await deleteDoc(doc(db, 'work_hours', action.data.id));
+            }
+
+            // Atviro lango metu sistemos atlikti automatiniai patvirtinimai 
+            const requestData = {
+                userId: currentUser.uid,
+                userName: currentUser.displayName || currentUser.email,
+                managerId: null, // Sistema automatiškai tvirtina, nereikia vadovo pranešimams per kraštą lipti
+                type: action.type,
+                reason: 'PlanningTime', // Specialus žymėjimas 
+                status: 'approved',
+                userDismissed: true,    // Kad nerodytu floating toaster
+                createdAt: new Date().toISOString(),
+                approvedAt: new Date().toISOString(),
+                approvedBy: 'system',
+                requestedEvent: action.data,
+                originalEvent: action.originalEvent || null
+            };
+
+            const cleanRequestData = JSON.parse(JSON.stringify(requestData));
+            await addDoc(collection(db, 'calendar_requests'), cleanRequestData);
+
+            await logCalendarChange(
+                currentUser, 
+                action.type === 'edit' ? 'edit' : action.type, 
+                new Date(action.data.start), 
+                new Date(action.data.end)
+            );
+        } catch (err) {
+            console.error("Error direct updating calendar:", err);
+            setError("Nepavyko atnaujinti kalendoriaus.");
+        }
+    };
+
     const handleUpdateEvent = async (e) => {
         e.preventDefault();
         if (!currentUser || !editingEvent) return;
@@ -201,53 +275,62 @@ export default function WorkPlanner() {
             }
 
             const title = editingEvent.isVacation ? 'Atostogos' : 'Darbas';
-
-            if (editingEvent.id) {
-                // Update existing
-                const eventRef = doc(db, 'work_hours', editingEvent.id);
-                await updateDoc(eventRef, {
+            
+            const actionDetails = {
+                type: editingEvent.id ? 'edit' : 'add',
+                data: {
+                    id: editingEvent.id || null,
                     start: startDateTime.toISOString(),
                     end: endDateTime.toISOString(),
                     title: title,
-                    isWorkFromHome: editingEvent.isWorkFromHome,
-                    isVacation: editingEvent.isVacation
-                });
-                await logCalendarChange(currentUser, 'edit', startDateTime, endDateTime);
+                    isWorkFromHome: editingEvent.isWorkFromHome || false,
+                    isVacation: editingEvent.isVacation || false
+                },
+                originalEvent: editingEvent.id ? events.find(e => e.id === editingEvent.id) : null
+            };
+
+            if (isApprovalFeatureActive()) {
+                setPendingAction(actionDetails);
+                setShowReasonModal(true);
             } else {
-                // Create new
-                await addDoc(collection(db, 'work_hours'), {
-                    userId: currentUser.uid,
-                    start: startDateTime.toISOString(),
-                    end: endDateTime.toISOString(),
-                    title: title,
-                    type: 'planned',
-                    isWorkFromHome: editingEvent.isWorkFromHome,
-                    isVacation: editingEvent.isVacation
-                });
-                await logCalendarChange(currentUser, 'add', startDateTime, endDateTime);
+                await executeDirectCalendarUpdate(actionDetails);
             }
-
+            
             setEditingEvent(null);
             setError('');
         } catch (err) {
-            console.error("Error saving work hours:", err);
-            setError("Nepavyko išsaugoti darbo valandų.");
+            console.error("Error preparing work hours:", err);
+            setError("Nepavyko paruošti duomenų.");
         }
     };
 
-    const handleDeleteEvent = async () => {
+    const handleDeleteEvent = () => {
         if (!currentUser || !editingEvent) return;
+        setShowDeleteModal(true);
+    };
 
-        if (window.confirm('Ar tikrai norite ištrinti šį įrašą?')) {
-            try {
-                await deleteDoc(doc(db, 'work_hours', editingEvent.id));
-                await logCalendarChange(currentUser, 'delete', editingEvent.start, editingEvent.end);
-                setEditingEvent(null);
-                setError('');
-            } catch (err) {
-                console.error("Error deleting work hours:", err);
-                setError("Nepavyko ištrinti darbo valandų.");
-            }
+    const confirmDelete = async () => {
+        if (!currentUser || !editingEvent) return;
+        const actionDetails = {
+            type: 'delete',
+            data: {
+                id: editingEvent.id,
+                start: editingEvent.start.toISOString(),
+                end: editingEvent.end.toISOString(),
+                title: editingEvent.title,
+                isWorkFromHome: editingEvent.isWorkFromHome,
+                isVacation: editingEvent.isVacation
+            },
+            originalEvent: editingEvent
+        };
+        setShowDeleteModal(false);
+        setEditingEvent(null);
+        
+        if (isApprovalFeatureActive()) {
+            setPendingAction(actionDetails);
+            setShowReasonModal(true);
+        } else {
+            await executeDirectCalendarUpdate(actionDetails);
         }
     };
 
@@ -279,16 +362,26 @@ export default function WorkPlanner() {
 
             const title = manualIsVacation ? 'Atostogos' : 'Darbas';
 
-            await addDoc(collection(db, 'work_hours'), {
-                userId: currentUser.uid,
-                start: startDateTime.toISOString(),
-                end: endDateTime.toISOString(),
-                title: title,
-                type: 'planned',
-                isWorkFromHome: manualIsWorkFromHome,
-                isVacation: manualIsVacation
-            });
-            await logCalendarChange(currentUser, 'add', startDateTime, endDateTime);
+            const actionDetails = {
+                type: 'add',
+                data: {
+                    id: null,
+                    start: startDateTime.toISOString(),
+                    end: endDateTime.toISOString(),
+                    title: title,
+                    isWorkFromHome: manualIsWorkFromHome || false,
+                    isVacation: manualIsVacation || false
+                }
+            };
+
+            if (isApprovalFeatureActive()) {
+                setPendingAction(actionDetails);
+                setShowReasonModal(true);
+                setShowManualInput(false);
+            } else {
+                await executeDirectCalendarUpdate(actionDetails);
+                setShowManualInput(false);
+            }
 
             // Reset form
             setManualDate('');
@@ -296,13 +389,95 @@ export default function WorkPlanner() {
             setManualEnd('');
             setManualIsWorkFromHome(false);
             setManualIsVacation(false);
-            setShowManualInput(false);
             setError('');
         } catch (err) {
-            console.error("Error adding manual work hours:", err);
-            setError("Nepavyko pridėti darbo valandų.");
+            console.error("Error preparing manual work hours:", err);
+            setError("Nepavyko paruošti duomenų.");
         }
     };
+
+    const submitCalendarRequest = async () => {
+        if (!currentUser || !pendingAction || reasonValue.length < 10) return;
+
+        try {
+            const isManagerOrAdmin = isManagerRole(userRole);
+            const managerId = userData?.defaultManager || (isManagerOrAdmin ? currentUser.uid : null);
+
+            const requestData = {
+                userId: currentUser.uid,
+                userName: userData?.displayName || currentUser.displayName || currentUser.email,
+                managerId: managerId,
+                type: pendingAction.type,
+                reason: reasonValue,
+                status: 'pending',
+                userDismissed: false,
+                createdAt: new Date().toISOString(),
+                requestedEvent: pendingAction.data,
+                originalEvent: pendingAction.originalEvent || null
+            };
+
+            // If user is manager/admin and approving themselves
+            let isAutoApproved = false;
+            if (isManagerOrAdmin && managerId === currentUser.uid) {
+                // Auto-approve logic
+                if (pendingAction.type === 'add') {
+                    await addDoc(collection(db, 'work_hours'), {
+                        ...pendingAction.data,
+                        userId: currentUser.uid,
+                        type: 'planned'
+                    });
+                } else if (pendingAction.type === 'edit') {
+                    await updateDoc(doc(db, 'work_hours', pendingAction.data.id), {
+                        start: pendingAction.data.start,
+                        end: pendingAction.data.end,
+                        title: pendingAction.data.title,
+                        isWorkFromHome: pendingAction.data.isWorkFromHome,
+                        isVacation: pendingAction.data.isVacation
+                    });
+                } else if (pendingAction.type === 'delete') {
+                    await deleteDoc(doc(db, 'work_hours', pendingAction.data.id));
+                }
+                
+                requestData.status = 'approved';
+                requestData.approvedAt = new Date().toISOString();
+                requestData.approvedBy = currentUser.uid;
+                isAutoApproved = true;
+            }
+
+            // Clean data of undefined fields to prevent Firebase errors
+            const cleanRequestData = JSON.parse(JSON.stringify(requestData));
+            await addDoc(collection(db, 'calendar_requests'), cleanRequestData);
+
+            if (isAutoApproved) {
+                // Legacy logging
+                await logCalendarChange(
+                    currentUser, 
+                    pendingAction.type === 'edit' ? 'edit' : pendingAction.type, 
+                    new Date(pendingAction.data.start), 
+                    new Date(pendingAction.data.end)
+                );
+
+                // Instantly clean up
+                setShowReasonModal(false);
+                setReasonValue('');
+                setPendingAction(null);
+                setError('');
+                // Give a visual indication, or just alert/toast
+                alert('Pakeitimas išsaugotas ir automatiškai patvirtintas.');
+            } else {
+                setShowReasonModal(false);
+                setReasonValue('');
+                setPendingAction(null);
+                setShowApprovalFeedback(true);
+            }
+        } catch (err) {
+            console.error("Error submitting calendar request:", err);
+            setError("Nepavyko pateikti užklausos: " + (err.message || 'Įvyko klaida'));
+            setShowReasonModal(false);
+            setReasonValue('');
+        }
+    };
+
 
     // Generate time options (24h format, 30min intervals)
     const timeOptions = [];
@@ -594,6 +769,81 @@ export default function WorkPlanner() {
                     <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
                 </ul>
             </div>
+
+            {/* Approval Logic Confirmation Modal */}
+            {showApprovalFeedback && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-300">
+                        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <Clock className="w-8 h-8" />
+                        </div>
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">Užklausa išsiųsta</h3>
+                        <p className="text-gray-600 mb-6">Jūsų pakeitimus turi patvirtinti vadovas.</p>
+                        <button
+                            onClick={() => setShowApprovalFeedback(false)}
+                            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-transform active:scale-95 shadow-lg shadow-blue-200"
+                        >
+                            Supratau
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Reason Modal */}
+            {showReasonModal && (
+                <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">Pakeitimų priežastis</h3>
+                        <p className="text-sm text-gray-500 mb-4">Prašome nurodyti kodėl darote šį pakeitimą (min. 10 simbolių).</p>
+                        
+                        <textarea
+                            value={reasonValue}
+                            onChange={(e) => setReasonValue(e.target.value)}
+                            placeholder="Pvz.: Keičiamas darbo laikas dėl vizito pas gydytoją..."
+                            className="w-full h-32 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none resize-none text-sm transition-all"
+                            autoFocus
+                        />
+                        
+                        <div className="mt-2 flex justify-end">
+                            <span className={clsx(
+                                "text-[10px] font-bold uppercase tracking-wider",
+                                reasonValue.length >= 10 ? "text-green-500" : "text-gray-400"
+                            )}>
+                                Simbolių: {reasonValue.length}/10
+                            </span>
+                        </div>
+
+                        <div className="flex gap-3 mt-6">
+                            <button
+                                onClick={() => {
+                                    setShowReasonModal(false);
+                                    setReasonValue('');
+                                    setPendingAction(null);
+                                }}
+                                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors"
+                            >
+                                Atšaukti
+                            </button>
+                            <button
+                                onClick={submitCalendarRequest}
+                                disabled={reasonValue.length < 10}
+                                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-xl font-bold transition-all shadow-lg shadow-blue-200 active:scale-95"
+                            >
+                                Pateikti
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            <DeleteConfirmationModal
+                isOpen={showDeleteModal}
+                onClose={() => setShowDeleteModal(false)}
+                onConfirm={confirmDelete}
+                taskTitle={editingEvent?.title || 'Darbo laiko įrašą'}
+                isTask={false}
+            />
         </div >
     );
 }
+

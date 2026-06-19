@@ -1,19 +1,17 @@
 import { useState, useMemo } from 'react';
-import { getPriorityRank, PRIORITIES, getPriorityLabel } from '../utils/priority';
-import { TASK_TAGS } from '../utils/taskUtils';
+import { getPriorityRank } from '../utils/priority';
+
 import { getLithuanianNow, getLithuanian3AMCutoff, getLithuanianDateString } from '../utils/timeUtils';
 
 export const useTaskFiltering = (tasks, manualTaskOrder) => {
     const [filterUser, setFilterUser] = useState('');
     const [filterPriority, setFilterPriority] = useState('');
+    const [filterTag, setFilterTag] = useState('');
     const [sortBy, setSortBy] = useState('none');
 
     const sortedTasks = useMemo(() => {
         // Filter out completed, deleted, and unapproved tasks
         let activeTasks = tasks.filter(t => {
-            // Basic exclusion
-            if (t.isDeleted || t.status === 'deleted') return false;
-
             // Definition of "Today's Work Day" (Starts at 3:00 AM Europe/Vilnius)
             const now = getLithuanianNow();
             let cutoffDate = getLithuanianDateString(now);
@@ -26,6 +24,13 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
             }
 
             const cutoff = getLithuanian3AMCutoff(cutoffDate);
+
+            // Deleted tasks: show if deleted today (with strikethrough), hide otherwise
+            if (t.isDeleted || t.status === 'deleted') {
+                const deletedAt = t.deletedAt || t.completedAt || t.updatedAt;
+                if (!deletedAt) return false;
+                return new Date(deletedAt) >= cutoff;
+            }
 
             const isDone = t.completed || t.status === 'completed' || t.status === 'confirmed';
 
@@ -44,12 +49,17 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
 
         // Apply user filter
         if (filterUser) {
-            activeTasks = activeTasks.filter(t => t.assignedWorkerId === filterUser);
+            activeTasks = activeTasks.filter(t => t.assignedUserId === filterUser);
         }
 
         // Apply priority filter
         if (filterPriority) {
             activeTasks = activeTasks.filter(t => t.priority === filterPriority);
+        }
+
+        // Apply tag filter
+        if (filterTag) {
+            activeTasks = activeTasks.filter(t => t.tag === filterTag);
         }
 
         if (sortBy === 'none') return activeTasks;
@@ -63,8 +73,8 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         const sorted = [...activeTasks];
 
         const compareUser = (a, b) => {
-            const nameA = a.assignedWorkerName || '';
-            const nameB = b.assignedWorkerName || '';
+            const nameA = a.assignedUserName || '';
+            const nameB = b.assignedUserName || '';
             if (!nameA && !nameB) return 0;
             if (!nameA) return 1;
             if (!nameB) return -1;
@@ -77,7 +87,13 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
             return dateA.localeCompare(dateB);
         };
 
-        if (sortBy === 'user') {
+        if (sortBy === 'priority') {
+            sorted.sort((a, b) => {
+                const prioDiff = comparePriority(a, b);
+                if (prioDiff !== 0) return prioDiff;
+                return compareUser(a, b);
+            });
+        } else if (sortBy === 'user') {
             sorted.sort((a, b) => {
                 const userDiff = compareUser(a, b);
                 if (userDiff !== 0) return userDiff;
@@ -143,7 +159,7 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         }
 
         return sorted;
-    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority]);
+    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority, filterTag]);
 
     return {
         sortedTasks,
@@ -151,6 +167,8 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         setFilterUser,
         filterPriority,
         setFilterPriority,
+        filterTag,
+        setFilterTag,
         sortBy,
         setSortBy
     };

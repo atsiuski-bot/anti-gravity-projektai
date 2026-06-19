@@ -6,9 +6,7 @@ import {
     signInWithRedirect,
     getRedirectResult,
     signOut,
-    onAuthStateChanged,
-    setPersistence,
-    browserLocalPersistence
+    onAuthStateChanged
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
@@ -21,6 +19,7 @@ export function useAuth() {
 export function AuthProvider({ children }) {
     const [currentUser, setCurrentUser] = useState(null);
     const [userData, setUserData] = useState(null); // Real-time Firestore data
+    const [optimisticUserData, setOptimisticUserData] = useState(null); // Instant UI feedback overriding userData
     const [userRole, setUserRole] = useState(null);
     const [breakState, setBreakState] = useState(null);
     const [workStatus, setWorkStatus] = useState(null);
@@ -42,9 +41,6 @@ export function AuthProvider({ children }) {
         console.log(`Auth: Starting Google Login with popup...`);
         const provider = new GoogleAuthProvider();
         try {
-            // Use browserLocalPersistence to allow session to persist across browser restarts for 4 days
-            await setPersistence(auth, browserLocalPersistence);
-
             // Use popup for all browsers (including Opera)
             // Note: Opera works fine with popup. Redirect requires Firebase Console configuration.
             if (isOpera) {
@@ -199,6 +195,34 @@ export function AuthProvider({ children }) {
                         setWorkStatus(data.workStatus || { isWorking: false });
                         setUserData(data); // Update full user data
 
+                        // Only clear optimistic data when real data has caught up
+                        setOptimisticUserData(prev => {
+                            if (!prev) return null;
+
+                            const optType = prev?.activeSession?.type;
+                            const realType = data?.activeSession?.type;
+
+                            if (optType) {
+                                if (optType === 'task') {
+                                    const optTid = prev?.workStatus?.activeTaskId;
+                                    const realTid = data?.workStatus?.activeTaskId;
+                                    if (realType === 'task' && data?.workStatus?.status === 'running' && realTid === optTid) {
+                                        return null; // Match found, clear optimistic
+                                    }
+                                    return prev; // Still waiting for DB to catch up
+                                }
+                                if (realType === optType) return null; // Match found
+                                return prev; // Still waiting
+                            }
+
+                            // If optimistic state expects no active session
+                            if (prev?.activeSession === null) {
+                                if (!data?.activeSession) return null; // DB finally cleared it
+                                return prev; // DB still has it, keep waiting
+                            }
+
+                            return prev; // Catch-all: hold onto optimistic state until explicitly matched
+                        });
 
                         setCurrentUser(user);
                         setLoading(false);
@@ -229,6 +253,7 @@ export function AuthProvider({ children }) {
                 setBreakState(null);
                 setWorkStatus(null);
                 setUserData(null);
+                setOptimisticUserData(null);
                 setLoading(false);
             }
         });
@@ -255,16 +280,19 @@ export function AuthProvider({ children }) {
         return () => clearTimeout(timer);
     }, [loading]);
 
+    const effectiveUserData = optimisticUserData || userData;
+
     const value = {
         currentUser,
-        userData, // Exposed here
+        userData: effectiveUserData, // Exposed real-time or optimistic override
+        setOptimisticUserData, // Function to trigger instant UI updates
         userRole,
         login,
         logout,
         loading,
-        breakState,
-        isTakingBreak: breakState?.isTakingBreak || false,
-        workStatus
+        breakState: effectiveUserData?.breakState || breakState,
+        isTakingBreak: effectiveUserData?.breakState?.isTakingBreak || false,
+        workStatus: effectiveUserData?.workStatus || workStatus
     };
 
     return (

@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, query, orderBy, getDocs, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, doc, getDoc, setDoc } from 'firebase/firestore';
+import { useUsers } from '../context/UsersContext';
 
 export const useManagerData = (currentUser) => {
+    const { users: usersList, usersMap, loading: usersLoading } = useUsers();
     const [tasks, setTasks] = useState([]);
-    const [users, setUsers] = useState([]);
     const [manualTaskOrder, setManualTaskOrder] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -38,49 +39,34 @@ export const useManagerData = (currentUser) => {
         }
     };
 
-    // Fetch tasks and users
+    // Fetch tasks
     useEffect(() => {
+        if (usersLoading) return; // Wait for users to load before mapping tasks
+
         let unsubscribe = () => { };
         setLoading(true);
 
         try {
             const q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
-            unsubscribe = onSnapshot(q, async (snapshot) => {
+            unsubscribe = onSnapshot(q, (snapshot) => {
                 let tasksData = snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
                 }));
 
-                // Fetch worker names for assigned tasks
-                try {
-                    const usersSnapshot = await getDocs(collection(db, 'users'));
-                    const usersMap = {};
-                    const usersList = [];
-                    usersSnapshot.docs.forEach(doc => {
-                        const userData = { id: doc.id, ...doc.data() };
-                        usersMap[doc.id] = userData;
-                        if (!userData.isDisabled) {
-                            usersList.push(userData);
-                        }
-                    });
-                    setUsers(usersList);
-
-                    // Enrich tasks with worker names and colors
-                    tasksData = tasksData.map(task => ({
-                        ...task,
-                        assignedWorkerName: task.assignedWorkerId && usersMap[task.assignedWorkerId]
-                            ? (usersMap[task.assignedWorkerId].displayName || usersMap[task.assignedWorkerId].email)
-                            : null,
-                        assignedWorkerColor: task.assignedWorkerId && usersMap[task.assignedWorkerId]
-                            ? (usersMap[task.assignedWorkerId].color || null)
-                            : null,
-                        creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
-                            ? (usersMap[task.createdBy].displayName || usersMap[task.createdBy].email)
-                            : null)
-                    }));
-                } catch (err) {
-                    console.error("Error fetching user names:", err);
-                }
+                // Enrich tasks with worker names and colors
+                tasksData = tasksData.map(task => ({
+                    ...task,
+                    assignedUserName: task.assignedUserId && usersMap[task.assignedUserId]
+                        ? (usersMap[task.assignedUserId].displayName || usersMap[task.assignedUserId].email)
+                        : null,
+                    assignedWorkerColor: task.assignedUserId && usersMap[task.assignedUserId]
+                        ? (usersMap[task.assignedUserId].color || null)
+                        : null,
+                    creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
+                        ? (usersMap[task.createdBy].displayName || usersMap[task.createdBy].email)
+                        : null)
+                }));
 
                 setTasks(tasksData);
                 setError(null);
@@ -97,7 +83,10 @@ export const useManagerData = (currentUser) => {
         }
 
         return () => unsubscribe();
-    }, []);
+    }, [usersLoading, usersMap]);
 
-    return { tasks, users, manualTaskOrder, saveManualOrder, error, loading };
+    // Filter out disabled users for the UI
+    const users = usersList.filter(u => !u.isDisabled);
+
+    return { tasks, users, allUsers: usersList, manualTaskOrder, saveManualOrder, error, loading };
 };

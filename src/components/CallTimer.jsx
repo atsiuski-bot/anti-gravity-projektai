@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { Phone, Square, PhoneOff, X, Check } from 'lucide-react';
 import ReactDOM from 'react-dom';
@@ -114,7 +115,8 @@ const CallModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinute
 });
 
 export default function CallTimer({ compact = false }) {
-    const { currentUser, userData } = useAuth();
+    const { currentUser, userData, setOptimisticUserData } = useAuth();
+    const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
 
     const {
         isActive: isCalling,
@@ -122,16 +124,33 @@ export default function CallTimer({ compact = false }) {
         startTime
     } = useTimerState(currentUser, 'callState', 'isCalling', null, null, 'call');
 
+    const isDisabled = isSecondarySessionActive && !isCalling && activeSessionType !== 'break' && activeSessionType !== 'quickWork';
+
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleStartCall = async () => {
-        if (!currentUser) return;
+        if (!currentUser || isDisabled) return;
         try {
+            // Optimistic UI Update: Instantly assume call started, clear other sessions
+            setOptimisticUserData({
+                ...userData,
+                activeSession: {
+                    type: 'call',
+                    startTime: new Date().toISOString(),
+                    pausedSession: userData?.activeSession || null
+                },
+                callState: { ...userData?.callState, isCalling: true, lastStartedAt: new Date().toISOString() },
+                breakState: { ...userData?.breakState, isTakingBreak: false },
+                quickWorkState: { ...userData?.quickWorkState, isQuickWorking: false },
+                workStatus: { ...userData?.workStatus, isWorking: false, status: 'paused' }
+            });
+
             await startSession(currentUser.uid, 'call');
             SoundManager.playCallSound();
         } catch (err) {
             console.error("Error starting call:", err);
+            setOptimisticUserData(null); // Revert
             alert("Klaida pradedant skambutį.");
         }
     };
@@ -159,19 +178,45 @@ export default function CallTimer({ compact = false }) {
 
         setIsSubmitting(true);
         try {
+            // Determine what will be restored from pausedSession
+            const pausedSession = userData?.activeSession?.pausedSession;
+            const pausedType = pausedSession?.type;
+            const optimistic = { ...userData, callState: { ...userData?.callState, isCalling: false } };
+
+            if (pausedType === 'break') {
+                optimistic.activeSession = pausedSession;
+                optimistic.breakState = { ...userData?.breakState, isTakingBreak: true };
+            } else if (pausedType === 'quickWork') {
+                optimistic.activeSession = pausedSession;
+                optimistic.quickWorkState = { ...userData?.quickWorkState, isQuickWorking: true };
+            } else if (pausedType === 'task' && pausedSession?.taskId) {
+                optimistic.activeSession = pausedSession;
+                optimistic.workStatus = { isWorking: true, status: 'running', activeTaskId: pausedSession.taskId };
+            } else {
+                // Fallback: check resumableTaskIds
+                const resumableTasks = userData?.callState?.resumableTaskIds || [];
+                const activeTaskId = resumableTasks.length > 0 ? resumableTasks[0] : null;
+                optimistic.activeSession = activeTaskId ? { type: 'task', startTime: new Date().toISOString(), taskId: activeTaskId } : null;
+                optimistic.workStatus = activeTaskId ? { isWorking: true, status: 'running', activeTaskId } : userData?.workStatus;
+            }
+
+            // Optimistic UI Update: Instantly assume call ended and paused session restored
+            setOptimisticUserData(optimistic);
+
             // End session with custom title overrides
             await endSession(currentUser.uid, null, { customTitle: taskTitle });
             setShowTitleModal(false);
         } catch (err) {
             console.error("Error completing call:", err);
+            setOptimisticUserData(null); // Revert
             alert("Klaida išsaugant skambutį.");
         } finally {
             setIsSubmitting(false);
         }
-    }, [currentUser]);
+    }, [currentUser, userData, setOptimisticUserData]);
 
     const handleToggleCall = async () => {
-        if (!currentUser) return;
+        if (!currentUser || isDisabled) return;
 
         try {
             if (!isCalling) {
@@ -215,13 +260,16 @@ export default function CallTimer({ compact = false }) {
 
                 <button
                     onClick={handleToggleCall}
+                    disabled={isDisabled}
                     className={clsx(
                         "p-2 rounded-lg transition-all active:scale-95 flex items-center justify-center",
-                        isCalling
-                            ? 'bg-sky-400 text-white ring-2 ring-sky-100'
-                            : 'text-gray-600 hover:bg-gray-100'
+                        isDisabled
+                            ? "opacity-50 cursor-not-allowed bg-gray-50 text-gray-400"
+                            : isCalling
+                                ? 'bg-sky-400 text-white ring-2 ring-sky-100'
+                                : 'text-gray-600 hover:bg-gray-100'
                     )}
-                    title={isCalling ? "Baigti skambutį" : "Pradėti skambutį"}
+                    title={isCalling ? "Baigti skambutį" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti skambutį")}
                 >
                     {isCalling ? (
                         <Square className="w-5 h-5 fill-current" />
@@ -240,12 +288,15 @@ export default function CallTimer({ compact = false }) {
         <>
             <button
                 onClick={handleToggleCall}
+                disabled={isDisabled}
                 className={clsx(
                     "flex-1 flex items-center justify-between px-4 py-3 rounded-xl transition-all shadow-sm active:scale-95 border min-w-[140px]",
-                    isCalling
-                        ? 'bg-sky-50 border-sky-200 text-sky-900 ring-1 ring-sky-200'
-                        : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300'
+                    isDisabled ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200" :
+                        isCalling
+                            ? 'bg-sky-50 border-sky-200 text-sky-900 ring-1 ring-sky-200'
+                            : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300'
                 )}
+                title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
             >
                 <div className="flex items-center gap-3">
                     <div className={clsx("p-1.5 rounded-lg", isCalling ? "bg-sky-200 text-sky-700" : "bg-gray-100 text-gray-500")}>

@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { isManagerRole } from '../utils/formatters';
 import AdminBootstrap from '../components/AdminBootstrap';
 import { shouldRunAutomation, checkAndPromoteTasks, archiveOldTasks } from '../utils/automationUtils';
 const ManagerView = React.lazy(() => import('./ManagerView'));
@@ -27,7 +28,7 @@ export default function Dashboard() {
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
                 </div>
             }>
-                {userRole === 'manager' || userRole === 'admin' ? <ManagerView /> : <WorkerView />}
+                {isManagerRole(userRole) ? <ManagerView /> : <WorkerView />}
             </React.Suspense>
         </>
     );

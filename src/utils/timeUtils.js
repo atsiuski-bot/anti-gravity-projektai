@@ -4,8 +4,8 @@ export const parseTimeStringToMinutes = (str) => {
 
     let total = 0;
     try {
-        // Handle 'val' or 'h' for hours
-        const hMatch = str.match(/(\d+\.?\d*)\s*(h|val)/);
+        // Handle 'val' or 'h' for hours (supports both period and comma as decimal separator)
+        const hMatch = str.replace(',', '.').match(/(\d+\.?\d*)\s*(h|val)/);
         // Handle 'min' or 'm' for minutes
         const mMatch = str.match(/(\d+)\s*(m|min)/);
 
@@ -30,14 +30,16 @@ export const parseTimeStringToMinutes = (str) => {
 
 export const formatMinutesToTimeString = (minutes) => {
     if (minutes === null || minutes === undefined) return '';
-    const totalMinutes = Math.round(minutes);
+    const isNegative = minutes < 0;
+    const totalMinutes = Math.round(Math.abs(minutes));
+    const prefix = isNegative ? '-' : '';
     if (totalMinutes < 60) {
-        return `${totalMinutes}m`;
+        return `${prefix}${totalMinutes}m`;
     }
     const h = Math.floor(totalMinutes / 60);
     const m = totalMinutes % 60;
-    if (m === 0) return `${h}h`;
-    return `${h}h ${m}m`;
+    if (m === 0) return `${prefix}${h}h`;
+    return `${prefix}${h}h ${m}m`;
 };
 
 // Calculate current total time including active session if running
@@ -46,16 +48,24 @@ export const calculateCurrentTotalMinutes = (task) => {
     if (!task || typeof task !== 'object') return 0;
 
     try {
-        // 1. Try numeric fields first (New System)
-        let total = (task.timerMinutes || 0) + (task.manualMinutes || 0);
+        let total = 0;
+
+        total = (task.manualMinutes || 0) + (task.timerMinutes || 0);
 
         // 2. If zero, try parsing actualTime string (Old System / Fallback)
         // checking total === 0 safeguards against double counting if we have both
-        if (total === 0 && (task.accumulatedMinutes || task.actualTime)) {
+        if (total === 0 && !task.timeChanged && (task.accumulatedMinutes || task.actualTime)) {
             total = task.accumulatedMinutes || parseTimeStringToMinutes(task.actualTime) || 0;
         }
 
-        // 3. Add current running session
+        // Add explicit time adjustments
+        if (task.timeAdjustments && Array.isArray(task.timeAdjustments)) {
+            task.timeAdjustments.forEach(adj => {
+                total += (adj.durationMinutes || 0);
+            });
+        }
+
+        // Add currently running session time if any      
         if (task.timerStatus === 'running' && task.timerStartedAt) {
             try {
                 const start = new Date(task.timerStartedAt);
@@ -71,7 +81,7 @@ export const calculateCurrentTotalMinutes = (task) => {
             }
         }
 
-        return Number.isFinite(total) && total >= 0 ? total : 0;
+        return Number.isFinite(total) ? total : 0;
     } catch (error) {
         console.error('Error calculating total minutes for task:', task?.id, error);
         return 0;
@@ -123,32 +133,28 @@ export const getLithuanianWeekday = (date = new Date()) => {
  * Returns a Date object for the same day at 03:00 Lithuania time.
  */
 export const getLithuanian3AMCutoff = (dateStr) => {
-    // dateStr is 'YYYY-MM-DD'
     const [y, m, d] = dateStr.split('-').map(Number);
-    // Create a date in local time first
-    const date = new Date(y, m - 1, d, 3, 0, 0, 0);
-
-    // We need this date to represent 3 AM in VILNIUS.
-    // A trick to get the offset:
-    const formatter = new Intl.DateTimeFormat('en-US', {
+    // 01:00 UTC is either 03:00 or 04:00 LT
+    let date = new Date(Date.UTC(y, m - 1, d, 1, 0, 0));
+    
+    const formatter = new Intl.DateTimeFormat('en-GB', {
         timeZone: 'Europe/Vilnius',
-        year: 'numeric', month: 'numeric', day: 'numeric',
-        hour: 'numeric', minute: 'numeric', second: 'numeric',
+        hour: 'numeric',
         hour12: false
     });
-
-    // Iteratively adjust until the formatted time is 03:00:00
-    // But usually, just creating it and adjusting for timezone difference is enough.
-    // More robustly: 
-    const targetISO = `${dateStr}T03:00:00`;
-    // We want the moment where Lithuania says it's 3AM.
-    // We can use the fact that Europe/Vilnius is either +02:00 or +03:00.
-    // Let's use a simpler approach: get the offset in minutes.
-
-    const parts = formatter.formatToParts(date);
-    const fHour = parseInt(parts.find(p => p.type === 'hour').value);
-
-    const diff = fHour - 3;
-    date.setHours(date.getHours() - diff);
+    
+    // Step towards 03:00 local time
+    for (let i = 0; i < 5; i++) {
+        let currentHour = parseInt(formatter.format(date), 10);
+        if (currentHour === 24) currentHour = 0;
+        if (currentHour === 3) break;
+        
+        let diff = 3 - currentHour;
+        if (diff > 12) diff -= 24;
+        if (diff < -12) diff += 24;
+        
+        date.setUTCHours(date.getUTCHours() + diff);
+    }
+    
     return date;
 };

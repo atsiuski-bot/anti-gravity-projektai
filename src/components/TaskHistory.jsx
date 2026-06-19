@@ -1,25 +1,28 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase, ChevronDown, Filter, X, Trash2 } from 'lucide-react';
+import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, addDoc, getDocs, updateDoc } from 'firebase/firestore';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase, ChevronDown, Filter, X, Trash2, MessageCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { updateDoc } from 'firebase/firestore';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
 import { startOfWeek, subWeeks, startOfDay, endOfDay, format } from 'date-fns';
-import { formatDisplayName } from '../utils/formatters';
+import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
-import { DeleteConfirmationModal } from './TaskDetailsModals';
+import { DeleteConfirmationModal, CommentsModal, TimeAdjustmentsModal } from './TaskDetailsModals';
+import SessionTypeIcon from './SessionTypeIcon';
+import { addComment } from '../utils/commentActions';
 
 export default function TaskHistory({ userId, users = [] }) {
     const { userRole, currentUser } = useAuth();
-    const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin';
+    const isManagerOrAdmin = isManagerRole(userRole);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
     const [deleteModalTask, setDeleteModalTask] = useState(null);
+    const [activeModal, setActiveModal] = useState({ type: null, taskId: null });
+    const [commentsModalTask, setCommentsModalTask] = useState(null);
 
     // Filter States
     const [dateFrom, setDateFrom] = useState('');
@@ -82,21 +85,23 @@ export default function TaskHistory({ userId, users = [] }) {
             orderBy('archivedAt', 'desc')
         ];
 
-        if (targetUserId !== 'all') {
-            constraints.splice(1, 0, where('assignedWorkerId', '==', targetUserId));
-        }
-
         q = query(collection(db, 'archived_tasks'), ...constraints);
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const tasksData = snapshot.docs.map(doc => ({
-                id: doc.id,
-                ...doc.data()
-            }));
+            const tasksData = snapshot.docs.map(doc => {
+                const data = doc.data();
+                return {
+                    id: doc.id,
+                    ...data,
+                    assignedUserId: resolveUserId(data),
+                    assignedUserName: resolveUserName(data)
+                };
+            });
 
             // Client-side filtering for Tag (Firestore limitation on multiple inequality/array-contains with inequalities)
             // And any other refinement
             const filteredTasks = tasksData.filter(task => {
+                if (targetUserId !== 'all' && task.assignedUserId !== targetUserId) return false;
                 if (filterTag !== 'all' && task.tag !== filterTag) return false;
                 return true;
             });
@@ -137,26 +142,148 @@ export default function TaskHistory({ userId, users = [] }) {
         return () => unsubscribe();
     }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy]);
 
-    const handleExport = () => {
-        const exportData = tasks.map(task => ({
-            Title: task.title,
-            Description: task.description,
-            Worker: task.assignedWorkerName,
-            Priority: task.priority,
-            Status: task.status,
-            EstimatedTime: task.estimatedTime,
-            CompletedAt: task.completedAt,
-            ConfirmedAt: task.confirmedAt,
-            ArchivedAt: task.archivedAt,
-            Comments: task.comments ? task.comments.map(c => `${c.user}: ${c.text}`).join('; ') : ''
-        }));
+    const handleExport = async () => {
+        try {
+            const exportDataPromises = tasks.map(async (task) => {
+                const realTimeMinutes = calculateCurrentTotalMinutes(task);
+                
+                // Fetch work sessions to get session times
+                const sessionsQuery = query(collection(db, 'work_sessions'), where('taskId', '==', task.id));
+                const sessionsSnap = await getDocs(sessionsQuery);
+                const sessionTimes = sessionsSnap.docs.map(doc => {
+                    const data = doc.data();
+                    return {
+                        date: data.date,
+                        durationMinutes: data.durationMinutes ? Math.round(data.durationMinutes) : 0,
+                        formattedDuration: data.durationMinutes ? formatMinutesToTimeString(data.durationMinutes) : '0h 0m'
+                    };
+                }).filter(s => s.durationMinutes > 0);
 
-        const dataStr = JSON.stringify(exportData, null, 2);
-        const blob = new Blob([dataStr], { type: "application/json" });
+                const cleanedAdjustments = (task.timeAdjustments || []).map(adj => ({
+                    date: adj.date,
+                    durationMinutes: adj.durationMinutes,
+                    formattedDuration: adj.durationMinutes ? formatMinutesToTimeString(adj.durationMinutes) : '0h 0m',
+                    reason: adj.reason || ''
+                }));
+
+                const cleanedComments = (task.comments || []).map(c => `${c.user}: ${c.text}`);
+
+                return {
+                    id: task.id,
+                    title: task.title,
+                    description: task.description || '',
+                    priority: getPriorityLabel(task.priority),
+                    tag: task.tag || '',
+                    status: task.status === 'confirmed' ? 'Patvirtinta' : (task.isDeleted || task.status === 'deleted' ? 'Ištrinta' : 'Atlikta'),
+                    assignedWorker: task.assignedUserName || '',
+                    manager: task.managerName || '',
+                    creator: task.creatorName || '',
+                    deadline: task.deadline || '',
+                    estimatedTime: task.estimatedTime || '0h 0m',
+                    totalWorkedTimeFormatted: realTimeMinutes !== 0 ? formatMinutesToTimeString(realTimeMinutes) : '0h 0m',
+                    totalWorkedMinutes: Math.round(realTimeMinutes),
+                    sessionTimes: sessionTimes,
+                    timeAdjustments: cleanedAdjustments,
+                    comments: cleanedComments,
+                    createdAt: task.createdAt ? new Date(task.createdAt).toLocaleString('lt-LT') : null,
+                    assignedAt: task.assignedAt ? new Date(task.assignedAt).toLocaleString('lt-LT') : null,
+                    startedAt: task.startedAt ? new Date(task.startedAt).toLocaleString('lt-LT') : null,
+                    completedAt: task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT') : null,
+                    approvedAt: task.approvedAt ? new Date(task.approvedAt).toLocaleString('lt-LT') : (task.confirmedAt ? new Date(task.confirmedAt).toLocaleString('lt-LT') : null)
+                };
+            });
+
+            const exportData = await Promise.all(exportDataPromises);
+
+            const dataStr = JSON.stringify(exportData, null, 2);
+            const blob = new Blob([dataStr], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `ai_task_analysis_${dateFrom}_to_${dateTo}.json`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } catch (error) {
+            console.error("Error generating AI export:", error);
+            alert("Įvyko klaida generuojant AI duomenis: " + error.message);
+        }
+    };
+
+    const handleExportCSV = () => {
+        const escapeCSV = (str) => {
+            if (str === null || str === undefined) return '""';
+            const s = String(str);
+            if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+                return `"${s.replace(/"/g, '""')}"`;
+            }
+            return s;
+        };
+
+        const formatMinutesToHHMM = (totalMinutes) => {
+            if (!totalMinutes || isNaN(totalMinutes)) return "00:00";
+            const hours = Math.floor(Math.abs(totalMinutes) / 60);
+            const mins = Math.round(Math.abs(totalMinutes) % 60);
+            const sign = totalMinutes < 0 ? "-" : "";
+            return `${sign}${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+        };
+
+        const headers = [
+            "Pavadinimas",
+            "Aprašymas",
+            "Darbuotojas",
+            "Vadovas",
+            "Sukūrė",
+            "Būsena",
+            "Prioritetas",
+            "Žyma",
+            "Terminas",
+            "Planuotas laikas",
+            "Faktinis laikas",
+            "Komentarai",
+            "Sukūrimo data",
+            "Priskyrimo data",
+            "Pradžios data",
+            "Užbaigimo data",
+            "Patvirtinimo data",
+            "Archyvavimo data"
+        ];
+
+        const rows = tasks.map(task => {
+            const realTimeMinutes = calculateCurrentTotalMinutes(task);
+            const realTimeFormatted = realTimeMinutes !== 0 ? formatMinutesToHHMM(realTimeMinutes) : '00:00';
+            const estimatedMins = task.timerMinutes || 0; // Using raw value or formatting if needed. Let's keep estimatedTime which is a string usually like '1h 30m', unless we have raw mins. If it's a string, we might just output it as is, or not touch it. Let's just touch target one.
+            const commentsText = task.comments ? task.comments.map(c => `${c.user}: ${c.text}`).join('; ') : '';
+
+            return [
+                escapeCSV(task.title),
+                escapeCSV(task.description),
+                escapeCSV(task.assignedUserName),
+                escapeCSV(task.managerName),
+                escapeCSV(task.creatorName),
+                escapeCSV(task.status),
+                escapeCSV(getPriorityLabel(task.priority)),
+                escapeCSV(task.tag),
+                escapeCSV(task.deadline),
+                escapeCSV(task.estimatedTime),
+                escapeCSV(realTimeFormatted),
+                escapeCSV(commentsText),
+                escapeCSV(task.createdAt ? new Date(task.createdAt).toLocaleString('lt-LT') : ''),
+                escapeCSV(task.assignedAt ? new Date(task.assignedAt).toLocaleString('lt-LT') : ''),
+                escapeCSV(task.startedAt ? new Date(task.startedAt).toLocaleString('lt-LT') : ''),
+                escapeCSV(task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT') : ''),
+                escapeCSV(task.approvedAt ? new Date(task.approvedAt).toLocaleString('lt-LT') : (task.confirmedAt ? new Date(task.confirmedAt).toLocaleString('lt-LT') : '')),
+                escapeCSV(task.archivedAt ? new Date(task.archivedAt).toLocaleString('lt-LT') : '')
+            ].join(',');
+        });
+
+        const csvContent = [headers.join(','), ...rows].join('\n');
+        // Add BOM for Excel UTF-8 recognition
+        const blob = new Blob(['\uFEFF' + csvContent], { type: "text/csv;charset=utf-8;" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `task_history_${dateFrom}_to_${dateTo}.json`;
+        link.download = `task_history_${dateFrom}_to_${dateTo}.csv`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -194,10 +321,10 @@ export default function TaskHistory({ userId, users = [] }) {
         setDeleteModalTask(task);
     };
 
-    const confirmDelete = async () => {
+    const confirmDelete = async ({ keepWorkHours }) => {
         if (!deleteModalTask) return;
         try {
-            await deleteTask(deleteModalTask, currentUser.uid);
+            await deleteTask(deleteModalTask, currentUser.uid, { keepWorkHours });
             setDeleteModalTask(null);
         } catch (err) {
             console.error("Error deleting task:", err);
@@ -217,6 +344,36 @@ export default function TaskHistory({ userId, users = [] }) {
         }
     };
 
+    const handleAddArchivedComment = async (text) => {
+        if (!commentsModalTask) return;
+        try {
+            await addComment(commentsModalTask.id, text, currentUser, commentsModalTask.comments, 'archived_tasks');
+            const newCommentObj = {
+                text: text,
+                user: currentUser.displayName || currentUser.email,
+                userId: currentUser.uid,
+                createdAt: new Date().toISOString()
+            };
+
+            // Update tasks array to reflect in the list immediately if expanded
+            setTasks(prev => prev.map(t =>
+                t.id === commentsModalTask.id
+                    ? { ...t, comments: [...(t.comments || []), newCommentObj] }
+                    : t
+            ));
+
+            // Update modal task so it has the new comment reference immediately
+            setCommentsModalTask(prev => ({
+                ...prev,
+                comments: [...(prev.comments || []), newCommentObj]
+            }));
+
+        } catch (err) {
+            console.error("Error adding comment to archived task:", err);
+            alert("Nepavyko pridėti komentaro.");
+        }
+    };
+
     const resetFilters = () => {
         const now = getLithuanianNow();
         const startOfCurrentWeek = startOfWeek(now, { weekStartsOn: 1 });
@@ -225,6 +382,73 @@ export default function TaskHistory({ userId, users = [] }) {
         setDateTo(getLithuanianDateString(now));
         setFilterUser('all');
         setFilterTag('all');
+    };
+
+    const handleAddAdjustment = async (taskId, date, h, m, reason) => {
+        try {
+            const task = tasks.find(t => t.id === taskId);
+            if (!task) return;
+            const durationMinutes = (parseInt(h) || 0) * 60 + (parseInt(m) || 0);
+
+            const now = getLithuanianNow();
+            const newSessionRef = await addDoc(collection(db, 'work_sessions'), {
+                taskId: task.id,
+                taskTitle: `🕒 Korekcija: ${task.title}${reason ? ` - ${reason}` : ''}`,
+                userId: task.assignedUserId || task.creatorId || 'unknown',
+                userName: task.assignedUserName || task.creatorName || 'Nežinomas',
+                startTime: new Date(date + 'T12:00:00').toISOString(),
+                endTime: new Date(date + 'T12:00:00').toISOString(),
+                durationMinutes: durationMinutes,
+                date: date,
+                createdAt: now.toISOString(),
+                isManualAdjustment: true
+            });
+
+            const newAdj = {
+                id: newSessionRef.id,
+                date: date,
+                durationMinutes: durationMinutes,
+                reason: reason,
+                createdAt: now.toISOString()
+            };
+
+            const collectionName = task.archivedAt ? 'archived_tasks' : 'tasks';
+            await updateDoc(doc(db, collectionName, task.id), {
+                timeAdjustments: [...(task.timeAdjustments || []), newAdj],
+                updatedAt: new Date().toISOString()
+            });
+
+            setTasks(prev => prev.map(t =>
+                t.id === task.id ? { ...t, timeAdjustments: [...(t.timeAdjustments || []), newAdj] } : t
+            ));
+        } catch (err) {
+            console.error('Error adding adjustment:', err);
+            alert('Nepavyko pridėti laiko korekcijos: ' + err.message);
+        }
+    };
+
+    const handleDeleteAdjustment = async (taskId, adj) => {
+        if (!window.confirm("Ar tikrai norite ištrinti šią korekciją?")) return;
+        try {
+            const task = tasks.find(t => t.id === taskId);
+            if (!task) return;
+
+            await deleteDoc(doc(db, 'work_sessions', adj.id));
+
+            const newAdjustments = (task.timeAdjustments || []).filter(a => a.id !== adj.id);
+            const collectionName = task.archivedAt ? 'archived_tasks' : 'tasks';
+            await updateDoc(doc(db, collectionName, task.id), {
+                timeAdjustments: newAdjustments,
+                updatedAt: new Date().toISOString()
+            });
+
+            setTasks(prev => prev.map(t =>
+                t.id === task.id ? { ...t, timeAdjustments: newAdjustments } : t
+            ));
+        } catch (err) {
+            console.error('Error deleting adjustment:', err);
+            alert('Nepavyko ištrinti korekcijos.');
+        }
     };
 
     if (loading && tasks.length === 0) {
@@ -238,6 +462,13 @@ export default function TaskHistory({ userId, users = [] }) {
                     Užduočių istorija <span className="text-gray-500 text-sm font-normal">({tasks.length})</span>
                 </h2>
                 <div className="flex items-center gap-2">
+                    <button
+                        onClick={handleExportCSV}
+                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                    >
+                        <FileText className="w-4 h-4" />
+                        Atsisiųsti (CSV)
+                    </button>
                     <button
                         onClick={handleExport}
                         className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
@@ -381,7 +612,10 @@ export default function TaskHistory({ userId, users = [] }) {
                                                 "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
                                                 expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
                                             )}>
-                                                <Briefcase className="w-2.5 h-2.5 flex-shrink-0 mt-0.5" />
+                                                <SessionTypeIcon
+                                                    type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
+                                                    className="w-3 h-3 flex-shrink-0 mt-0.5"
+                                                />
                                                 {task.description}
                                             </div>
                                         )}
@@ -403,16 +637,26 @@ export default function TaskHistory({ userId, users = [] }) {
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
-                                        {task.assignedWorkerName && (
+                                        {task.assignedUserName && (
                                             <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
-                                                {formatDisplayName(task.assignedWorkerName).split(' ')[0]}
+                                                {formatDisplayName(task.assignedUserName).split(' ')[0]}
                                             </span>
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap text-right text-[10px] font-medium text-gray-900 align-top font-mono">
-                                        <span className="text-blue-600">{task.estimatedTime || '-'}</span>
-                                        <span className="text-gray-400 mx-1">/</span>
-                                        <span className="text-gray-900">{calculateCurrentTotalMinutes(task) > 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
+                                        <>
+                                            <span className="text-blue-600">{task.estimatedTime || '-'}</span>
+                                            <span className="text-gray-400 mx-1">/</span>
+                                            <span className="text-gray-900">{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
+                                            {userRole === 'admin' && (
+                                                <button onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'timeAdjustments', taskId: task.id }); }} className="text-blue-500 hover:text-blue-700 ml-1 inline-flex" title="Koreguoti laiką">
+                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                </button>
+                                            )}
+                                        </>
+                                        {task.timeChanged && (
+                                            <div className="text-red-600 font-bold text-[10px] uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</div>
+                                        )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         <span
@@ -456,6 +700,18 @@ export default function TaskHistory({ userId, users = [] }) {
                                                 </button>
                                             )}
                                             <button
+                                                onClick={() => setCommentsModalTask(task)}
+                                                className="p-1 text-gray-600 hover:bg-gray-50 rounded relative"
+                                                title="Komentarai"
+                                            >
+                                                <MessageCircle className="w-3.5 h-3.5" />
+                                                {task.comments?.length > 0 && (
+                                                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 text-white text-[8px] font-bold flex items-center justify-center rounded-full leading-none truncate">
+                                                        {task.comments.length}
+                                                    </span>
+                                                )}
+                                            </button>
+                                            <button
                                                 onClick={() => handleRestore(task)}
                                                 className="p-1 text-blue-600 hover:bg-blue-50 rounded"
                                                 title="Grąžinti"
@@ -493,6 +749,25 @@ export default function TaskHistory({ userId, users = [] }) {
                 onConfirm={confirmDelete}
                 taskTitle={deleteModalTask?.title}
             />
+            <CommentsModal
+                isOpen={!!commentsModalTask}
+                onClose={() => setCommentsModalTask(null)}
+                comments={commentsModalTask?.comments || []}
+                onAddComment={handleAddArchivedComment}
+            />
+            {activeModal.taskId && (() => {
+                const task = tasks.find(t => t.id === activeModal.taskId);
+                if (!task) return null;
+                return (
+                    <TimeAdjustmentsModal
+                        isOpen={activeModal.type === 'timeAdjustments'}
+                        onClose={() => setActiveModal({ type: null, taskId: null })}
+                        task={task}
+                        onAddAdjustment={handleAddAdjustment}
+                        onDeleteAdjustment={handleDeleteAdjustment}
+                    />
+                );
+            })()}
         </div>
     );
 }

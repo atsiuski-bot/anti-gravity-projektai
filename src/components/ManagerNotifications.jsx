@@ -1,17 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { startOfWeek, format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, Trash2 } from 'lucide-react';
+import { X, AlertCircle, Check, Trash2, Edit, MessageCircle, Clock, RotateCcw } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
-import { deleteTask } from '../utils/taskActions';
+import { deleteTask, extendTaskTime } from '../utils/taskActions';
+import { formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
+import { logCalendarChange } from '../utils/calendarNotifications';
+import { DeleteConfirmationModal } from './TaskDetailsModals';
+import { SoundManager } from '../utils/soundUtils';
 
-export default function ManagerNotifications() {
+export default function ManagerNotifications({ onEditAndApprove }) {
     const { currentUser } = useAuth();
     const [calendarNotifications, setCalendarNotifications] = useState([]);
+    const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
+    const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
+    const [extensionSelections, setExtensionSelections] = useState({}); // { notifId: selectedTimeString }
+    const [inspectingNotifs, setInspectingNotifs] = useState(new Set()); // notif IDs in inspection mode
+    const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
+
 
     // 1. Calendar Notifications (Existing Logic)
     useEffect(() => {
@@ -33,7 +43,6 @@ export default function ManagerNotifications() {
                 ...doc.data()
             })).filter(n => !n.dismissedBy?.includes(currentUser.uid));
 
-            setCalendarNotifications(notifs);
             setCalendarNotifications(notifs);
         }, (error) => {
             console.error("ManagerNotifications: Calendar Listener Error:", error);
@@ -58,10 +67,41 @@ export default function ManagerNotifications() {
                 source: 'task',
                 ...doc.data()
             }));
-            setTaskNotifications(notifs);
+
+            // Play sound if a new time_extension_request appeared
+            const timeExtNotifs = notifs.filter(n => n.type === 'time_extension_request');
+            if (timeExtNotifs.length > prevTaskNotifCountRef.current) {
+                try { SoundManager.playBeep(); } catch (e) { /* ignore */ }
+            }
+            prevTaskNotifCountRef.current = timeExtNotifs.length;
+
             setTaskNotifications(notifs);
         }, (error) => {
             console.error("ManagerNotifications: Task Notifications Listener Error:", error);
+        });
+
+        return () => unsubscribe();
+    }, [currentUser]);
+
+    // 3. Calendar Approval Requests (New Logic)
+    useEffect(() => {
+        if (!currentUser) return;
+
+        const q = query(
+            collection(db, 'calendar_requests'),
+            where('managerId', '==', currentUser.uid),
+            where('status', '==', 'pending')
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const requests = snapshot.docs.map(doc => ({
+                id: doc.id,
+                source: 'calendar_approval',
+                ...doc.data()
+            }));
+            setCalendarRequests(requests);
+        }, (error) => {
+            console.error("ManagerNotifications: Calendar Requests Listener Error:", error);
         });
 
         return () => unsubscribe();
@@ -88,6 +128,61 @@ export default function ManagerNotifications() {
         }
     };
 
+    const handleApproveCalendarRequest = async (request) => {
+        try {
+            const { type, requestedEvent, userId, userName } = request;
+            const now = new Date().toISOString();
+            
+            if (type === 'add') {
+                await addDoc(collection(db, 'work_hours'), {
+                    ...requestedEvent,
+                    userId,
+                    type: 'planned'
+                });
+            } else if (type === 'edit') {
+                await updateDoc(doc(db, 'work_hours', requestedEvent.id), {
+                    start: requestedEvent.start,
+                    end: requestedEvent.end,
+                    title: requestedEvent.title,
+                    isWorkFromHome: requestedEvent.isWorkFromHome,
+                    isVacation: requestedEvent.isVacation
+                });
+            } else if (type === 'delete') {
+                await deleteDoc(doc(db, 'work_hours', requestedEvent.id));
+            }
+
+            await updateDoc(doc(db, 'calendar_requests', request.id), {
+                status: 'approved',
+                approvedAt: now,
+                approvedBy: currentUser.uid
+            });
+
+            await logCalendarChange(
+                { uid: userId, displayName: userName, email: '' },
+                type === 'edit' ? 'edit' : type,
+                new Date(requestedEvent.start),
+                new Date(requestedEvent.end)
+            );
+        } catch (err) {
+            console.error("Error approving calendar request:", err);
+            alert("Nepavyko patvirtinti užklausos. " + (err.message || ''));
+        }
+    };
+
+    const handleDeclineCalendarRequest = async (request) => {
+        try {
+            await updateDoc(doc(db, 'calendar_requests', request.id), {
+                status: 'declined',
+                declinedAt: new Date().toISOString(),
+                declinedBy: currentUser.uid
+            });
+        } catch (err) {
+            console.error("Error declining calendar request:", err);
+            alert("Nepavyko atmesti užklausos.");
+        }
+    };
+
+
     const handleApproveTask = async (notificationId, taskId) => {
         if (!taskId) return;
         try {
@@ -108,10 +203,41 @@ export default function ManagerNotifications() {
         }
     };
 
-    const handleDeleteTaskAction = async (notificationId, taskId) => {
+    const handleEditAndApprove = async (notificationId, taskId) => {
         if (!taskId) return;
-        if (!window.confirm("Ar tikrai norite ištrinti šią užduotį?")) return;
+        try {
+            // 1. Approve the task
+            const taskRef = doc(db, 'tasks', taskId);
+            await updateDoc(taskRef, {
+                status: 'approved',
+                isApproved: true,
+                approvedAt: new Date().toISOString(),
+                approvedBy: currentUser.uid
+            });
 
+            // 2. Dismiss notification
+            await handleDismissTask(notificationId);
+
+            // 3. Fetch full task data and open edit modal
+            if (onEditAndApprove) {
+                const taskSnap = await getDoc(taskRef);
+                if (taskSnap.exists()) {
+                    onEditAndApprove({ id: taskSnap.id, ...taskSnap.data() });
+                }
+            }
+        } catch (err) {
+            console.error("Error in edit and approve:", err);
+            alert("Nepavyko patvirtinti užduoties: " + err.message);
+        }
+    };
+
+    const handleDeleteTaskAction = (notificationId, taskId, taskTitle) => {
+        setDeleteModalData({ taskId, notificationId, taskTitle });
+    };
+
+    const confirmDelete = async ({ keepWorkHours }) => {
+        if (!deleteModalData) return;
+        const { taskId, notificationId } = deleteModalData;
         try {
             // Fetch the full task data first so we can archive it properly
             const taskRef = doc(db, 'tasks', taskId);
@@ -119,30 +245,132 @@ export default function ManagerNotifications() {
 
             if (taskSnap.exists()) {
                 const taskData = { id: taskSnap.id, ...taskSnap.data() };
-                // Use the centralized deleteTask function which now archives the task
-                await deleteTask(taskData, currentUser.uid);
-            } else {
-                console.warn("Task to delete not found, maybe already deleted?", taskId);
+                await deleteTask(taskData, currentUser.uid, { keepWorkHours });
             }
 
-            // Dismiss notification regardless (so it doesn't get stuck)
             await handleDismissTask(notificationId);
+            setDeleteModalData(null);
         } catch (err) {
             console.error("Error deleting task:", err);
             alert("Nepavyko ištrinti užduoties: " + err.message);
         }
     };
 
-    const allNotifications = [...calendarNotifications, ...taskNotifications];
+    // --- Time Extension Handlers ---
+    const handleDismissExtension = async (notificationId) => {
+        await handleDismissTask(notificationId);
+    };
 
-    if (allNotifications.length === 0) return null;
+    // --- Task Completion Handlers ---
+    const handleConfirmCompletion = async (notificationId, taskId) => {
+        if (!taskId) return;
+        try {
+            await updateDoc(doc(db, 'tasks', taskId), {
+                status: 'confirmed',
+                isApproved: true,
+                confirmedBy: currentUser.uid,
+                confirmedAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            });
+            await handleDismissTask(notificationId);
+        } catch (err) {
+            console.error('Error confirming task completion:', err);
+            alert('Nepavyko patvirtinti užduoties: ' + err.message);
+        }
+    };
+
+    const handleRevertTask = async (notificationId, taskId, userName) => {
+        if (!taskId) return;
+        try {
+            const managerName = currentUser.displayName || currentUser.email || 'Vadovas';
+            const autoComment = {
+                text: `Vadovas ${managerName} grąžino užduotį į darbų sąrašą tobulinimui.`,
+                user: managerName,
+                userId: currentUser.uid,
+                isSystemComment: true,
+                createdAt: new Date().toISOString()
+            };
+            await updateDoc(doc(db, 'tasks', taskId), {
+                status: 'in-progress',
+                completed: false,
+                completedAt: null,
+                confirmedBy: null,
+                confirmedAt: null,
+                timerStatus: 'paused',
+                updatedAt: new Date().toISOString(),
+                comments: arrayUnion(autoComment)
+            });
+            await handleDismissTask(notificationId);
+        } catch (err) {
+            console.error('Error reverting task:', err);
+            alert('Nepavyko grąžinti užduoties: ' + err.message);
+        }
+    };
+
+    const handleInspectTask = async (notificationId, taskId) => {
+        try {
+            // Mark notification as inspecting
+            setInspectingNotifs(prev => new Set([...prev, notificationId]));
+            // Set inspection status on the task
+            if (taskId) {
+                await updateDoc(doc(db, 'tasks', taskId), {
+                    inspectionStatus: 'inspecting',
+                    updatedAt: new Date().toISOString()
+                });
+            }
+        } catch (err) {
+            console.error('Error setting inspection status:', err);
+        }
+    };
+
+    const handleExtendTime = async (notificationId, taskId) => {
+        const selectedTime = extensionSelections[notificationId];
+        if (!selectedTime) {
+            alert('Pasirinkite laiko tarpą pratęsimui.');
+            return;
+        }
+        try {
+            await extendTaskTime(taskId, selectedTime, currentUser.uid);
+            await handleDismissTask(notificationId);
+            // Clean up local state
+            setExtensionSelections(prev => {
+                const next = { ...prev };
+                delete next[notificationId];
+                return next;
+            });
+        } catch (err) {
+            console.error('Error extending task time:', err);
+            alert('Nepavyko pratęsti laiko: ' + err.message);
+        }
+    };
+
+    const TIME_OPTIONS = [
+        '5min', '15min', '30min', '45min',
+        '1h', '1,5h', '2h', '3h', '4h', '5h', '6h',
+        '8h', '10h', '12h', '15h', '20h', '25h', '30h', '40h', '50h'
+    ];
+
+    const allNotifications = [...calendarNotifications, ...calendarRequests, ...taskNotifications];
+    
+    // Sort all notifications so newest is at the top
+    const sortedNotifications = allNotifications.sort((a, b) => {
+        const getTimestamp = (notif) => {
+            if (notif.createdAt) return new Date(notif.createdAt).getTime();
+            if (notif.timestamp) return new Date(notif.timestamp).getTime();
+            if (notif.changes && notif.changes.length > 0) return new Date(notif.changes[notif.changes.length - 1].timestamp).getTime();
+            return 0;
+        };
+        return getTimestamp(b) - getTimestamp(a);
+    });
+
+    if (sortedNotifications.length === 0) return null;
 
     return (
         <div className="mb-6 space-y-4">
-            {allNotifications.map(notif => {
+            {sortedNotifications.map(notif => {
                 if (notif.source === 'calendar') {
                     return (
-                        <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm">
+                        <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm max-w-xl">
                             <button
                                 onClick={() => handleDismissCalendar(notif.id)}
                                 className="absolute top-2 right-2 text-blue-400 hover:text-blue-600 p-1"
@@ -175,7 +403,7 @@ export default function ManagerNotifications() {
                                                             isEdit ? 'text-amber-600 font-medium min-w-[70px]' :
                                                                 'text-red-600 font-medium min-w-[70px]'
                                                     }>
-                                                        {isAdd ? '+ Pridėta:' : isEdit ? '~ Pakeista:' : '- Ištrinta:'}
+                                                        {isAdd ? '+ Pridėta:' : isEdit ? '~ Pakeista:' : '- Atšaukta:'}
                                                     </span>
                                                     <span>{dayNameCap}, {timeRange}</span>
                                                 </div>
@@ -186,49 +414,277 @@ export default function ManagerNotifications() {
                             </div>
                         </div>
                     );
-                } else if (notif.source === 'task') {
+                } else if (notif.source === 'calendar_approval') {
+                    const reqStart = parseISO(notif.requestedEvent.start);
+                    const reqEnd = parseISO(notif.requestedEvent.end);
+                    const dayName = format(reqStart, 'MMMM do', { locale: lt });
+                    const timeRange = `${format(reqStart, 'HH:mm')} - ${format(reqEnd, 'HH:mm')}`;
+                    
+                    let oldTimeRange = '';
+                    if (notif.type === 'edit' && notif.originalEvent) {
+                        const oldStart = parseISO(notif.originalEvent.start);
+                        const oldEnd = parseISO(notif.originalEvent.end);
+                        oldTimeRange = `${format(oldStart, 'HH:mm')} - ${format(oldEnd, 'HH:mm')}`;
+                    }
+                    
+                    const actionText = notif.type === 'delete' ? 'nori atšaukti (ištrinti) darbo laiką' :
+                                       notif.type === 'add' ? 'nori pridėti darbo laiką' :
+                                       'nori pakeisti darbo laiką';
+
                     return (
-                        <div key={notif.id} className="bg-amber-50 border border-amber-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
-
-
-                            <div className="flex flex-col gap-3">
-                                <div className="flex items-start gap-3">
-                                    <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
-                                    <div>
-                                        <div className="text-sm text-amber-800">
-                                            <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> priskyrė Jus vadovu užduočiai:</p>
-                                            <p className="font-medium mt-1">"{notif.taskTitle}"</p>
-                                        </div>
-                                    </div>
+                        <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                            <div className="flex items-start gap-4">
+                                <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shrink-0">
+                                    <Clock className="w-5 h-5" />
                                 </div>
+                                <div className="flex-1">
+                                    <h4 className="font-bold text-blue-900 leading-tight">
+                                        {formatDisplayName(notif.userName)} {actionText}
+                                    </h4>
+                                    <p className="text-sm text-blue-800 mt-1 font-medium">
+                                        {dayName}, {notif.type === 'edit' ? `nuo ${oldTimeRange} iki ${timeRange}` : timeRange}
+                                    </p>
+                                    
+                                    <div className="mt-3 bg-white/50 rounded-lg p-3 border border-blue-100">
+                                        <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Priežastis:</p>
+                                        <p className="text-sm text-blue-800 italic">"{notif.reason}"</p>
+                                    </div>
 
-                                <div className="flex items-center justify-between mt-3 mb-1 px-2 gap-2">
-                                    <div className="w-8 shrink-0"></div> {/* Left spacer to offset center */}
-
-                                    <button
-                                        onClick={() => handleApproveTask(notif.id, notif.taskId)}
-                                        className="flex items-center justify-center gap-2 px-6 py-2 bg-green-100 text-green-700 hover:bg-green-200 rounded-lg transition-colors text-base font-semibold shadow-sm whitespace-nowrap"
-                                        title="Patvirtinti užduotį"
-                                    >
-                                        <Check className="w-5 h-5" />
-                                        Taip, patvirtinti
-                                    </button>
-
-                                    <button
-                                        onClick={() => handleDeleteTaskAction(notif.id, notif.taskId)}
-                                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-600 hover:bg-red-200 rounded transition-colors text-xs font-medium shrink-0 whitespace-nowrap"
-                                        title="Ištrinti užduotį"
-                                    >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                        Ne, ištrinti
-                                    </button>
+                                    <div className="mt-4 flex gap-3">
+                                        <button
+                                            onClick={() => handleApproveCalendarRequest(notif)}
+                                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-all font-bold shadow-sm active:scale-95"
+                                        >
+                                            <Check className="w-4 h-4" />
+                                            Patvirtinti
+                                        </button>
+                                        <button
+                                            onClick={() => handleDeclineCalendarRequest(notif)}
+                                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-all font-bold active:scale-95"
+                                        >
+                                            <X className="w-4 h-4" />
+                                            Atmesti
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
                     );
-                }
-                return null;
+                } else if (notif.source === 'task') {
+
+                    if (notif.type === 'new_comment') {
+                        return (
+                            <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <button
+                                    onClick={() => handleDismissTask(notif.id)}
+                                    className="absolute top-2 right-2 text-blue-400 hover:text-blue-600 p-1"
+                                    title="Uždaryti pranešimą"
+                                >
+                                    <X className="w-5 h-5" />
+                                </button>
+                                <div className="flex flex-col gap-3">
+                                    <div className="flex items-start gap-3 pr-6">
+                                        <MessageCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                                        <div>
+                                            <div className="text-sm text-blue-800">
+                                                <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> pakomentavo užduotį:</p>
+                                                <p className="font-medium mt-1">"{notif.taskTitle}"</p>
+                                                {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-blue-300 pl-2"> "{notif.commentText}"</p>}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-end mt-1 px-2 gap-2">
+                                        <button
+                                            onClick={() => handleDismissTask(notif.id)}
+                                            className="px-4 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded transition-colors text-xs font-semibold"
+                                            title="Uždaryti"
+                                        >
+                                            Supratau
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    // --- Task Completion Notification ---
+                    if (notif.type === 'task_completion') {
+                        const completedDate = notif.completedAt
+                            ? format(new Date(notif.completedAt), 'yyyy-MM-dd HH:mm')
+                            : '';
+                        return (
+                            <div key={notif.id} className="bg-green-50 border border-green-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <div className="flex flex-col gap-3">
+                                    <div className="flex items-start gap-3">
+                                        <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
+                                        <div className="text-sm text-green-900">
+                                            <p>
+                                                <span className="font-semibold">{formatDisplayName(notif.userName)}</span>
+                                                {' '}baigė užduotį{' '}
+                                                <span className="font-medium">"{notif.taskTitle}"</span>
+                                                {completedDate && <span className="text-green-700"> {completedDate}</span>}
+                                                .
+                                            </p>
+                                            <p className="mt-1">
+                                                Užduočiai sugaištas laikas:{' '}
+                                                <span className="font-semibold">{notif.actualTime || '—'}</span>.
+                                            </p>
+                                            <p className="mt-1 text-green-700">Patvirtinkite atlikimą arba grąžinkite užduotį tobulinti.</p>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center justify-between mt-2 mb-1 px-2 gap-2">
+                                        <button
+                                            onClick={() => handleConfirmCompletion(notif.id, notif.taskId)}
+                                            className="flex items-center justify-center gap-2 px-5 py-2 bg-green-100 text-green-700 hover:bg-green-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                            title="Patvirtinti užduoties atlikimą"
+                                        >
+                                            <Check className="w-4 h-4" />
+                                            Patvirtinti
+                                        </button>
+                                        <button
+                                            onClick={() => handleRevertTask(notif.id, notif.taskId, notif.userName)}
+                                            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                            title="Grąžinti į darbų sąrašą"
+                                        >
+                                            <RotateCcw className="w-4 h-4" />
+                                            Sugrąžinti į darbų sąrašą
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    }
+                    
+                    // --- Time Extension Request Notification ---
+                    if (notif.type === 'time_extension_request') {
+                        return (
+                            <div
+                                key={notif.id}
+                                className="rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl border bg-red-50 border-red-200"
+                            >
+                                <div className="flex flex-col gap-3">
+                                    {/* Header */}
+                                    <div className="flex items-start gap-3">
+                                        <Clock className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-600" />
+                                        <div>
+                                            <div className="text-sm text-red-800">
+                                                <p className="font-medium leading-relaxed">
+                                                    <span className="font-semibold">
+                                                        {formatDisplayName(notif.userName)}
+                                                    </span>{' '}
+                                                    išnaudojo visą numatomą laiką užduočiai "{notif.taskTitle}" atlikti. Aptarkite tolesnę eigą ir jei reikia, pratęskite numatomą laiką.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Action Buttons */}
+                                <div className="flex items-center justify-end mt-4 mb-1 gap-3 flex-wrap">
+                                    {/* Do Not Extend */}
+                                    <button
+                                        onClick={() => handleDismissExtension(notif.id)}
+                                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                    >
+                                        <X className="w-4 h-4" />
+                                        Nepratęsti
+                                    </button>
+
+                                    {/* Edit Task To Extend */}
+                                    <button
+                                        onClick={async () => {
+                                            // Dismiss notification
+                                            await handleDismissTask(notif.id);
+                                            // Open task modal without changing status
+                                            if (onEditAndApprove) {
+                                                try {
+                                                    const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
+                                                    if (taskSnap.exists()) {
+                                                        onEditAndApprove({ id: taskSnap.id, ...taskSnap.data() });
+                                                    }
+                                                } catch (e) {
+                                                    console.error("Failed to load task for extending time:", e);
+                                                }
+                                            }
+                                        }}
+                                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                    >
+                                        <Edit className="w-4 h-4" />
+                                        Redaguoti užduotį
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    }
+
+                // Default fallback for task assignments / approvals
+                return (
+                    <div key={notif.id} className="bg-amber-50 border border-amber-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+
+                        <div className="flex flex-col gap-3">
+                            <div className="flex items-start gap-3">
+                                <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                                <div>
+                                    <div className="text-sm text-amber-800">
+                                        <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> priskyrė Jus vadovu užduočiai:</p>
+                                        <p className="font-medium mt-1">"{notif.taskTitle}"</p>
+                                        {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
+                                        {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-amber-300 pl-2"> {notif.description}</p>}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-between mt-3 mb-1 px-2 gap-2">
+                                <div className="w-8 shrink-0"></div> {/* Left spacer to offset center */}
+
+                                <button
+                                    onClick={() => handleApproveTask(notif.id, notif.taskId)}
+                                    className="flex items-center justify-center gap-2 px-6 py-2 bg-green-100 text-green-700 hover:bg-green-200 rounded-lg transition-colors text-base font-semibold shadow-sm whitespace-nowrap"
+                                    title="Patvirtinti užduotį"
+                                >
+                                    <Check className="w-5 h-5" />
+                                    Taip, patvirtinti
+                                </button>
+
+                                <button
+                                    onClick={() => handleEditAndApprove(notif.id, notif.taskId)}
+                                    className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                    title="Patvirtinti ir redaguoti užduotį"
+                                >
+                                    <Edit className="w-4 h-4" />
+                                    Redaguoti ir Patvirtinti
+                                </button>
+
+                                <button
+                                    onClick={() => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle)}
+                                    className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-600 hover:bg-red-200 rounded transition-colors text-xs font-medium shrink-0 whitespace-nowrap"
+                                    title="Ištrinti užduotį"
+                                >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                    Ne, ištrinti
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            }
+
+            return null;
             })}
+            <DeleteConfirmationModal
+                isOpen={!!deleteModalData}
+                onClose={() => setDeleteModalData(null)}
+                onConfirm={confirmDelete}
+                taskTitle={deleteModalData?.taskTitle}
+            />
         </div>
     );
+}
+
+// Helper to parse estimated time strings including comma format (e.g. "1,5h")
+function parseTimeFromNotif(str) {
+    if (!str) return 0;
+    // Handle comma format like "1,5h" by converting to "1.5h"
+    const normalized = str.replace(',', '.');
+    return parseTimeStringToMinutes(normalized);
 }

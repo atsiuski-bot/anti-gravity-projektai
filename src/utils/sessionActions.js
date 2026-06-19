@@ -1,4 +1,4 @@
-import { doc, getDoc, updateDoc, collection, addDoc, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
 import { getLithuanianNow, getLithuanianDateString } from './timeUtils';
@@ -8,7 +8,7 @@ import { getLithuanianNow, getLithuanianDateString } from './timeUtils';
  * Automatically ends any existing session.
  * 
  * @param {string} userId 
- * @param {string} type - 'break', 'call', 'quick_work', 'task'
+ * @param {string} type - 'break', 'call', 'quickWork', 'task'
  * @param {Object} metadata - Additional data (e.g. taskId, taskTitle)
  */
 export const startSession = async (userId, type, metadata = {}) => {
@@ -31,34 +31,82 @@ export const startSession = async (userId, type, metadata = {}) => {
             resumableTaskIds.push(userData.workStatus.activeTaskId);
         }
 
-        // 3. End current session if exists and pause tasks
+        // Check if there is already a pausedSession holding a task
+        let inheritedPausedSession = null;
+        if (userData?.activeSession?.type !== 'task' && userData?.activeSession?.pausedSession) {
+            inheritedPausedSession = userData.activeSession.pausedSession;
+            if (inheritedPausedSession.type === 'task' && inheritedPausedSession.taskId) {
+                resumableTaskIds.push(inheritedPausedSession.taskId);
+            }
+        }
+
+        // 3. Pause current session if exists (collect promises, don't await yet)
+        let newPausedSession = null;
+        let pausePromise = Promise.resolve();
         if (userData?.activeSession?.type) {
             if (userData.activeSession.type === 'task' && userData.activeSession.taskId) {
-                const taskDoc = await getDoc(doc(db, 'tasks', userData.activeSession.taskId));
-                if (taskDoc.exists()) {
-                    await pauseTask({ id: taskDoc.id, ...taskDoc.data() });
-                }
-                // After pausing, we can call endSession safely (though pauseTask updates user status too)
-                // endSession will clear the activeSession field if pauseTask didn't already (pauseTask sets it to paused/idle legacy style)
-                await endSession(userId, userData, {}, true);
-            } else {
-                await endSession(userId, userData, {}, true);
-            }
-        } else {
-            // Check legacy states
-            if (userData?.breakState?.isTakingBreak) await endLegacySession(userId, 'break', userData);
-            else if (userData?.callState?.isCalling) await endLegacySession(userId, 'call', userData);
-            else if (userData?.quickWorkState?.isQuickWorking) await endLegacySession(userId, 'quick_work', userData);
-            else if (userData?.workStatus?.status === 'running') {
-                // Legacy Task Handling
-                const activeTaskId = userData.workStatus.activeTaskId;
-                if (activeTaskId) {
-                    const taskDoc = await getDoc(doc(db, 'tasks', activeTaskId));
+                // Fire pause in background — optimistic UI already shows it paused
+                pausePromise = getDoc(doc(db, 'tasks', userData.activeSession.taskId)).then(taskDoc => {
                     if (taskDoc.exists()) {
-                        await pauseTask({ id: taskDoc.id, ...taskDoc.data() });
+                        return pauseTask({ id: taskDoc.id, ...taskDoc.data() }, { skipUserStatusUpdate: true });
+                    }
+                }).catch(e => console.warn("Task pause error:", e));
+                newPausedSession = userData.activeSession;
+            } else {
+                newPausedSession = userData.activeSession;
+
+                // Log partial work_session for quick_work/call being interrupted
+                // so the pre-interruption time appears in reports
+                if ((userData.activeSession.type === 'quickWork' || userData.activeSession.type === 'call') && userData.activeSession.startTime) {
+                    const interruptNow = getLithuanianNow();
+                    const interruptStart = new Date(userData.activeSession.startTime);
+                    const partialDuration = (interruptNow - interruptStart) / (1000 * 60);
+                    if (partialDuration > (10 / 60)) {
+                        // Log the partial segment and capture doc ID for later renaming
+                        const partialType = userData.activeSession.type;
+                        const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greitas darbas');
+                        try {
+                            const partialDocRef = await addDoc(collection(db, 'work_sessions'), {
+                                taskId: `${partialType}_partial_${interruptNow.getTime()}`,
+                                taskTitle: partialTitle,
+                                userId: userId,
+                                userName: userData.displayName || 'Unknown',
+                                startTime: userData.activeSession.startTime,
+                                endTime: interruptNow.toISOString(),
+                                durationMinutes: partialDuration,
+                                date: getLithuanianDateString(interruptNow),
+                                createdAt: new Date().toISOString(),
+                                isQuickWork: partialType === 'quickWork',
+                                isSystemTask: partialType === 'call',
+                                isPartial: true
+                            });
+                            // Store partial doc ID on the paused session so we can rename it later
+                            newPausedSession = { ...newPausedSession, partialDocId: partialDocRef.id };
+                        } catch (e) {
+                            console.warn('Partial session log error:', e);
+                        }
                     }
                 }
             }
+        } else {
+            // Fire legacy cleanup in background
+            const legacyCleanup = async () => {
+                try {
+                    if (userData?.breakState?.isTakingBreak) await endLegacySession(userId, 'break', userData);
+                    else if (userData?.callState?.isCalling) await endLegacySession(userId, 'call', userData);
+                    else if (userData?.quickWorkState?.isQuickWorking) await endLegacySession(userId, 'quickWork', userData);
+                    else if (userData?.workStatus?.status === 'running') {
+                        const activeTaskId = userData.workStatus.activeTaskId;
+                        if (activeTaskId) {
+                            const taskDoc = await getDoc(doc(db, 'tasks', activeTaskId));
+                            if (taskDoc.exists()) {
+                                await pauseTask({ id: taskDoc.id, ...taskDoc.data() }, { skipUserStatusUpdate: true });
+                            }
+                        }
+                    }
+                } catch (e) { console.warn("Legacy cleanup error:", e); }
+            };
+            legacyCleanup(); // Fire and forget
         }
 
         // 4. Prepare new session data
@@ -67,16 +115,26 @@ export const startSession = async (userId, type, metadata = {}) => {
         const activeSession = {
             type,
             startTime,
-            ...metadata // contains taskId for tasks
+            pausedSession: newPausedSession || inheritedPausedSession,
+            ...metadata
         };
 
         // 5. Update User Doc
         const updates = {
             activeSession,
-            // Legacy Sync (Double Write)
+            // Clear all legacy active flags so timer components rely on activeSession!
+            'breakState.isTakingBreak': false,
+            'callState.isCalling': false,
+            'quickWorkState.isQuickWorking': false,
+            'workStatus.isWorking': false
         };
 
-        // Legacy: Update specific states based on type
+        // If we are starting a secondary session (not a task), ensure legacy workStatus shows paused
+        if (type !== 'task' && userData?.workStatus?.status === 'running') {
+            updates['workStatus.status'] = 'paused';
+        }
+
+        // Legacy: Update specific states based on type ONLY for the new active one
         if (type === 'break') {
             updates.breakState = {
                 isTakingBreak: true,
@@ -91,7 +149,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                 lastStartedAt: startTime,
                 resumableTaskIds: resumableTaskIds
             };
-        } else if (type === 'quick_work') {
+        } else if (type === 'quickWork') {
             updates.quickWorkState = {
                 isQuickWorking: true,
                 lastStartedAt: startTime,
@@ -106,7 +164,11 @@ export const startSession = async (userId, type, metadata = {}) => {
             };
         }
 
-        await updateDoc(userRef, updates);
+        // Run critical user doc update in parallel with task pause
+        await Promise.all([
+            updateDoc(userRef, updates),
+            pausePromise
+        ]);
 
     } catch (err) {
         console.error("Error starting session:", err);
@@ -137,7 +199,7 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
         if (!userData?.activeSession && !sessionOverrides.force) {
             if (userData?.breakState?.isTakingBreak) await endLegacySession(userId, 'break', userData);
             else if (userData?.callState?.isCalling) await endLegacySession(userId, 'call', userData);
-            else if (userData?.quickWorkState?.isQuickWorking) await endLegacySession(userId, 'quick_work', userData);
+            else if (userData?.quickWorkState?.isQuickWorking) await endLegacySession(userId, 'quickWork', userData);
             return;
         }
 
@@ -148,77 +210,154 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
         const durationMinutes = (now - start) / (1000 * 60);
         const sessionDate = getLithuanianDateString(now);
 
-        // 1. Log to generic 'sessions'
-        if (durationMinutes > (10 / 60)) { // Minimal threshold
-            try {
-                await addDoc(collection(db, 'sessions'), {
-                    userId,
-                    userName: userData.displayName || 'Unknown',
-                    type: session.type,
-                    startTime: session.startTime,
-                    endTime: now.toISOString(),
-                    durationMinutes,
-                    date: sessionDate,
-                    metadata: session
-                });
-            } catch (logErr) {
-                // Silently ignore permission errors for generic sessions as they are optional/beta
-                // console.debug("Failed to log generic session (likely permissions):", logErr);
+        // 1. Prepare User State Update (CRITICAL PATH - must be fast)
+        const updates = {};
+        let restoredSession = null;
+
+        if (session.pausedSession && !skipResume) {
+            restoredSession = { ...session.pausedSession };
+
+            // Set start time to NOW (end of interruption) because the pre-interruption
+            // portion was already logged as a partial work_session in startSession.
+            restoredSession.startTime = now.toISOString();
+
+            updates.activeSession = restoredSession;
+
+            // Restore legacy flags so UI timers continue running
+            if (restoredSession.type === 'quickWork') {
+                updates['quickWorkState.isQuickWorking'] = true;
+                if (userData?.quickWorkState?.resumableTaskIds) {
+                    updates['quickWorkState.resumableTaskIds'] = userData.quickWorkState.resumableTaskIds;
+                }
+            } else if (restoredSession.type === 'call') {
+                updates['callState.isCalling'] = true;
+                if (userData?.callState?.resumableTaskIds) {
+                    updates['callState.resumableTaskIds'] = userData.callState.resumableTaskIds;
+                }
+            } else if (restoredSession.type === 'break') {
+                updates['breakState.isTakingBreak'] = true;
+                if (userData?.breakState?.resumableTaskIds) {
+                    updates['breakState.resumableTaskIds'] = userData.breakState.resumableTaskIds;
+                }
+            } else if (restoredSession.type === 'task') {
+                updates['workStatus.isWorking'] = true;
+                updates['workStatus.status'] = 'running';
+                updates['workStatus.activeTaskId'] = restoredSession.taskId || null;
             }
+        } else {
+            updates.activeSession = null;
         }
 
-        // 2. Double Write to Legacy Collections
-        try {
-            await handleLegacyLogging(userId, userData, session, now, durationMinutes);
-        } catch (legacyLogErr) {
-            console.warn("Failed to log legacy session:", legacyLogErr);
-        }
-
-        // 3. Clear User State
-        const updates = {
-            activeSession: null
-        };
-
-        // Legacy Clear
+        // Apply legacy clears for the session that just ended
         if (session.type === 'break') {
             updates['breakState.isTakingBreak'] = false;
             updates['breakState.dailyAccumulatedMinutes'] = (userData.breakState?.dailyAccumulatedMinutes || 0) + durationMinutes;
         } else if (session.type === 'call') {
             updates['callState.isCalling'] = false;
-        } else if (session.type === 'quick_work') {
+        } else if (session.type === 'quickWork') {
             updates['quickWorkState.isQuickWorking'] = false;
         } else if (session.type === 'task') {
             updates['workStatus.isWorking'] = false;
-            updates['workStatus.status'] = 'idle';
-            updates['workStatus.activeTaskId'] = null;
+            if (!restoredSession || restoredSession.type !== 'task') {
+                updates['workStatus.status'] = 'idle';
+                updates['workStatus.activeTaskId'] = null;
+            }
         }
 
+        // 2. CRITICAL: Update user doc immediately (this is what the UI waits for)
         await updateDoc(userRef, updates);
 
+        // 3. Non-critical logging — fire and forget, don't block the caller
+        const doLogging = async () => {
+            try {
+                const logPromises = [];
+                if (durationMinutes > (10 / 60)) {
+                    logPromises.push(
+                        addDoc(collection(db, 'sessions'), {
+                            userId,
+                            userName: userData.displayName || 'Unknown',
+                            type: session.type,
+                            startTime: session.startTime,
+                            endTime: now.toISOString(),
+                            durationMinutes,
+                            date: sessionDate,
+                            metadata: session
+                        }).catch(() => { /* ignore */ })
+                    );
+                }
+                logPromises.push(
+                    handleLegacyLogging(userId, userData, session, now, durationMinutes)
+                        .catch(e => console.warn("Legacy log error:", e))
+                );
+                await Promise.all(logPromises);
+            } catch (e) { /* swallow */ }
+        };
+        doLogging(); // Fire and forget — no await
+
         // 4. Task Resumption Logic
-        // Determine resumable IDs from the state we just closed
         if (!skipResume) {
             let resumableTaskIds = [];
-            if (session.type === 'break') resumableTaskIds = userData.breakState?.resumableTaskIds || [];
-            else if (session.type === 'call') resumableTaskIds = userData.callState?.resumableTaskIds || [];
-            else if (session.type === 'quick_work') resumableTaskIds = userData.quickWorkState?.resumableTaskIds || [];
+
+            if (restoredSession) {
+                // If we restored a task session directly, we must resume that specific task
+                if (restoredSession.type === 'task' && restoredSession.taskId) {
+                    resumableTaskIds.push(restoredSession.taskId);
+                }
+                // If we restored a secondary session (quick_work, call), do NOT resume tasks yet!
+            } else {
+                // We did not restore any session, so we fully resume queued tasks
+                if (session.type === 'break') resumableTaskIds = userData.breakState?.resumableTaskIds || [];
+                else if (session.type === 'call') resumableTaskIds = userData.callState?.resumableTaskIds || [];
+                else if (session.type === 'quickWork') resumableTaskIds = userData.quickWorkState?.resumableTaskIds || [];
+            }
 
             if (resumableTaskIds && resumableTaskIds.length > 0) {
-                const resumePromises = resumableTaskIds.map(async (taskId) => {
-                    const tDoc = await getDoc(doc(db, 'tasks', taskId));
-                    if (tDoc.exists()) {
-                        const tData = { id: tDoc.id, ...tDoc.data() };
-                        // Only resume if task is paused AND not completed/confirmed/deleted
-                        if (tData.timerStatus === 'paused' &&
-                            !tData.completed &&
-                            tData.status !== 'completed' &&
-                            tData.status !== 'confirmed' &&
-                            tData.status !== 'deleted') {
-                            await resumeTask(tData, userId);
-                        }
+                // Fire and forget — task resumption should not block endSession
+                const doResume = async () => {
+                    try {
+                        const resumePromises = resumableTaskIds.map(async (taskId) => {
+                            const tDoc = await getDoc(doc(db, 'tasks', taskId));
+                            if (tDoc.exists()) {
+                                const tData = { id: tDoc.id, ...tDoc.data() };
+                                
+                                // SAFEGUARD: Fetch latest local user state to prevent race conditions.
+                                // If the user rapidly started a new task while we were fetching from the server,
+                                // we should abort resurrecting the old task.
+                                let userStartedAnotherTask = false;
+                                try {
+                                    // Fetch the real-time user document from server to prevent race conditions
+                                    // and avoid unreliable cache behavior that aborts resumes.
+                                    const latestUserDoc = await getDoc(doc(db, 'users', userId));
+                                    if (latestUserDoc.exists()) {
+                                        const uData = latestUserDoc.data();
+                                        if (uData?.activeSession?.taskId && uData.activeSession.taskId !== taskId) {
+                                            userStartedAnotherTask = true;
+                                        } else if (uData?.workStatus?.activeTaskId && uData.workStatus.activeTaskId !== taskId) {
+                                            userStartedAnotherTask = true;
+                                        }
+                                    }
+                                } catch (fetchErr) {
+                                    console.warn("Could not check latest user state in doResume", fetchErr);
+                                }
+
+                                if (!userStartedAnotherTask &&
+                                    tData.timerStatus === 'paused' &&
+                                    !tData.completed &&
+                                    tData.status !== 'completed' &&
+                                    tData.status !== 'confirmed' &&
+                                    tData.status !== 'deleted') {
+                                    await resumeTask(tData, userId);
+                                } else {
+                                    console.log(`Skipping background resume for ${taskId} (completed or superseded)`);
+                                }
+                            }
+                        });
+                        await Promise.allSettled(resumePromises);
+                    } catch (e) {
+                        console.warn("Task resume error:", e);
                     }
-                });
-                await Promise.allSettled(resumePromises);
+                };
+                doResume(); // Fire and forget — no await
             }
         }
 
@@ -234,7 +373,7 @@ const endLegacySession = async (userId, type, userData) => {
         let startTime;
         if (type === 'break') startTime = userData.breakState?.lastStartedAt;
         else if (type === 'call') startTime = userData.callState?.lastStartedAt;
-        else if (type === 'quick_work') startTime = userData.quickWorkState?.lastStartedAt;
+        else if (type === 'quickWork') startTime = userData.quickWorkState?.lastStartedAt;
 
         let duration = 0;
         const nowMoment = getLithuanianNow();
@@ -263,7 +402,7 @@ const endLegacySession = async (userId, type, userData) => {
             updates['breakState.dailyAccumulatedMinutes'] = (userData.breakState?.dailyAccumulatedMinutes || 0) + duration;
         } else if (type === 'call') {
             updates['callState.isCalling'] = false;
-        } else if (type === 'quick_work') {
+        } else if (type === 'quickWork') {
             updates['quickWorkState.isQuickWorking'] = false;
         }
 
@@ -294,70 +433,99 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         });
     } else if (session.type === 'call') {
         const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
-        // Log as Task
-        await addDoc(collection(db, 'tasks'), {
-            title: "Skambutis",
-            description: timeString,
-            status: "confirmed",
-            priority: "Medium",
-            assignedWorkerId: userId,
-            assignedWorkerName: userData.displayName || 'Unknown',
-            createdBy: userId,
-            creatorName: userData.displayName || 'Unknown',
-            createdAt: new Date().toISOString(),
-            completedAt: now.toISOString(),
-            completed: true,
-            confirmedBy: userId,
-            confirmedAt: now.toISOString(),
-            manualMinutes: durationMinutes,
-            isSystemTask: true
-        });
-        // Log Work Session
-        await addDoc(collection(db, 'work_sessions'), {
-            taskId: "call_" + now.getTime(),
-            taskTitle: "Skambutis",
-            workerId: userId,
-            workerName: userData.displayName || 'Unknown',
-            startTime: session.startTime,
-            endTime: now.toISOString(),
-            durationMinutes: durationMinutes,
-            date: sessionDate,
-            createdAt: new Date().toISOString(),
-            isSystemTask: true
-        });
-    } else if (session.type === 'quick_work') {
+        const callTitle = session.customTitle || "Skambutis";
+        // Log task + work session in PARALLEL
+        const callPromises = [
+            addDoc(collection(db, 'tasks'), {
+                title: callTitle,
+                description: timeString,
+                status: "confirmed",
+                priority: "Medium",
+                assignedUserId: userId,
+                assignedUserName: userData.displayName || 'Unknown',
+                createdBy: userId,
+                creatorName: userData.displayName || 'Unknown',
+                createdAt: new Date().toISOString(),
+                completedAt: now.toISOString(),
+                completed: true,
+                confirmedBy: userId,
+                confirmedAt: now.toISOString(),
+                manualMinutes: durationMinutes,
+                isSystemTask: true
+            }),
+            addDoc(collection(db, 'work_sessions'), {
+                taskId: "call_" + now.getTime(),
+                taskTitle: callTitle,
+                userId: userId,
+                userName: userData.displayName || 'Unknown',
+                startTime: session.startTime,
+                endTime: now.toISOString(),
+                durationMinutes: durationMinutes,
+                date: sessionDate,
+                createdAt: new Date().toISOString(),
+                isSystemTask: true
+            })
+        ];
+
+        // Retroactively rename the partial work_session that was logged when this call was interrupted
+        if (session.partialDocId && session.customTitle) {
+            callPromises.push(
+                updateDoc(doc(db, 'work_sessions', session.partialDocId), {
+                    taskTitle: session.customTitle
+                }).catch(e => console.warn('Failed to rename partial call session:', e))
+            );
+        }
+
+        await Promise.all(callPromises);
+    } else if (session.type === 'quickWork') {
         const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
         const title = session.customTitle || "Greitas darbas (Automatiškai išsaugotas)";
+        const isManager = userData.role === 'manager' || userData.role === 'admin';
 
-        await addDoc(collection(db, 'tasks'), {
-            title: title,
-            description: session.customTitle ? timeString : `${timeString} (Automatiškai sukurtas)`,
-            status: "completed",
-            priority: "Medium",
-            assignedWorkerId: userId,
-            assignedWorkerName: userData.displayName || 'Unknown',
-            createdBy: userId,
-            creatorName: userData.displayName || 'Unknown',
-            createdAt: new Date().toISOString(),
-            completedAt: now.toISOString(),
-            completed: true,
-            manualMinutes: durationMinutes,
-            isQuickWork: true,
-            autoStopped: !session.customTitle
-        });
+        // Log task + work session in PARALLEL
+        const logPromises = [
+            addDoc(collection(db, 'tasks'), {
+                title: title,
+                description: session.customTitle ? timeString : `${timeString} (Automatiškai sukurtas)`,
+                status: isManager ? "confirmed" : "completed",
+                priority: "Medium",
+                assignedUserId: userId,
+                assignedUserName: userData.displayName || 'Unknown',
+                createdBy: userId,
+                creatorName: userData.displayName || 'Unknown',
+                createdAt: new Date().toISOString(),
+                completedAt: now.toISOString(),
+                completed: true,
+                confirmedBy: isManager ? userId : null,
+                confirmedAt: isManager ? now.toISOString() : null,
+                manualMinutes: durationMinutes,
+                isQuickWork: true,
+                autoStopped: !session.customTitle
+            }),
+            addDoc(collection(db, 'work_sessions'), {
+                taskId: "quick_" + now.getTime(),
+                taskTitle: title,
+                userId: userId,
+                userName: userData.displayName || 'Unknown',
+                startTime: session.startTime,
+                endTime: now.toISOString(),
+                durationMinutes: durationMinutes,
+                date: sessionDate,
+                createdAt: new Date().toISOString(),
+                isQuickWork: true
+            })
+        ];
 
-        await addDoc(collection(db, 'work_sessions'), {
-            taskId: "quick_" + now.getTime(),
-            taskTitle: title,
-            workerId: userId,
-            workerName: userData.displayName || 'Unknown',
-            startTime: session.startTime,
-            endTime: now.toISOString(),
-            durationMinutes: durationMinutes,
-            date: sessionDate,
-            createdAt: new Date().toISOString(),
-            isQuickWork: true
-        });
+        // Retroactively rename the partial work_session that was logged when this session was interrupted
+        if (session.partialDocId && session.customTitle) {
+            logPromises.push(
+                updateDoc(doc(db, 'work_sessions', session.partialDocId), {
+                    taskTitle: session.customTitle
+                }).catch(e => console.warn('Failed to rename partial session:', e))
+            );
+        }
+
+        await Promise.all(logPromises);
     }
     // Note: 'task' type logging is usually handled by pauseTask inside taskActions. 
     // If we use startSession('task'), we must ensure taskActions.startTask was called or logic matches.

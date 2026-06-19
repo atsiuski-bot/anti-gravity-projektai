@@ -1,37 +1,26 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getFirestore } from "firebase/firestore";
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-    apiKey: "AIzaSyDXaHCrL8hKgaEedSXEIT-XSxhmIcCEuXU",
-    authDomain: "darbo-planavimas.firebaseapp.com",
-    projectId: "darbo-planavimas",
-    storageBucket: "darbo-planavimas.firebasestorage.app",
-    messagingSenderId: "198926113678",
-    appId: "1:198926113678:web:de7f0253681f8c667e62df",
-    measurementId: "G-J9ZMTZZSTF"
+    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDXaHCrL8hKgaEedSXEIT-XSxhmIcCEuXU",
+    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "darbo-planavimas.firebaseapp.com",
+    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "darbo-planavimas",
+    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "darbo-planavimas.firebasestorage.app",
+    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "198926113678",
+    appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:198926113678:web:de7f0253681f8c667e62df",
+    measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-J9ZMTZZSTF"
 };
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Clear old corrupted Firestore cache from IndexedDB
-// This prevents "INTERNAL ASSERTION FAILED: Unexpected state" errors
-if (typeof indexedDB !== 'undefined') {
-    try {
-        // Delete old persistent cache databases
-        indexedDB.deleteDatabase('firestore/darbo-planavimas/default');
-        indexedDB.deleteDatabase('firestore/[DEFAULT]/darbo-planavimas/main');
-        console.log('Cleared old Firestore cache');
-    } catch (e) {
-        console.warn('Could not clear old cache:', e);
-    }
-}
-
-// Initialize Firestore with standard configuration
-// Note: Removed persistentLocalCache due to internal SDK errors
-export const db = getFirestore(app);
+// Initialize Firestore with persistent cache for instant loads
+// Cache serves data immediately while syncing with the server in background
+export const db = initializeFirestore(app, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+});
 
 export const storage = getStorage(app);
 

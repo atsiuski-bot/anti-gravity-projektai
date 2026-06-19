@@ -23,7 +23,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
             const now = new Date();
 
             tasks.forEach(task => {
-                if (task.timerStatus === 'running' && task.timerStartedAt && task.assignedWorkerId === currentUser?.uid) {
+                if (task.timerStatus === 'running' && task.timerStartedAt && task.assignedUserId === currentUser?.uid) {
                     const start = new Date(task.timerStartedAt);
                     if (!isNaN(start.getTime())) {
                         totalActiveMillis += (now - start);
@@ -54,7 +54,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
         // 1. Fetch Work Sessions (Actual Worked Hours - FINISHED ONLY)
         const sessionsQuery = query(
             collection(db, 'work_sessions'),
-            where('workerId', '==', currentUser.uid),
+            where('userId', '==', currentUser.uid),
             where('date', 'in', weekDays)
         );
 
@@ -63,6 +63,8 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
             let wWorked = 0;
             snapshot.docs.forEach(doc => {
                 const data = doc.data();
+                if (data.isDeleted) return;
+
                 const duration = (data.durationMinutes || 0) / 60;
                 wWorked += duration;
                 if (data.date === todayStr) {

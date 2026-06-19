@@ -1,22 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { db } from '../firebase';
-import { doc, updateDoc, deleteDoc, setDoc } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, FileText, CheckCircle2, MessageSquare, Calendar, Archive, Trash2, ArrowUp, ArrowDown, ImageIcon } from 'lucide-react';
-import { LinksModal, CommentsModal, DescriptionModal, ImageModal } from './TaskDetailsModals';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2 } from 'lucide-react';
+import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
-import { parseTimeStringToMinutes, formatMinutesToTimeString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
-import { pauseOtherTasks, archiveTask, deleteTask } from '../utils/taskActions';
-import { formatDisplayName } from '../utils/formatters';
+import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow } from '../utils/timeUtils';
+import { deleteTask, revertTask } from '../utils/taskActions';
+import { toggleTaskCompletion } from '../utils/taskCompletionActions';
+import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
+import { STATUS_LABELS, STATUS_COLORS } from '../utils/taskConstants';
+import SessionTypeIcon from './SessionTypeIcon';
 
-export default function TaskTable({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) {
-    const { currentUser, userRole } = useAuth();
+const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown, hideCheckboxes }) => {
+    const { currentUser, userRole, userData } = useAuth();
     const [expandedComments, setExpandedComments] = useState({});
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null }); // { type: 'description'|'links'|'comments', taskId: string }
     const [refreshTick, setRefreshTick] = useState(0);
+    const [deleteModalTask, setDeleteModalTask] = useState(null);
 
     // Comment Editing State
     const [editingComment, setEditingComment] = useState({ taskId: null, index: null });
@@ -30,16 +34,63 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
         return () => clearInterval(interval);
     }, []);
 
-    // Helper to format duration in "3h 17min" or "17min" format
-    const formatDuration = (minutes) => {
-        const totalMinutes = Math.floor(minutes);
-        if (totalMinutes < 60) {
-            return `${totalMinutes}min`;
+
+
+    const handleAddAdjustment = async (taskId, date, h, m, reason) => {
+        try {
+            const task = tasks.find(t => t.id === taskId);
+            if (!task) return;
+            const durationMinutes = (parseInt(h) || 0) * 60 + (parseInt(m) || 0);
+
+            const now = getLithuanianNow();
+            const newSessionRef = await addDoc(collection(db, 'work_sessions'), {
+                taskId: task.id,
+                taskTitle: `🕒 Korekcija: ${task.title}${reason ? ` - ${reason}` : ''}`,
+                userId: task.assignedUserId || task.creatorId || 'unknown',
+                userName: task.assignedUserName || task.creatorName || 'Nežinomas',
+                startTime: new Date(date + 'T12:00:00').toISOString(),
+                endTime: new Date(date + 'T12:00:00').toISOString(),
+                durationMinutes: durationMinutes,
+                date: date,
+                createdAt: now.toISOString(),
+                isManualAdjustment: true
+            });
+
+            const newAdj = {
+                id: newSessionRef.id,
+                date: date,
+                durationMinutes: durationMinutes,
+                reason: reason,
+                createdAt: now.toISOString()
+            };
+
+            await updateDoc(doc(db, 'tasks', task.id), {
+                timeAdjustments: [...(task.timeAdjustments || []), newAdj],
+                updatedAt: new Date().toISOString()
+            });
+        } catch (err) {
+            console.error('Error adding adjustment:', err);
+            alert('Nepavyko pridėti laiko korekcijos: ' + err.message);
         }
-        const h = Math.floor(totalMinutes / 60);
-        const m = totalMinutes % 60;
-        if (m === 0) return `${h}h`;
-        return `${h}h ${m}min`;
+    };
+
+    const handleDeleteAdjustment = async (taskId, adj) => {
+        if (!window.confirm("Ar tikrai norite ištrinti šią korekciją?")) return;
+        try {
+            const task = tasks.find(t => t.id === taskId);
+            if (!task) return;
+
+            await deleteDoc(doc(db, 'work_sessions', adj.id));
+
+            const newAdjustments = (task.timeAdjustments || []).filter(a => a.id !== adj.id);
+            await updateDoc(doc(db, 'tasks', task.id), {
+                timeAdjustments: newAdjustments,
+                updatedAt: new Date().toISOString()
+            });
+        } catch (err) {
+            console.error('Error deleting adjustment:', err);
+            alert('Nepavyko ištrinti korekcijos.');
+        }
     };
 
     const handleUpdateComment = async (taskId, index, newText) => {
@@ -82,70 +133,18 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
         }));
     };
 
-    // Priority colors/labels handled via utility
-    /* const priorityColors = {
-        Low: 'bg-gray-800 text-white',
-        Medium: 'bg-gray-500 text-white',
-        High: 'bg-gray-200 text-gray-800',
-        Urgent: 'bg-yellow-50 text-black border border-yellow-200'
-    };
 
-    const priorityLabels = {
-        Low: 'Žemas',
-        Medium: 'Vidutinis',
-        High: 'Aukštas',
-        Urgent: 'Skubus'
-    }; */
-
-    const statusColors = {
-        'pending': 'bg-white text-gray-800 border border-gray-200',
-        'in-progress': 'bg-white text-gray-800 border border-gray-200',
-        'completed': 'bg-gray-200 text-gray-800',
-        'confirmed': 'bg-gray-100 text-gray-800 border-gray-200',
-        'unapproved': 'bg-amber-50 text-gray-800 border-amber-200'
-    };
-
-    const statusLabels = {
-        'pending': 'Nepradėtas',
-        'in-progress': 'Pradėtas',
-        'completed': 'Užbaigtas, nepriduotas',
-        'confirmed': 'Užbaigtas, priduotas',
-        'unapproved': 'Laukia patvirtinimo'
-    };
 
     const handleToggleComplete = async (taskId, currentStatus) => {
         try {
             const task = tasks.find(t => t.id === taskId);
             if (!task) return;
 
-            const isManagerOrAdmin = userRole === 'manager' || userRole === 'admin' || currentUser?.uid === task.managerId;
-            const willBeCompleted = !currentStatus;
-
-            if (willBeCompleted && !window.confirm("Ar tikrai norite užbaigti užduotį?")) {
+            if (!currentStatus && !window.confirm("Ar tikrai norite užbaigti užduotį?")) {
                 return;
             }
 
-            const taskData = {
-                ...task,
-                completed: willBeCompleted,
-                completedAt: willBeCompleted ? new Date().toISOString() : null,
-                completedBy: willBeCompleted ? currentUser.uid : null,
-                status: willBeCompleted ? (isManagerOrAdmin ? 'confirmed' : 'completed') : 'pending',
-                confirmedBy: willBeCompleted && isManagerOrAdmin ? currentUser.uid : null,
-                confirmedAt: willBeCompleted && isManagerOrAdmin ? new Date().toISOString() : null,
-                updatedAt: new Date().toISOString()
-            };
-
-            // Sanitize data to remove undefined values
-            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
-
-            if (willBeCompleted) {
-                // Changing to completed/confirmed - do NOT archive immediately
-                // Tasks will be archived by the nightly automation if they are from a previous day
-                await updateDoc(doc(db, 'tasks', taskId), taskData);
-            } else {
-                await updateDoc(doc(db, 'tasks', taskId), taskData);
-            }
+            await toggleTaskCompletion(task, currentUser.uid, userRole, task.managerId);
         } catch (err) {
             console.error("Error toggling task completion:", err);
         }
@@ -154,7 +153,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
     const handleConfirmTask = async (taskId) => {
         // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
         // Task-level managers (who are not system managers) cannot confirm.
-        if (userRole !== 'manager' && userRole !== 'admin') {
+        if (!isManagerRole(userRole)) {
             alert("Tik vadovai gali patvirtinti užduotis.");
             return;
         }
@@ -196,23 +195,34 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
         }
     };
 
-    const handleDeleteTask = async (taskId, taskTitle) => {
-        if (!window.confirm(`Ar tikrai norite ištrinti užduotį "${taskTitle}"?`)) {
-            return;
-        }
+    const handleDeleteTask = (taskId, taskTitle) => {
+        const taskToDelete = tasks.find(t => t.id === taskId) || { id: taskId, title: taskTitle };
+        setDeleteModalTask(taskToDelete);
+    };
 
+    const confirmDeleteTask = async ({ keepWorkHours }) => {
+        if (!deleteModalTask) return;
         try {
-            // Find full task object if needed, but deleteTask mainly needs ID
-            // We pass the full task object just in case (for archiving/backup)
-            const taskToDelete = tasks.find(t => t.id === taskId) || { id: taskId, title: taskTitle };
-            await deleteTask(taskToDelete, currentUser.uid);
+            await deleteTask(deleteModalTask, currentUser.uid, { keepWorkHours });
+            setDeleteModalTask(null);
         } catch (err) {
             console.error("Error deleting task:", err);
             alert("Nepavyko ištrinti užduoties: " + err.message);
         }
     };
 
+    const isTaskRunning = (task) => {
+        if (currentUser?.uid !== task.assignedUserId || task.timerStatus !== 'running') return false;
+        const activeSession = userData?.activeSession;
+        if (activeSession) return activeSession.type === 'task' && activeSession.taskId === task.id;
+        if (userData?.workStatus?.status === 'running') return userData.workStatus.activeTaskId === task.id;
+        if (userData?.workStatus?.status === 'idle' || userData?.workStatus?.status === 'paused') return false;
+        return false;
+    };
+
     const getStatusStyle = (task) => {
+        if (isTaskRunning(task)) return 'bg-green-200 border-green-300';
+
         const status = task.status || 'pending';
         if (status === 'confirmed') return 'bg-gray-50';
         if (status === 'completed') return 'bg-gray-100';
@@ -235,7 +245,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
     };
 
     const isWorker = role === 'worker';
-    const canManage = userRole === 'manager' || userRole === 'admin';
+    const canManage = isManagerRole(userRole);
 
     return (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
@@ -248,11 +258,13 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                     #
                                 </th>
                             )}
-                            <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
-                                ✓
-                            </th>
+                            {!hideCheckboxes && (
+                                <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-10">
+                                    ✓
+                                </th>
+                            )}
                             <th className={`px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider ${!isWorker ? 'w-72' : ''}`}>Užduotis</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Darb.</th>
+                            <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Darb.</th>
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Žyma</th>
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Atlikti iki</th>
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Prior.</th>
@@ -260,19 +272,19 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-14" title="Numatytas laikas">Num.</th>
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-16">Nuorodos</th>
                             <th className="px-1 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-10 text-center">Kom.</th>
-                            {(userRole === 'manager' || userRole === 'admin') && <th className="px-1 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Patv.</th>}
+                            {canManage && <th className="px-1 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Patv.</th>}
                             <th className="px-1 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Veik.</th>
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {tasks.map((task) => {
-                            const isAssignedToMe = currentUser?.uid === task.assignedWorkerId;
+                            const isAssignedToMe = currentUser?.uid === task.assignedUserId;
                             return (
                                 <React.Fragment key={task.id}>
                                     <tr className={clsx(
                                         "transition-colors",
                                         getStatusStyle(task),
-                                        !task.completed && "hover:bg-gray-50"
+                                        !task.completed && "hover:opacity-90"
                                     )}>
                                         {showReorderControls && (
                                             <td className="px-2 py-3 text-center">
@@ -294,29 +306,36 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                                 </div>
                                             </td>
                                         )}
-                                        <td className="px-1 py-3 text-center">
-                                            <input
-                                                type="checkbox"
-                                                checked={task.completed || false}
-                                                onChange={() => {
-                                                    if (isAssignedToMe) {
-                                                        handleToggleComplete(task.id, task.completed);
-                                                    }
-                                                }}
-                                                disabled={!isAssignedToMe || task.status === 'confirmed'}
-                                                className={clsx(
-                                                    "w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500",
-                                                    isAssignedToMe && task.status !== 'confirmed' ? "cursor-pointer" : "cursor-not-allowed opacity-50"
-                                                )}
-                                            />
-                                        </td>
+                                        {!hideCheckboxes && (
+                                            <td className="px-1 py-3 text-center">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={task.completed || false}
+                                                    onChange={() => {
+                                                        if (isAssignedToMe) {
+                                                            handleToggleComplete(task.id, task.completed);
+                                                        }
+                                                    }}
+                                                    disabled={!isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved'}
+                                                    className={clsx(
+                                                        "w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500",
+                                                        isAssignedToMe && task.status !== 'confirmed' && task.status !== 'unapproved' ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+                                                    )}
+                                                />
+                                            </td>
+                                        )}
                                         <td className="px-1 py-3">
                                             <div className={clsx(
                                                 "text-sm font-medium break-words rounded px-2 py-1",
-                                                task.completed ? "text-gray-500 line-through" : "text-gray-900",
+                                                (task.completed || task.isDeleted) ? "text-gray-500 line-through" : "text-gray-900",
                                                 task.status === 'unapproved' ? "bg-gray-200 text-gray-700" : ""
                                             )}>
                                                 {task.title}
+                                                {task.isDeleted && (
+                                                    <span className="ml-2 inline-block no-underline px-1.5 py-0.5 text-[9px] font-bold bg-red-100 text-red-600 rounded border border-red-200 align-middle" style={{ textDecoration: 'none' }}>
+                                                        Ištrintas
+                                                    </span>
+                                                )}
                                             </div>
                                             {(task.managerName || task.creatorName) && (
                                                 <div className="text-[9px] text-purple-600 font-medium mt-0.5 opacity-80">
@@ -327,9 +346,12 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                             {task.description && (
                                                 <button
                                                     onClick={() => setActiveModal({ type: 'description', taskId: task.id })}
-                                                    className="text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50/50 p-1 rounded-md transition-colors line-clamp-3 text-left w-full mt-1 border border-transparent hover:border-blue-100 whitespace-pre-wrap"
+                                                    className="text-xs text-gray-600 hover:text-blue-600 hover:bg-blue-50/50 p-1 rounded-md transition-colors line-clamp-3 text-left w-full mt-1 border border-transparent hover:border-blue-100 whitespace-pre-wrap flex items-start gap-1"
                                                 >
-                                                    <FileText className="w-3 h-3 inline mr-1 flex-shrink-0 text-blue-500" />
+                                                    <SessionTypeIcon
+                                                        type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
+                                                        className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+                                                    />
                                                     {task.description}
                                                 </button>
                                             )}
@@ -339,7 +361,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                                 <div className="mt-2 space-y-1.5 pl-2 border-l-2 border-indigo-100">
                                                     {task.comments.map((comment, index) => {
                                                         const isEditing = editingComment.taskId === task.id && editingComment.index === index;
-                                                        const canEdit = (userRole === 'manager' || userRole === 'admin') || comment.userId === currentUser.uid;
+                                                        const canEdit = canManage || comment.userId === currentUser.uid;
 
                                                         return (
                                                             <div key={index} className="text-[11px] bg-indigo-50/30 rounded p-1.5 group hover:bg-indigo-50/60 transition-colors">
@@ -417,13 +439,13 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                             )}
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
-                                            {task.assignedWorkerName && (
+                                            {task.assignedUserName && (
                                                 <div
                                                     className="inline-flex items-center justify-center p-[3px] rounded-full"
                                                     style={{ backgroundColor: task.assignedWorkerColor || '#3b82f6' }}
                                                 >
-                                                    <span className="px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-white text-gray-800 border border-white/50 max-w-[80px] truncate">
-                                                        {formatDisplayName(task.assignedWorkerName)}
+                                                    <span className="px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-white text-gray-800 border border-white/50 max-w-[120px] truncate block">
+                                                        👤 {formatDisplayName(task.assignedUserName)}
                                                     </span>
                                                 </div>
                                             )}
@@ -455,18 +477,40 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                             <div className="flex flex-col gap-0.5">
                                                 <span className={clsx(
                                                     "px-1.5 py-0.5 inline-flex text-[10px] leading-4 font-semibold rounded-full max-w-[100px] truncate",
-                                                    statusColors[task.status || 'pending']
+                                                    STATUS_COLORS[task.status || 'pending']
                                                 )}>
-                                                    {statusLabels[task.status || 'pending']}
+                                                    {STATUS_LABELS[task.status || 'pending']}
                                                 </span>
-                                                {task.status === 'in-progress' && (() => {
+                                                {(() => {
                                                     const totalMinutes = calculateCurrentTotalMinutes(task);
-                                                    return totalMinutes > 0 ? (
-                                                        <span className="text-[9px] text-gray-500 font-medium">
-                                                            {formatDuration(totalMinutes)}
-                                                        </span>
-                                                    ) : null;
+                                                    const hasStarted = task.status && task.status !== 'pending';
+                                                    if (totalMinutes > 0 || hasStarted) {
+                                                        return (
+                                                            <div className="flex items-center gap-1 mt-0.5 min-h-[14px]">
+                                                                <span className="text-[10px] text-blue-600 font-bold whitespace-nowrap">
+                                                                    {formatMinutesToTimeString(totalMinutes)}
+                                                                </span>
+                                                                {canManage && (
+                                                                    <button onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'timeAdjustments', taskId: task.id }); }} className="text-blue-500 hover:text-blue-700" title="Koreguoti laiką">
+                                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    } else if (canManage && task.status === 'pending') {
+                                                        return (
+                                                            <div className="flex items-center gap-1 mt-0.5 min-h-[14px]">
+                                                                <button onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'timeAdjustments', taskId: task.id }); }} className="text-blue-500 hover:text-blue-700" title="Koreguoti laiką">
+                                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21036H3v-3.572L16.732 3.732z" /></svg>
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    }
+                                                    return null;
                                                 })()}
+                                                {task.timeChanged && (
+                                                    <span className="text-red-600 font-bold text-[9px] uppercase tracking-wide">⚠ Pakeistas laikas</span>
+                                                )}
                                             </div>
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap text-xs text-gray-500">
@@ -521,7 +565,7 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                                 )}
                                             </button>
                                         </td>
-                                        {(userRole === 'manager' || userRole === 'admin') && (
+                                        {canManage && (
                                             <td className="px-1 py-3 text-center">
                                                 {task.status === 'completed' && task.status !== 'confirmed' && (
                                                     canManage ? (
@@ -558,6 +602,23 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                                         className="text-blue-600 hover:text-blue-900 font-medium"
                                                     >
                                                         Redaguoti
+                                                    </button>
+                                                )}
+                                                {(task.completed || task.isDeleted) && canManage && (
+                                                    <button
+                                                        onClick={async () => {
+                                                            if (!window.confirm('Ar tikrai norite grąžinti šią užduotį?')) return;
+                                                            try {
+                                                                await revertTask(task);
+                                                            } catch (err) {
+                                                                alert('Nepavyko grąžinti užduoties: ' + err.message);
+                                                            }
+                                                        }}
+                                                        className="text-amber-600 hover:text-amber-800 font-medium flex items-center justify-end gap-1"
+                                                        title="Grąžinti užduotį"
+                                                    >
+                                                        <Undo2 className="w-3 h-3" />
+                                                        Grąžinti
                                                     </button>
                                                 )}
                                                 {(canManage || !isWorker) && (
@@ -615,11 +676,42 @@ export default function TaskTable({ tasks, onEdit, role, showReorderControls, on
                                 onClose={() => setActiveModal({ type: null, taskId: null })}
                                 imageUrls={task.attachmentUrls && task.attachmentUrls.length > 0 ? task.attachmentUrls : (task.attachmentUrl ? [task.attachmentUrl] : [])}
                             />
+                            <TimeAdjustmentsModal
+                                isOpen={activeModal.type === 'timeAdjustments'}
+                                onClose={() => setActiveModal({ type: null, taskId: null })}
+                                task={task}
+                                onAddAdjustment={handleAddAdjustment}
+                                onDeleteAdjustment={handleDeleteAdjustment}
+                            />
                         </>
                     );
                 })()
             }
 
+            <DeleteConfirmationModal
+                isOpen={!!deleteModalTask}
+                onClose={() => setDeleteModalTask(null)}
+                onConfirm={confirmDeleteTask}
+                taskTitle={deleteModalTask?.title || ''}
+            />
         </div >
     );
-}
+};
+
+export default React.memo(TaskTable, (prevProps, nextProps) => {
+    if (prevProps.role !== nextProps.role) return false;
+    if (prevProps.showReorderControls !== nextProps.showReorderControls) return false;
+    if (prevProps.tasks?.length !== nextProps.tasks?.length) return false;
+
+    // Fast check by reference and updatedAt
+    for (let i = 0; i < (prevProps.tasks?.length || 0); i++) {
+        const prevTask = prevProps.tasks[i];
+        const nextTask = nextProps.tasks[i];
+        if (prevTask.id !== nextTask.id) return false; // order changed
+        if (prevTask.updatedAt !== nextTask.updatedAt) return false;
+        if (prevTask.status !== nextTask.status) return false;
+        if (prevTask.comments?.length !== nextTask.comments?.length) return false;
+        if (prevTask.timeChanged !== nextTask.timeChanged) return false;
+    }
+    return true;
+});

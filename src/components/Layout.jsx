@@ -4,7 +4,7 @@ import { LogOut, User } from 'lucide-react';
 import BottomNavigation from './BottomNavigation';
 import InstallPrompt from './InstallPrompt';
 import { checkAndPromoteTasks, shouldRunAutomation } from '../utils/automationUtils';
-import { formatDisplayName } from '../utils/formatters';
+import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { useSessionNotification } from '../hooks/useSessionNotification';
 
 export default function Layout({ children }) {
@@ -18,7 +18,7 @@ export default function Layout({ children }) {
 
     // Run task automation once per day for managers/admins
     useEffect(() => {
-        if ((userRole === 'manager' || userRole === 'admin') && shouldRunAutomation()) {
+        if (isManagerRole(userRole) && shouldRunAutomation()) {
             checkAndPromoteTasks();
         }
     }, [userRole]);
@@ -38,20 +38,33 @@ export default function Layout({ children }) {
         };
     }, []);
 
-    // Extract state values with memoization to prevent unnecessary re-renders
-    const isCalling = useMemo(() => userData?.callState?.isCalling || false, [userData?.callState?.isCalling]);
-    const isQuickWorking = useMemo(() => userData?.quickWorkState?.isQuickWorking || false, [userData?.quickWorkState?.isQuickWorking]);
-    const isRunning = useMemo(() => workStatus?.status === 'running', [workStatus?.status]);
+    // Derive active session type — activeSession is the primary source of truth.
+    // Legacy flags are only used as fallback when no activeSession exists.
+    const sessionType = userData?.activeSession?.type || null;
 
-    // Determine background color based on state priority (memoized for performance)
-    // Priority: Quick Work (Red) > Call (Blue) > Break (Amber) > Working (Green) > Default (White)
+    const isQuickWorking = sessionType === 'quickWork' || (!sessionType && (userData?.quickWorkState?.isQuickWorking || false));
+    const isCalling = sessionType === 'call' || (!sessionType && (userData?.callState?.isCalling || false));
+    const isRunning = sessionType === 'task' || (!sessionType && workStatus?.status === 'running');
+
+    // Determine background color based on activeSession.type (primary source of truth).
+    // Priority: Quick Work (Red) > Call (Blue) > Break (Amber) > Task Running (Green) > Default (White)
     const bgColor = useMemo(() => {
-        if (isQuickWorking) return 'bg-red-500'; // Much more intense red for Quick Work
-        if (isCalling) return 'bg-blue-100'; // Light Blue for Call
-        if (isTakingBreak) return 'bg-amber-100'; // Break
-        if (isRunning) return 'bg-green-200'; // Actively working
-        return 'bg-white'; // Default (idle or paused)
-    }, [isQuickWorking, isCalling, isTakingBreak, isRunning]);
+        if (sessionType) {
+            switch (sessionType) {
+                case 'quickWork': return 'bg-red-500';
+                case 'call': return 'bg-blue-100';
+                case 'break': return 'bg-amber-100';
+                case 'task': return 'bg-green-200';
+                default: return 'bg-white';
+            }
+        }
+        // Legacy fallback (for cases where activeSession is absent but legacy flags exist)
+        if (isQuickWorking) return 'bg-red-500';
+        if (isCalling) return 'bg-blue-100';
+        if (isTakingBreak) return 'bg-amber-100';
+        if (isRunning) return 'bg-green-200';
+        return 'bg-white';
+    }, [sessionType, isQuickWorking, isCalling, isTakingBreak, isRunning]);
 
     // Use system notification hook to show notification in phone's status bar
     useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning });

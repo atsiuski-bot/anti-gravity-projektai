@@ -10,17 +10,7 @@ export const logCalendarChange = async (currentUser, type, start, end) => {
     const hour = now.getHours();
     const minute = now.getMinutes();
 
-    // Check time window: Mon 00:01 to Fri 14:00
-    let isWithinWindow = false;
-    if (day === 1) { // Monday
-        if (hour > 0 || (hour === 0 && minute >= 1)) isWithinWindow = true;
-    } else if (day > 1 && day < 5) { // Tue, Wed, Thu
-        isWithinWindow = true;
-    } else if (day === 5) { // Friday
-        if (hour < 14) isWithinWindow = true;
-    }
 
-    if (!isWithinWindow) return;
 
     // Determine week start (Monday)
     const weekStart = startOfWeek(now, { weekStartsOn: 1 });

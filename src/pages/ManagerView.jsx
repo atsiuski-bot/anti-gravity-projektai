@@ -13,13 +13,18 @@ import Reports from '../components/Reports';
 import DailyStatistics from '../components/DailyStatistics';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import ManagerNotifications from '../components/ManagerNotifications';
+import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
 import { useAuth } from '../context/AuthContext';
+
 import { useNavigation } from '../context/NavigationContext';
 
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
 import { getPriorityRank, PRIORITIES, getPriorityLabel } from '../utils/priority';
 import { migrateOldDeletedTasks } from '../utils/migrateDeletedTasks';
 
+import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
+import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
+import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
 
@@ -31,15 +36,19 @@ export default function ManagerView() {
     const [viewMode, setViewMode] = useState('desktop');
 
     // Use custom hooks
-    const { tasks, users, manualTaskOrder, saveManualOrder, error, loading } = useManagerData(currentUser);
+    const { tasks, users, allUsers, manualTaskOrder, saveManualOrder, error, loading } = useManagerData(currentUser);
     const {
         sortedTasks,
         filterUser, setFilterUser,
         filterPriority, setFilterPriority,
+        filterTag, setFilterTag,
         sortBy, setSortBy
     } = useTaskFiltering(tasks, manualTaskOrder);
 
-    const handleMoveUp = (taskId) => {
+    // Task time monitoring — 80% warning and 100% limit for manager's own tasks
+    const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(tasks);
+
+    const handleMoveUp = React.useCallback((taskId) => {
         const currentList = [...sortedTasks];
         const index = currentList.findIndex(t => t.id === taskId);
         if (index > 0) {
@@ -49,9 +58,9 @@ export default function ManagerView() {
             const newOrder = currentList.map(t => t.id);
             saveManualOrder(newOrder);
         }
-    };
+    }, [sortedTasks, saveManualOrder]);
 
-    const handleMoveDown = (taskId) => {
+    const handleMoveDown = React.useCallback((taskId) => {
         const currentList = [...sortedTasks];
         const index = currentList.findIndex(t => t.id === taskId);
         if (index < currentList.length - 1) {
@@ -61,7 +70,7 @@ export default function ManagerView() {
             const newOrder = currentList.map(t => t.id);
             saveManualOrder(newOrder);
         }
-    };
+    }, [sortedTasks, saveManualOrder]);
 
     useEffect(() => {
         // Simple responsive check
@@ -72,7 +81,10 @@ export default function ManagerView() {
         window.addEventListener('resize', handleResize);
         handleResize(); // Initial check
 
-        const handleOpenModalEvent = () => handleCreateTask();
+        const handleOpenModalEvent = () => {
+            setEditingTask(null);
+            setIsModalOpen(true);
+        };
         window.addEventListener('open-task-modal', handleOpenModalEvent);
 
         return () => {
@@ -86,12 +98,11 @@ export default function ManagerView() {
         setIsModalOpen(true);
     };
 
-    const handleEditTask = (task) => {
+    const handleEditTask = React.useCallback((task) => {
         setEditingTask(task);
         setIsModalOpen(true);
-    };
+    }, []);
 
-    // Scroll restoration logic
     // Scroll restoration logic
     useEffect(() => {
         requestAnimationFrame(() => {
@@ -108,7 +119,8 @@ export default function ManagerView() {
                 </div>
             )}
 
-            <ManagerNotifications />
+            <ManagerNotifications onEditAndApprove={handleEditTask} />
+            <CalendarRequestStatusBanner />
 
             {/* Tab Content */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
@@ -151,6 +163,19 @@ export default function ManagerView() {
                                 <option value={PRIORITIES.VERY_LOW}>{getPriorityLabel(PRIORITIES.VERY_LOW)}</option>
                             </select>
                         </div>
+                        <div className="relative">
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <select
+                                value={filterTag}
+                                onChange={(e) => setFilterTag(e.target.value)}
+                                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                            >
+                                <option value="">Visi Tagai</option>
+                                {TASK_TAGS.map(tag => (
+                                    <option key={`filter-${tag}`} value={tag}>{tag}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
 
                     {/* Sort dropdown */}
@@ -163,6 +188,7 @@ export default function ManagerView() {
                         >
                             <option value="none">Numatyta tvarka</option>
                             <option value="status">Pagal būseną</option>
+                            <option value="priority">Pagal prioritetą</option>
                             <option value="user">Pagal vartotoją</option>
                             <option value="deadline-user">Pagal terminą-vartotoją</option>
                             <option value="user-priority">Pagal vartotoją-prioritetą</option>
@@ -196,6 +222,7 @@ export default function ManagerView() {
                         showReorderControls={sortBy === 'manual'}
                         onMoveUp={handleMoveUp}
                         onMoveDown={handleMoveDown}
+                        hideCheckboxes={true}
                     />
                 )}
             </div>
@@ -203,7 +230,7 @@ export default function ManagerView() {
             <div className={activeTab === 'my-tasks' ? 'block' : 'hidden'}>
                 {/* Reuse worker view logic for "My Tasks" */}
                 {(() => {
-                    const myTasks = tasks.filter(t => t.assignedWorkerId === currentUser?.uid);
+                    const myTasks = tasks.filter(t => t.assignedUserId === currentUser?.uid);
                     const filteredMyTasks = myTasks;
                     const sortedMyTasks = sortWorkerTasks(filteredMyTasks);
 
@@ -232,6 +259,7 @@ export default function ManagerView() {
                                     tasks={sortedMyTasks}
                                     onEdit={handleEditTask}
                                     role="worker" // Mimic worker view columns/actions
+                                    hideCheckboxes={true}
                                 />
                             )}
                         </>
@@ -250,7 +278,7 @@ export default function ManagerView() {
             </div>
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
-                <Reports users={users} />
+                <Reports users={allUsers || users} />
             </div>
 
             <div className={activeTab === 'my-reports' ? 'block' : 'hidden'}>
@@ -277,6 +305,24 @@ export default function ManagerView() {
                     role="manager"
                 />
             )}
+
+            {/* Time monitoring popups */}
+            {warningPopup && (
+                <TaskTimeWarningPopup
+                    task={warningPopup.task}
+                    remaining={warningPopup.remaining}
+                    onDismiss={dismissWarning}
+                />
+            )}
+            {limitPopup && (
+                <TaskTimeLimitPopup
+                    task={limitPopup.task}
+                    estimatedTime={limitPopup.estimatedTime}
+                    actualMinutes={limitPopup.actualMinutes}
+                    onDismiss={dismissLimit}
+                />
+            )}
         </div>
     );
 }
+

@@ -57,13 +57,15 @@ export default function WorkerCalendarReport({ users }) {
 
             const q = query(
                 collection(db, 'work_sessions'),
-                where('workerId', '==', selectedUserId),
+                where('userId', '==', selectedUserId),
                 where('date', '>=', startStr),
                 where('date', '<=', endStr)
             );
 
             const querySnapshot = await getDocs(q);
-            const sessions = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const sessions = querySnapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter(session => !session.isDeleted);
 
             // Process events
             const newEvents = sessions.map(session => ({
@@ -178,7 +180,7 @@ export default function WorkerCalendarReport({ users }) {
                             className="pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm bg-white min-w-[200px] w-full"
                         >
                             <option value="" disabled>Pasirinkite darbuotoją</option>
-                            {users?.filter(u => !u.isDisabled).map(u => (
+                            {users?.map(u => (
                                 <option key={u.id} value={u.id}>
                                     {formatDisplayName(u.displayName || u.email)}
                                 </option>
