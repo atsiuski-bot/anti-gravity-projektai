@@ -1,8 +1,13 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    match /{allPaths=**} {
-      allow read, write: if request.auth != null;
+    // The app only ever uploads task attachments (TaskModal -> attachments/<id>_<name>).
+    // Scope all access to that prefix so an authenticated user can no longer read or
+    // write arbitrary paths anywhere in the bucket. Require auth and cap upload size.
+    match /attachments/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                   && (request.resource == null || request.resource.size < 100 * 1024 * 1024);
     }
   }
 }
