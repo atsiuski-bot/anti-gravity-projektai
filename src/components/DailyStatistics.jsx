@@ -310,7 +310,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     // ALL sessions go into the timeline — Quick Work and Calls are regular work sessions,
     // they were previously excluded to avoid double-count with manualTasks but that caused them to vanish.
-    const validSessions = useMemo(() => sessions, [sessions]);
+    const validSessions = sessions;
 
     // Active Sessions Integration
     const activeTaskSessionsForToday = useMemo(() => {
