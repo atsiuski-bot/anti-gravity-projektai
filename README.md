@@ -1,4 +1,3 @@
-# Anti Gravity Project
+# WORKZ
 
-This is a demo file to show how git versions work.
-We are currently in the second version of the project.
+Productivity app (Viduramžiai.LT).
