@@ -162,7 +162,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             );
         } catch (err) {
             console.error("Error approving calendar request:", err);
-            alert("Nepavyko patvirtinti užklausos. " + (err.message || ''));
+            alert("Nepavyko patvirtinti užklausos. Bandykite dar kartą.");
         }
     };
 
@@ -196,7 +196,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             await handleDismissTask(notificationId);
         } catch (err) {
             console.error("Error approving task:", err);
-            alert("Nepavyko patvirtinti užduoties: " + err.message);
+            alert("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
         }
     };
 
@@ -224,7 +224,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             }
         } catch (err) {
             console.error("Error in edit and approve:", err);
-            alert("Nepavyko patvirtinti užduoties: " + err.message);
+            alert("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
         }
     };
 
@@ -249,7 +249,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             setDeleteModalData(null);
         } catch (err) {
             console.error("Error deleting task:", err);
-            alert("Nepavyko ištrinti užduoties: " + err.message);
+            alert("Nepavyko ištrinti užduoties. Bandykite dar kartą.");
         }
     };
 
@@ -300,7 +300,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             await handleDismissTask(notificationId);
         } catch (err) {
             console.error('Error reverting task:', err);
-            alert('Nepavyko grąžinti užduoties: ' + err.message);
+            alert('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
         }
     };
 
@@ -588,34 +588,32 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                 </div>
                             </div>
 
-                            <div className="flex items-center justify-between mt-3 mb-1 px-2 gap-2">
-                                <div className="w-8 shrink-0"></div> {/* Left spacer to offset center */}
-
+                            <div className="mt-3 mb-1 flex flex-wrap items-center gap-2">
                                 <button
                                     onClick={() => handleApproveTask(notif.id, notif.taskId)}
-                                    className="flex items-center justify-center gap-2 px-6 py-2 bg-green-100 text-green-700 hover:bg-green-200 rounded-lg transition-colors text-base font-semibold shadow-sm whitespace-nowrap"
+                                    className="inline-flex min-h-touch items-center justify-center gap-2 whitespace-nowrap rounded-control bg-green-100 px-4 text-sm font-semibold text-green-800 shadow-sm transition-colors hover:bg-green-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
                                     title="Patvirtinti užduotį"
                                 >
-                                    <Check className="w-5 h-5" />
-                                    Taip, patvirtinti
+                                    <Check className="w-4 h-4" aria-hidden="true" />
+                                    Patvirtinti
                                 </button>
 
                                 <button
                                     onClick={() => handleEditAndApprove(notif.id, notif.taskId)}
-                                    className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                    className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-brand-soft px-4 text-sm font-semibold text-brand-hover shadow-sm transition-colors hover:bg-brand-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                     title="Patvirtinti ir redaguoti užduotį"
                                 >
-                                    <Edit className="w-4 h-4" />
-                                    Redaguoti ir Patvirtinti
+                                    <Edit className="w-4 h-4" aria-hidden="true" />
+                                    Redaguoti
                                 </button>
 
                                 <button
                                     onClick={() => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle)}
-                                    className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-600 hover:bg-red-200 rounded transition-colors text-xs font-medium shrink-0 whitespace-nowrap"
+                                    className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-red-100 px-4 text-sm font-semibold text-red-700 shadow-sm transition-colors hover:bg-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-700"
                                     title="Ištrinti užduotį"
                                 >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                    Ne, ištrinti
+                                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                                    Ištrinti
                                 </button>
                             </div>
                         </div>
