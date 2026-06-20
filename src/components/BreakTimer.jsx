@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
-import { Coffee, Play } from 'lucide-react';
+import { Coffee, Play, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { SoundManager } from '../utils/soundUtils';
@@ -17,9 +18,12 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
 
     const isDisabled = isSecondarySessionActive && !isTakingBreak && activeSessionType !== 'quickWork';
 
+    const [error, setError] = useState('');
+
     const handleToggleBreak = async () => {
         if (!currentUser || isDisabled) return;
 
+        setError('');
         try {
             if (!isTakingBreak) {
                 // Optimistic UI Update: Instantly assume break started, clear all other sessions
@@ -84,7 +88,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
             console.error("Error toggling break:", err);
             // Revert optimistic update on failure (it will naturally happen on next snapshot, but we can clear it immediately)
             setOptimisticUserData(null);
-            alert("Klaida keičiant pertraukos būseną.");
+            setError("Nepavyko pakeisti pertraukos būsenos. Bandykite dar kartą.");
         }
     };
 
@@ -93,35 +97,46 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
     if (compact) {
         return (
             <div className="flex flex-col items-center">
-                {isTakingBreak && (
-                    <span className="text-[10px] font-bold text-gray-700 font-mono mb-1 leading-none">
+                {isTakingBreak ? (
+                    <span
+                        className="text-body-lg font-bold text-session-break-accent font-mono mb-1 leading-6"
+                        aria-live="polite"
+                    >
                         {totalDisplay}
                     </span>
-                )}
-                {!isTakingBreak && (
-                    <span className="text-[10px] font-bold text-transparent font-mono mb-1 leading-none select-none">
+                ) : (
+                    <span className="text-body-lg font-bold text-transparent font-mono mb-1 leading-6 select-none" aria-hidden="true">
                         00:00
                     </span>
                 )}
                 <button
                     onClick={handleToggleBreak}
                     disabled={isDisabled}
+                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pertrauka")}
                     className={clsx(
-                        "p-2 rounded-lg transition-all active:scale-95",
+                        "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                         isDisabled
-                            ? "opacity-50 cursor-not-allowed bg-gray-50 text-gray-400"
+                            ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isTakingBreak
-                                ? 'bg-amber-500 text-white ring-2 ring-amber-100'
-                                : 'text-gray-600 hover:bg-gray-100'
+                                ? 'bg-session-break-accent text-white ring-2 ring-amber-100'
+                                : 'text-ink hover:bg-surface-sunken'
                     )}
                     title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pertrauka")}
                 >
                     {isTakingBreak ? (
-                        <Play className="w-5 h-5 fill-current" />
+                        <Play className="w-5 h-5 fill-current" aria-hidden="true" />
                     ) : (
-                        <Coffee className="w-5 h-5" />
+                        <Coffee className="w-5 h-5" aria-hidden="true" />
                     )}
                 </button>
+
+                {error && (
+                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-2" role="alert">
+                        <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
+                        <p className="text-caption text-red-700">{error}</p>
+                    </div>
+                )}
             </div>
         );
     }
@@ -130,36 +145,47 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
         <div className="flex items-center gap-3">
             {isTakingBreak && (
                 <div className="flex flex-col items-end mr-2">
-                    <span className="text-sm font-medium text-gray-700 font-mono">
+                    <span className="text-body-lg font-bold text-session-break-accent font-mono" aria-live="polite">
                         {totalDisplay}
                     </span>
                 </div>
             )}
 
-            <button
-                onClick={handleToggleBreak}
-                disabled={isDisabled}
-                className={clsx(
-                    "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm",
-                    isDisabled ? "bg-gray-100 text-gray-400 cursor-not-allowed border border-gray-200" :
-                        isTakingBreak
-                            ? 'bg-amber-100 text-amber-800 hover:bg-amber-200 border border-amber-200'
-                            : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
+            <div className="flex flex-col items-stretch">
+                <button
+                    onClick={handleToggleBreak}
+                    disabled={isDisabled}
+                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pertrauka")}
+                    className={clsx(
+                        "inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2.5 rounded-control text-body font-medium transition-colors shadow-sm",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
+                        isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border border-line" :
+                            isTakingBreak
+                                ? 'bg-session-break-surface text-amber-800 hover:bg-amber-100 border border-amber-200'
+                                : 'bg-surface-card text-ink hover:bg-surface-sunken border border-line'
+                    )}
+                    title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
+                >
+                    {isTakingBreak ? (
+                        <>
+                            <Play className="w-4 h-4 fill-current" aria-hidden="true" />
+                            Tęsti darbą
+                        </>
+                    ) : (
+                        <>
+                            <Coffee className="w-4 h-4" aria-hidden="true" />
+                            Pertrauka
+                        </>
+                    )}
+                </button>
+
+                {error && (
+                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-2" role="alert">
+                        <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
+                        <p className="text-caption text-red-700">{error}</p>
+                    </div>
                 )}
-                title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
-            >
-                {isTakingBreak ? (
-                    <>
-                        <Play className="w-4 h-4 fill-current" />
-                        Tęsti darbą
-                    </>
-                ) : (
-                    <>
-                        <Coffee className="w-4 h-4" />
-                        Pertrauka
-                    </>
-                )}
-            </button>
+            </div>
         </div>
     );
 }

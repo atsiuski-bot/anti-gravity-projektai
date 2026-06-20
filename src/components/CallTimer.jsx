@@ -1,13 +1,15 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
-import { Phone, Square, X, Check } from 'lucide-react';
+import { Phone, Square, X, Check, ShieldAlert } from 'lucide-react';
 import ReactDOM from 'react-dom';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import IconButton from './ui/IconButton';
+import Button from './ui/Button';
 
 // Separate memoized modal component to prevent re-renders from timer updates
 const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) {
@@ -23,35 +25,29 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
     };
 
     return ReactDOM.createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4">
             <form
                 onSubmit={handleSubmit}
-                className="bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+                className="bg-white w-full max-w-md rounded-modal shadow-2xl flex flex-col overflow-hidden"
                 style={{ maxHeight: '80vh' }}
             >
                 {/* Header */}
                 <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
                     <div>
                         <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                            <Phone className="w-6 h-6 text-sky-500" />
+                            <Phone className="w-6 h-6 text-session-call-accent" />
                             Skambučio pabaiga
                         </h3>
                         <p className="text-sm text-gray-500 mt-1">Įveskite skambučio aprašymą</p>
                     </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="text-gray-400 hover:text-gray-600 p-3 hover:bg-gray-100 rounded-full transition-colors"
-                    >
-                        <X className="w-7 h-7" />
-                    </button>
+                    <IconButton icon={X} label="Uždaryti" variant="ghost" onClick={onClose} />
                 </div>
 
                 {/* Content */}
                 <div className="p-5 flex-1 overflow-y-auto">
-                    <div className="mb-5 bg-sky-50 rounded-2xl p-4 border border-sky-200 flex items-center justify-between">
-                        <span className="text-sky-700 font-semibold text-base">Užfiksuotas laikas:</span>
-                        <span className="text-4xl font-mono font-bold text-sky-600">{totalDisplay}</span>
+                    <div className="mb-5 bg-session-call-surface rounded-2xl p-4 border border-blue-200 flex items-center justify-between">
+                        <span className="text-blue-700 font-semibold text-base">Užfiksuotas laikas:</span>
+                        <span className="text-4xl font-mono font-bold text-session-call-accent">{totalDisplay}</span>
                     </div>
 
                     <div>
@@ -87,24 +83,12 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
 
                 {/* Footer */}
                 <div className="p-4 border-t border-gray-200 bg-gray-50 flex gap-3 justify-end">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="px-6 py-3 text-sm text-gray-600 bg-white border-2 border-gray-300 hover:bg-gray-50 rounded-xl font-semibold transition-all shadow-sm">
+                    <Button type="button" variant="secondary" onClick={onClose}>
                         Atšaukti
-                    </button>
-                    <button
-                        type="submit"
-                        disabled={isSubmitting}
-                        className="px-8 py-3 text-sm bg-sky-600 hover:bg-sky-700 text-white rounded-xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                        {isSubmitting ? 'Saugoma...' : (
-                            <>
-                                <Check className="w-5 h-5" />
-                                Išsaugoti skambutį
-                            </>
-                        )}
-                    </button>
+                    </Button>
+                    <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
+                        {isSubmitting ? 'Saugoma...' : 'Išsaugoti skambutį'}
+                    </Button>
                 </div>
             </form>
         </div>,
@@ -126,9 +110,11 @@ export default function CallTimer({ compact = false }) {
 
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [error, setError] = useState('');
 
     const handleStartCall = async () => {
         if (!currentUser || isDisabled) return;
+        setError('');
         try {
             // Optimistic UI Update: Instantly assume call started, clear other sessions
             setOptimisticUserData({
@@ -149,7 +135,7 @@ export default function CallTimer({ compact = false }) {
         } catch (err) {
             console.error("Error starting call:", err);
             setOptimisticUserData(null); // Revert
-            alert("Klaida pradedant skambutį.");
+            setError("Nepavyko pradėti skambučio. Bandykite dar kartą.");
         }
     };
 
@@ -175,6 +161,7 @@ export default function CallTimer({ compact = false }) {
         if (!taskTitle || !taskTitle.trim()) return;
 
         setIsSubmitting(true);
+        setError('');
         try {
             // Determine what will be restored from pausedSession
             const pausedSession = userData?.activeSession?.pausedSession;
@@ -207,7 +194,7 @@ export default function CallTimer({ compact = false }) {
         } catch (err) {
             console.error("Error completing call:", err);
             setOptimisticUserData(null); // Revert
-            alert("Klaida išsaugant skambutį.");
+            setError("Nepavyko išsaugoti skambučio. Bandykite dar kartą.");
         } finally {
             setIsSubmitting(false);
         }
@@ -216,6 +203,7 @@ export default function CallTimer({ compact = false }) {
     const handleToggleCall = async () => {
         if (!currentUser || isDisabled) return;
 
+        setError('');
         try {
             if (!isCalling) {
                 await handleStartCall();
@@ -224,7 +212,7 @@ export default function CallTimer({ compact = false }) {
             }
         } catch (err) {
             console.error("Error toggling call:", err);
-            alert("Klaida keičiant skambučio būseną.");
+            setError("Nepavyko pakeisti skambučio būsenos. Bandykite dar kartą.");
         }
     };
 
@@ -244,14 +232,16 @@ export default function CallTimer({ compact = false }) {
     if (compact) {
         return (
             <div className="flex flex-col items-center">
-                {/* Timer Display */}
-                {isCalling && (
-                    <span className="text-[10px] font-bold text-blue-600 font-mono mb-1 leading-none animate-pulse">
+                {/* Timer Display — live readout (color is never the sole signal) */}
+                {isCalling ? (
+                    <span
+                        className="text-body-lg font-bold text-session-call-accent font-mono mb-1 leading-6 animate-pulse"
+                        aria-live="polite"
+                    >
                         {totalDisplay}
                     </span>
-                )}
-                {!isCalling && (
-                    <span className="text-[10px] font-bold text-transparent font-mono mb-1 leading-none select-none">
+                ) : (
+                    <span className="text-body-lg font-bold text-transparent font-mono mb-1 leading-6 select-none" aria-hidden="true">
                         00:00
                     </span>
                 )}
@@ -259,22 +249,31 @@ export default function CallTimer({ compact = false }) {
                 <button
                     onClick={handleToggleCall}
                     disabled={isDisabled}
+                    aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti skambutį")}
                     className={clsx(
-                        "p-2 rounded-lg transition-all active:scale-95 flex items-center justify-center",
+                        "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                         isDisabled
-                            ? "opacity-50 cursor-not-allowed bg-gray-50 text-gray-400"
+                            ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isCalling
-                                ? 'bg-sky-400 text-white ring-2 ring-sky-100'
-                                : 'text-gray-600 hover:bg-gray-100'
+                                ? 'bg-session-call-accent text-white ring-2 ring-blue-100'
+                                : 'text-ink hover:bg-surface-sunken'
                     )}
                     title={isCalling ? "Baigti skambutį" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti skambutį")}
                 >
                     {isCalling ? (
-                        <Square className="w-5 h-5 fill-current" />
+                        <Square className="w-5 h-5 fill-current" aria-hidden="true" />
                     ) : (
-                        <Phone className="w-5 h-5" />
+                        <Phone className="w-5 h-5" aria-hidden="true" />
                     )}
                 </button>
+
+                {error && (
+                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-2" role="alert">
+                        <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
+                        <p className="text-caption text-red-700">{error}</p>
+                    </div>
+                )}
 
                 {renderModal}
             </div>
@@ -287,36 +286,45 @@ export default function CallTimer({ compact = false }) {
             <button
                 onClick={handleToggleCall}
                 disabled={isDisabled}
+                aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti skambutį")}
                 className={clsx(
-                    "flex-1 flex items-center justify-between px-4 py-3 rounded-xl transition-all shadow-sm active:scale-95 border min-w-[140px]",
-                    isDisabled ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200" :
+                    "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition-all shadow-sm active:scale-95 border min-w-[140px]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
+                    isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isCalling
-                            ? 'bg-sky-50 border-sky-200 text-sky-900 ring-1 ring-sky-200'
-                            : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300'
+                            ? 'bg-session-call-surface border-blue-200 text-blue-900 ring-1 ring-blue-200'
+                            : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-gray-300'
                 )}
                 title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
             >
                 <div className="flex items-center gap-3">
-                    <div className={clsx("p-1.5 rounded-lg", isCalling ? "bg-sky-200 text-sky-700" : "bg-gray-100 text-gray-500")}>
+                    <div className={clsx("rounded-control", isCalling ? "text-session-call-accent" : "text-ink-muted")}>
                         {isCalling ? (
-                            <Square className="w-5 h-5 fill-current" />
+                            <Square className="w-5 h-5 fill-current" aria-hidden="true" />
                         ) : (
-                            <Phone className="w-5 h-5" />
+                            <Phone className="w-5 h-5" aria-hidden="true" />
                         )}
                     </div>
-                    <div className="flex flex-col items-start leading-none">
+                    <div className="flex flex-col items-start leading-tight">
                         <span className="text-xs font-bold uppercase tracking-wider opacity-70">Skambutis</span>
-                        {isCalling && <span className="text-[10px] font-semibold text-sky-600">Skambinama...</span>}
+                        {isCalling && <span className="text-caption font-semibold text-session-call-accent">Skambinama...</span>}
                     </div>
                 </div>
 
                 <span className={clsx(
                     "text-lg font-mono font-bold ml-2",
-                    isCalling ? "text-sky-600" : "text-gray-400"
+                    isCalling ? "text-session-call-accent" : "text-ink-muted"
                 )}>
                     {totalDisplay}
                 </span>
             </button>
+
+            {error && (
+                <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-3" role="alert">
+                    <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                    <p className="text-body text-red-700">{error}</p>
+                </div>
+            )}
 
             {renderModal}
         </>

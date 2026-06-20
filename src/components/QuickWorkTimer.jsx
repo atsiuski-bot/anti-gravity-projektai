@@ -2,12 +2,14 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import ReactDOM from 'react-dom';
-import { Zap, Square, X, Check } from 'lucide-react';
+import { Zap, Square, X, Check, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import IconButton from './ui/IconButton';
+import Button from './ui/Button';
 
 // Separate memoized modal component to prevent re-renders from timer updates
 const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) => {
@@ -23,10 +25,10 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
     };
 
     return ReactDOM.createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 p-4">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4">
             <form
                 onSubmit={handleSubmit}
-                className="bg-white w-full max-w-md rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+                className="bg-white w-full max-w-md rounded-modal shadow-2xl flex flex-col overflow-hidden"
                 style={{ maxHeight: '80vh' }}
             >
                 {/* Header */}
@@ -38,13 +40,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                         </h3>
                         <p className="text-sm text-gray-500 mt-1">Įveskite atlikto darbo aprašymą</p>
                     </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="text-gray-400 hover:text-gray-600 p-3 hover:bg-gray-100 rounded-full transition-colors"
-                    >
-                        <X className="w-7 h-7" />
-                    </button>
+                    <IconButton icon={X} label="Uždaryti" variant="ghost" onClick={onClose} />
                 </div>
 
                 {/* Content */}
@@ -87,24 +83,12 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
 
                 {/* Footer */}
                 <div className="p-4 border-t border-gray-200 bg-gray-50 flex gap-3 justify-end">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="px-6 py-3 text-sm text-gray-600 bg-white border-2 border-gray-300 hover:bg-gray-50 rounded-xl font-semibold transition-all shadow-sm">
+                    <Button type="button" variant="secondary" onClick={onClose}>
                         Atšaukti
-                    </button>
-                    <button
-                        type="submit"
-                        disabled={isSubmitting}
-                        className="px-8 py-3 text-sm bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                    >
-                        {isSubmitting ? 'Saugoma...' : (
-                            <>
-                                <Check className="w-5 h-5" />
-                                Išsaugoti darbą
-                            </>
-                        )}
-                    </button>
+                    </Button>
+                    <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
+                        {isSubmitting ? 'Saugoma...' : 'Išsaugoti darbą'}
+                    </Button>
                 </div>
             </form>
         </div>,
@@ -127,8 +111,9 @@ export default function QuickWorkTimer({ compact = false }) {
 
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [error, setError] = useState('');
 
-    // Listen for external stop requests is still good, 
+    // Listen for external stop requests is still good,
     // but session actions handle this via endSession usually. 
     // However, for the MODAL, we need local state.
     // If the session is stopped remotely (e.g. by starting a task), isQuickWorking becomes false.
@@ -140,6 +125,7 @@ export default function QuickWorkTimer({ compact = false }) {
 
     const handleStartQuickWork = async () => {
         if (!currentUser || isDisabled) return;
+        setError('');
         try {
             // Optimistic UI Update: Instantly assume Quick Work started, clear other sessions
             setOptimisticUserData({
@@ -156,7 +142,7 @@ export default function QuickWorkTimer({ compact = false }) {
         } catch (err) {
             console.error("Error starting quick work:", err);
             setOptimisticUserData(null); // Revert on error
-            alert("Klaida pradedant greitą darbą.");
+            setError("Nepavyko pradėti greito darbo. Bandykite dar kartą.");
         }
     };
 
@@ -182,6 +168,7 @@ export default function QuickWorkTimer({ compact = false }) {
         if (!taskTitle || !taskTitle.trim()) return;
 
         setIsSubmitting(true);
+        setError('');
         try {
             // Determine if a task will be resumed
             const resumableTasks = userData?.quickWorkState?.resumableTaskIds || [];
@@ -205,7 +192,7 @@ export default function QuickWorkTimer({ compact = false }) {
         } catch (err) {
             console.error("Error completing quick work:", err);
             setOptimisticUserData(null); // Revert on error
-            alert("Klaida išsaugant greitą darbą.");
+            setError("Nepavyko išsaugoti greito darbo. Bandykite dar kartą.");
         } finally {
             setIsSubmitting(false);
         }
@@ -225,15 +212,17 @@ export default function QuickWorkTimer({ compact = false }) {
     if (compact) {
         return (
             <div className="flex flex-col items-center">
-                {/* Timer Display */}
-                {isQuickWorking && (
-                    <span className="text-[10px] font-bold text-red-600 font-mono mb-1 leading-none animate-pulse">
+                {/* Timer Display — paired label + live readout (color is never the sole signal) */}
+                {isQuickWorking ? (
+                    <span
+                        className="text-body-lg font-bold text-session-quickWork-accent font-mono mb-1 leading-6 animate-pulse"
+                        aria-live="polite"
+                    >
                         {formatMinutesToTimeString(currentSessionMinutes)}
                     </span>
-                )}
-                {!isQuickWorking && (
-                    // Invisible placeholder to keep alignment
-                    <span className="text-[10px] font-bold text-transparent font-mono mb-1 leading-none select-none">
+                ) : (
+                    // Invisible placeholder to keep alignment (decorative spacer)
+                    <span className="text-body-lg font-bold text-transparent font-mono mb-1 leading-6 select-none" aria-hidden="true">
                         00:00
                     </span>
                 )}
@@ -241,22 +230,31 @@ export default function QuickWorkTimer({ compact = false }) {
                 <button
                     onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                     disabled={isDisabled}
+                    aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Greitas darbas")}
                     className={clsx(
-                        "p-2 rounded-lg transition-all active:scale-95 flex items-center justify-center",
+                        "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                         isDisabled
-                            ? "opacity-50 cursor-not-allowed bg-gray-50 text-gray-400"
+                            ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isQuickWorking
-                                ? 'bg-red-500 text-white ring-2 ring-red-200 shadow-lg shadow-red-500/20'
-                                : 'text-gray-600 hover:bg-gray-100'
+                                ? 'bg-session-quickWork-shell text-white ring-2 ring-red-200 shadow-lg shadow-red-500/20'
+                                : 'text-ink hover:bg-surface-sunken'
                     )}
                     title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Greitas darbas")}
                 >
                     {isQuickWorking ? (
-                        <Square className="w-5 h-5 fill-current" />
+                        <Square className="w-5 h-5 fill-current" aria-hidden="true" />
                     ) : (
-                        <Zap className="w-5 h-5 fill-current" />
+                        <Zap className="w-5 h-5 fill-current" aria-hidden="true" />
                     )}
                 </button>
+
+                {error && (
+                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-2" role="alert">
+                        <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
+                        <p className="text-caption text-red-700">{error}</p>
+                    </div>
+                )}
 
                 {renderModal}
             </div>
@@ -269,35 +267,44 @@ export default function QuickWorkTimer({ compact = false }) {
             <button
                 onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                 disabled={isDisabled}
+                aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti greitą darbą")}
                 className={clsx(
-                    "flex-1 flex items-center justify-between px-4 py-3 rounded-xl transition-all shadow-sm active:scale-95 border min-w-[140px]",
-                    isDisabled ? "bg-gray-100 text-gray-400 cursor-not-allowed border-gray-200" :
+                    "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition-all shadow-sm active:scale-95 border min-w-[140px]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
+                    isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isQuickWorking
-                            ? 'bg-red-50 border-red-200 text-red-900 ring-1 ring-red-200'
-                            : 'bg-white border-gray-200 text-gray-700 hover:bg-gray-50 hover:border-gray-300'
+                            ? 'bg-session-quickWork-surface border-red-200 text-red-900 ring-1 ring-red-200'
+                            : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-gray-300'
                 )}
                 title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
             >
                 <div className="flex items-center gap-3">
-                    <div className={clsx("p-1.5 rounded-lg", isQuickWorking ? "bg-red-200 text-red-700" : "bg-gray-100 text-gray-500")}>
+                    <div className={clsx("rounded-control", isQuickWorking ? "text-session-quickWork-accent" : "text-ink-muted")}>
                         {isQuickWorking ? (
-                            <Square className="w-5 h-5 fill-current" />
+                            <Square className="w-5 h-5 fill-current" aria-hidden="true" />
                         ) : (
-                            <Zap className="w-5 h-5 fill-current" />
+                            <Zap className="w-5 h-5 fill-current" aria-hidden="true" />
                         )}
                     </div>
-                    <div className="flex flex-col items-start leading-none">
+                    <div className="flex flex-col items-start leading-tight">
                         <span className="text-xs font-bold uppercase tracking-wider opacity-70">Greitas</span>
-                        {isQuickWorking && <span className="text-[10px] font-semibold text-red-600">Vyksta...</span>}
+                        {isQuickWorking && <span className="text-caption font-semibold text-session-quickWork-accent">Vyksta...</span>}
                     </div>
                 </div>
                 <span className={clsx(
                     "text-lg font-mono font-bold ml-2",
-                    isQuickWorking ? "text-red-600" : "text-gray-400"
+                    isQuickWorking ? "text-session-quickWork-accent" : "text-ink-muted"
                 )}>
                     {formatMinutesToTimeString(currentSessionMinutes)}
                 </span>
             </button>
+
+            {error && (
+                <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-3" role="alert">
+                    <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                    <p className="text-body text-red-700">{error}</p>
+                </div>
+            )}
 
             {renderModal}
         </>

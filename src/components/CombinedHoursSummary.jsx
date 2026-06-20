@@ -260,13 +260,17 @@ export default function CombinedHoursSummary() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
-                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
+                aria-expanded={!isCollapsed}
+                aria-label="Komandos savaitės darbai"
+                className="w-full flex items-center justify-between p-4 min-h-touch bg-gray-50 hover:bg-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
             >
                 <div className="flex items-center gap-2">
-                    <Users className="w-5 h-5 text-blue-600" />
+                    <Users className="w-5 h-5 text-brand" aria-hidden="true" />
                     <h3 className="font-semibold text-gray-900">Komandos darbai (Savaitės)</h3>
                 </div>
-                {isCollapsed ? <ChevronDown className="w-5 h-5 text-gray-500" /> : <ChevronUp className="w-5 h-5 text-gray-500" />}
+                {isCollapsed
+                    ? <ChevronDown className="w-5 h-5 text-gray-500" aria-hidden="true" />
+                    : <ChevronUp className="w-5 h-5 text-gray-500" aria-hidden="true" />}
             </button>
 
             {!isCollapsed && (
@@ -274,7 +278,7 @@ export default function CombinedHoursSummary() {
                     {/* Active Sessions (Veikla) */}
                     {activeSessions.length > 0 && (
                         <div>
-                            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 pl-1">
+                            <h4 className="text-caption font-semibold text-ink-muted uppercase tracking-wider mb-3 pl-1">
                                 Veikla
                             </h4>
                             <div className="space-y-2">
@@ -288,13 +292,13 @@ export default function CombinedHoursSummary() {
                     {/* Weekly Hours Bars */}
                     <div>
                         {combinedStats.data.length > 0 && (
-                            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 pl-1">
+                            <h4 className="text-caption font-semibold text-ink-muted uppercase tracking-wider mb-3 pl-1">
                                 Savaitės valandos
                             </h4>
                         )}
 
                         {combinedStats.data.length === 0 ? (
-                            <p className="text-gray-500 text-sm italic">Nėra duomenų.</p>
+                            <p className="text-body italic text-ink-muted">Nėra duomenų.</p>
                         ) : (
                             combinedStats.data.map(user => (
                                 <div key={user.id} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mb-3 last:mb-0">
@@ -313,7 +317,7 @@ export default function CombinedHoursSummary() {
                                     <div className="flex-1 flex flex-col gap-1.5">
                                         {/* Planned Bar */}
                                         <div className="flex items-center gap-2">
-                                            <span className="text-[10px] text-gray-500 font-mono w-12 text-right">
+                                            <span className="text-body-lg text-gray-500 font-mono w-16 text-right tabular-nums">
                                                 {user.plannedHours.toFixed(1)}h
                                             </span>
                                             <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
@@ -326,7 +330,7 @@ export default function CombinedHoursSummary() {
 
                                         {/* Worked Bar */}
                                         <div className="flex items-center gap-2">
-                                            <span className="text-[10px] text-gray-900 font-bold font-mono w-12 text-right">
+                                            <span className="text-body-lg text-gray-900 font-bold font-mono w-16 text-right tabular-nums">
                                                 {user.workedHours.toFixed(1)}h
                                             </span>
                                             <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
@@ -400,7 +404,7 @@ function ActiveSessionRow({ session }) {
                     {session.label}
                 </span>
             </div>
-            <span className="font-mono font-bold text-sm ml-4 whitespace-nowrap opacity-80">
+            <span className="font-mono font-bold text-body-lg ml-4 whitespace-nowrap tabular-nums">
                 {durationStr}
             </span>
         </div>
