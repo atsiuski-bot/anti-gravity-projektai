@@ -185,15 +185,63 @@ export default function DailyHoursSummary() {
                 <p className="text-xs text-gray-500 mt-1">Planuotos / Faktinės / Galimos valandos kiekvienai dienai</p>
             </div>
 
-            <div className="overflow-x-auto">
+            {/* Mobile: one card per user — never a horizontal table on a phone (§9) */}
+            <ul className="divide-y divide-gray-200 md:hidden">
+                {Object.entries(dailyStats).map(([userId, userData]) => (
+                    <li key={userId} className="p-4">
+                        <div className="flex items-center gap-2">
+                            <div
+                                className="w-3 h-3 rounded-full flex-shrink-0"
+                                style={{ backgroundColor: userData.color }}
+                            />
+                            <span className="text-sm font-medium text-gray-900 truncate" title={userData.name}>
+                                {userData.name}
+                            </span>
+                        </div>
+                        <dl className="mt-3 grid grid-cols-1 gap-1.5">
+                            {dayNames.map((day) => {
+                                const dayData = userData.days[day];
+                                const isOverbooked = dayData.planned > dayData.available && dayData.available > 0;
+                                const hasData = dayData.available > 0 || dayData.planned > 0;
+
+                                return (
+                                    <div key={day} className="flex items-center justify-between gap-3">
+                                        <dt className="text-caption text-gray-500">{day}</dt>
+                                        <dd className={`text-sm font-medium ${isOverbooked ? 'text-red-600' : 'text-gray-700'}`}>
+                                            {hasData ? (
+                                                <span className="flex items-center gap-1">
+                                                    {isOverbooked && (
+                                                        <>
+                                                            <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
+                                                            <span className="sr-only">Viršytas planas</span>
+                                                        </>
+                                                    )}
+                                                    <span>
+                                                        {dayData.planned.toFixed(1)} / <span className="text-green-600 font-bold">{dayData.actual.toFixed(1)}</span> / {dayData.available.toFixed(1)}h
+                                                    </span>
+                                                </span>
+                                            ) : (
+                                                <span className="text-gray-400">-</span>
+                                            )}
+                                        </dd>
+                                    </div>
+                                );
+                            })}
+                        </dl>
+                    </li>
+                ))}
+            </ul>
+
+            {/* Desktop: dense weekly hours table */}
+            <div className="hidden md:block overflow-x-auto">
                 <table className="min-w-full">
                     <thead className="bg-gray-50 border-b border-gray-200">
                         <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10">
+                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10">
                                 Vartotojas
                             </th>
                             {dayAbbr.map((day, idx) => (
-                                <th key={idx} className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th key={idx} scope="col" className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
                                     <div className="hidden sm:block">{dayNames[idx]}</div>
                                     <div className="sm:hidden">{day}</div>
                                 </th>
@@ -203,17 +251,17 @@ export default function DailyHoursSummary() {
                     <tbody className="bg-white divide-y divide-gray-200">
                         {Object.entries(dailyStats).map(([userId, userData]) => (
                             <tr key={userId} className="hover:bg-gray-50">
-                                <td className="px-4 py-3 whitespace-nowrap sticky left-0 bg-white">
+                                <th scope="row" className="px-4 py-3 whitespace-nowrap sticky left-0 bg-white text-left font-normal">
                                     <div className="flex items-center gap-2">
                                         <div
                                             className="w-3 h-3 rounded-full flex-shrink-0"
                                             style={{ backgroundColor: userData.color }}
                                         />
-                                        <span className="text-sm font-medium text-gray-900 truncate max-w-[120px]">
+                                        <span className="text-sm font-medium text-gray-900 truncate max-w-[120px]" title={userData.name}>
                                             {userData.name}
                                         </span>
                                     </div>
-                                </td>
+                                </th>
                                 {dayNames.map((day, idx) => {
                                     const dayData = userData.days[day];
                                     const isOverbooked = dayData.planned > dayData.available && dayData.available > 0;
@@ -221,16 +269,21 @@ export default function DailyHoursSummary() {
                                     return (
                                         <td key={idx} className="px-3 py-3 whitespace-nowrap text-center">
                                             {dayData.available > 0 || dayData.planned > 0 ? (
-                                                <div className={`text-xs font-medium ${isOverbooked ? 'text-red-600' : 'text-gray-700'}`}>
+                                                <div className={`text-sm font-medium ${isOverbooked ? 'text-red-600' : 'text-gray-700'}`}>
                                                     <div className="flex items-center justify-center gap-1">
-                                                        {isOverbooked && <AlertTriangle className="w-3 h-3" />}
+                                                        {isOverbooked && (
+                                                            <>
+                                                                <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
+                                                                <span className="sr-only">Viršytas planas</span>
+                                                            </>
+                                                        )}
                                                         <span>
                                                             {dayData.planned.toFixed(1)} / <span className="text-green-600 font-bold">{dayData.actual.toFixed(1)}</span> / {dayData.available.toFixed(1)}h
                                                         </span>
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <span className="text-xs text-gray-400">-</span>
+                                                <span className="text-sm text-gray-400">-</span>
                                             )}
                                         </td>
                                     );

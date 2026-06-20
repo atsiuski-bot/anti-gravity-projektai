@@ -974,12 +974,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                         <table className="w-full md:w-auto divide-y divide-gray-200 text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-gray-500">Darbuotojas</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-gray-500">Pradžia</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-gray-500">Pabaiga</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500">Pertraukos</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500">Užduotims</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-gray-500">Darbuotojas</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-gray-500">Pradžia</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-gray-500">Pabaiga</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500">Pertraukos</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500">Užduotims</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
@@ -988,10 +988,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                         <td className="px-4 py-3 text-gray-900 font-medium">
                                             {summary.name}
                                         </td>
-                                        <td className="px-4 py-3 text-center text-gray-600 font-mono text-xs">
+                                        <td className="px-4 py-3 text-center text-gray-600 font-mono text-sm">
                                             {formatTime(summary.earliestStart)}
                                         </td>
-                                        <td className="px-4 py-3 text-center text-gray-600 font-mono text-xs">
+                                        <td className="px-4 py-3 text-center text-gray-600 font-mono text-sm">
                                             {formatTime(summary.latestEnd)}
                                         </td>
                                         <td className="px-4 py-3 text-right text-amber-600 font-mono">
@@ -1069,9 +1069,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                         <table className="w-full md:w-auto divide-y divide-gray-200 text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-gray-500 w-24">Laikas</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-gray-500">Užduotis</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500 w-32">Trukmė</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-gray-500 w-24">Laikas</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-gray-500">Užduotis</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500 w-32">Trukmė</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
@@ -1522,7 +1522,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                     {formatDisplayName(userName).split(' ')[0]}
                                                 </span>
                                             </td>
-                                            <td className="px-1 py-2 text-right text-gray-900 font-mono text-caption whitespace-nowrap">
+                                            <td className="px-1 py-2 text-right text-gray-900 font-mono text-sm whitespace-nowrap">
                                                 {editingTimeTaskId === task.id ? (
                                                     <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
                                                         <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h

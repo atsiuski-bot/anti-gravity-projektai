@@ -119,13 +119,13 @@ END OF ERROR REPORT
                             Programa netikėtai sustojo. Nukopijuokite klaidos informaciją žemiau ir nusiųskite ją savo administratoriui.
                         </p>
 
-                        {/* Error Message */}
+                        {/* Error Message — friendly Lithuanian summary; raw text stays in the technical details section */}
                         {error && (
                             <div className="mb-6">
                                 <h2 className="text-sm font-semibold text-gray-700 mb-2">Klaidos pranešimas:</h2>
                                 <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
-                                    <p className="text-sm font-mono text-red-800 break-words">
-                                        {error.toString()}
+                                    <p className="text-sm text-red-800 break-words">
+                                        Programoje įvyko netikėta klaida ir ji negali tęsti darbo. Tikslią techninę informaciją rasite žemiau, ją galite nukopijuoti ir nusiųsti administratoriui.
                                     </p>
                                 </div>
                             </div>
@@ -143,7 +143,7 @@ END OF ERROR REPORT
                         <div className="mb-6">
                             <button
                                 onClick={this.toggleDetails}
-                                className="w-full flex items-center justify-between p-3 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-left"
+                                className="w-full flex items-center justify-between p-3 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                             >
                                 <span className="text-sm font-semibold text-gray-700">
                                     {showDetails ? 'Slėpti' : 'Rodyti'} techninę informaciją

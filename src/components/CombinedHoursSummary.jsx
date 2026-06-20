@@ -400,7 +400,7 @@ function ActiveSessionRow({ session }) {
                 <span className="font-semibold text-sm truncate">
                     {session.userName}
                 </span>
-                <span className="text-sm border-l border-current/20 pl-3 truncate opacity-90">
+                <span className="text-sm border-l border-current/20 pl-3 truncate">
                     {session.label}
                 </span>
             </div>

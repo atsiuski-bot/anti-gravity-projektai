@@ -561,14 +561,14 @@ export default function Reports({ users }) {
             <table className="min-w-full divide-y divide-gray-200 table-fixed">
                 <thead className="bg-gray-50">
                     <tr>
-                        <th className="px-2 py-2 text-center w-8 text-caption font-bold text-gray-500 uppercase tracking-wider">OK</th>
-                        <th className="px-2 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">UŽDUOTIS</th>
-                        <th className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-12">DARB.</th>
-                        <th className="px-1 py-2 text-right text-caption font-bold text-gray-500 uppercase tracking-wider w-24">LAIKAS</th>
-                        <th className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16">PRIO</th>
-                        <th className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16">BŪSENA</th>
-                        <th className="px-1 py-2 text-center text-caption font-bold text-gray-500 uppercase tracking-wider w-10">KOM.</th>
-                        <th className="px-1 py-2 text-right text-caption font-bold text-gray-500 uppercase tracking-wider w-16"></th>
+                        <th scope="col" className="px-2 py-2 text-center w-8 text-caption font-bold text-gray-500 uppercase tracking-wider">OK</th>
+                        <th scope="col" className="px-2 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">UŽDUOTIS</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-12">DARB.</th>
+                        <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-gray-500 uppercase tracking-wider w-24">LAIKAS</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16">PRIO</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16">BŪSENA</th>
+                        <th scope="col" className="px-1 py-2 text-center text-caption font-bold text-gray-500 uppercase tracking-wider w-10">KOM.</th>
+                        <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-gray-500 uppercase tracking-wider w-16"></th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
@@ -624,7 +624,7 @@ export default function Reports({ users }) {
                                         {formatDisplayName(userName).split(' ')[0]}
                                     </span>
                                 </td>
-                                <td className="px-1 py-2 whitespace-nowrap text-right text-caption font-medium font-mono">
+                                <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium font-mono">
                                     <span className="text-blue-600">{task.estimatedTime || '-'}</span>
                                     <span className="text-gray-400 mx-1">/</span>
                                     <span className="text-gray-900">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
@@ -1063,13 +1063,13 @@ export default function Reports({ users }) {
                                 <table className="min-w-full divide-y divide-gray-200">
                                     <thead className="bg-gray-50">
                                         <tr>
-                                            <th className="px-6 py-3 text-left text-caption uppercase tracking-wider font-bold text-gray-500">Darb.</th>
-                                            <th className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Darbas</th>
-                                            <th className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Pertraukos</th>
-                                            <th className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500" title="Bendras laikas: apima darbą ir pertraukas — ne tik darbo valandos.">Bendras laikas</th>
-                                            <th className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Dienų</th>
-                                            <th className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Vid.</th>
-                                            <th className="px-6 py-3 w-10"></th>
+                                            <th scope="col" className="px-6 py-3 text-left text-caption uppercase tracking-wider font-bold text-gray-500">Darb.</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Darbas</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Pertraukos</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500" title="Bendras laikas: apima darbą ir pertraukas — ne tik darbo valandos.">Bendras laikas</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Dienų</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Vid.</th>
+                                            <th scope="col" className="px-6 py-3 w-10"></th>
                                         </tr>
                                     </thead>
                                     <tbody className="bg-white divide-y divide-gray-200">
@@ -1201,12 +1201,12 @@ export default function Reports({ users }) {
                                 <table className="min-w-full divide-y divide-gray-200">
                                     <thead className="bg-gray-50">
                                         <tr>
-                                            <th className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Darbuotojas</th>
-                                            <th className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Data ir laikas (kalendoriuje)</th>
-                                            <th className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Veiksmas / tipas</th>
-                                            <th className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Keitimo laikas</th>
-                                            <th className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Patvirtino / būsena</th>
-                                            <th className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Priežastis</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Darbuotojas</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Data ir laikas (kalendoriuje)</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Veiksmas / tipas</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Keitimo laikas</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Patvirtino / būsena</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Priežastis</th>
                                         </tr>
                                     </thead>
                                     <tbody className="bg-white divide-y divide-gray-100">
