@@ -7,10 +7,25 @@ import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
-import { Clock, Plus, Trash2, AlertCircle, Info, ChevronLeft, ChevronRight, Home, Palmtree } from 'lucide-react';
+import { Clock, Plus, Trash2, AlertCircle, Info, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2 } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
+import Button from './ui/Button';
+import IconButton from './ui/IconButton';
+
+// Map raw / Firebase errors to friendly Lithuanian copy (DESIGN_SYSTEM §10).
+// Never surface raw err.message to the user.
+const friendlyCalendarError = (err) => {
+    const msg = (err && err.message) ? err.message.toLowerCase() : '';
+    if (msg.includes('permission') || msg.includes('insufficient')) {
+        return 'Jūs neturite leidimo atlikti šį veiksmą.';
+    }
+    if (msg.includes('network') || msg.includes('unavailable') || msg.includes('offline')) {
+        return 'Tinklo klaida. Patikrinkite ryšį ir bandykite dar kartą.';
+    }
+    return 'Nepavyko pateikti užklausos. Bandykite dar kartą.';
+};
 
 const locales = {
     'lt': lt,
@@ -33,22 +48,26 @@ const CustomToolbar = (toolbar) => {
             {/* Top Row: Buttons */}
             <div className="flex justify-between items-center w-full">
                 {/* Left: Week/Day */}
-                <div className="flex items-center bg-gray-100 rounded-lg overflow-hidden border border-gray-200 shadow-sm">
+                <div className="flex items-center bg-surface-sunken rounded-control overflow-hidden border border-line shadow-sm" role="group" aria-label="Rodinio pasirinkimas">
                     <button
                         onClick={() => toggleView('week')}
+                        aria-pressed={toolbar.view === 'week'}
                         className={clsx(
-                            "w-[90px] sm:w-[100px] h-[40px] text-sm font-semibold transition-colors flex items-center justify-center",
-                            toolbar.view === 'week' ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-200"
+                            "w-[90px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                            toolbar.view === 'week' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
                         )}
                     >
                         Savaitė
                     </button>
-                    <div className="w-[1px] h-[40px] bg-gray-200"></div>
+                    <div className="w-[1px] self-stretch bg-line"></div>
                     <button
                         onClick={() => toggleView('day')}
+                        aria-pressed={toolbar.view === 'day'}
                         className={clsx(
-                            "w-[90px] sm:w-[100px] h-[40px] text-sm font-semibold transition-colors flex items-center justify-center",
-                            toolbar.view === 'day' ? "bg-blue-600 text-white" : "text-gray-700 hover:bg-gray-200"
+                            "w-[90px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                            toolbar.view === 'day' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
                         )}
                     >
                         Diena
@@ -57,43 +76,42 @@ const CustomToolbar = (toolbar) => {
 
                 {/* Right: Today & Manual Add */}
                 <div className="flex flex-col gap-2 items-end">
-                    <button
+                    <Button
+                        variant="secondary"
+                        size="md"
                         onClick={goToToday}
-                        className="w-[90px] sm:w-[100px] h-[40px] text-sm font-bold bg-white hover:bg-gray-50 text-gray-700 border border-gray-200 rounded-lg shadow-sm transition-all active:scale-95 flex items-center justify-center"
+                        className="w-[90px] sm:w-[100px]"
                     >
                         Šiandien
-                    </button>
-                    <button
+                    </Button>
+                    <Button
+                        variant="primary"
+                        size="md"
+                        icon={Plus}
                         onClick={toolbar.onManualClick}
-                        className="flex items-center justify-center bg-blue-600 text-white px-2 py-1 rounded-md hover:bg-blue-700 transition-all active:scale-90 shadow-sm text-[10px] font-semibold"
                     >
-                        <Plus className="w-3 h-3 mr-1" />
                         Pridėti rankiniu būdu
-                    </button>
+                    </Button>
                 </div>
             </div>
 
             {/* Date Label & Navigation */}
             <div className="flex items-center justify-center gap-4 py-2">
-                <button
+                <IconButton
+                    icon={ChevronLeft}
+                    label="Ankstesnis laikotarpis"
                     onClick={() => toolbar.onNavigate('PREV')}
-                    className="p-1 hover:bg-gray-200 rounded-full transition-colors text-gray-600"
-                    aria-label="Atgal"
-                >
-                    <ChevronLeft className="w-6 h-6" />
-                </button>
+                />
 
-                <span className="text-lg font-bold text-gray-800 capitalize select-none min-w-[140px] text-center">
+                <span className="text-h3 font-bold text-ink-strong capitalize select-none min-w-[140px] text-center">
                     {toolbar.label}
                 </span>
 
-                <button
+                <IconButton
+                    icon={ChevronRight}
+                    label="Kitas laikotarpis"
                     onClick={() => toolbar.onNavigate('NEXT')}
-                    className="p-1 hover:bg-gray-200 rounded-full transition-colors text-gray-600"
-                    aria-label="Pirmyn"
-                >
-                    <ChevronRight className="w-6 h-6" />
-                </button>
+                />
             </div>
         </div>
     );
@@ -117,6 +135,25 @@ export default function WorkPlanner() {
     const [reasonValue, setReasonValue] = useState('');
     const [pendingAction, setPendingAction] = useState(null); // { type: 'add'|'edit'|'delete', data: {} }
     const [showApprovalFeedback, setShowApprovalFeedback] = useState(false);
+    // Which feedback copy the confirmation modal shows: 'sent' (awaiting a manager) or
+    // 'approved' (auto-approved + saved). Replaces a banned window.alert (§10).
+    const [feedbackVariant, setFeedbackVariant] = useState('sent');
+
+    // Phone detection mirrors the md: breakpoint (768px). On phones the full week grid is
+    // unreadable, so the calendar opens in day view; md+ keeps the week overview. This only
+    // drives the calendar's *default* view — the toolbar Savaitė/Diena toggle still works.
+    const [isPhone, setIsPhone] = useState(
+        typeof window !== 'undefined' && window.innerWidth < 768
+    );
+
+    useEffect(() => {
+        if (typeof window === 'undefined' || !window.matchMedia) return undefined;
+        const mql = window.matchMedia('(max-width: 767px)');
+        const onChange = (e) => setIsPhone(e.matches);
+        setIsPhone(mql.matches);
+        mql.addEventListener('change', onChange);
+        return () => mql.removeEventListener('change', onChange);
+    }, []);
 
     useEffect(() => {
 
@@ -462,17 +499,19 @@ export default function WorkPlanner() {
                 setReasonValue('');
                 setPendingAction(null);
                 setError('');
-                // Give a visual indication, or just alert/toast
-                alert('Pakeitimas išsaugotas ir automatiškai patvirtintas.');
+                // Accessible confirmation instead of a banned window.alert (§10).
+                setFeedbackVariant('approved');
+                setShowApprovalFeedback(true);
             } else {
                 setShowReasonModal(false);
                 setReasonValue('');
                 setPendingAction(null);
+                setFeedbackVariant('sent');
                 setShowApprovalFeedback(true);
             }
         } catch (err) {
             console.error("Error submitting calendar request:", err);
-            setError("Nepavyko pateikti užklausos: " + (err.message || 'Įvyko klaida'));
+            setError(friendlyCalendarError(err));
             setShowReasonModal(false);
             setReasonValue('');
         }
@@ -488,25 +527,42 @@ export default function WorkPlanner() {
     }
 
     const components = {
-        event: ({ event }) => (
-            <div className={`flex flex-col h-full justify-center px-1 leading-tight ${event.isVacation ? 'bg-black/10' : ''}`} style={{ writingMode: 'vertical-rl', textOrientation: 'sideways' }}>
-                <div className="font-semibold text-xs flex items-center gap-1">
-                    {event.isVacation ? (
-                        <>
-                            <Palmtree className="w-3 h-3 rotate-90" />
-                            <span>Atostogos</span>
-                        </>
-                    ) : event.isWorkFromHome ? (
-                        <>
-                            <Home className="w-3 h-3 rotate-90" />
-                            <span>Iš namų</span>
-                        </>
-                    ) : (
-                        <span>Dirbtuvėse</span>
+        event: ({ event }) => {
+            // Horizontal layout: time first (always readable), then icon + state label.
+            // Vacation is a calm "free" state — soft brand (indigo) tint + label, never a
+            // near-black block (color is never the sole signal, §5).
+            const isVacation = event.isVacation;
+            const isWfh = !isVacation && event.isWorkFromHome;
+            return (
+                <div
+                    className={clsx(
+                        'flex h-full flex-wrap items-center gap-x-2 gap-y-0.5 overflow-hidden px-1.5 py-0.5 leading-tight rounded-input',
+                        // Vacation = calm indigo "free" state (brand, not a session colour);
+                        // work events keep the calendar's own (blue) fill, so white text reads.
+                        isVacation ? 'bg-brand-soft text-brand-hover' : 'text-white'
                     )}
+                >
+                    <span className="text-caption font-mono font-semibold tabular-nums">
+                        {format(event.start, 'HH:mm')}
+                    </span>
+                    <span className="flex items-center gap-1 text-caption font-semibold">
+                        {isVacation ? (
+                            <>
+                                <Palmtree className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                <span>Atostogos</span>
+                            </>
+                        ) : isWfh ? (
+                            <>
+                                <Home className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                <span>Iš namų</span>
+                            </>
+                        ) : (
+                            <span>Dirbtuvėse</span>
+                        )}
+                    </span>
                 </div>
-            </div>
-        ),
+            );
+        },
         toolbar: (props) => (
             <CustomToolbar
                 {...props}
@@ -520,48 +576,53 @@ export default function WorkPlanner() {
             {/* Floating button removed */}
 
             {error && (
-                <div className="mb-3 bg-red-50 border-l-4 border-red-500 p-3 rounded flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 text-red-500" />
-                    <p className="text-xs text-red-700">{error}</p>
+                <div role="alert" className="mb-3 bg-red-50 border-l-4 border-feedback-danger p-3 rounded-card flex items-start gap-2">
+                    <AlertCircle className="w-5 h-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                    <p className="text-body text-red-700">
+                        <span className="font-semibold">Klaida: </span>{error}
+                    </p>
                 </div>
             )}
 
             {showManualInput && (
-                <form onSubmit={handleManualSubmit} className="mb-4 p-3 bg-gray-50 rounded-lg border border-gray-100 shadow-inner">
+                <form onSubmit={handleManualSubmit} className="mb-4 p-3 bg-surface-base rounded-card border border-line shadow-inner">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
-                            <label className="block text-[10px] uppercase tracking-wider font-bold text-gray-500 mb-1">Data</label>
+                            <label htmlFor="manualDate" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Data</label>
                             <input
+                                id="manualDate"
                                 type="date"
                                 value={manualDate}
                                 onChange={(e) => setManualDate(e.target.value)}
-                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
                                 required
                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] uppercase tracking-wider font-bold text-gray-500 mb-1">Pradžia</label>
+                            <label htmlFor="manualStart" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Pradžia</label>
                             <input
+                                id="manualStart"
                                 type="time"
                                 value={manualStart}
                                 onChange={(e) => setManualStart(e.target.value)}
-                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
                                 required
                             />
                         </div>
                         <div>
-                            <label className="block text-[10px] uppercase tracking-wider font-bold text-gray-500 mb-1">Pabaiga</label>
+                            <label htmlFor="manualEnd" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Pabaiga</label>
                             <input
+                                id="manualEnd"
                                 type="time"
                                 value={manualEnd}
                                 onChange={(e) => setManualEnd(e.target.value)}
-                                className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
                                 required
                             />
                         </div>
                     </div>
-                    <div className="mt-3 flex gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer">
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+                        <label className="flex min-h-touch items-center gap-2 cursor-pointer">
                             <input
                                 type="checkbox"
                                 checked={manualIsWorkFromHome}
@@ -569,11 +630,11 @@ export default function WorkPlanner() {
                                     setManualIsWorkFromHome(e.target.checked);
                                     if (e.target.checked) setManualIsVacation(false);
                                 }}
-                                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
                             />
-                            <span className="text-sm font-medium text-gray-700">Darbas iš namų</span>
+                            <span className="text-body font-medium text-ink">Darbas iš namų</span>
                         </label>
-                        <label className="flex items-center gap-2 cursor-pointer">
+                        <label className="flex min-h-touch items-center gap-2 cursor-pointer">
                             <input
                                 type="checkbox"
                                 checked={manualIsVacation}
@@ -581,25 +642,18 @@ export default function WorkPlanner() {
                                     setManualIsVacation(e.target.checked);
                                     if (e.target.checked) setManualIsWorkFromHome(false);
                                 }}
-                                className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
                             />
-                            <span className="text-sm font-medium text-gray-700">Atostogos</span>
+                            <span className="text-body font-medium text-ink">Atostogos</span>
                         </label>
                     </div>
                     <div className="flex gap-2 mt-4">
-                        <button
-                            type="submit"
-                            className="bg-blue-600 text-white px-4 py-1.5 rounded-md text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm"
-                        >
+                        <Button type="submit" variant="primary" size="md">
                             Išsaugoti
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setShowManualInput(false)}
-                            className="bg-gray-200 text-gray-700 px-4 py-1.5 rounded-md text-sm font-bold hover:bg-gray-300 transition-colors"
-                        >
+                        </Button>
+                        <Button type="button" variant="secondary" size="md" onClick={() => setShowManualInput(false)}>
                             Atšaukti
-                        </button>
+                        </Button>
                     </div>
                 </form>
             )
@@ -607,6 +661,7 @@ export default function WorkPlanner() {
 
             <div className="h-[820px] sm:h-[650px] md:h-[750px]">
                 <Calendar
+                    key={isPhone ? 'day' : 'week'}
                     localizer={localizer}
                     events={events}
                     startAccessor="start"
@@ -615,7 +670,7 @@ export default function WorkPlanner() {
                     selectable
                     onSelectSlot={handleSelectSlot}
                     onSelectEvent={handleSelectEvent}
-                    defaultView="week"
+                    defaultView={isPhone ? 'day' : 'week'}
                     views={['week', 'day']}
                     step={30}
                     timeslots={2}
@@ -636,31 +691,38 @@ export default function WorkPlanner() {
             {/* Edit Event Modal */}
             {
                 editingEvent && (
-                    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
-                        <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200">
-                            <h3 className="text-lg font-bold text-gray-900 mb-4">
+                    <div className="fixed inset-0 z-top flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
+                        <div
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby="edit-event-title"
+                            className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200"
+                        >
+                            <h3 id="edit-event-title" className="text-h2 text-ink-strong mb-4">
                                 {editingEvent.id ? 'Redaguoti laiką' : 'Pridėti darbo laiką'}
                             </h3>
 
                             <form onSubmit={handleUpdateEvent}>
                                 <div className="grid grid-cols-1 gap-4 mb-6">
                                     <div>
-                                        <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Data</label>
+                                        <label htmlFor="editDate" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Data</label>
                                         <input
+                                            id="editDate"
                                             type="date"
                                             value={editingEvent.dateStr}
                                             onChange={(e) => setEditingEvent({ ...editingEvent, dateStr: e.target.value })}
-                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                                            className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none"
                                             required
                                         />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
-                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Pradžia</label>
+                                            <label htmlFor="editStart" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Pradžia</label>
                                             <select
+                                                id="editStart"
                                                 value={editingEvent.startStr}
                                                 onChange={(e) => setEditingEvent({ ...editingEvent, startStr: e.target.value })}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white appearance-none"
+                                                className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none bg-surface-card appearance-none"
                                                 required
                                             >
                                                 {timeOptions.map(time => (
@@ -669,11 +731,12 @@ export default function WorkPlanner() {
                                             </select>
                                         </div>
                                         <div>
-                                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Pabaiga</label>
+                                            <label htmlFor="editEnd" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Pabaiga</label>
                                             <select
+                                                id="editEnd"
                                                 value={editingEvent.endStr}
                                                 onChange={(e) => setEditingEvent({ ...editingEvent, endStr: e.target.value })}
-                                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-white appearance-none"
+                                                className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none bg-surface-card appearance-none"
                                                 required
                                             >
                                                 {timeOptions.map(time => (
@@ -683,8 +746,8 @@ export default function WorkPlanner() {
                                         </div>
                                     </div>
                                 </div>
-                                <div className="mt-4 flex gap-4">
-                                    <label className="flex items-center gap-2 cursor-pointer">
+                                <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2">
+                                    <label className="flex min-h-touch items-center gap-2 cursor-pointer">
                                         <input
                                             type="checkbox"
                                             checked={editingEvent.isWorkFromHome}
@@ -693,11 +756,11 @@ export default function WorkPlanner() {
                                                 isWorkFromHome: e.target.checked,
                                                 isVacation: e.target.checked ? false : editingEvent.isVacation
                                             })}
-                                            className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                                            className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
                                         />
-                                        <span className="text-sm font-medium text-gray-700">Darbas iš namų</span>
+                                        <span className="text-body font-medium text-ink">Darbas iš namų</span>
                                     </label>
-                                    <label className="flex items-center gap-2 cursor-pointer">
+                                    <label className="flex min-h-touch items-center gap-2 cursor-pointer">
                                         <input
                                             type="checkbox"
                                             checked={editingEvent.isVacation}
@@ -706,50 +769,50 @@ export default function WorkPlanner() {
                                                 isVacation: e.target.checked,
                                                 isWorkFromHome: e.target.checked ? false : editingEvent.isWorkFromHome
                                             })}
-                                            className="w-4 h-4 text-blue-600 rounded border-gray-300 focus:ring-blue-500"
+                                            className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
                                         />
-                                        <span className="text-sm font-medium text-gray-700">Atostogos</span>
+                                        <span className="text-body font-medium text-ink">Atostogos</span>
                                     </label>
                                 </div>
 
 
-                                <div className="flex items-center justify-between gap-3 pt-2">
+                                <div className="flex items-center justify-between gap-3 pt-4">
                                     {editingEvent.id ? (
-                                        <button
+                                        <Button
                                             type="button"
+                                            variant="danger"
+                                            size="md"
+                                            icon={Trash2}
                                             onClick={handleDeleteEvent}
-                                            className="flex items-center gap-2 px-4 py-2 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-medium transition-colors"
                                         >
-                                            <Trash2 className="w-4 h-4" />
                                             <span className="hidden sm:inline">Ištrinti</span>
                                             <span className="sm:hidden">Trinti</span>
-                                        </button>
+                                        </Button>
                                     ) : (
-                                        <button
+                                        <Button
                                             type="button"
+                                            variant="secondary"
+                                            size="md"
                                             onClick={() => setEditingEvent(null)}
-                                            className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition-colors"
                                         >
                                             Atšaukti
-                                        </button>
+                                        </Button>
                                     )}
 
                                     <div className="flex items-center gap-3">
                                         {editingEvent.id && (
-                                            <button
+                                            <Button
                                                 type="button"
+                                                variant="ghost"
+                                                size="md"
                                                 onClick={() => setEditingEvent(null)}
-                                                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium transition-colors"
                                             >
                                                 Atšaukti
-                                            </button>
+                                            </Button>
                                         )}
-                                        <button
-                                            type="submit"
-                                            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-sm transition-transform active:scale-95"
-                                        >
+                                        <Button type="submit" variant="primary" size="md">
                                             Išsaugoti
-                                        </button>
+                                        </Button>
                                     </div>
                                 </div>
                             </form>
@@ -758,11 +821,11 @@ export default function WorkPlanner() {
                 )
             }
 
-            <div className="mt-8 p-3 bg-blue-50/30 rounded-lg border border-blue-100/50">
-                <p className="text-xs font-bold text-blue-800/70 mb-2 flex items-center gap-1.5">
-                    <Info className="w-4 h-4" /> Instrukcija:
+            <div className="mt-8 p-3 bg-brand-soft rounded-card border border-line">
+                <p className="text-body font-bold text-brand mb-2 flex items-center gap-1.5">
+                    <Info className="w-4 h-4" aria-hidden="true" /> Instrukcija:
                 </p>
-                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500 list-disc list-inside">
+                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-caption text-ink list-disc list-inside">
                     <li>Tempkite kalendoriuje laikui žymėti</li>
                     <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
                     <li>Bakstelėkite įrašą trynimui</li>
@@ -772,65 +835,92 @@ export default function WorkPlanner() {
 
             {/* Approval Logic Confirmation Modal */}
             {showApprovalFeedback && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-300">
-                        <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-                            <Clock className="w-8 h-8" />
-                        </div>
-                        <h3 className="text-xl font-bold text-gray-900 mb-2">Užklausa išsiųsta</h3>
-                        <p className="text-gray-600 mb-6">Jūsų pakeitimus turi patvirtinti vadovas.</p>
-                        <button
-                            onClick={() => setShowApprovalFeedback(false)}
-                            className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold transition-transform active:scale-95 shadow-lg shadow-blue-200"
-                        >
+                <div className="fixed inset-0 z-top flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="approval-feedback-title"
+                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-300"
+                    >
+                        {feedbackVariant === 'approved' ? (
+                            <div className="w-16 h-16 bg-green-100 text-feedback-success rounded-full flex items-center justify-center mx-auto mb-4">
+                                <CheckCircle2 className="w-8 h-8" aria-hidden="true" />
+                            </div>
+                        ) : (
+                            <div className="w-16 h-16 bg-brand-soft text-brand rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Clock className="w-8 h-8" aria-hidden="true" />
+                            </div>
+                        )}
+                        <h3 id="approval-feedback-title" className="text-h2 text-ink-strong mb-2">
+                            {feedbackVariant === 'approved' ? 'Pakeitimas išsaugotas' : 'Užklausa išsiųsta'}
+                        </h3>
+                        <p className="text-body text-ink-muted mb-6">
+                            {feedbackVariant === 'approved'
+                                ? 'Pakeitimas išsaugotas ir automatiškai patvirtintas.'
+                                : 'Jūsų pakeitimus turi patvirtinti vadovas.'}
+                        </p>
+                        <Button variant="primary" size="lg" fullWidth onClick={() => setShowApprovalFeedback(false)}>
                             Supratau
-                        </button>
+                        </Button>
                     </div>
                 </div>
             )}
 
             {/* Reason Modal */}
             {showReasonModal && (
-                <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
-                        <h3 className="text-xl font-bold text-gray-900 mb-2">Pakeitimų priežastis</h3>
-                        <p className="text-sm text-gray-500 mb-4">Prašome nurodyti kodėl darote šį pakeitimą (min. 10 simbolių).</p>
-                        
+                <div className="fixed inset-0 z-modal flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="reason-modal-title"
+                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 animate-in fade-in slide-in-from-bottom-4 duration-300"
+                    >
+                        <h3 id="reason-modal-title" className="text-h2 text-ink-strong mb-2">Pakeitimų priežastis</h3>
+                        <label htmlFor="reasonValue" className="block text-body text-ink-muted mb-4">Prašome nurodyti kodėl darote šį pakeitimą (min. 10 simbolių).</label>
+
                         <textarea
+                            id="reasonValue"
                             value={reasonValue}
                             onChange={(e) => setReasonValue(e.target.value)}
                             placeholder="Pvz.: Keičiamas darbo laikas dėl vizito pas gydytoją..."
-                            className="w-full h-32 px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none resize-none text-sm transition-all"
+                            className="w-full h-32 px-4 py-3 border border-line rounded-input focus:ring-2 focus:ring-brand outline-none resize-none text-body-lg transition-all"
                             autoFocus
                         />
-                        
+
                         <div className="mt-2 flex justify-end">
-                            <span className={clsx(
-                                "text-[10px] font-bold uppercase tracking-wider",
-                                reasonValue.length >= 10 ? "text-green-500" : "text-gray-400"
-                            )}>
+                            <span
+                                aria-live="polite"
+                                className={clsx(
+                                    "text-caption font-bold uppercase tracking-wider",
+                                    reasonValue.length >= 10 ? "text-feedback-success" : "text-ink-muted"
+                                )}
+                            >
                                 Simbolių: {reasonValue.length}/10
                             </span>
                         </div>
 
                         <div className="flex gap-3 mt-6">
-                            <button
+                            <Button
+                                variant="secondary"
+                                size="lg"
+                                fullWidth
                                 onClick={() => {
                                     setShowReasonModal(false);
                                     setReasonValue('');
                                     setPendingAction(null);
                                 }}
-                                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-bold transition-colors"
                             >
                                 Atšaukti
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                                variant="primary"
+                                size="lg"
+                                fullWidth
                                 onClick={submitCalendarRequest}
                                 disabled={reasonValue.length < 10}
-                                className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-xl font-bold transition-all shadow-lg shadow-blue-200 active:scale-95"
                             >
                                 Pateikti
-                            </button>
+                            </Button>
                         </div>
                     </div>
                 </div>
