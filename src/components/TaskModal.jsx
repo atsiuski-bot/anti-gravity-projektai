@@ -824,7 +824,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                             }
                                             return null;
                                         })()}
-                                        {task.id && <div className="font-mono text-[9px] text-gray-400 mt-1">ID: {task.id}</div>}
+                                        {task.id && <div className="font-mono text-caption text-ink-muted mt-1">ID: {task.id}</div>}
                                     </div>
                                 )
                             }

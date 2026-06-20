@@ -272,7 +272,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             await handleDismissTask(notificationId);
         } catch (err) {
             console.error('Error confirming task completion:', err);
-            alert('Nepavyko patvirtinti užduoties: ' + err.message);
+            alert('Nepavyko patvirtinti užduoties. Bandykite dar kartą.');
         }
     };
 
