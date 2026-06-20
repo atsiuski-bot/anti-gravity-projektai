@@ -11,7 +11,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['logo.jpg', 'pwa-192x192.png', 'pwa-512x512.png'],
       manifest: {
-        name: 'Viduramžiai.LT WORKZ',
+        name: 'WORKZ',
         short_name: 'WORKZ',
         description: 'Productivity App',
         theme_color: '#ffffff',
