@@ -109,7 +109,9 @@ export default function ActiveWorkSessions() {
         <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
-                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
+                aria-expanded={!isCollapsed}
+                aria-controls="active-work-sessions-panel"
+                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             >
                 <div className="flex items-center gap-2">
                     <Activity className="w-5 h-5 text-brand" />
@@ -119,7 +121,7 @@ export default function ActiveWorkSessions() {
             </button>
 
             {!isCollapsed && (
-                <div className="p-4 space-y-2">
+                <div id="active-work-sessions-panel" className="p-4 space-y-2">
                     {activeSessions.map(session => (
                         <ActiveSessionRow key={session.userId} session={session} />
                     ))}
@@ -185,11 +187,11 @@ const ActiveSessionRow = React.memo(({ session }) => {
                         {session.userName}
                     </span>
                 </div>
-                <div className="text-xs truncate opacity-90">
+                <div className="text-xs truncate">
                     {session.label}
                 </div>
             </div>
-            <span className="font-mono font-bold text-sm ml-4 whitespace-nowrap opacity-80">
+            <span className="font-mono font-bold text-base ml-4 whitespace-nowrap">
                 {durationStr}
             </span>
         </div>

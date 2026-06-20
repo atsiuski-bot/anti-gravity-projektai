@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { db, storage } from '../firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
@@ -14,6 +14,7 @@ import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../util
 import { TASK_TAGS } from '../utils/taskUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import ConfirmDialog from './ui/ConfirmDialog';
 
 // Persistent field label — fields previously had only placeholders, which vanish on input
 // and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
@@ -24,6 +25,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const { activeUsers } = useUsers();
     const workers = useMemo(() => activeUsers || [], [activeUsers]);
     const [loading, setLoading] = useState(false);
+
+    // Inline accessible error region (replaces banned window.alert popups).
+    const [formError, setFormError] = useState('');
+    // State-gated confirmations (replace banned window.confirm).
+    const [templateToDelete, setTemplateToDelete] = useState(null); // { id, name }
+    const [overwriteTemplate, setOverwriteTemplate] = useState(null); // existing template pending overwrite
+    // Dialog panel ref for focus management.
+    const panelRef = useRef(null);
 
     const [formData, setFormData] = useState({
         title: '',
@@ -157,6 +166,38 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }
     }, [role, isOpen]);
 
+    // Dialog semantics: close on Escape, move focus into the dialog on open,
+    // and restore focus to the previously-focused element on close (WCAG 2.1.1 / 2.4.3).
+    useEffect(() => {
+        if (!isOpen) return;
+        // Clear any stale error / pending confirmations from a previous open.
+        setFormError('');
+        setTemplateToDelete(null);
+        setOverwriteTemplate(null);
+        const previouslyFocused = document.activeElement;
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                onClose();
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+
+        // Move focus into the dialog after it mounts.
+        const focusTimer = window.setTimeout(() => {
+            panelRef.current?.focus();
+        }, 0);
+
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            window.clearTimeout(focusTimer);
+            if (previouslyFocused instanceof HTMLElement) {
+                previouslyFocused.focus();
+            }
+        };
+    }, [isOpen, onClose]);
+
     const fetchTemplates = async () => {
         try {
 
@@ -199,53 +240,74 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         });
     };
 
-    const handleDeleteTemplate = async (templateId, name) => {
-        if (window.confirm(`Ar tikrai norite ištrinti šabloną "${name}"?`)) {
-            try {
-                await deleteTaskTemplate(templateId);
-                setTemplates(prev => prev.filter(t => t.id !== templateId));
-                // Use toast or alert?
-            } catch (error) {
-                alert("Nepavyko ištrinti šablono. Bandykite dar kartą.");
-            }
+    const handleDeleteTemplate = (templateId, name) => {
+        setFormError('');
+        setTemplateToDelete({ id: templateId, name });
+    };
+
+    const confirmDeleteTemplate = async () => {
+        if (!templateToDelete) return;
+        try {
+            await deleteTaskTemplate(templateToDelete.id);
+            setTemplates(prev => prev.filter(t => t.id !== templateToDelete.id));
+            setTemplateToDelete(null);
+        } catch (error) {
+            console.error('Failed to delete template', error);
+            setTemplateToDelete(null);
+            setFormError('Nepavyko ištrinti šablono. Bandykite dar kartą.');
         }
     };
 
+    const buildTemplateData = () => {
+        const dataToSave = {};
+        // Copy only selected fields
+        Object.keys(selectedTemplateFields).forEach(key => {
+            if (selectedTemplateFields[key]) {
+                dataToSave[key] = formData[key];
+            }
+        });
+        return dataToSave;
+    };
+
     const handleConfirmSaveTemplate = async () => {
+        setFormError('');
         if (!templateName.trim()) {
-            alert("Prašome įvesti šablono pavadinimą!");
+            setFormError('Prašome įvesti šablono pavadinimą!');
             return;
         }
+
+        // Check for existing template to overwrite — gate behind an explicit confirmation.
+        const existingTemplate = templates.find(t => t.templateName.toLowerCase() === templateName.trim().toLowerCase());
+        if (existingTemplate) {
+            setOverwriteTemplate(existingTemplate);
+            return;
+        }
+
         setLoading(true);
         try {
-            const dataToSave = {};
-            // Copy only selected fields
-            Object.keys(selectedTemplateFields).forEach(key => {
-                if (selectedTemplateFields[key]) {
-                    dataToSave[key] = formData[key];
-                }
-            });
-
-            // Check for existing template to overwrite
-            const existingTemplate = templates.find(t => t.templateName.toLowerCase() === templateName.trim().toLowerCase());
-
-            if (existingTemplate) {
-                if (!window.confirm(`Šablonas "${existingTemplate.templateName}" jau egzistuoja. Ar norite jį perrašyti?`)) {
-                    setLoading(false);
-                    return;
-                }
-                await updateTaskTemplate(existingTemplate.id, templateName, dataToSave, currentUser);
-                alert("Šablonas atnaujintas!");
-            } else {
-                await saveTaskTemplate(templateName, dataToSave, currentUser);
-                alert("Šablonas sėkmingai išsaugotas!");
-            }
-
+            await saveTaskTemplate(templateName, buildTemplateData(), currentUser);
             await fetchTemplates();
             setIsSavingTemplate(false);
         } catch (error) {
             console.error("Failed to save template", error);
-            alert("Nepavyko išsaugoti šablono. Bandykite dar kartą.");
+            setFormError('Nepavyko išsaugoti šablono. Bandykite dar kartą.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const confirmOverwriteTemplate = async () => {
+        if (!overwriteTemplate) return;
+        setLoading(true);
+        try {
+            await updateTaskTemplate(overwriteTemplate.id, templateName, buildTemplateData(), currentUser);
+            await fetchTemplates();
+            setOverwriteTemplate(null);
+            setIsSavingTemplate(false);
+        } catch (error) {
+            console.error("Failed to save template", error);
+            setOverwriteTemplate(null);
+            setFormError('Nepavyko išsaugoti šablono. Bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
@@ -258,10 +320,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         const currentCount = (formData.attachmentUrls?.length || 0) + selectedFiles.length + files.length;
 
         if (currentCount > 8) {
-            alert(`Maksimalus nuotraukų kiekis: 8. Jūs jau turite ${formData.attachmentUrls?.length + selectedFiles.length}, bandote pridėti ${files.length}.`);
+            setFormError(`Maksimalus nuotraukų kiekis: 8. Jūs jau turite ${(formData.attachmentUrls?.length || 0) + selectedFiles.length}, bandote pridėti ${files.length}.`);
             return;
         }
 
+        setFormError('');
         setSelectedFiles(prev => [...prev, ...files]);
     };
 
@@ -279,7 +342,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const uploadFile = (file) => {
         return new Promise((resolve, reject) => {
             const fileId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-            const storageRef = ref(storage, `attachments/${fileId}_${file.name}`);
+            // Store under a per-uploader folder so Storage rules can scope direct
+            // SDK access (read/list/overwrite/delete) to the owner. Task viewers still
+            // see the file via the tokenized download URL saved on the task document.
+            const storageRef = ref(storage, `attachments/${currentUser.uid}/${fileId}_${file.name}`);
             const metadata = { contentType: file.type };
             const uploadTask = uploadBytesResumable(storageRef, file, metadata);
 
@@ -423,7 +489,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             onClose();
         } catch (error) {
             console.error("Error saving task:", error);
-            alert("Nepavyko išsaugoti užduoties. Bandykite dar kartą.");
+            setFormError('Nepavyko išsaugoti užduoties. Bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
@@ -466,16 +532,24 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     return createPortal(
         <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black bg-opacity-50 p-4 pt-10 pb-20 overflow-y-auto">
-            <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col my-auto relative">
+            <div
+                ref={panelRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="task-modal-title"
+                tabIndex={-1}
+                className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col my-auto relative focus:outline-none"
+            >
                 {/* Header - Fixed */}
                 <div className="flex justify-between items-center p-6 border-b border-gray-200 flex-shrink-0">
-                    <h2 className="text-xl font-bold text-gray-900">
+                    <h2 id="task-modal-title" className="text-xl font-bold text-gray-900">
                         {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Sukurti užduotį')}
                     </h2>
                     <div className="flex items-center gap-2">
                         {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
                             <select
                                 onChange={(e) => handleLoadTemplate(e.target.value)}
+                                aria-label="Užkrauti šabloną"
                                 className="mr-2 px-3 py-1 border border-gray-300 rounded-lg text-sm"
                                 value=""
                             >
@@ -492,6 +566,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
                 {/* Scrollable Content */}
                 <div className="flex-1 overflow-y-auto p-6">
+                    {formError && (
+                        <div
+                            role="alert"
+                            aria-live="assertive"
+                            className="mb-4 rounded-control bg-red-50 border border-red-200 p-3 text-body text-feedback-danger"
+                        >
+                            {formError}
+                        </div>
+                    )}
                     {isSavingTemplate ? (
                         <div className="space-y-6">
                             <div>
@@ -515,14 +598,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                     >
                                                         {t.templateName}
                                                     </button>
-                                                    <button
-                                                        type="button"
+                                                    <IconButton
+                                                        icon={Trash2}
+                                                        label="Ištrinti šabloną"
+                                                        variant="danger"
                                                         onClick={() => handleDeleteTemplate(t.id, t.templateName)}
-                                                        className="text-gray-400 hover:text-red-500 p-1.5 rounded-full hover:bg-red-50 transition-colors"
-                                                        title="Ištrinti šabloną"
-                                                    >
-                                                        <Trash2 className="w-4 h-4" />
-                                                    </button>
+                                                    />
                                                 </div>
                                             ))}
                                         </div>
@@ -689,13 +770,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         className="flex-1 px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand text-base"
                                         onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addLink())}
                                     />
-                                    <button
-                                        type="button"
+                                    <IconButton
+                                        icon={Plus}
+                                        label="Pridėti nuorodą"
+                                        variant="primary"
                                         onClick={addLink}
-                                        className="px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 font-medium"
-                                    >
-                                        <Plus className="w-5 h-5" />
-                                    </button>
+                                    />
                                 </div>
 
                                 {formData.links.length > 0 && (
@@ -705,13 +785,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 <a href={link} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 truncate hover:underline flex-1 mr-2">
                                                     {link}
                                                 </a>
-                                                <button
-                                                    type="button"
+                                                <IconButton
+                                                    icon={Trash2}
+                                                    label="Pašalinti nuorodą"
+                                                    variant="danger"
                                                     onClick={() => removeLink(index)}
-                                                    className="text-gray-400 hover:text-red-500"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
+                                                />
                                             </div>
                                         ))}
                                     </div>
@@ -754,9 +833,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                     <button
                                                         type="button"
                                                         onClick={() => removeExistingAttachment(index)}
-                                                        className="absolute top-1 right-1 bg-white rounded-full p-1 text-red-500 shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                                                        aria-label="Pašalinti nuotrauką"
+                                                        className="absolute top-1 right-1 inline-flex items-center justify-center min-h-touch min-w-touch bg-white rounded-full text-red-500 shadow transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                     >
-                                                        <Trash2 className="w-4 h-4" />
+                                                        <Trash2 className="w-4 h-4" aria-hidden="true" />
                                                     </button>
                                                 </div>
                                             ))}
@@ -866,6 +946,29 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         </>
                     )}
                 </div>
+
+                <ConfirmDialog
+                    open={!!templateToDelete}
+                    onConfirm={confirmDeleteTemplate}
+                    onCancel={() => setTemplateToDelete(null)}
+                    title="Ištrinti šabloną"
+                    message={templateToDelete ? `Ar tikrai norite ištrinti šabloną „${templateToDelete.name}“?` : ''}
+                    confirmLabel="Ištrinti"
+                    cancelLabel="Atšaukti"
+                    variant="danger"
+                />
+
+                <ConfirmDialog
+                    open={!!overwriteTemplate}
+                    onConfirm={confirmOverwriteTemplate}
+                    onCancel={() => setOverwriteTemplate(null)}
+                    title="Perrašyti šabloną"
+                    message={overwriteTemplate ? `Šablonas „${overwriteTemplate.templateName}“ jau egzistuoja. Ar norite jį perrašyti?` : ''}
+                    confirmLabel="Perrašyti"
+                    cancelLabel="Atšaukti"
+                    variant="primary"
+                    loading={loading}
+                />
             </div>
         </div>,
         document.body

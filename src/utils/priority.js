@@ -114,8 +114,26 @@ export const getPriorityOptions = () => {
 };
 
 /**
- * Determines text color (white or black) based on background hex.
- * Simple threshold logic for grayscale background.
+ * WCAG 2.1 relative luminance of an sRGB color (0..1).
+ * Linearizes each channel then applies the 0.2126/0.7152/0.0722 weighting.
+ */
+const relativeLuminance = (r, g, b) => {
+    const linearize = (channel) => {
+        const c = channel / 255;
+        return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    return (
+        0.2126 * linearize(r) +
+        0.7152 * linearize(g) +
+        0.0722 * linearize(b)
+    );
+};
+
+/**
+ * Determines text color (dark or white) for the given background using a real
+ * WCAG 2.1 contrast comparison: compute the (L1 + 0.05) / (L2 + 0.05) ratio for
+ * each candidate against the background and return whichever yields the higher
+ * contrast. Returns dark text for the MEDIUM chip bg (#A3A3A3).
  */
 export const getContrastingTextColor = (bgHex) => {
     // Remove hash
@@ -124,12 +142,22 @@ export const getContrastingTextColor = (bgHex) => {
     const g = parseInt(hex.substring(2, 4), 16);
     const b = parseInt(hex.substring(4, 6), 16);
 
-    // Calculate brightness (standard YIQ formula)
-    const yiq = ((r * 299) + (g * 587) + (b * 114)) / 1000;
+    const bgLum = relativeLuminance(r, g, b);
 
-    // If dark -> white text, if light -> black text
-    // Threshold ~128 is standard, tweaking slightly if needed.
-    return (yiq >= 128) ? '#111111' : '#FFFFFF';
+    // Contrast ratio against the two text candidates.
+    const contrast = (lum) => {
+        const lighter = Math.max(bgLum, lum);
+        const darker = Math.min(bgLum, lum);
+        return (lighter + 0.05) / (darker + 0.05);
+    };
+
+    const DARK = '#111111';
+    const LIGHT = '#FFFFFF';
+    const darkLum = relativeLuminance(0x11, 0x11, 0x11);
+    const lightLum = relativeLuminance(0xFF, 0xFF, 0xFF);
+
+    // Pick whichever candidate has the higher contrast ratio against the bg.
+    return contrast(darkLum) >= contrast(lightLum) ? DARK : LIGHT;
 };
 
 export const UI_COLORS = {

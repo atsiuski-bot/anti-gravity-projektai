@@ -382,12 +382,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                 {canEdit && !isEditing && (
                                                     <div className="flex gap-1">
                                                         <button
+                                                            aria-label="Redaguoti komentarą"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 setEditingCommentIndex(index);
                                                                 setEditCommentText(comment.text);
                                                             }}
-                                                            className="text-gray-400 hover:text-blue-600 p-2 -my-2"
+                                                            className="text-gray-400 hover:text-blue-600 p-2 -my-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
                                                         >
                                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                                         </button>
@@ -456,8 +457,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                 href={link.trim().startsWith('http') ? link.trim() : `https://${link.trim()}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="flex items-center justify-center text-blue-600 hover:text-blue-800 transition-transform active:scale-95 min-w-[36px] min-h-[36px] bg-blue-50 rounded-lg shadow-sm border border-blue-100" // Reduced size
+                                                className="flex items-center justify-center text-blue-600 hover:text-blue-800 transition-transform active:scale-95 min-w-touch min-h-touch bg-blue-50 rounded-lg shadow-sm border border-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                 title={link.trim()}
+                                                aria-label={`Atidaryti nuorodą: ${link.trim()}`}
                                                 onClick={(e) => e.stopPropagation()}
                                             >
                                                 <LinkIcon className="w-4 h-4" />
@@ -473,8 +475,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                         e.stopPropagation();
                                         setActiveModal('image');
                                     }}
-                                    className="flex items-center justify-center gap-1.5 text-pink-600 hover:text-pink-800 hover:bg-pink-50 rounded-lg transition-colors px-2 py-1.5 min-h-[36px]"
+                                    className="flex items-center justify-center gap-1.5 text-pink-600 hover:text-pink-800 hover:bg-pink-50 rounded-lg transition-colors px-2 py-1.5 min-h-touch min-w-touch focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                     title="Peržiūrėti nuotrauką"
+                                    aria-label="Peržiūrėti nuotrauką"
                                 >
                                     <ImageIcon className="w-4 h-4" />
                                 </button>
@@ -484,7 +487,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                     e.stopPropagation();
                                     setActiveModal('comments');
                                 }}
-                                className="flex items-center justify-center gap-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors px-2 py-1.5 min-h-[36px]" // Reduced size
+                                className="flex items-center justify-center gap-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors px-2 py-1.5 min-h-touch min-w-touch focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                aria-label="Peržiūrėti komentarus"
                             >
                                 <MessageCircle className="w-4 h-4" />
                                 <span className="text-xs font-bold">{task.comments?.length || 0}</span>

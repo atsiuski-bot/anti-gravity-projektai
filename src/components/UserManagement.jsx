@@ -4,6 +4,7 @@ import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { UserCog, ShieldAlert, Check, Sliders, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { formatDisplayName } from '../utils/formatters';
+import { getContrastingTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
 import Card from './ui/Card';
@@ -44,6 +45,10 @@ function UserAvatar({ user }) {
 
 function ColorSwatch({ user, onEdit }) {
     const name = formatDisplayName(user.displayName) || user.email || 'vartotojo';
+    const swatchColor = user.color || WORKER_FALLBACK_COLOR;
+    // Pick the glyph color from the swatch's luminance so the icon keeps >=3:1 contrast on
+    // any user-chosen color (white drops below 3:1 on light backgrounds). (DESIGN_SYSTEM §6)
+    const iconColor = getContrastingTextColor(swatchColor);
     return (
         <button
             type="button"
@@ -51,9 +56,9 @@ function ColorSwatch({ user, onEdit }) {
             aria-label={`Keisti ${name} spalvą`}
             title="Keisti spalvą"
             className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border-2 border-line shadow-sm transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-            style={{ backgroundColor: user.color || WORKER_FALLBACK_COLOR }}
+            style={{ backgroundColor: swatchColor }}
         >
-            <Sliders className="h-4 w-4 text-white drop-shadow-md" aria-hidden="true" />
+            <Sliders className="h-4 w-4" style={{ color: iconColor }} aria-hidden="true" />
         </button>
     );
 }

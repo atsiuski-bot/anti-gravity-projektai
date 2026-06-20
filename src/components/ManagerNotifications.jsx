@@ -10,6 +10,7 @@ import { deleteTask } from '../utils/taskActions';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import { SoundManager } from '../utils/soundUtils';
+import IconButton from './ui/IconButton';
 
 export default function ManagerNotifications({ onEditAndApprove }) {
     const { currentUser } = useAuth();
@@ -17,6 +18,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
+    const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
     const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
 
 
@@ -127,6 +129,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
 
     const handleApproveCalendarRequest = async (request) => {
         try {
+            setActionError(null);
             const { type, requestedEvent, userId, userName } = request;
             const now = new Date().toISOString();
             
@@ -162,12 +165,13 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             );
         } catch (err) {
             console.error("Error approving calendar request:", err);
-            alert("Nepavyko patvirtinti užklausos. Bandykite dar kartą.");
+            setActionError("Nepavyko patvirtinti užklausos. Bandykite dar kartą.");
         }
     };
 
     const handleDeclineCalendarRequest = async (request) => {
         try {
+            setActionError(null);
             await updateDoc(doc(db, 'calendar_requests', request.id), {
                 status: 'declined',
                 declinedAt: new Date().toISOString(),
@@ -175,7 +179,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             });
         } catch (err) {
             console.error("Error declining calendar request:", err);
-            alert("Nepavyko atmesti užklausos.");
+            setActionError("Nepavyko atmesti užklausos. Bandykite dar kartą.");
         }
     };
 
@@ -183,6 +187,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     const handleApproveTask = async (notificationId, taskId) => {
         if (!taskId) return;
         try {
+            setActionError(null);
             // 1. Approve the task
             const taskRef = doc(db, 'tasks', taskId);
             await updateDoc(taskRef, {
@@ -196,13 +201,14 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             await handleDismissTask(notificationId);
         } catch (err) {
             console.error("Error approving task:", err);
-            alert("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
+            setActionError("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
         }
     };
 
     const handleEditAndApprove = async (notificationId, taskId) => {
         if (!taskId) return;
         try {
+            setActionError(null);
             // 1. Approve the task
             const taskRef = doc(db, 'tasks', taskId);
             await updateDoc(taskRef, {
@@ -224,7 +230,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             }
         } catch (err) {
             console.error("Error in edit and approve:", err);
-            alert("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
+            setActionError("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
         }
     };
 
@@ -236,6 +242,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
         if (!deleteModalData) return;
         const { taskId, notificationId } = deleteModalData;
         try {
+            setActionError(null);
             // Fetch the full task data first so we can archive it properly
             const taskRef = doc(db, 'tasks', taskId);
             const taskSnap = await getDoc(taskRef);
@@ -249,7 +256,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             setDeleteModalData(null);
         } catch (err) {
             console.error("Error deleting task:", err);
-            alert("Nepavyko ištrinti užduoties. Bandykite dar kartą.");
+            setActionError("Nepavyko ištrinti užduoties. Bandykite dar kartą.");
         }
     };
 
@@ -262,6 +269,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     const handleConfirmCompletion = async (notificationId, taskId) => {
         if (!taskId) return;
         try {
+            setActionError(null);
             await updateDoc(doc(db, 'tasks', taskId), {
                 status: 'confirmed',
                 isApproved: true,
@@ -272,13 +280,14 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             await handleDismissTask(notificationId);
         } catch (err) {
             console.error('Error confirming task completion:', err);
-            alert('Nepavyko patvirtinti užduoties. Bandykite dar kartą.');
+            setActionError('Nepavyko patvirtinti užduoties. Bandykite dar kartą.');
         }
     };
 
     const handleRevertTask = async (notificationId, taskId, _userName) => {
         if (!taskId) return;
         try {
+            setActionError(null);
             const managerName = currentUser.displayName || currentUser.email || 'Vadovas';
             const autoComment = {
                 text: `Vadovas ${managerName} grąžino užduotį į darbų sąrašą tobulinimui.`,
@@ -300,7 +309,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             await handleDismissTask(notificationId);
         } catch (err) {
             console.error('Error reverting task:', err);
-            alert('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
+            setActionError('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
         }
     };
 
@@ -321,17 +330,26 @@ export default function ManagerNotifications({ onEditAndApprove }) {
 
     return (
         <div className="mb-6 space-y-4">
+            {actionError && (
+                <div
+                    role="alert"
+                    aria-live="assertive"
+                    className="max-w-xl rounded-control border border-red-200 bg-red-50 px-4 py-3 text-body text-feedback-danger"
+                >
+                    {actionError}
+                </div>
+            )}
             {sortedNotifications.map(notif => {
                 if (notif.source === 'calendar') {
                     return (
                         <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm max-w-xl">
-                            <button
+                            <IconButton
+                                icon={X}
+                                label="Uždaryti pranešimą"
+                                variant="ghost"
                                 onClick={() => handleDismissCalendar(notif.id)}
-                                className="absolute top-2 right-2 text-blue-400 hover:text-blue-600 p-1"
-                                title="Uždaryti pranešimą"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
+                                className="absolute top-2 right-2 text-blue-400 hover:text-blue-600"
+                            />
 
                             <div className="flex items-start gap-3">
                                 <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
@@ -407,16 +425,16 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     <div className="mt-4 flex gap-3">
                                         <button
                                             onClick={() => handleApproveCalendarRequest(notif)}
-                                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-all font-bold shadow-sm active:scale-95"
+                                            className="flex-1 inline-flex min-h-touch items-center justify-center gap-2 rounded-control bg-green-600 px-4 font-bold text-white shadow-sm transition-all hover:bg-green-700 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
                                         >
-                                            <Check className="w-4 h-4" />
+                                            <Check className="w-4 h-4" aria-hidden="true" />
                                             Patvirtinti
                                         </button>
                                         <button
                                             onClick={() => handleDeclineCalendarRequest(notif)}
-                                            className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 rounded-lg transition-all font-bold active:scale-95"
+                                            className="flex-1 inline-flex min-h-touch items-center justify-center gap-2 rounded-control bg-red-50 px-4 font-bold text-red-600 transition-all hover:bg-red-100 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2"
                                         >
-                                            <X className="w-4 h-4" />
+                                            <X className="w-4 h-4" aria-hidden="true" />
                                             Atmesti
                                         </button>
                                     </div>
@@ -429,13 +447,13 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                     if (notif.type === 'new_comment') {
                         return (
                             <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
-                                <button
+                                <IconButton
+                                    icon={X}
+                                    label="Uždaryti pranešimą"
+                                    variant="ghost"
                                     onClick={() => handleDismissTask(notif.id)}
-                                    className="absolute top-2 right-2 text-blue-400 hover:text-blue-600 p-1"
-                                    title="Uždaryti pranešimą"
-                                >
-                                    <X className="w-5 h-5" />
-                                </button>
+                                    className="absolute top-2 right-2 text-blue-400 hover:text-blue-600"
+                                />
                                 <div className="flex flex-col gap-3">
                                     <div className="flex items-start gap-3 pr-6">
                                         <MessageCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
@@ -450,7 +468,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     <div className="flex items-center justify-end mt-1 px-2 gap-2">
                                         <button
                                             onClick={() => handleDismissTask(notif.id)}
-                                            className="px-4 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded transition-colors text-xs font-semibold"
+                                            className="inline-flex min-h-touch items-center justify-center rounded-control bg-blue-100 px-4 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                             title="Uždaryti"
                                         >
                                             Supratau
@@ -489,18 +507,18 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     <div className="flex items-center justify-between mt-2 mb-1 px-2 gap-2">
                                         <button
                                             onClick={() => handleConfirmCompletion(notif.id, notif.taskId)}
-                                            className="flex items-center justify-center gap-2 px-5 py-2 bg-green-100 text-green-700 hover:bg-green-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                            className="inline-flex min-h-touch items-center justify-center gap-2 whitespace-nowrap rounded-control bg-green-100 px-5 text-sm font-semibold text-green-700 shadow-sm transition-colors hover:bg-green-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
                                             title="Patvirtinti užduoties atlikimą"
                                         >
-                                            <Check className="w-4 h-4" />
+                                            <Check className="w-4 h-4" aria-hidden="true" />
                                             Patvirtinti
                                         </button>
                                         <button
                                             onClick={() => handleRevertTask(notif.id, notif.taskId, notif.userName)}
-                                            className="flex items-center justify-center gap-1.5 px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                            className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-amber-100 px-4 text-sm font-semibold text-amber-700 shadow-sm transition-colors hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-2"
                                             title="Grąžinti į darbų sąrašą"
                                         >
-                                            <RotateCcw className="w-4 h-4" />
+                                            <RotateCcw className="w-4 h-4" aria-hidden="true" />
                                             Sugrąžinti į darbų sąrašą
                                         </button>
                                     </div>
@@ -538,9 +556,9 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     {/* Do Not Extend */}
                                     <button
                                         onClick={() => handleDismissExtension(notif.id)}
-                                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                        className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-gray-100 px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2"
                                     >
-                                        <X className="w-4 h-4" />
+                                        <X className="w-4 h-4" aria-hidden="true" />
                                         Nepratęsti
                                     </button>
 
@@ -561,9 +579,9 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                                 }
                                             }
                                         }}
-                                        className="flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-100 text-blue-700 hover:bg-blue-200 rounded-lg transition-colors text-sm font-semibold shadow-sm whitespace-nowrap"
+                                        className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-blue-100 px-4 text-sm font-semibold text-blue-700 shadow-sm transition-colors hover:bg-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                     >
-                                        <Edit className="w-4 h-4" />
+                                        <Edit className="w-4 h-4" aria-hidden="true" />
                                         Redaguoti užduotį
                                     </button>
                                 </div>

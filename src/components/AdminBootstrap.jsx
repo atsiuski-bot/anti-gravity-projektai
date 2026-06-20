@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { ShieldCheck } from 'lucide-react';
+import Button from './ui/Button';
 
 export default function AdminBootstrap() {
     const { currentUser, userRole } = useAuth();
@@ -52,12 +53,12 @@ export default function AdminBootstrap() {
                         </p>
                     </div>
                 </div>
-                <button
+                <Button
                     onClick={handleBecomeAdmin}
-                    className="ml-4 px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-yellow-600 hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-yellow-500"
+                    className="ml-4 bg-yellow-600 text-white hover:bg-yellow-700 shadow-sm"
                 >
                     Tapti administratoriumi
-                </button>
+                </Button>
             </div>
         </div>
     );

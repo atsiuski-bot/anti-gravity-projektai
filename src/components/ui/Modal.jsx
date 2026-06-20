@@ -21,6 +21,7 @@ export default function Modal({
     onClose,
     title,
     titleId = 'modal-title',
+    ariaLabel,
     children,
     footer,
     size = 'md',
@@ -63,6 +64,7 @@ export default function Modal({
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={title ? titleId : undefined}
+                aria-label={!title ? ariaLabel : undefined}
                 tabIndex={-1}
                 className={cn(
                     'relative z-modal w-full bg-surface-card rounded-modal shadow-xl',
