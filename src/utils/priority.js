@@ -31,7 +31,8 @@ const PRIORITY_CONFIG = {
         rank: 3,
         label: 'Vidutinis',
         color: '#A3A3A3', // Lighter Medium Grey (was #8C8C8C)
-        textColor: '#FFFFFF',
+        // No explicit textColor: white-on-#A3A3A3 is 2.52:1 (fails WCAG AA). Let
+        // getContrastingTextColor pick dark text (#111) for this light-gray chip. (DESIGN_SYSTEM §6)
     },
     [PRIORITIES.LOW]: {
         id: PRIORITIES.LOW,

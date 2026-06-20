@@ -13,6 +13,7 @@ import { completeTask } from '../utils/taskCompletionActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
+import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { STATUS_LABELS, STATUS_STYLES } from '../utils/taskConstants';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
@@ -269,7 +270,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             {task.assignedUserName && (isManager || !isAssignedToMe) && (
                                 <div
                                     className="inline-flex items-center justify-center p-[2px] rounded-full"
-                                    style={{ backgroundColor: displayColor || '#3b82f6' }}
+                                    style={{ backgroundColor: displayColor || WORKER_FALLBACK_COLOR }}
                                 >
                                     <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-gray-800 border border-white/50">
                                         👤 {formatDisplayName(task.assignedUserName)}

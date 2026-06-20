@@ -6,6 +6,7 @@ import { startOfWeek, endOfWeek } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
+import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 
 export default function CombinedHoursSummary() {
     const { currentUser } = useAuth();
@@ -175,7 +176,7 @@ export default function CombinedHoursSummary() {
             stats.push({
                 id: user.id,
                 name: user.displayName || user.email,
-                color: user.color || '#3b82f6',
+                color: user.color || WORKER_FALLBACK_COLOR,
                 plannedHours,
                 workedHours
             });
@@ -246,7 +247,7 @@ export default function CombinedHoursSummary() {
             return {
                 userId: user.id,
                 userName: user.displayName || user.email,
-                userColor: user.color || '#3b82f6',
+                userColor: user.color || WORKER_FALLBACK_COLOR,
                 ...displayProps
             };
         }).filter(Boolean);

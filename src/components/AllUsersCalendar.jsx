@@ -6,6 +6,7 @@ import { lt } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 import { useUsers } from '../context/UsersContext';
+import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 
 // Constants
 const START_HOUR = 7;
@@ -90,7 +91,7 @@ export default function AllUsersCalendar() {
                     end: new Date(data.end),
                     userId: data.userId,
                     userName: user ? formatDisplayName(user.displayName || user.email) : 'Nežinomas',
-                    color: user?.color || '#3b82f6',
+                    color: user?.color || WORKER_FALLBACK_COLOR,
                     isWorkFromHome: data.isWorkFromHome || false,
                     isVacation: data.isVacation || false,
                 };

@@ -10,6 +10,7 @@ import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianN
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { STATUS_LABELS, STATUS_COLORS } from '../utils/taskConstants';
@@ -432,7 +433,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             {task.assignedUserName && (
                                                 <div
                                                     className="inline-flex items-center justify-center p-[3px] rounded-full"
-                                                    style={{ backgroundColor: task.assignedWorkerColor || '#3b82f6' }}
+                                                    style={{ backgroundColor: task.assignedWorkerColor || WORKER_FALLBACK_COLOR }}
                                                 >
                                                     <span className="px-1.5 py-0.5 rounded-full text-[11px] font-bold bg-white text-gray-800 border border-white/50 max-w-[120px] truncate block">
                                                         👤 {formatDisplayName(task.assignedUserName)}

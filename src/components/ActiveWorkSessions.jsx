@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import SessionTypeIcon from './SessionTypeIcon';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { useUsers } from '../context/UsersContext';
+import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 
 export default function ActiveWorkSessions() {
     const { users: allUsers, loading: usersLoading } = useUsers();
@@ -92,7 +93,7 @@ export default function ActiveWorkSessions() {
             return {
                 userId: user.id,
                 userName: user.displayName || user.email,
-                userColor: user.color || '#3b82f6',
+                userColor: user.color || WORKER_FALLBACK_COLOR,
                 ...displayProps
             };
         }).filter(Boolean);

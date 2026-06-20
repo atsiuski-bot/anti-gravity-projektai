@@ -4,6 +4,7 @@ import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { UserCog, ShieldAlert, Check, Sliders, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { formatDisplayName } from '../utils/formatters';
+import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 
 export default function UserManagement() {
     const { currentUser, userRole } = useAuth();
@@ -82,7 +83,7 @@ export default function UserManagement() {
 
     const startEditingColor = (user) => {
         setEditingColorUser(user.id);
-        setTempColor(hexToRgb(user.color || '#3b82f6'));
+        setTempColor(hexToRgb(user.color || WORKER_FALLBACK_COLOR));
     };
 
     const saveColor = async () => {
@@ -235,7 +236,7 @@ export default function UserManagement() {
                                     <button
                                         onClick={() => startEditingColor(user)}
                                         className="w-10 h-10 rounded-full border-2 border-gray-300 shadow-sm hover:ring-2 hover:ring-offset-2 hover:ring-blue-500 transition-all flex items-center justify-center"
-                                        style={{ backgroundColor: user.color || '#3b82f6' }}
+                                        style={{ backgroundColor: user.color || WORKER_FALLBACK_COLOR }}
                                         title="Keisti spalvą"
                                     >
                                         <Sliders className="w-4 h-4 text-white drop-shadow-md opacity-75" />

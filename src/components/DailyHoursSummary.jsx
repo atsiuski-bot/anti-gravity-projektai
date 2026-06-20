@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { Clock, AlertTriangle } from 'lucide-react';
 import { formatDisplayName, parseTimeToHours } from '../utils/formatters';
+import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 
 export default function DailyHoursSummary() {
     const [users, setUsers] = useState([]);
@@ -78,7 +79,7 @@ export default function DailyHoursSummary() {
         users.forEach(user => {
             stats[user.id] = {
                 name: formatDisplayName(user.displayName) || user.email,
-                color: user.color || '#3b82f6',
+                color: user.color || WORKER_FALLBACK_COLOR,
                 days: {}
             };
 
