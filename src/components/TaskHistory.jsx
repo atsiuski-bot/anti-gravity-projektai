@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, addDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Pencil, AlertCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
@@ -13,6 +13,42 @@ import { deleteTask } from '../utils/taskActions';
 import { DeleteConfirmationModal, CommentsModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import SessionTypeIcon from './SessionTypeIcon';
 import { addComment } from '../utils/commentActions';
+import IconButton from './ui/IconButton';
+import StatusPill from './ui/StatusPill';
+import ConfirmDialog from './ui/ConfirmDialog';
+
+// Filter field label — shared by every filter control. 12px floor (§5): was text-[10px].
+const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
+const SELECT_CLASS =
+    'bg-surface-card border border-line text-ink text-body rounded-input block w-full px-2.5 py-1.5 ' +
+    'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
+
+// Status → StatusPill tone, so color is never the sole signal and contrast meets AA (§5/§8).
+function TaskStatusPill({ task }) {
+    if (task.isDeleted || task.status === 'deleted') {
+        return <StatusPill tone="danger" icon={Trash2}>Ištrinta</StatusPill>;
+    }
+    if (task.status === 'confirmed') {
+        return <StatusPill tone="running" icon={UserCheck}>Patvirtinta</StatusPill>;
+    }
+    return <StatusPill tone="neutral">Nepatvirtinta</StatusPill>;
+}
+
+// Priority badge — keeps the grayscale priority ramp (inline style from utils/priority),
+// only the text is bumped to the 12px caption floor (§5).
+function PriorityBadge({ priority }) {
+    return (
+        <span
+            className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md border border-black/5 uppercase"
+            style={{
+                backgroundColor: getPriorityColor(priority),
+                color: getPriorityTextColor(priority)
+            }}
+        >
+            {getPriorityLabel(priority)}
+        </span>
+    );
+}
 
 export default function TaskHistory({ userId, users = [] }) {
     const { userRole, currentUser } = useAuth();
@@ -23,6 +59,12 @@ export default function TaskHistory({ userId, users = [] }) {
     const [deleteModalTask, setDeleteModalTask] = useState(null);
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null });
     const [commentsModalTask, setCommentsModalTask] = useState(null);
+
+    // Confirm dialogs (replace window.confirm — §8) and friendly error banner (replace alert — §10)
+    const [restoreTarget, setRestoreTarget] = useState(null);
+    const [restoring, setRestoring] = useState(false);
+    const [adjustmentDeleteTarget, setAdjustmentDeleteTarget] = useState(null);
+    const [error, setError] = useState('');
 
     // Filter States
     const [dateFrom, setDateFrom] = useState('');
@@ -204,9 +246,9 @@ export default function TaskHistory({ userId, users = [] }) {
             document.body.appendChild(link);
             link.click();
             document.body.removeChild(link);
-        } catch (error) {
-            console.error("Error generating AI export:", error);
-            alert("Įvyko klaida generuojant AI duomenis: " + error.message);
+        } catch (err) {
+            console.error("Error generating AI export:", err);
+            setError("Nepavyko paruošti AI analizės duomenų. Bandykite dar kartą.");
         }
     };
 
@@ -290,8 +332,15 @@ export default function TaskHistory({ userId, users = [] }) {
 
 
 
-    const handleRestore = async (task) => {
-        if (!window.confirm('Ar norite grąžinti užduotį į aktyvių sąrašą?')) return;
+    const handleRestore = (task) => {
+        setError('');
+        setRestoreTarget(task);
+    };
+
+    const confirmRestore = async () => {
+        const task = restoreTarget;
+        if (!task) return;
+        setRestoring(true);
         try {
             const restoredTask = {
                 ...task,
@@ -311,8 +360,13 @@ export default function TaskHistory({ userId, users = [] }) {
 
             await setDoc(doc(db, 'tasks', task.id), restoredTask);
             await deleteDoc(doc(db, 'archived_tasks', task.id));
+            setRestoreTarget(null);
         } catch (err) {
             console.error("Error restoring task:", err);
+            setError("Nepavyko grąžinti užduoties. Bandykite dar kartą.");
+            setRestoreTarget(null);
+        } finally {
+            setRestoring(false);
         }
     };
 
@@ -327,7 +381,7 @@ export default function TaskHistory({ userId, users = [] }) {
             setDeleteModalTask(null);
         } catch (err) {
             console.error("Error deleting task:", err);
-            alert("Nepavyko ištrinti užduoties: " + err.message);
+            setError("Nepavyko ištrinti užduoties. Bandykite dar kartą.");
         }
     };
 
@@ -369,7 +423,7 @@ export default function TaskHistory({ userId, users = [] }) {
 
         } catch (err) {
             console.error("Error adding comment to archived task:", err);
-            alert("Nepavyko pridėti komentaro.");
+            setError("Nepavyko pridėti komentaro. Bandykite dar kartą.");
         }
     };
 
@@ -422,15 +476,24 @@ export default function TaskHistory({ userId, users = [] }) {
             ));
         } catch (err) {
             console.error('Error adding adjustment:', err);
-            alert('Nepavyko pridėti laiko korekcijos: ' + err.message);
+            setError('Nepavyko pridėti laiko korekcijos. Bandykite dar kartą.');
         }
     };
 
-    const handleDeleteAdjustment = async (taskId, adj) => {
-        if (!window.confirm("Ar tikrai norite ištrinti šią korekciją?")) return;
+    const handleDeleteAdjustment = (taskId, adj) => {
+        setError('');
+        setAdjustmentDeleteTarget({ taskId, adj });
+    };
+
+    const confirmDeleteAdjustment = async () => {
+        if (!adjustmentDeleteTarget) return;
+        const { taskId, adj } = adjustmentDeleteTarget;
         try {
             const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
+            if (!task) {
+                setAdjustmentDeleteTarget(null);
+                return;
+            }
 
             await deleteDoc(doc(db, 'work_sessions', adj.id));
 
@@ -444,63 +507,136 @@ export default function TaskHistory({ userId, users = [] }) {
             setTasks(prev => prev.map(t =>
                 t.id === task.id ? { ...t, timeAdjustments: newAdjustments } : t
             ));
+            setAdjustmentDeleteTarget(null);
         } catch (err) {
             console.error('Error deleting adjustment:', err);
-            alert('Nepavyko ištrinti korekcijos.');
+            setError('Nepavyko ištrinti korekcijos. Bandykite dar kartą.');
+            setAdjustmentDeleteTarget(null);
         }
     };
 
+    // Comments IconButton with an always-visible count badge. The count is bumped to the 12px
+    // floor (§5); the badge stays inside the 44px IconButton target.
+    const CommentsButton = ({ task }) => (
+        <span className="relative inline-flex">
+            <IconButton
+                icon={MessageCircle}
+                label="Komentarai"
+                onClick={() => setCommentsModalTask(task)}
+            />
+            {task.comments?.length > 0 && (
+                <span className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 bg-brand text-white text-caption font-bold flex items-center justify-center rounded-full leading-none">
+                    {task.comments.length}
+                </span>
+            )}
+        </span>
+    );
+
+    // Shared action cluster — always-visible 44px targets (no hover dependency, so it works on
+    // touch). Same controls + role gating in both the desktop table and the mobile card (§7/§9).
+    const TaskActions = ({ task }) => (
+        <div className="flex items-center gap-1">
+            {task.status !== 'confirmed' && isManagerOrAdmin && (
+                <IconButton
+                    icon={UserCheck}
+                    label="Patvirtinti"
+                    onClick={() => handleConfirm(task)}
+                    className="text-feedback-success hover:bg-green-50"
+                />
+            )}
+            <CommentsButton task={task} />
+            <IconButton
+                icon={RotateCcw}
+                label="Grąžinti"
+                onClick={() => handleRestore(task)}
+            />
+            {isManagerOrAdmin && (
+                <IconButton
+                    icon={Trash2}
+                    label="Ištrinti"
+                    variant="danger"
+                    onClick={() => handleDelete(task)}
+                />
+            )}
+        </div>
+    );
+
+    // Admin-only inline time-adjustment trigger — 44px IconButton with an accessible name,
+    // replacing the bare <svg> button (§7). Shown in both the table and the mobile card.
+    const TimeEditButton = ({ task }) =>
+        userRole === 'admin' ? (
+            <IconButton
+                icon={Pencil}
+                label="Koreguoti laiką"
+                onClick={() => setActiveModal({ type: 'timeAdjustments', taskId: task.id })}
+            />
+        ) : null;
+
     if (loading && tasks.length === 0) {
-        return <div className="p-8 text-center text-gray-500">Kraunama istorija...</div>;
+        return <div className="p-8 text-center text-ink-muted">Kraunama istorija...</div>;
     }
 
     return (
         <div className="space-y-4">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                    Užduočių istorija <span className="text-gray-500 text-sm font-normal">({tasks.length})</span>
+                <h2 className="text-h3 font-semibold text-ink-strong flex items-center gap-2">
+                    Užduočių istorija <span className="text-ink-muted text-body font-normal">({tasks.length})</span>
                 </h2>
                 <div className="flex items-center gap-2">
                     <button
                         onClick={handleExportCSV}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                        className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
-                        <FileText className="w-4 h-4" />
+                        <FileText className="w-4 h-4" aria-hidden="true" />
                         Atsisiųsti (CSV)
                     </button>
                     <button
                         onClick={handleExport}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm font-medium"
+                        className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
-                        <Download className="w-4 h-4" />
+                        <Download className="w-4 h-4" aria-hidden="true" />
                         Atsisiųsti AI analizei (JSON)
                     </button>
                 </div>
             </div>
 
+            {/* Friendly error banner — replaces the banned alert() with mapped LT copy (§10) */}
+            {error && (
+                <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-red-50 p-4" role="alert">
+                    <AlertCircle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                    <p className="text-body text-red-700">{error}</p>
+                    <button
+                        onClick={() => setError('')}
+                        className="ml-auto text-body font-medium text-red-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                    >
+                        Uždaryti
+                    </button>
+                </div>
+            )}
+
             {/* Filters */}
-            <div className="bg-gray-50 p-4 rounded-xl border border-gray-200 flex flex-col md:flex-row gap-4 items-end md:items-center flex-wrap">
+            <div className="bg-surface-sunken p-4 rounded-card border border-line flex flex-col md:flex-row gap-4 items-end md:items-center flex-wrap">
 
                 {/* Date Range */}
                 <div className="flex items-center gap-2">
                     <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase font-bold text-gray-500">Nuo</label>
+                        <label className={FILTER_LABEL_CLASS}>Nuo</label>
                         <input
                             type="date"
                             value={dateFrom}
                             onChange={(e) => setDateFrom(e.target.value)}
-                            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5"
+                            className={SELECT_CLASS}
                         />
                     </div>
-                    <span className="text-gray-400 mt-5">-</span>
+                    <span className="text-ink-muted mt-5">-</span>
                     <div className="flex flex-col gap-1">
-                        <label className="text-[10px] uppercase font-bold text-gray-500">Iki</label>
+                        <label className={FILTER_LABEL_CLASS}>Iki</label>
                         <input
                             type="date"
                             value={dateTo}
                             onChange={(e) => setDateTo(e.target.value)}
                             max={getLithuanianDateString()}
-                            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5"
+                            className={SELECT_CLASS}
                         />
                     </div>
                 </div>
@@ -508,11 +644,11 @@ export default function TaskHistory({ userId, users = [] }) {
                 {/* User Filter (Manager Only) */}
                 {(isManagerOrAdmin && userId === 'all') && (
                     <div className="flex flex-col gap-1 min-w-[150px]">
-                        <label className="text-[10px] uppercase font-bold text-gray-500">Darbuotojas</label>
+                        <label className={FILTER_LABEL_CLASS}>Darbuotojas</label>
                         <select
                             value={filterUser}
                             onChange={(e) => setFilterUser(e.target.value)}
-                            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5"
+                            className={SELECT_CLASS}
                         >
                             <option value="all">Visi</option>
                             {users.map(u => (
@@ -526,11 +662,11 @@ export default function TaskHistory({ userId, users = [] }) {
 
                 {/* Tag Filter */}
                 <div className="flex flex-col gap-1 min-w-[120px]">
-                    <label className="text-[10px] uppercase font-bold text-gray-500">Žyma</label>
+                    <label className={FILTER_LABEL_CLASS}>Žyma</label>
                     <select
                         value={filterTag}
                         onChange={(e) => setFilterTag(e.target.value)}
-                        className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5"
+                        className={SELECT_CLASS}
                     >
                         <option value="all">Visos</option>
                         {TASK_TAGS.map(tag => (
@@ -541,199 +677,253 @@ export default function TaskHistory({ userId, users = [] }) {
 
                 {/* Sort By */}
                 <div className="flex flex-col gap-1 min-w-[120px]">
-                    <label className="text-[10px] uppercase font-bold text-gray-500">Rikiuoti</label>
+                    <label className={FILTER_LABEL_CLASS}>Rikiuoti</label>
                     <div className="relative">
                         <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value)}
-                            className="bg-white border border-gray-300 text-gray-900 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block w-full px-2.5 py-1.5 pl-8"
+                            className={clsx(SELECT_CLASS, 'pl-8')}
                         >
                             <option value="date">Pagal datą</option>
                             <option value="status">Pagal būseną</option>
                         </select>
-                        <Filter className="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-1/2 transform -translate-y-1/2" />
+                        <Filter className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" aria-hidden="true" />
                     </div>
                 </div>
 
                 {/* Reset Button */}
-                <button
-                    onClick={resetFilters}
-                    className="md:ml-auto p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 rounded-lg transition-colors"
-                    title="Išvalyti filtrus"
-                >
-                    <RotateCcw className="w-5 h-5" />
-                </button>
+                <div className="md:ml-auto">
+                    <IconButton
+                        icon={RotateCcw}
+                        label="Išvalyti filtrus"
+                        onClick={resetFilters}
+                    />
+                </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            {/* Mobile / touch: one card per task — never a horizontally-scrolling table (§9).
+                Hover-only table actions are surfaced here as always-visible 44px buttons. */}
+            <ul className="space-y-3 md:hidden">
+                {tasks.map((task) => {
+                    const deleted = task.isDeleted || task.status === 'deleted';
+                    const actualMinutes = calculateCurrentTotalMinutes(task);
+                    const actualLabel = actualMinutes !== 0 ? formatMinutesToTimeString(actualMinutes) : '-';
+                    return (
+                        <li
+                            key={task.id}
+                            className="bg-surface-card rounded-card shadow-sm border border-line p-4 space-y-3"
+                        >
+                            {/* Title row + priority */}
+                            <div className="flex items-start justify-between gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => toggleExpand(task.id)}
+                                    aria-expanded={expandedTasks.has(task.id)}
+                                    className="min-w-0 flex-1 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                >
+                                    <span className={clsx(
+                                        "text-body-lg font-bold text-ink-strong break-words",
+                                        deleted && "line-through text-ink-muted"
+                                    )}>
+                                        {task.title}
+                                    </span>
+                                    {task.tag && (
+                                        <span className="ml-2 inline-block px-2 py-0.5 text-caption font-medium bg-brand-soft text-brand-hover rounded align-middle">
+                                            {task.tag}
+                                        </span>
+                                    )}
+                                </button>
+                                <PriorityBadge priority={task.priority} />
+                            </div>
+
+                            {/* Meta chips: worker + deadline + archive date */}
+                            <div className="flex flex-wrap items-center gap-2">
+                                {task.assignedUserName && (
+                                    <span className="px-2 py-1 rounded-full text-caption font-medium bg-surface-sunken text-ink border border-line">
+                                        {formatDisplayName(task.assignedUserName).split(' ')[0]}
+                                    </span>
+                                )}
+                                {task.deadline && (
+                                    <span className="inline-flex items-center gap-1 text-caption text-ink-muted">
+                                        <Calendar className="w-3.5 h-3.5" aria-hidden="true" />
+                                        {task.deadline}
+                                    </span>
+                                )}
+                                <span className="text-caption text-ink-muted">
+                                    Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}
+                                </span>
+                            </div>
+
+                            {/* Est. / Actual time — the core metric, read at a glance */}
+                            <div className="flex items-center gap-2">
+                                <span className="text-caption text-ink-muted">Plan. / Tikras:</span>
+                                <span className="text-body-lg font-mono font-semibold text-ink-strong">
+                                    <span className="text-brand">{task.estimatedTime || '-'}</span>
+                                    <span className="text-ink-muted mx-1">/</span>
+                                    <span>{actualLabel}</span>
+                                </span>
+                                <TimeEditButton task={task} />
+                            </div>
+                            {task.timeChanged && (
+                                <div className="text-feedback-danger font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</div>
+                            )}
+
+                            {/* Description */}
+                            {task.description && (
+                                <div className={clsx(
+                                    "text-caption text-ink-muted flex items-start gap-1 break-words",
+                                    expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
+                                )}>
+                                    <SessionTypeIcon
+                                        type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
+                                        className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+                                    />
+                                    {task.description}
+                                </div>
+                            )}
+
+                            {/* Manager */}
+                            {(task.managerName || task.creatorName) && (
+                                <div className="text-caption text-ink-muted flex items-center gap-1">
+                                    <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                                    <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                </div>
+                            )}
+
+                            {/* Expanded comments */}
+                            {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
+                                <div className="pl-4 border-l-2 border-line">
+                                    <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
+                                    {task.comments.map((comment, idx) => (
+                                        <div key={idx} className="text-caption text-ink mb-1">
+                                            <span className="font-medium">{comment.user}:</span> {comment.text}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Footer: status + always-visible action buttons */}
+                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
+                                <TaskStatusPill task={task} />
+                                <TaskActions task={task} />
+                            </div>
+                        </li>
+                    );
+                })}
+                {tasks.length === 0 && (
+                    <li className="bg-surface-card rounded-card border border-line px-6 py-12 text-center text-body text-ink-muted">
+                        Istorija tuščia pagal pasirinktus filtrus.
+                    </li>
+                )}
+            </ul>
+
+            {/* Desktop / wide: the denser table is allowed (§9) */}
+            <div className="hidden md:block bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
                 <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200 table-fixed">
-                        <thead className="bg-gray-50">
+                    <table className="min-w-full divide-y divide-line table-fixed">
+                        <thead className="bg-surface-sunken">
                             <tr>
-                                <th className="px-2 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider min-w-[200px] w-auto">UŽDUOTIS</th>
-                                <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">DARB.</th>
-                                <th className="px-1 py-2 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24">PLAN. / TIKRAS</th>
-                                <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">PRIO</th>
-                                <th className="px-1 py-2 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16">BŪSENA</th>
-                                <th className="px-1 py-2 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24"></th>
+                                <th className="px-2 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider min-w-[200px] w-auto">UŽDUOTIS</th>
+                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">DARB.</th>
+                                <th className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-24">PLAN. / TIKRAS</th>
+                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIO</th>
+                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-20">BŪSENA</th>
+                                <th className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-44"></th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody className="bg-surface-card divide-y divide-line">
                             {tasks.map((task) => (
-                                <tr key={task.id} className="group hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-0">
+                                <tr key={task.id} className="hover:bg-surface-sunken transition-colors border-b border-line last:border-0">
                                     <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
                                         <div className={clsx(
-                                            "text-sm font-bold text-gray-900 whitespace-normal break-words",
-                                            (task.isDeleted || task.status === 'deleted') && "line-through text-gray-500"
+                                            "text-body font-bold text-ink-strong whitespace-normal break-words",
+                                            (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
                                         )}>
                                             {task.title}
                                             {task.tag && (
-                                                <span className="ml-2 inline-block px-1.5 py-0.5 text-[9px] font-medium bg-blue-50 text-blue-600 rounded border border-blue-100 align-middle">
+                                                <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-medium bg-brand-soft text-brand-hover rounded align-middle">
                                                     {task.tag}
                                                 </span>
                                             )}
                                         </div>
                                         {task.deadline && (
-                                            <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                                                <Calendar className="w-2.5 h-2.5" />
+                                            <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                <Calendar className="w-3.5 h-3.5" aria-hidden="true" />
                                                 <span>{task.deadline}</span>
-                                                <span className="text-gray-300">|</span>
+                                                <span className="text-line">|</span>
                                                 <span>Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}</span>
                                             </div>
                                         )}
                                         {!task.deadline && (
-                                            <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                            <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
                                                 <span>Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}</span>
                                             </div>
                                         )}
                                         {task.description && (
                                             <div className={clsx(
-                                                "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
+                                                "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
                                                 expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
                                             )}>
                                                 <SessionTypeIcon
                                                     type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
-                                                    className="w-3 h-3 flex-shrink-0 mt-0.5"
+                                                    className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
                                                 />
                                                 {task.description}
                                             </div>
                                         )}
                                         {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                            <div className="mt-2 pl-4 border-l-2 border-gray-200">
-                                                <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
+                                            <div className="mt-2 pl-4 border-l-2 border-line">
+                                                <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                                 {task.comments.map((comment, idx) => (
-                                                    <div key={idx} className="text-[10px] text-gray-600 mb-1">
+                                                    <div key={idx} className="text-caption text-ink mb-1">
                                                         <span className="font-medium">{comment.user}:</span> {comment.text}
                                                     </div>
                                                 ))}
                                             </div>
                                         )}
                                         {(task.managerName || task.creatorName) && (
-                                            <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
-                                                <UserCheck className="w-2.5 h-2.5" />
+                                            <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
+                                                <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
                                                 <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
                                             </div>
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         {task.assignedUserName && (
-                                            <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                                            <span className="px-2 py-1 rounded-full text-caption font-medium bg-surface-sunken text-ink border border-line">
                                                 {formatDisplayName(task.assignedUserName).split(' ')[0]}
                                             </span>
                                         )}
                                     </td>
-                                    <td className="px-1 py-2 whitespace-nowrap text-right text-[10px] font-medium text-gray-900 align-top font-mono">
-                                        <>
-                                            <span className="text-blue-600">{task.estimatedTime || '-'}</span>
-                                            <span className="text-gray-400 mx-1">/</span>
-                                            <span className="text-gray-900">{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
-                                            {userRole === 'admin' && (
-                                                <button onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'timeAdjustments', taskId: task.id }); }} className="text-blue-500 hover:text-blue-700 ml-1 inline-flex" title="Koreguoti laiką">
-                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                                </button>
-                                            )}
-                                        </>
+                                    <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium text-ink-strong align-top font-mono">
+                                        <div className="inline-flex items-center justify-end gap-1">
+                                            <span>
+                                                <span className="text-brand">{task.estimatedTime || '-'}</span>
+                                                <span className="text-ink-muted mx-1">/</span>
+                                                <span className="text-ink-strong">{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
+                                            </span>
+                                            <TimeEditButton task={task} />
+                                        </div>
                                         {task.timeChanged && (
-                                            <div className="text-red-600 font-bold text-[10px] uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</div>
+                                            <div className="text-feedback-danger font-bold text-caption uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</div>
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
-                                        <span
-                                            className={clsx(
-                                                "px-1.5 py-0.5 inline-flex text-[9px] leading-3 font-semibold rounded-md border border-black/5 uppercase"
-                                            )}
-                                            style={{
-                                                backgroundColor: getPriorityColor(task.priority),
-                                                color: getPriorityTextColor(task.priority)
-                                            }}
-                                        >
-                                            {getPriorityLabel(task.priority)}
-                                        </span>
+                                        <PriorityBadge priority={task.priority} />
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
-                                        <div className="flex items-center gap-1">
-                                            {(task.isDeleted || task.status === 'deleted') ? (
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-800 border border-red-200">
-                                                    Ištrinta
-                                                </span>
-                                            ) : task.status === 'confirmed' ? (
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
-                                                    Patvirt.
-                                                </span>
-                                            ) : (
-                                                <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-800">
-                                                    Nepatv.
-                                                </span>
-                                            )}
-                                        </div>
+                                        <TaskStatusPill task={task} />
                                     </td>
-                                    <td className="px-1 py-2 whitespace-nowrap text-right text-xs font-medium align-top">
-                                        <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            {task.status !== 'confirmed' && (isManagerOrAdmin) && (
-                                                <button
-                                                    onClick={() => handleConfirm(task)}
-                                                    className="p-1 text-green-600 hover:bg-green-50 rounded"
-                                                    title="Patvirtinti"
-                                                >
-                                                    <UserCheck className="w-3.5 h-3.5" />
-                                                </button>
-                                            )}
-                                            <button
-                                                onClick={() => setCommentsModalTask(task)}
-                                                className="p-1 text-gray-600 hover:bg-gray-50 rounded relative"
-                                                title="Komentarai"
-                                            >
-                                                <MessageCircle className="w-3.5 h-3.5" />
-                                                {task.comments?.length > 0 && (
-                                                    <span className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 text-white text-[8px] font-bold flex items-center justify-center rounded-full leading-none truncate">
-                                                        {task.comments.length}
-                                                    </span>
-                                                )}
-                                            </button>
-                                            <button
-                                                onClick={() => handleRestore(task)}
-                                                className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-                                                title="Grąžinti"
-                                            >
-                                                <RotateCcw className="w-3.5 h-3.5" />
-                                            </button>
-                                            {(isManagerOrAdmin) && (
-                                                <button
-                                                    onClick={() => handleDelete(task)}
-                                                    className="p-1 text-red-600 hover:bg-red-50 rounded"
-                                                    title="Ištrinti"
-                                                >
-                                                    <Trash2 className="w-3.5 h-3.5" />
-                                                </button>
-                                            )}
-
+                                    <td className="px-1 py-2 whitespace-nowrap text-right align-top">
+                                        <div className="flex items-center justify-end">
+                                            <TaskActions task={task} />
                                         </div>
                                     </td>
                                 </tr>
                             ))}
                             {tasks.length === 0 && (
                                 <tr>
-                                    <td colSpan="7" className="px-6 py-12 text-center text-gray-500 text-sm">
+                                    <td colSpan="6" className="px-6 py-12 text-center text-ink-muted text-body">
                                         <span>Istorija tuščia pagal pasirinktus filtrus.</span>
                                     </td>
                                 </tr>
@@ -767,6 +957,36 @@ export default function TaskHistory({ userId, users = [] }) {
                     />
                 );
             })()}
+
+            {/* Restore confirmation — replaces window.confirm (§8) */}
+            {restoreTarget && (
+                <ConfirmDialog
+                    open
+                    title="Grąžinti užduotį?"
+                    message={`Užduotis „${restoreTarget.title}" bus grąžinta į aktyvius sąrašus.`}
+                    confirmLabel="Grąžinti"
+                    cancelLabel="Atšaukti"
+                    variant="primary"
+                    loading={restoring}
+                    onConfirm={confirmRestore}
+                    onCancel={() => setRestoreTarget(null)}
+                />
+            )}
+
+            {/* Time-adjustment delete confirmation — replaces window.confirm (§8) */}
+            {adjustmentDeleteTarget && (
+                <ConfirmDialog
+                    open
+                    title="Ištrinti korekciją?"
+                    message="Ši laiko korekcija bus negrąžinamai ištrinta."
+                    warning="Veiksmo atšaukti nebus galima."
+                    confirmLabel="Ištrinti"
+                    cancelLabel="Atšaukti"
+                    variant="danger"
+                    onConfirm={confirmDeleteAdjustment}
+                    onCancel={() => setAdjustmentDeleteTarget(null)}
+                />
+            )}
         </div>
     );
 }
