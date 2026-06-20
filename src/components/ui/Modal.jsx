@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import IconButton from './IconButton';
@@ -48,7 +49,9 @@ export default function Modal({
 
     if (!open) return null;
 
-    return (
+    // Portal to <body> so the fixed overlay is never trapped by a transformed ancestor
+    // (e.g. a swipeable TaskCard applies translateX, which would otherwise contain `fixed`).
+    return createPortal(
         <div
             className="fixed inset-0 z-backdrop flex items-center justify-center p-4 bg-feedback-scrim"
             onMouseDown={(e) => {
@@ -85,6 +88,7 @@ export default function Modal({
                 <div className={cn('px-6 pb-6', !title && !(dismissible && onClose) && 'pt-6')}>{children}</div>
                 {footer && <div className="px-6 pb-6 pt-2">{footer}</div>}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 }

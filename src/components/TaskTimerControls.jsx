@@ -7,6 +7,8 @@ import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
+import Button from './ui/Button';
+import ConfirmDialog from './ui/ConfirmDialog';
 
 // stopBreak/stopCall no longer needed — startTask/resumeTask handle session cleanup
 
@@ -35,6 +37,9 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     }
 
     const [elapsedString, setElapsedString] = useState('');
+    const [confirmFinish, setConfirmFinish] = useState(false);
+    const [finishing, setFinishing] = useState(false);
+    const [finishError, setFinishError] = useState('');
 
     useEffect(() => {
         const updateTime = () => {
@@ -147,13 +152,15 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         }
     };
 
-    const handleFinish = async (e) => {
+    // Open the confirm dialog (stop propagation so the tap doesn't also hit the card).
+    const openFinish = (e) => {
         e.stopPropagation();
+        setFinishError('');
+        setConfirmFinish(true);
+    };
 
-        if (!window.confirm("Ar tikrai norite užbaigti užduotį?")) {
-            return;
-        }
-
+    const performFinish = async () => {
+        setFinishing(true);
         try {
             let finalTimerMinutes = task.timerMinutes || 0;
             let currentManualMinutes = task.manualMinutes || 0;
@@ -290,11 +297,13 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             }
 
             console.log(`Task ${task.id} finished and archived`);
+            setConfirmFinish(false);
         } catch (err) {
             console.error("Error finishing task:", err);
-            if (navigator.onLine) {
-                alert("Nepavyko užbaigti užduoties: " + err.message);
-            }
+            // Surface the failure inside the dialog (never raw err.message, never window.alert).
+            setFinishError('Nepavyko užbaigti užduoties. Bandykite dar kartą.');
+        } finally {
+            setFinishing(false);
         }
     };
 
@@ -304,7 +313,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         return (
             <div className="mt-3 border-t pt-2 flex items-center justify-between">
                 <span className="text-xs font-semibold text-gray-500">Praleistas laikas:</span>
-                <span className="text-sm font-bold text-blue-600 flex items-center gap-1">
+                <span className="text-sm font-bold text-ink-strong flex items-center gap-1">
                     <Clock className="w-4 h-4" />
                     {formatMinutesToTimeString(totalMinutes)}
                 </span>
@@ -319,56 +328,69 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     const isLimitExceeded = estMinutes > 0 && currentTotalMinutes >= estMinutes;
 
     return (
-        <div className="flex items-center gap-2 mt-3 border-t pt-3">
-            {/* Toggle Button: Pradėti / Pauzė / Tęsti */}
-            {isRunning ? (
-                <button
-                    type="button"
-                    onClick={handlePause}
-                    disabled={isSecondarySessionActive}
-                    className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${isSecondarySessionActive
-                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                        : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
-                        }`}
-                >
-                    <Pause className="w-3.5 h-3.5 flex-shrink-0" />
-                    Pauzė {elapsedString}
-                </button>
-            ) : isLimitExceeded ? (
-                /* Start Button Removed when Limit Exceeded (User request: remove start button) */
-                <div className="flex-1 flex items-center justify-center px-2 py-1.5 text-xs font-semibold text-red-500 bg-red-50 rounded border border-red-100 whitespace-nowrap">
-                    Laikas išnaudotas
-                </div>
-            ) : (
-                <button
-                    type="button"
-                    onClick={isPaused ? handleResume : handleStart}
-                    disabled={isSecondarySessionActive}
-                    className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${isSecondarySessionActive
-                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                        : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
-                        }`}
-                    title={isSecondarySessionActive ? "Kitas veiksmas jau aktyvus" : ""}
-                >
-                    <Play className="w-3.5 h-3.5 flex-shrink-0" />
-                    {isPaused ? 'Tęsti' : 'Pradėti'} {elapsedString !== '00:00' ? elapsedString : ''}
-                </button>
-            )}
+        <>
+            <div className="mt-3 flex items-center gap-2 border-t pt-3">
+                {/* Primary control: Pradėti / Tęsti / Pauzė — always the dominant action (2x width). */}
+                {isRunning ? (
+                    <Button
+                        variant="secondary"
+                        icon={Pause}
+                        onClick={handlePause}
+                        disabled={isSecondarySessionActive}
+                        className="flex-[2] whitespace-nowrap"
+                    >
+                        Pauzė {elapsedString}
+                    </Button>
+                ) : isLimitExceeded ? (
+                    /* Start removed once the time limit is exceeded (occupies the primary slot). */
+                    <div
+                        role="status"
+                        className="flex min-h-touch flex-[2] items-center justify-center gap-1.5 rounded-control border border-red-100 bg-red-50 px-2 text-body font-semibold text-red-700"
+                    >
+                        <Clock className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+                        Laikas išnaudotas
+                    </div>
+                ) : (
+                    <Button
+                        variant="primary"
+                        icon={Play}
+                        onClick={isPaused ? handleResume : handleStart}
+                        disabled={isSecondarySessionActive}
+                        title={isSecondarySessionActive ? 'Kitas veiksmas jau aktyvus' : undefined}
+                        className="flex-[2] whitespace-nowrap"
+                    >
+                        {isPaused ? 'Tęsti' : 'Pradėti'} {elapsedString !== '00:00' ? elapsedString : ''}
+                    </Button>
+                )}
 
-            {/* UŽBAIGTI */}
-            <button
-                type="button"
-                onClick={handleFinish}
-                disabled={isSecondarySessionActive}
-                className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium rounded transition-colors whitespace-nowrap ${isSecondarySessionActive
-                    ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                    : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
-                    }`}
-                title={isSecondarySessionActive ? "Kitas veiksmas jau aktyvus" : ""}
-            >
-                <Square className="w-3.5 h-3.5 flex-shrink-0" />
-                Užbaigti
-            </button>
-        </div>
+                {/* Užbaigti — the irreversible action: deliberately quieter and narrower than the
+                    primary control, and gated by a confirm dialog (DESIGN_SYSTEM §8). */}
+                <Button
+                    variant="secondary"
+                    icon={Square}
+                    onClick={openFinish}
+                    disabled={isSecondarySessionActive}
+                    title={isSecondarySessionActive ? 'Kitas veiksmas jau aktyvus' : undefined}
+                    className="flex-1 whitespace-nowrap text-ink-muted"
+                >
+                    Užbaigti
+                </Button>
+            </div>
+
+            {confirmFinish && (
+                <ConfirmDialog
+                    open
+                    title="Užbaigti užduotį?"
+                    message="Užduotis bus pažymėta kaip užbaigta ir bus užfiksuotas sugaištas laikas."
+                    warning={finishError || 'Šio veiksmo nebus galima atšaukti.'}
+                    confirmLabel="Užbaigti"
+                    cancelLabel="Atšaukti"
+                    variant="danger"
+                    loading={finishing}
+                    onConfirm={performFinish}
+                    onCancel={() => setConfirmFinish(false)}
+                />
+            )}
+        </>
     );
 }

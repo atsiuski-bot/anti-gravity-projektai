@@ -1,16 +1,19 @@
-import { Zap, Phone, Coffee, Briefcase } from 'lucide-react';
-import clsx from 'clsx';
+import { Briefcase } from 'lucide-react';
+import { getSessionColors } from '../utils/sessionColors';
+import { cn } from '../utils/cn';
 
+/**
+ * SessionTypeIcon — renders the glyph and accent for a session type, both sourced from the
+ * single SESSION_COLORS map (DESIGN_SYSTEM §4-B). This is what unifies the "call" color onto
+ * blue (it was `sky` here before) and keeps every session icon consistent app-wide.
+ */
 export default function SessionTypeIcon({ type, className }) {
-    switch (type) {
-        case 'quickWork':
-            return <Zap className={clsx("text-red-500", className)} />;
-        case 'call':
-            return <Phone className={clsx("text-sky-500", className)} />;
-        case 'break':
-            return <Coffee className={clsx("text-amber-500", className)} />;
-        case 'task':
-        default:
-            return <Briefcase className={clsx("text-blue-500", className)} />;
+    const session = getSessionColors(type);
+
+    if (!session) {
+        return <Briefcase className={cn('text-session-task-accent', className)} aria-hidden="true" />;
     }
+
+    const Icon = session.Icon;
+    return <Icon className={cn(session.accent, className)} aria-hidden="true" />;
 }

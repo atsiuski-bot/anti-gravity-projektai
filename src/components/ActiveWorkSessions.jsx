@@ -45,20 +45,23 @@ export default function ActiveWorkSessions() {
             switch (user.activeSession.type) {
                 case 'break':
                     displayProps = {
+                        type: 'break',
                         label: 'Pertrauka',
-                        colorClass: 'bg-orange-100 text-orange-800',
+                        colorClass: 'bg-amber-100 text-amber-800',
                         startTime: user.activeSession.startTime
                     };
                     break;
                 case 'call':
                     displayProps = {
+                        type: 'call',
                         label: 'Skambutis',
-                        colorClass: 'bg-sky-100 text-sky-800',
+                        colorClass: 'bg-blue-100 text-blue-800',
                         startTime: user.activeSession.startTime
                     };
                     break;
                 case 'quickWork':
                     displayProps = {
+                        type: 'quickWork',
                         label: 'Greitas darbas',
                         colorClass: 'bg-red-100 text-red-800',
                         startTime: user.activeSession.startTime
@@ -109,8 +112,8 @@ export default function ActiveWorkSessions() {
                 className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
             >
                 <div className="flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-blue-600" />
-                    <h3 className="font-semibold text-gray-900">Veikla (Active Sessions)</h3>
+                    <Activity className="w-5 h-5 text-brand" />
+                    <h3 className="font-semibold text-gray-900">Aktyvi veikla</h3>
                 </div>
                 {isCollapsed ? <ChevronDown className="w-5 h-5 text-gray-500" /> : <ChevronUp className="w-5 h-5 text-gray-500" />}
             </button>
