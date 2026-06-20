@@ -1,9 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
+import IconButton from './ui/IconButton';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
+    const dialogRef = useRef(null);
+    const restoreFocusRef = useRef(null);
+    const titleId = useId();
+
+    useEffect(() => {
+        if (!isOpen) return undefined;
+        restoreFocusRef.current = document.activeElement;
+        dialogRef.current?.focus?.();
+
+        const onKey = (e) => {
+            if (e.key === 'Escape') onClose?.();
+        };
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            restoreFocusRef.current?.focus?.();
+        };
+    }, [isOpen, onClose]);
+
     if (!isOpen) return null;
 
     return (
@@ -13,22 +33,21 @@ export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
             onTouchEnd={(e) => { e.stopPropagation(); onClose(); }}
         >
             <div
-                className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto"
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                tabIndex={-1}
+                className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto focus:outline-none"
                 onClick={(e) => e.stopPropagation()}
                 onTouchEnd={(e) => e.stopPropagation()}
             >
                 <div className="flex justify-between items-center p-4 border-b border-gray-200 sticky top-0 bg-white z-10">
                     <div className="flex items-center gap-2">
                         {Icon && <Icon className="w-5 h-5 text-blue-600" />}
-                        <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+                        <h3 id={titleId} className="text-lg font-semibold text-gray-900">{title}</h3>
                     </div>
-                    <button
-                        onClick={onClose}
-                        className="text-gray-500 hover:text-gray-700 transition-colors p-2 -mr-2 touch-manipulation"
-                        aria-label="Uždaryti"
-                    >
-                        <X className="w-7 h-7 sm:w-6 sm:h-6" />
-                    </button>
+                    <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
                 </div>
                 <div className="p-6">
                     {children}
@@ -195,7 +214,7 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                 <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {adjustments.length > 0 ? (
                         adjustments.map((adj, idx) => (
-                            <div key={idx} className="bg-gray-50 p-4 rounded-lg flex justify-between items-center group">
+                            <div key={idx} className="bg-gray-50 p-4 rounded-lg flex justify-between items-center">
                                 <div>
                                     <div className="flex items-center gap-2 mb-1">
                                         <span className="font-semibold text-gray-900">{adj.date}</span>
@@ -205,13 +224,12 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                                     </div>
                                     <p className="text-gray-600 text-sm">{adj.reason || 'Be priežasties'}</p>
                                 </div>
-                                <button
+                                <IconButton
+                                    icon={Trash2}
+                                    label="Ištrinti šį įrašą"
+                                    variant="danger"
                                     onClick={() => onDeleteAdjustment(task.id, adj)}
-                                    className="p-2 text-red-500 hover:bg-red-50 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
-                                    title="Ištrinti šį įrašą"
-                                >
-                                    <Trash2 className="w-5 h-5" />
-                                </button>
+                                />
                             </div>
                         ))
                     ) : (
@@ -285,6 +303,25 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     const containerRef = React.useRef(null);
     const isDragOccurred = React.useRef(false);
 
+    const hasMultiple = imageUrls && imageUrls.length > 1;
+
+    useEffect(() => {
+        if (!isOpen) return undefined;
+        const onKey = (e) => {
+            if (e.key === 'Escape') {
+                onClose?.();
+            } else if (e.key === 'ArrowRight' && hasMultiple) {
+                setCurrentIndex((prev) => (prev + 1) % imageUrls.length);
+                setZoom(1);
+            } else if (e.key === 'ArrowLeft' && hasMultiple) {
+                setCurrentIndex((prev) => (prev - 1 + imageUrls.length) % imageUrls.length);
+                setZoom(1);
+            }
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [isOpen, hasMultiple, imageUrls, onClose]);
+
     if (!isOpen || !imageUrls || imageUrls.length === 0) return null;
 
     const validIndex = currentIndex >= imageUrls.length ? 0 : currentIndex;
@@ -353,29 +390,38 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
         <div
             className="fixed inset-0 z-[9999] flex items-center justify-center bg-black bg-opacity-95"
             onClick={onClose}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Nuotraukos peržiūra"
         >
             <div className={`relative w-full h-full flex items-center justify-center overflow-hidden`}>
                 {/* Controls - Only show when not zoomed or fix them to screen edges */}
                 <button
+                    type="button"
                     onClick={onClose}
-                    className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors z-[10000] bg-black/20 rounded-full p-1"
+                    aria-label="Uždaryti"
+                    className="absolute top-4 right-4 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-[10000] bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                 >
-                    <X className="w-8 h-8" />
+                    <X className="w-8 h-8" aria-hidden="true" />
                 </button>
 
                 {imageUrls.length > 1 && (
                     <>
                         <button
+                            type="button"
                             onClick={handlePrev}
-                            className="absolute left-4 top-1/2 -translate-y-1/2 p-2 text-white hover:bg-white/10 rounded-full transition-colors z-[10000] bg-black/20"
+                            aria-label="Ankstesnė nuotrauka"
+                            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-[10000] bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
-                            <ChevronLeft className="w-8 h-8" />
+                            <ChevronLeft className="w-8 h-8" aria-hidden="true" />
                         </button>
                         <button
+                            type="button"
                             onClick={handleNext}
-                            className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-white hover:bg-white/10 rounded-full transition-colors z-[10000] bg-black/20"
+                            aria-label="Kita nuotrauka"
+                            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-[10000] bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
-                            <ChevronRight className="w-8 h-8" />
+                            <ChevronRight className="w-8 h-8" aria-hidden="true" />
                         </button>
                     </>
                 )}
@@ -428,17 +474,43 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
 }
 
 export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true }) {
+    const dialogRef = useRef(null);
+    const restoreFocusRef = useRef(null);
+    const titleId = useId();
+
+    useEffect(() => {
+        if (!isOpen) return undefined;
+        restoreFocusRef.current = document.activeElement;
+        dialogRef.current?.focus?.();
+
+        const onKey = (e) => {
+            if (e.key === 'Escape') onClose?.();
+        };
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('keydown', onKey);
+            restoreFocusRef.current?.focus?.();
+        };
+    }, [isOpen, onClose]);
+
     if (!isOpen) return null;
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50 p-4 animate-in fade-in duration-200">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 duration-200">
+            <div
+                ref={dialogRef}
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby={titleId}
+                tabIndex={-1}
+                className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 duration-200 focus:outline-none"
+            >
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-4 text-red-600">
                         <div className="p-2 bg-red-50 rounded-full">
                             <AlertTriangle className="w-6 h-6" />
                         </div>
-                        <h3 className="text-xl font-bold">{isTask ? 'Ištrinti užduotį' : 'Ištrinti įrašą'}</h3>
+                        <h3 id={titleId} className="text-xl font-bold">{isTask ? 'Ištrinti užduotį' : 'Ištrinti įrašą'}</h3>
                     </div>
 
                     <div className="space-y-4 mb-6">
