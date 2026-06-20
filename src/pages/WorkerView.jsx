@@ -14,7 +14,8 @@ import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/ta
 import { getPriorityRank } from '../utils/priority';
 import Reports from '../components/Reports';
 import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
-import { Filter } from 'lucide-react';
+import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
+import EmptyState from '../components/ui/EmptyState';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
@@ -30,7 +31,6 @@ export default function WorkerView() {
     const [tasks, setTasks] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
-    const [viewMode, setViewMode] = useState('desktop');
 
     const [error, setError] = useState(null);
 
@@ -98,13 +98,6 @@ export default function WorkerView() {
             setError("Įvyko klaida. Bandykite perkrauti puslapį.");
         }
 
-        const handleResize = () => {
-            setViewMode(window.innerWidth < 768 ? 'mobile' : 'desktop');
-        };
-
-        window.addEventListener('resize', handleResize);
-        handleResize();
-
         const handleOpenTaskModal = () => {
             setEditingTask(null);
             setIsModalOpen(true);
@@ -127,7 +120,6 @@ export default function WorkerView() {
 
         return () => {
             unsubscribe();
-            window.removeEventListener('resize', handleResize);
             window.removeEventListener('open-task-modal', handleOpenTaskModal);
             clearInterval(filterInterval);
         };
@@ -192,8 +184,9 @@ export default function WorkerView() {
         <div className="pt-1">
             <div className="mb-2 sm:mb-6">
                 {error && (
-                    <div className="mt-4 bg-red-50 border-l-4 border-red-500 p-4">
-                        <p className="text-sm text-red-700">{error}</p>
+                    <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-red-50 p-4" role="alert">
+                        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                        <p className="text-body text-red-700">{error}</p>
                     </div>
                 )}
             </div>
@@ -206,16 +199,17 @@ export default function WorkerView() {
             {/* Tasks Tab */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 sm:mb-6">
-                    <h2 className="text-xl font-bold text-gray-900 hidden sm:block">Mano užduotys</h2>
+                    <h2 className="text-h2 font-bold text-ink-strong">Mano užduotys</h2>
 
                     {/* Sort dropdown */}
                     <div className="relative w-full sm:w-auto flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
                         <div className="relative">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
                             <select
                                 value={sortBy}
                                 onChange={(e) => setSortBy(e.target.value)}
-                                className="w-full sm:w-auto pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                aria-label="Rūšiuoti pagal"
+                                className="w-full sm:w-auto min-h-touch pl-10 pr-4 py-2 border border-line rounded-input text-body-lg text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 <option value="none">Numatyta tvarka</option>
                                 <option value="status">Pagal būseną</option>
@@ -223,11 +217,12 @@ export default function WorkerView() {
                             </select>
                         </div>
                         <div className="relative">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
                             <select
                                 value={filterTag}
                                 onChange={(e) => setFilterTag(e.target.value)}
-                                className="w-full sm:w-auto pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                aria-label="Filtruoti pagal žymę"
+                                className="w-full sm:w-auto min-h-touch pl-10 pr-4 py-2 border border-line rounded-input text-body-lg text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 <option value="">Visi Tagai</option>
                                 {TASK_TAGS.map(tag => (
@@ -242,27 +237,36 @@ export default function WorkerView() {
 
 
                 {sortedTasks.length === 0 ? (
-                    <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-200">
-                        <p className="text-gray-500">Jums dar nepriskirta jokių užduočių.</p>
-                    </div>
-                ) : viewMode === 'mobile' ? (
-                    <div className="space-y-4">
-                        {sortedTasks.map(task => (
-                            <TaskCard
-                                key={task.id}
-                                task={task}
-                                onEdit={() => handleEditTask(task)}
-                                role="worker"
-                            />
-                        ))}
+                    <div className="rounded-card border border-line bg-surface-card shadow-sm">
+                        <EmptyState
+                            icon={ClipboardList}
+                            title="Nėra užduočių"
+                            description="Jums dar nepriskirta jokių užduočių."
+                        />
                     </div>
                 ) : (
-                    <TaskTable
-                        tasks={sortedTasks}
-                        onEdit={handleEditTask}
-                        role="worker"
-                        hideCheckboxes={true}
-                    />
+                    <>
+                        {/* Mobile: card stack — actions always visible (no group-hover) */}
+                        <div className="space-y-4 md:hidden">
+                            {sortedTasks.map(task => (
+                                <TaskCard
+                                    key={task.id}
+                                    task={task}
+                                    onEdit={() => handleEditTask(task)}
+                                    role="worker"
+                                />
+                            ))}
+                        </div>
+                        {/* Desktop: denser table */}
+                        <div className="hidden md:block">
+                            <TaskTable
+                                tasks={sortedTasks}
+                                onEdit={handleEditTask}
+                                role="worker"
+                                hideCheckboxes={true}
+                            />
+                        </div>
+                    </>
                 )}
             </div>
 
