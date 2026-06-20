@@ -238,6 +238,15 @@ export function AuthProvider({ children }) {
                     }
                 }, (error) => {
                     console.error("Auth: Snapshot error:", error);
+                    // On permission-denied, the user document may not exist yet (first login).
+                    // Retry creating it so the snapshot can re-attach successfully.
+                    if (error.code === 'permission-denied' && !isProcessingRedirect.current) {
+                        console.log("Auth: Permission denied on snapshot — retrying user doc creation...");
+                        isProcessingRedirect.current = true;
+                        processUserAfterLogin(user)
+                            .catch(e => console.error("Auth: Retry failed:", e))
+                            .finally(() => { isProcessingRedirect.current = false; });
+                    }
                     setLoading(false);
                 });
 
