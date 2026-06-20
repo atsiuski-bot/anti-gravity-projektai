@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import Button from './ui/Button';
 
 class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -111,17 +112,17 @@ END OF ERROR REPORT
                         </div>
 
                         <h1 className="text-2xl font-bold text-gray-900 mb-2 text-center">
-                            Application Crashed
+                            Įvyko klaida
                         </h1>
 
                         <p className="text-gray-600 mb-6 text-center">
-                            The application encountered an unexpected error. You can copy the error details below and send them to your developer.
+                            Programa netikėtai sustojo. Nukopijuokite klaidos informaciją žemiau ir nusiųskite ją savo administratoriui.
                         </p>
 
                         {/* Error Message */}
                         {error && (
                             <div className="mb-6">
-                                <h2 className="text-sm font-semibold text-gray-700 mb-2">Error Message:</h2>
+                                <h2 className="text-sm font-semibold text-gray-700 mb-2">Klaidos pranešimas:</h2>
                                 <div className="bg-red-50 border border-red-200 p-4 rounded-lg">
                                     <p className="text-sm font-mono text-red-800 break-words">
                                         {error.toString()}
@@ -133,7 +134,7 @@ END OF ERROR REPORT
                         {/* Metadata */}
                         {timestamp && (
                             <div className="mb-4 text-xs text-gray-500 space-y-1">
-                                <p><span className="font-semibold">Time:</span> {new Date(timestamp).toLocaleString()}</p>
+                                <p><span className="font-semibold">Laikas:</span> {new Date(timestamp).toLocaleString()}</p>
                                 <p><span className="font-semibold">URL:</span> {window.location.href}</p>
                             </div>
                         )}
@@ -145,7 +146,7 @@ END OF ERROR REPORT
                                 className="w-full flex items-center justify-between p-3 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-left"
                             >
                                 <span className="text-sm font-semibold text-gray-700">
-                                    {showDetails ? 'Hide' : 'Show'} Technical Details
+                                    {showDetails ? 'Slėpti' : 'Rodyti'} techninę informaciją
                                 </span>
                                 {showDetails ? (
                                     <ChevronUp className="w-5 h-5 text-gray-600" />
@@ -165,34 +166,29 @@ END OF ERROR REPORT
 
                         {/* Action Buttons */}
                         <div className="flex flex-col sm:flex-row gap-3">
-                            <button
+                            <Button
+                                variant="primary"
+                                size="lg"
+                                fullWidth
                                 onClick={this.copyErrorToClipboard}
-                                className="flex-1 flex items-center justify-center gap-2 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-semibold"
+                                icon={copied ? Check : Copy}
                             >
-                                {copied ? (
-                                    <>
-                                        <Check className="w-5 h-5" />
-                                        Copied!
-                                    </>
-                                ) : (
-                                    <>
-                                        <Copy className="w-5 h-5" />
-                                        Copy Error Details
-                                    </>
-                                )}
-                            </button>
+                                {copied ? 'Nukopijuota!' : 'Kopijuoti klaidos informaciją'}
+                            </Button>
 
-                            <button
+                            <Button
+                                variant="secondary"
+                                size="lg"
+                                fullWidth
                                 onClick={() => window.location.reload()}
-                                className="flex-1 bg-gray-600 text-white px-6 py-3 rounded-lg hover:bg-gray-700 transition-colors font-semibold"
                             >
-                                Reload Page
-                            </button>
+                                Perkrauti puslapį
+                            </Button>
                         </div>
 
                         {/* Help Text */}
                         <p className="mt-4 text-xs text-gray-500 text-center">
-                            Click &quot;Copy Error Details&quot; to copy the full error log to your clipboard
+                            Paspaudę „Kopijuoti klaidos informaciją“ nukopijuosite visą klaidos žurnalą į iškarpinę.
                         </p>
                     </div>
                 </div>
