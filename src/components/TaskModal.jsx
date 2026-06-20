@@ -279,7 +279,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const uploadFile = (file) => {
         return new Promise((resolve, reject) => {
             const fileId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-            const storageRef = ref(storage, `attachments/${fileId}_${file.name}`);
+            // Store under a per-uploader folder so Storage rules can scope direct
+            // SDK access (read/list/overwrite/delete) to the owner. Task viewers still
+            // see the file via the tokenized download URL saved on the task document.
+            const storageRef = ref(storage, `attachments/${currentUser.uid}/${fileId}_${file.name}`);
             const metadata = { contentType: file.type };
             const uploadTask = uploadBytesResumable(storageRef, file, metadata);
 
