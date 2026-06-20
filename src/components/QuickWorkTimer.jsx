@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import ReactDOM from 'react-dom';
 import { Zap, Square, X, Check } from 'lucide-react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { formatMinutesToTimeString, getLithuanianNow } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
@@ -113,6 +111,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
         document.body
     );
 });
+QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
 
 export default function QuickWorkTimer({ compact = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();

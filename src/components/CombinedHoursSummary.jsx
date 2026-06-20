@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
-import { Users, ChevronDown, ChevronUp, Briefcase } from 'lucide-react';
-import { startOfWeek, endOfWeek, addDays } from 'date-fns';
+import { Users, ChevronDown, ChevronUp } from 'lucide-react';
+import { startOfWeek, endOfWeek } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
@@ -219,7 +219,7 @@ export default function CombinedHoursSummary() {
                         startTime: user.activeSession.startTime
                     };
                     break;
-                case 'task':
+                case 'task': {
                     // Find generic task title if available
                     let title = user.activeSession.taskTitle || 'Užduotis';
                     // Try to find specific task in loaded tasks if ID matches
@@ -233,6 +233,7 @@ export default function CombinedHoursSummary() {
                         startTime: user.activeSession.startTime
                     };
                     break;
+                }
                 default:
                     // Fallback for unknown types
                     displayProps = {

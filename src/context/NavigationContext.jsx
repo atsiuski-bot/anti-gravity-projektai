@@ -4,6 +4,7 @@ import { isManagerRole } from '../utils/formatters';
 
 const NavigationContext = createContext();
 
+// eslint-disable-next-line react-refresh/only-export-components -- hook intentionally co-located with its provider; dev-HMR-only lint, no runtime impact.
 export function useNavigation() {
     return useContext(NavigationContext);
 }

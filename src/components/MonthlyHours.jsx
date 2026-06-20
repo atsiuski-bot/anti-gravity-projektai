@@ -1,7 +1,7 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, onSnapshot } from 'firebase/firestore';
-import { Calendar, ChevronDown, ChevronUp, Clock, FileText } from 'lucide-react';
+import { Calendar, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 

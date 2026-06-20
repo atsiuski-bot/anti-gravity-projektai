@@ -6,11 +6,6 @@ import { getLithuanianNow } from './timeUtils';
 
 export const logCalendarChange = async (currentUser, type, start, end) => {
     const now = getLithuanianNow();
-    const day = now.getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-
-
 
     // Determine week start (Monday)
     const weekStart = startOfWeek(now, { weekStartsOn: 1 });

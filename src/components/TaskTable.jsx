@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { db } from '../firebase';
-import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2 } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -17,9 +17,8 @@ import SessionTypeIcon from './SessionTypeIcon';
 
 const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown, hideCheckboxes }) => {
     const { currentUser, userRole, userData } = useAuth();
-    const [expandedComments, setExpandedComments] = useState({});
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null }); // { type: 'description'|'links'|'comments', taskId: string }
-    const [refreshTick, setRefreshTick] = useState(0);
+    const [, setRefreshTick] = useState(0);
     const [deleteModalTask, setDeleteModalTask] = useState(null);
 
     // Comment Editing State
@@ -125,15 +124,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             return dateStr;
         }
     };
-
-    const toggleComments = (taskId) => {
-        setExpandedComments(prev => ({
-            ...prev,
-            [taskId]: !prev[taskId]
-        }));
-    };
-
-
 
     const handleToggleComplete = async (taskId, currentStatus) => {
         try {

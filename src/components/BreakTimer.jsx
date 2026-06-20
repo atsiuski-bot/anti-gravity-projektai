@@ -1,23 +1,18 @@
-import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { Coffee, Play } from 'lucide-react';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
 
-export default function BreakTimer({ currentUser: propUser, compact = false }) {
+export default function BreakTimer({ currentUser: _propUser, compact = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
     const {
         isActive: isTakingBreak,
-        currentSessionMinutes,
-        accumulatedMinutes,
-        setAccumulatedMinutes
+        currentSessionMinutes
     } = useTimerState(currentUser, 'breakState', 'isTakingBreak', null, null, 'break');
 
     const isDisabled = isSecondarySessionActive && !isTakingBreak && activeSessionType !== 'quickWork';

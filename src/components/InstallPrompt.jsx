@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Download, Smartphone } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Download } from 'lucide-react';
 
 export default function InstallPrompt() {
     const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -39,7 +39,7 @@ export default function InstallPrompt() {
             deferredPrompt.prompt();
 
             // Wait for the user to respond to the prompt
-            const { outcome } = await deferredPrompt.userChoice;
+            await deferredPrompt.userChoice;
 
             // We've used the prompt, whether accepted or dismissed, clear it
             setDeferredPrompt(null);

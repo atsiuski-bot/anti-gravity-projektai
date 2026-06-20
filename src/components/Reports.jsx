@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanian3AMCutoff, calculateCurrentTotalMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { addComment } from '../utils/commentActions';
-import { STATUS_COLORS, STATUS_LABELS } from '../utils/taskConstants';
-import { BarChart, Calendar, Filter, Download, ChevronDown, ChevronUp, Clock, Tag, Briefcase, MessageSquare, RotateCcw, Coffee } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, Coffee } from 'lucide-react';
 
 
 
@@ -37,6 +36,7 @@ export default function Reports({ users }) {
     const [historyMonth, setHistoryMonth] = useState(getLithuanianDateString().slice(0, 7));
     const [calendarHistory, setCalendarHistory] = useState([]);
     const [filteredTasks, setFilteredTasks] = useState([]);
+    const [taskSort, setTaskSort] = useState('date_desc'); // date_desc, date_asc, time_desc, time_asc
 
     // Modal state
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null, task: null });
@@ -46,6 +46,7 @@ export default function Reports({ users }) {
         if (activeTab === 'hours') {
             fetchWorkHours();
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchWorkHours is recreated each render; intentionally refetch only on tab/month change
     }, [activeTab, selectedMonth]);
 
     // Auto-expand when there's only one user (worker viewing own data)
@@ -53,6 +54,7 @@ export default function Reports({ users }) {
         if (workData.length === 1 && !expandedUser) {
             setExpandedUser(workData[0].userId);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally auto-expand only when workData changes, not on every expandedUser update
     }, [workData]);
 
     // Fetch Calendar History
@@ -60,6 +62,7 @@ export default function Reports({ users }) {
         if (activeTab === 'calendar-history') {
             fetchCalendarHistory();
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchCalendarHistory is recreated each render; intentionally refetch only on tab/month change
     }, [activeTab, historyMonth]);
 
     // Fetch Tasks Data
@@ -67,6 +70,7 @@ export default function Reports({ users }) {
         if (activeTab === 'tasks') {
             fetchTasks();
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchTasks is recreated each render; intentionally refetch only on tab/filter change
     }, [activeTab, taskFilters]); // Refetch when filters change
 
     const [expandedDays, setExpandedDays] = useState({}); // { userId: { dateString: boolean } }
@@ -494,10 +498,6 @@ export default function Reports({ users }) {
             alert("Klaida grąžinant užduotį: " + error.message);
             fetchTasks(); // Refresh on error
         }
-    };
-
-    const get3AMCutoff = () => {
-        return getLithuanian3AMCutoff(getLithuanianDateString());
     };
 
     const getAvg = (totalMins, daysObj) => {

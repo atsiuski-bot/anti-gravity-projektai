@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, addDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, CheckCircle2, Briefcase, ChevronDown, Filter, X, Trash2, MessageCircle } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
-import { startOfWeek, subWeeks, startOfDay, endOfDay, format } from 'date-fns';
+import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
@@ -252,7 +252,6 @@ export default function TaskHistory({ userId, users = [] }) {
         const rows = tasks.map(task => {
             const realTimeMinutes = calculateCurrentTotalMinutes(task);
             const realTimeFormatted = realTimeMinutes !== 0 ? formatMinutesToHHMM(realTimeMinutes) : '00:00';
-            const estimatedMins = task.timerMinutes || 0; // Using raw value or formatting if needed. Let's keep estimatedTime which is a string usually like '1h 30m', unless we have raw mins. If it's a string, we might just output it as is, or not touch it. Let's just touch target one.
             const commentsText = task.comments ? task.comments.map(c => `${c.user}: ${c.text}`).join('; ') : '';
 
             return [

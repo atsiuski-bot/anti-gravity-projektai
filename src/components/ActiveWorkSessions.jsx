@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { Users, ChevronDown, ChevronUp, Activity } from 'lucide-react';
+import { ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import SessionTypeIcon from './SessionTypeIcon';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { useUsers } from '../context/UsersContext';
@@ -63,7 +63,7 @@ export default function ActiveWorkSessions() {
                         startTime: user.activeSession.startTime
                     };
                     break;
-                case 'task':
+                case 'task': {
                     // Find generic task title if available
                     let title = user.activeSession.taskTitle || 'Užduotis';
                     // Try to find specific task in loaded tasks if ID matches
@@ -79,6 +79,7 @@ export default function ActiveWorkSessions() {
                         task: foundTask || null
                     };
                     break;
+                }
                 default:
                     // Fallback for unknown types
                     displayProps = {
@@ -166,6 +167,7 @@ const ActiveSessionRow = React.memo(({ session }) => {
         const interval = setInterval(updateTime, 10000);
 
         return () => clearInterval(interval);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- preserve timer re-arm timing; session.type is stable for a given session row
     }, [session.startTime, session.task]);
 
     return (

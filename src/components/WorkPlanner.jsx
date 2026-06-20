@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
@@ -764,7 +764,7 @@ export default function WorkPlanner() {
                 </p>
                 <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-gray-500 list-disc list-inside">
                     <li>Tempkite kalendoriuje laikui žymėti</li>
-                    <li>Naudokite "Pridėti" rankiniu būdu</li>
+                    <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
                     <li>Bakstelėkite įrašą trynimui</li>
                     <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
                 </ul>

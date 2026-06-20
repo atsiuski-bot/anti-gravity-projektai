@@ -12,10 +12,9 @@ import AllUsersCalendar from '../components/AllUsersCalendar';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
 import { getPriorityRank } from '../utils/priority';
-import DailyStatistics from '../components/DailyStatistics';
 import Reports from '../components/Reports';
 import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
-import { History, Plus, Filter } from 'lucide-react';
+import { Filter } from 'lucide-react';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
@@ -149,7 +148,7 @@ export default function WorkerView() {
             const savedScroll = scrollPositions.current[activeTab] || 0;
             window.scrollTo(0, savedScroll);
         });
-    }, [activeTab]);
+    }, [activeTab, scrollPositions]);
 
     const sortedTasks = useMemo(() => {
         let result = [...tasks];

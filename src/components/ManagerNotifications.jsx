@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -6,8 +6,7 @@ import { startOfWeek, format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { X, AlertCircle, Check, Trash2, Edit, MessageCircle, Clock, RotateCcw } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
-import { deleteTask, extendTaskTime } from '../utils/taskActions';
-import { formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
+import { deleteTask } from '../utils/taskActions';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import { SoundManager } from '../utils/soundUtils';
@@ -18,8 +17,6 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
-    const [extensionSelections, setExtensionSelections] = useState({}); // { notifId: selectedTimeString }
-    const [inspectingNotifs, setInspectingNotifs] = useState(new Set()); // notif IDs in inspection mode
     const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
 
 
@@ -279,7 +276,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
         }
     };
 
-    const handleRevertTask = async (notificationId, taskId, userName) => {
+    const handleRevertTask = async (notificationId, taskId, _userName) => {
         if (!taskId) return;
         try {
             const managerName = currentUser.displayName || currentUser.email || 'Vadovas';
@@ -306,49 +303,6 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             alert('Nepavyko grąžinti užduoties: ' + err.message);
         }
     };
-
-    const handleInspectTask = async (notificationId, taskId) => {
-        try {
-            // Mark notification as inspecting
-            setInspectingNotifs(prev => new Set([...prev, notificationId]));
-            // Set inspection status on the task
-            if (taskId) {
-                await updateDoc(doc(db, 'tasks', taskId), {
-                    inspectionStatus: 'inspecting',
-                    updatedAt: new Date().toISOString()
-                });
-            }
-        } catch (err) {
-            console.error('Error setting inspection status:', err);
-        }
-    };
-
-    const handleExtendTime = async (notificationId, taskId) => {
-        const selectedTime = extensionSelections[notificationId];
-        if (!selectedTime) {
-            alert('Pasirinkite laiko tarpą pratęsimui.');
-            return;
-        }
-        try {
-            await extendTaskTime(taskId, selectedTime, currentUser.uid);
-            await handleDismissTask(notificationId);
-            // Clean up local state
-            setExtensionSelections(prev => {
-                const next = { ...prev };
-                delete next[notificationId];
-                return next;
-            });
-        } catch (err) {
-            console.error('Error extending task time:', err);
-            alert('Nepavyko pratęsti laiko: ' + err.message);
-        }
-    };
-
-    const TIME_OPTIONS = [
-        '5min', '15min', '30min', '45min',
-        '1h', '1,5h', '2h', '3h', '4h', '5h', '6h',
-        '8h', '10h', '12h', '15h', '20h', '25h', '30h', '40h', '50h'
-    ];
 
     const allNotifications = [...calendarNotifications, ...calendarRequests, ...taskNotifications];
     
@@ -447,7 +401,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     
                                     <div className="mt-3 bg-white/50 rounded-lg p-3 border border-blue-100">
                                         <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Priežastis:</p>
-                                        <p className="text-sm text-blue-800 italic">"{notif.reason}"</p>
+                                        <p className="text-sm text-blue-800 italic">&quot;{notif.reason}&quot;</p>
                                     </div>
 
                                     <div className="mt-4 flex gap-3">
@@ -488,8 +442,8 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         <div>
                                             <div className="text-sm text-blue-800">
                                                 <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> pakomentavo užduotį:</p>
-                                                <p className="font-medium mt-1">"{notif.taskTitle}"</p>
-                                                {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-blue-300 pl-2"> "{notif.commentText}"</p>}
+                                                <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
+                                                {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-blue-300 pl-2"> &quot;{notif.commentText}&quot;</p>}
                                             </div>
                                         </div>
                                     </div>
@@ -521,7 +475,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                             <p>
                                                 <span className="font-semibold">{formatDisplayName(notif.userName)}</span>
                                                 {' '}baigė užduotį{' '}
-                                                <span className="font-medium">"{notif.taskTitle}"</span>
+                                                <span className="font-medium">&quot;{notif.taskTitle}&quot;</span>
                                                 {completedDate && <span className="text-green-700"> {completedDate}</span>}
                                                 .
                                             </p>
@@ -572,7 +526,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                                     <span className="font-semibold">
                                                         {formatDisplayName(notif.userName)}
                                                     </span>{' '}
-                                                    išnaudojo visą numatomą laiką užduočiai "{notif.taskTitle}" atlikti. Aptarkite tolesnę eigą ir jei reikia, pratęskite numatomą laiką.
+                                                    išnaudojo visą numatomą laiką užduočiai &quot;{notif.taskTitle}&quot; atlikti. Aptarkite tolesnę eigą ir jei reikia, pratęskite numatomą laiką.
                                                 </p>
                                             </div>
                                         </div>
@@ -627,7 +581,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                 <div>
                                     <div className="text-sm text-amber-800">
                                         <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> priskyrė Jus vadovu užduočiai:</p>
-                                        <p className="font-medium mt-1">"{notif.taskTitle}"</p>
+                                        <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
                                         {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
                                         {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-amber-300 pl-2"> {notif.description}</p>}
                                     </div>
@@ -679,12 +633,4 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             />
         </div>
     );
-}
-
-// Helper to parse estimated time strings including comma format (e.g. "1,5h")
-function parseTimeFromNotif(str) {
-    if (!str) return 0;
-    // Handle comma format like "1,5h" by converting to "1.5h"
-    const normalized = str.replace(',', '.');
-    return parseTimeStringToMinutes(normalized);
 }

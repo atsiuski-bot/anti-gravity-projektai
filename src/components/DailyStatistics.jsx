@@ -1,12 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, getDoc, orderBy, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, orderBy, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment } from '../utils/commentActions';
-import { STATUS_COLORS, STATUS_LABELS } from '../utils/taskConstants';
-import { Calendar, Clock, Coffee, User, Briefcase, ChevronLeft, ChevronRight, Zap, Phone, MessageSquare, Check, Filter, RotateCcw } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, Zap, MessageSquare, Check, Filter, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
@@ -16,13 +15,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     // Managers can see everyone, Workers only themselves
     const [selectedUserId, setSelectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
     const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
-    const [loading, setLoading] = useState(false);
+    const [, setLoading] = useState(false);
 
     // Data states
-    const [dailyStats, setDailyStats] = useState(null); // From daily_stats collection (legacy/ref for other stats if any)
+    const [, setDailyStats] = useState(null); // From daily_stats collection (legacy/ref for other stats if any)
     const [breakSessions, setBreakSessions] = useState([]); // from break_sessions collection
     const [sessions, setSessions] = useState([]); // From work_sessions collection
-    const [scheduledTasks, setScheduledTasks] = useState([]); // Tasks planned for this weekday
+    const [, setScheduledTasks] = useState([]); // Tasks planned for this weekday
     const [finishedTasks, setFinishedTasks] = useState([]); // Tasks finished on this specific date
 
     // Ticker for active sessions
@@ -124,7 +123,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         let activeQ, archivedQ;
 
         // Limit query to selectedDate + 2 days to capture anything archived shortly after completion
-        const rangeStartDate = new Date(selectedDate);
         // Start from beginning of selected day
         const startIso = `${selectedDate}T00:00:00`;
 
@@ -304,6 +302,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             earlierTasks: sortTasks(earlierTasksList),
             archivedTasks: sortTasks(archivedTasksList)
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff only reads selectedDate, already listed
     }, [finishedTasks, selectedDate, sortBy]);
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
@@ -413,6 +412,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             const finishedDate = new Date(dateStr);
             return finishedDate >= cutoff && finishedDate < nextDayCutoff;
         });
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff only reads selectedDate, already listed
     }, [finishedTasks, sessions, selectedDate]);
 
     const totalManualMinutes = manualTasks.reduce((acc, t) => acc + (t.manualMinutes || 0), 0);
@@ -520,6 +520,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         }
 
         return sortedItems;
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- finishedTasks changes already propagate via manualTasks; preserving current timing
     }, [allValidSessions, manualTasks, allBreakSessions, selectedUserId]);
 
 
@@ -1066,7 +1067,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 }
 
 // Mobile Stats Card Component
-function MobileStatsCard({ task, onToggleConfirm, onAddComment, onRestore, users, userRole, setActiveModal, onTimeChange, currentUser }) {
+function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, onRestore, users, userRole, setActiveModal, onTimeChange, currentUser: _currentUser }) {
     const isConfirmed = task.status === 'confirmed';
     const worker = users.find(u => u.id === task.assignedUserId);
     const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '—');
@@ -1235,7 +1236,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment, onRestore, users
             )}
         </div>
     );
-};
+}
 
 // Task List Helper Component
 function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, onTimeChange, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false }) {

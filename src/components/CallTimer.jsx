@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
-import { Phone, Square, PhoneOff, X, Check } from 'lucide-react';
+import { Phone, Square, X, Check } from 'lucide-react';
 import ReactDOM from 'react-dom';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
@@ -12,7 +10,7 @@ import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const CallModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) => {
+const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) {
     const textareaRef = useRef(null);
     const totalDisplay = formatMinutesToTimeString(currentSessionMinutes);
 

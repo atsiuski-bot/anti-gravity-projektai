@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -89,7 +89,7 @@ export default function CalendarRequestStatusBanner() {
                             </p>
                             <div className="mt-3 bg-white/40 rounded-lg p-3 border border-black/5">
                                 <p className="text-xs font-bold uppercase tracking-wider mb-1 opacity-70">Jūsų nurodyta priežastis:</p>
-                                <p className="text-sm italic font-medium opacity-80">"{notif.reason}"</p>
+                                <p className="text-sm italic font-medium opacity-80">&quot;{notif.reason}&quot;</p>
                             </div>
                         </div>
                     </div>

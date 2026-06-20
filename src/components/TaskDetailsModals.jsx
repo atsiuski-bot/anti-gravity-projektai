@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Link as LinkIcon, MessageCircle, FileText, ImageIcon, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock } from 'lucide-react';
+import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -444,9 +444,9 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                     <div className="space-y-4 mb-6">
                         <p className="text-gray-600">
                             {isTask ? (
-                                <>Pasirinkite, kaip norite ištrinti įrašą <span className="font-semibold text-gray-900">"{taskTitle}"</span>:</>
+                                <>Pasirinkite, kaip norite ištrinti įrašą <span className="font-semibold text-gray-900">&quot;{taskTitle}&quot;</span>:</>
                             ) : (
-                                <>Ar tikrai norite ištrinti įrašą <span className="font-semibold text-gray-900">"{taskTitle}"</span>? Šio veiksmo atšaukti nebus galima.</>
+                                <>Ar tikrai norite ištrinti įrašą <span className="font-semibold text-gray-900">&quot;{taskTitle}&quot;</span>? Šio veiksmo atšaukti nebus galima.</>
                             )}
                         </p>
                     </div>

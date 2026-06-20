@@ -1,9 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { auth, db } from '../firebase';
 import {
     GoogleAuthProvider,
     signInWithPopup,
-    signInWithRedirect,
     getRedirectResult,
     signOut,
     onAuthStateChanged
@@ -12,6 +11,7 @@ import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 
 const AuthContext = createContext();
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
     return useContext(AuthContext);
 }

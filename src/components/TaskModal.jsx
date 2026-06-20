@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { db, storage } from '../firebase';
-import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc, addDoc, collection, getDocs, query, where, getDoc } from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, ExternalLink, Clock } from 'lucide-react';
+import { X, Plus, Trash2, Clock } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { getPriorityOptions, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
@@ -16,7 +16,7 @@ import { TASK_TAGS } from '../utils/taskUtils';
 export default function TaskModal({ isOpen, onClose, task, role }) {
     const { currentUser, userRole, userData } = useAuth();
     const { activeUsers } = useUsers();
-    const workers = activeUsers || [];
+    const workers = useMemo(() => activeUsers || [], [activeUsers]);
     const [loading, setLoading] = useState(false);
 
     const [formData, setFormData] = useState({
@@ -39,7 +39,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const [newLink, setNewLink] = useState('');
     const [newComment, setNewComment] = useState('');
     const [selectedFiles, setSelectedFiles] = useState([]); // Changed to array
-    const [uploadProgress, setUploadProgress] = useState(0);
+    const [, setUploadProgress] = useState(0);
 
     // Template State
     const [templates, setTemplates] = useState([]);
@@ -245,11 +245,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }
     };
 
-    // Helper to trigger template load from footer
-    const handleFooterTemplateSelect = (e) => {
-        handleLoadTemplate(e.target.value);
-    };
-
     // workers is provided by context
 
     const handleFileSelect = (e) => {
@@ -283,9 +278,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             const uploadTask = uploadBytesResumable(storageRef, file, metadata);
 
             uploadTask.on('state_changed',
-                (snapshot) => {
-                    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-
+                (_snapshot) => {
+                    /* progress events intentionally ignored */
                 },
                 (error) => {
                     console.error("Upload failed:", error);
@@ -460,7 +454,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     if (!isOpen) return null;
 
     const isManager = isManagerRole(role) || isManagerRole(userRole);
-    const isCreator = String(task?.createdBy) === String(currentUser?.uid);
 
     // Filter to only allow Managers, Admins, and the current user (so they can assign to themselves).
     // This excludes other 'regular' workers.

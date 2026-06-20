@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { UserCog, ShieldAlert, Check, Sliders, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { formatDisplayName } from '../utils/formatters';
@@ -37,6 +37,7 @@ export default function UserManagement() {
         }
 
         return () => unsubscribe();
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- subscribe once on mount; adding 'error' would tear down/re-create the listener on every error change
     }, []);
 
     const countAdmins = () => {

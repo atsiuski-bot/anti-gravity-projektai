@@ -1,23 +1,19 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Play, Pause, Square, Clock } from 'lucide-react';
 import { doc, updateDoc, collection, addDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
-import { startTask, pauseTask, resumeTask, archiveTask } from '../utils/taskActions';
+import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 
 // stopBreak/stopCall no longer needed — startTask/resumeTask handle session cleanup
 
-export default function TaskTimerControls({ task, onShowModal, role }) {
+export default function TaskTimerControls({ task, onShowModal: _onShowModal, role }) {
     const { currentUser, userRole, userData, setOptimisticUserData } = useAuth();
     const { isSecondarySessionActive } = useActiveSessionStatus();
     const isAssignedToMe = currentUser?.uid === task.assignedUserId;
-
-    // Only allow the assigned worker to control the task
-    // And restrict managers from controlling tasks in the Team View (where role === 'manager')
-    if (!isAssignedToMe || isManagerRole(role)) return null;
 
     // Strict UI logic: The task document (timerStatus) is the ULTIMATE source of truth for the timer.
     // We only display as running if BOTH the task and user profile agree.
@@ -28,7 +24,7 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
         if (task.timerStatus === 'running') {
             isRunning = true;
         }
-        
+
         // If it's not running right now, but timerStatus is explicitly 'paused', it must be paused
         if (!isRunning && task.timerStatus === 'paused') {
             isPaused = true;
@@ -56,6 +52,10 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
         }
         return () => clearInterval(interval);
     }, [isRunning, task]);
+
+    // Only allow the assigned worker to control the task
+    // And restrict managers from controlling tasks in the Team View (where role === 'manager')
+    if (!isAssignedToMe || isManagerRole(role)) return null;
 
     const handleStart = async (e) => {
         e.stopPropagation();
@@ -171,6 +171,9 @@ export default function TaskTimerControls({ task, onShowModal, role }) {
             const totalMinutes = finalTimerMinutes + currentManualMinutes;
             const formattedTime = formatMinutesToTimeString(totalMinutes);
 
+            // Destructure to strip denormalized display fields from the task before
+            // writing it back to Firestore; the named siblings are intentionally unused.
+            // eslint-disable-next-line no-unused-vars
             const { assignedUserName, assignedWorkerColor, creatorName, ...cleanTask } = task;
 
             const taskData = {

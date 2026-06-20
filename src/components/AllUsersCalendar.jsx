@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, onSnapshot, getDocs, where } from 'firebase/firestore';
-import { format, addDays, isSameDay, startOfWeek, getDay } from 'date-fns';
+import { collection, query, onSnapshot, where } from 'firebase/firestore';
+import { format, addDays, isSameDay, getDay } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Clock, Users } from 'lucide-react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 import { useUsers } from '../context/UsersContext';
 
@@ -11,7 +11,6 @@ import { useUsers } from '../context/UsersContext';
 const START_HOUR = 7;
 const END_HOUR = 22;
 const TOTAL_HOURS = END_HOUR - START_HOUR; // 15 hours
-const GRID_COLS = TOTAL_HOURS * 2; // Every 30 mins
 const WEEKDAYS = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
 
 // Helper to calculate position and width
@@ -44,9 +43,9 @@ export default function AllUsersCalendar() {
     }, []);
 
     const [events, setEvents] = useState([]);
-    const [users, setUsers] = useState({});
+    const [users] = useState({});
     const [currentDate, setCurrentDate] = useState(new Date());
-    const [error, setError] = useState('');
+    const [, setError] = useState('');
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
     useEffect(() => {
@@ -137,6 +136,7 @@ export default function AllUsersCalendar() {
             ...user,
             events: dayEvents.filter(e => e.userId === user.id)
         })).filter(user => user.events.length > 0); // Filter out users with no events
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- preserve current recompute timing; activeUsers/usersMap from context are not stable refs
     }, [users, dayEvents]);
 
     // Scroll to 9:00 on mount for mobile

@@ -1,10 +1,11 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
 
 const UsersContext = createContext();
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useUsers() {
     return useContext(UsersContext);
 }

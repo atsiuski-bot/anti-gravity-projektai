@@ -14,7 +14,7 @@ class ErrorBoundary extends React.Component {
         };
     }
 
-    static getDerivedStateFromError(error) {
+    static getDerivedStateFromError(_error) {
         return { hasError: true };
     }
 
@@ -98,7 +98,7 @@ END OF ERROR REPORT
 
     render() {
         if (this.state.hasError) {
-            const { error, errorInfo, timestamp, copied, showDetails } = this.state;
+            const { error, timestamp, copied, showDetails } = this.state;
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-red-50 to-gray-100 flex flex-col items-center justify-center p-4">
@@ -192,7 +192,7 @@ END OF ERROR REPORT
 
                         {/* Help Text */}
                         <p className="mt-4 text-xs text-gray-500 text-center">
-                            Click "Copy Error Details" to copy the full error log to your clipboard
+                            Click &quot;Copy Error Details&quot; to copy the full error log to your clipboard
                         </p>
                     </div>
                 </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, AlertCircle, CheckCircle2, Circle, Link as LinkIcon, MessageCircle, FileText, Check, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2 } from 'lucide-react';
+import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2 } from 'lucide-react';
 import clsx from 'clsx';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -9,7 +9,7 @@ import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirma
 import { InlineEditModal } from './InlineEditModal';
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
-import { toggleTaskCompletion, completeTask } from '../utils/taskCompletionActions';
+import { completeTask } from '../utils/taskCompletionActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
@@ -19,7 +19,7 @@ import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 
 
 const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) => {
-    const { currentUser, userRole, userData } = useAuth();
+    const { currentUser, userRole } = useAuth();
     const [activeModal, setActiveModal] = useState(null);
     const [editingField, setEditingField] = useState(null);
     const [lastTap, setLastTap] = useState(0);
@@ -53,7 +53,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const isAssignedToMe = currentUser?.uid === task.assignedUserId;
 
     const taskStatus = task.status || 'pending';
-    const isUnapproved = taskStatus === 'unapproved';
 
     // Strict UI logic: activeSession is the PRIMARY source of truth, workStatus is the fallback.
     const isRunning = useIsTaskRunning(task);
@@ -174,21 +173,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         trackTouch: true,
         delta: 50
     });
-
-    const handleToggleComplete = async (e) => {
-        e.stopPropagation();
-        if (!isAssignedToMe) return;
-
-        if (!task.completed && !window.confirm("Ar tikrai norite užbaigti užduotį?")) {
-            return;
-        }
-
-        try {
-            await toggleTaskCompletion(task, currentUser.uid, userRole, task.managerId);
-        } catch (error) {
-            console.error('Error toggling completion:', error);
-        }
-    };
 
     // Compute dynamic limit state based on raw math instead of just the task.timeLimitReached flag.
     // This allows manual time reduction to instantly un-red the card without needing a flag wipe.

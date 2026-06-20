@@ -59,13 +59,13 @@ export function useTaskTimeMonitor(tasks) {
             if (percentage < 100) {
                 if (limitReachedRef.current.has(taskId)) limitReachedRef.current.delete(taskId);
                 if (activeTask.timeLimitReached) {
-                    try { updateDoc(doc(db, 'tasks', taskId), { timeLimitReached: false }); } catch(e) {}
+                    try { updateDoc(doc(db, 'tasks', taskId), { timeLimitReached: false }); } catch(e) { /* intentionally ignored */ }
                 }
             }
             if (percentage < 70) {
                 if (warned70Ref.current.has(taskId)) warned70Ref.current.delete(taskId);
                 if (activeTask.warningShown70) {
-                    try { updateDoc(doc(db, 'tasks', taskId), { warningShown70: false }); } catch(e) {}
+                    try { updateDoc(doc(db, 'tasks', taskId), { warningShown70: false }); } catch(e) { /* intentionally ignored */ }
                 }
             }
 

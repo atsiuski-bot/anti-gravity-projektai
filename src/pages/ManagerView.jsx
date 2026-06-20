@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Users, LayoutDashboard, CheckSquare, Layout, Calendar as CalendarIcon, Users as UsersIcon, ListTodo, ArrowUpDown, History, UserCheck, Filter } from 'lucide-react';
+import { ArrowUpDown, Filter } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -8,7 +8,6 @@ import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
 import AllUsersCalendar from '../components/AllUsersCalendar';
 import WorkPlanner from '../components/WorkPlanner';
-import TaskHistory from '../components/TaskHistory';
 import Reports from '../components/Reports';
 import DailyStatistics from '../components/DailyStatistics';
 import DailyWorkProgress from '../components/DailyWorkProgress';
@@ -19,7 +18,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
-import { getPriorityRank, PRIORITIES, getPriorityLabel } from '../utils/priority';
+import { PRIORITIES, getPriorityLabel } from '../utils/priority';
 
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
@@ -35,7 +34,7 @@ export default function ManagerView() {
     const [viewMode, setViewMode] = useState('desktop');
 
     // Use custom hooks
-    const { tasks, users, allUsers, manualTaskOrder, saveManualOrder, error, loading } = useManagerData(currentUser);
+    const { tasks, users, allUsers, manualTaskOrder, saveManualOrder, error } = useManagerData(currentUser);
     const {
         sortedTasks,
         filterUser, setFilterUser,
@@ -92,11 +91,6 @@ export default function ManagerView() {
         };
     }, []);
 
-    const handleCreateTask = () => {
-        setEditingTask(null);
-        setIsModalOpen(true);
-    };
-
     const handleEditTask = React.useCallback((task) => {
         setEditingTask(task);
         setIsModalOpen(true);
@@ -108,7 +102,7 @@ export default function ManagerView() {
             const savedScroll = scrollPositions.current[activeTab] || 0;
             window.scrollTo(0, savedScroll);
         });
-    }, [activeTab]);
+    }, [activeTab, scrollPositions]);
 
     return (
         <div className="pt-1 sm:pt-4">

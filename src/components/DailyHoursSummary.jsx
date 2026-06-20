@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { startOfWeek, endOfWeek } from 'date-fns';
@@ -132,7 +132,6 @@ export default function DailyHoursSummary() {
                         // CRITICAL FIX: Filter by current week
                         if (!isNaN(sessionDate.getTime()) && isInCurrentWeek(sessionDate)) {
                             // Map session date to day name
-                            const dayName = dayNames[sessionDate.getDay() === 0 ? 6 : sessionDate.getDay() - 1];
                             // Note: getDay() 0=Sun. Our dayNames array: 0=Mon, ... 6=Sun.
                             // Need to map correctly. 
                             // dayNames index: 0->Mon(1), 1->Tue(2)... 5->Sat(6), 6->Sun(0)
@@ -162,6 +161,7 @@ export default function DailyHoursSummary() {
         });
 
         return stats;
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- dayNames is a render-stable constant array; omitting it preserves memo identity
     }, [users, tasks, workSessions]);
 
     if (loading) {
