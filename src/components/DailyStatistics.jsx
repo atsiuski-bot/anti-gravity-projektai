@@ -925,8 +925,52 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                         <p>Šią dieną darbo sesijų nefiksuota.</p>
                     </div>
                 ) : selectedUserId === 'all' ? (
-                    /* TEAM MODE SUMMARY TABLE */
-                    <div className="overflow-x-auto">
+                    <>
+                        {/* Mobile: one card per worker — never a horizontal table on a phone (§9) */}
+                        <ul className="divide-y divide-line md:hidden">
+                            {workerList.map(([userId, summary]) => (
+                                <li key={userId} className="p-4">
+                                    <p className="text-body font-semibold text-ink-strong">{summary.name}</p>
+                                    <p className="mt-0.5 font-mono text-caption text-ink-muted">
+                                        {formatTime(summary.earliestStart)} – {formatTime(summary.latestEnd)}
+                                    </p>
+                                    <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
+                                        <div>
+                                            <dt className="text-caption text-ink-muted">Pertraukos</dt>
+                                            <dd className="font-mono text-body font-semibold text-amber-700">{formatMinutesToTimeString(summary.breakMinutes)}</dd>
+                                        </div>
+                                        <div>
+                                            <dt className="text-caption text-ink-muted">Užduotims</dt>
+                                            <dd className="font-mono text-body font-semibold text-brand">{formatMinutesToTimeString(summary.taskTimeMinutes)}</dd>
+                                        </div>
+                                        <div>
+                                            <dt className="text-caption text-ink-muted">Bendras laikas</dt>
+                                            <dd className="font-mono text-body font-bold text-ink-strong">{formatMinutesToTimeString(summary.taskTimeMinutes + summary.breakMinutes)}</dd>
+                                        </div>
+                                    </dl>
+                                </li>
+                            ))}
+                            <li className="bg-surface-sunken p-4">
+                                <p className="mb-2 text-body font-bold text-ink-strong">Viso komanda</p>
+                                <dl className="grid grid-cols-3 gap-2 text-center">
+                                    <div>
+                                        <dt className="text-caption text-ink-muted">Pertraukos</dt>
+                                        <dd className="font-mono text-body font-semibold text-amber-700">{formatMinutesToTimeString(totalBreakMinutes)}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-caption text-ink-muted">Užduotims</dt>
+                                        <dd className="font-mono text-body font-semibold text-brand">{formatMinutesToTimeString(totalWorkedMinutes)}</dd>
+                                    </div>
+                                    <div>
+                                        <dt className="text-caption text-ink-muted">Bendras laikas</dt>
+                                        <dd className="font-mono text-body font-bold text-ink-strong">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</dd>
+                                    </div>
+                                </dl>
+                            </li>
+                        </ul>
+
+                        {/* Desktop: dense team summary table */}
+                        <div className="hidden overflow-x-auto md:block">
                         <table className="w-full md:w-auto divide-y divide-gray-200 text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
@@ -935,7 +979,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                     <th className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-gray-500">Pabaiga</th>
                                     <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500">Pertraukos</th>
                                     <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-500">Užduotims</th>
-                                    <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-gray-900">Viso(D+P)</th>
+                                    <th className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
@@ -978,9 +1022,50 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                             </tbody>
                         </table>
                     </div>
+                    </>
                 ) : (
-                    /* INDIVIDUAL MODE TIMELINE TABLE */
-                    <div className="overflow-x-auto">
+                    <>
+                        {/* Mobile: timeline as a card list — never a horizontal table on a phone (§9) */}
+                        <ul className="divide-y divide-line md:hidden">
+                            {combinedTimelineItems.map((item, idx) => (
+                                <li key={item.id || idx} className="flex items-center justify-between gap-3 p-4">
+                                    <div className="min-w-0">
+                                        <p className="font-mono text-caption text-ink-muted">
+                                            {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                                        </p>
+                                        <div className="mt-0.5 flex items-center gap-1.5 text-body text-ink">
+                                            {item.type === 'break' ? (
+                                                <><SessionTypeIcon type="break" className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" /> Pertrauka</>
+                                            ) : item.type === 'inactive' ? (
+                                                <span className="italic text-ink-muted">{item.title || 'Neaktyvus'}</span>
+                                            ) : (
+                                                <>
+                                                    <SessionTypeIcon
+                                                        type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')}
+                                                        className="w-3.5 h-3.5 flex-shrink-0"
+                                                        aria-hidden="true"
+                                                    />
+                                                    <span className="truncate">{item.title || 'Darbas'}</span>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <span className={clsx(
+                                        "font-mono text-body font-bold whitespace-nowrap",
+                                        item.type === 'break' ? 'text-amber-700' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'
+                                    )}>
+                                        {formatMinutesToTimeString(item.duration)}
+                                    </span>
+                                </li>
+                            ))}
+                            <li className="flex items-center justify-between gap-3 bg-surface-sunken p-4">
+                                <span className="text-body font-semibold text-ink-strong">Viso (laikmatis + rankinis)</span>
+                                <span className="font-mono text-body font-bold text-brand">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
+                            </li>
+                        </ul>
+
+                        {/* Desktop: dense timeline table */}
+                        <div className="hidden overflow-x-auto md:block">
                         <table className="w-full md:w-auto divide-y divide-gray-200 text-sm">
                             <thead className="bg-gray-50">
                                 <tr>
@@ -1017,7 +1102,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                                 ))}
                                 <tr className="bg-gray-50 font-semibold">
                                     <td colSpan="2" className="px-4 py-3 text-right text-gray-900">
-                                        Viso (Timer + Manual):
+                                        Viso (laikmatis + rankinis):
                                     </td>
                                     <td className="px-4 py-3 md:px-2 md:py-2 text-right text-indigo-600">
                                         {formatMinutesToTimeString(totalWorkedMinutes)}
@@ -1026,6 +1111,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                             </tbody>
                         </table>
                     </div>
+                    </>
                 )}
             </div>
 
