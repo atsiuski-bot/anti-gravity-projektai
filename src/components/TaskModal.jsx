@@ -12,6 +12,12 @@ import { getPriorityOptions, normalizePriority, DEFAULT_PRIORITY } from '../util
 import { compressImage } from '../utils/imageUtils';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { TASK_TAGS } from '../utils/taskUtils';
+import Button from './ui/Button';
+import IconButton from './ui/IconButton';
+
+// Persistent field label — fields previously had only placeholders, which vanish on input
+// and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
+const fieldLabel = 'mt-4 mb-1 block text-body font-medium text-ink';
 
 export default function TaskModal({ isOpen, onClose, task, role }) {
     const { currentUser, userRole, userData } = useAuth();
@@ -200,7 +206,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 setTemplates(prev => prev.filter(t => t.id !== templateId));
                 // Use toast or alert?
             } catch (error) {
-                alert("Klaida trinant šabloną: " + error.message);
+                alert("Nepavyko ištrinti šablono. Bandykite dar kartą.");
             }
         }
     };
@@ -239,7 +245,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             setIsSavingTemplate(false);
         } catch (error) {
             console.error("Failed to save template", error);
-            alert("Klaida saugant šabloną: " + error.message);
+            alert("Nepavyko išsaugoti šablono. Bandykite dar kartą.");
         } finally {
             setLoading(false);
         }
@@ -417,7 +423,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             onClose();
         } catch (error) {
             console.error("Error saving task:", error);
-            alert("Klaida: " + error.message);
+            alert("Nepavyko išsaugoti užduoties. Bandykite dar kartą.");
         } finally {
             setLoading(false);
         }
@@ -480,9 +486,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 ))}
                             </select>
                         )}
-                        <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
-                            <X className="w-6 h-6" />
-                        </button>
+                        <IconButton icon={X} label="Uždaryti" onClick={onClose} />
                     </div>
                 </div>
 
@@ -496,7 +500,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     value={templateName}
                                     onChange={(e) => setTemplateName(e.target.value)}
                                     placeholder="Šablono pavadinimas"
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand"
                                 />
                                 {templates.length > 0 && (
                                     <div className="mt-3">
@@ -556,22 +560,23 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         <form id="task-form" onSubmit={handleSubmit} className="space-y-6">
                             {/* Title - Manager Only Edit OR Worker Creation */}
                             <div>
+                                <span className="mb-1 block text-body font-medium text-ink">Pavadinimas</span>
                                 <input
                                     type="text"
                                     value={formData.title}
                                     onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                                     disabled={!isManager && !!task}
                                     placeholder="Pavadinimas"
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 text-base"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand focus:border-brand disabled:bg-gray-100 text-base"
                                     required
                                 />
 
-                                {/* Select: Priority */}
+                                <span className={fieldLabel}>Prioritetas</span>
                                 <select
                                     value={formData.priority}
                                     onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
                                     disabled={!isManager && !!task}
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand disabled:bg-gray-100 text-base mt-4"
                                 >
                                     {getPriorityOptions().map(p => (
                                         <option key={p.id} value={p.id}>
@@ -580,7 +585,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     ))}
                                 </select>
 
-                                {/* Input: Deadline */}
+                                <span className={fieldLabel}>Atlikti iki</span>
                                 <input
                                     type={formData.deadline ? "date" : "text"}
                                     value={formData.deadline}
@@ -589,15 +594,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     onBlur={(e) => !e.target.value && (e.target.type = 'text')}
                                     placeholder="Atlikti iki"
                                     disabled={!isManager && !!task}
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand disabled:bg-gray-100 text-base mt-4"
                                 />
 
-                                {/* Select: Estimated Time */}
+                                <span className={fieldLabel}>Planuojamas laikas</span>
                                 <select
                                     value={formData.estimatedTime}
                                     onChange={(e) => setFormData({ ...formData, estimatedTime: e.target.value })}
                                     disabled={!isManager && !!task}
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand disabled:bg-gray-100 text-base mt-4"
                                     required
                                 >
                                     <option value="" disabled>Planuojamas laikas...</option>
@@ -633,11 +638,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     <option value="200h">200h</option>
                                 </select>
 
+                                <span className={fieldLabel}>Vadovas</span>
                                 <select
                                     value={formData.managerId}
                                     onChange={(e) => setFormData({ ...formData, managerId: e.target.value })}
                                     disabled={!isManager && !!task}
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand disabled:bg-gray-100 text-base mt-4"
                                 >
                                     <option value="">Priskirti vadovą...</option>
                                     {managers.map(manager => (
@@ -647,12 +653,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     ))}
                                 </select>
 
-                                {/* Select: Assigned Worker */}
+                                <span className={fieldLabel}>Darbuotojas</span>
                                 <select
                                     value={formData.assignedUserId}
                                     onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
                                     disabled={!isManager}
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand disabled:bg-gray-100 text-base mt-4"
                                 >
                                     <option value="">Priskirti darbuotoją...</option>
                                     {workers.map(worker => (
@@ -662,14 +668,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     ))}
                                 </select>
 
-                                {/* Textarea: Description */}
+                                <span className={fieldLabel}>Aprašymas</span>
                                 <textarea
                                     value={formData.description}
                                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                                     disabled={!isManager && !!task}
                                     rows={3}
                                     placeholder="Užduoties aprašymas..."
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand disabled:bg-gray-100 text-base mt-4"
                                 />
 
                                 {/* Input: New Link (Manager) */}
@@ -680,7 +686,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         onChange={(e) => setNewLink(e.target.value)}
                                         placeholder="https://..."
                                         inputMode="url"
-                                        className="flex-1 px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-base"
+                                        className="flex-1 px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand text-base"
                                         onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addLink())}
                                     />
                                     <button
@@ -711,12 +717,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     </div>
                                 )}
 
-                                {/* Select: Tag */}
+                                <span className={fieldLabel}>Žyma</span>
                                 <select
                                     value={formData.tag || ''}
                                     onChange={(e) => setFormData({ ...formData, tag: e.target.value })}
                                     disabled={!isManager && !!task}
-                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 text-base mt-4"
+                                    className="w-full px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand disabled:bg-gray-100 text-base mt-4"
                                 >
                                     <option value="">Pasirinkti žymą...</option>
                                     {TASK_TAGS.map(tag => (
@@ -786,7 +792,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         value={newComment}
                                         onChange={(e) => setNewComment(e.target.value)}
                                         placeholder="Rašyti komentarą..."
-                                        className="flex-1 px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-base"
+                                        className="flex-1 px-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand text-base"
                                     />
                                     <button type="button" onClick={addComment} className="bg-blue-50 text-blue-600 px-4 rounded-lg hover:bg-blue-100 font-medium whitespace-nowrap">
                                         Skelbti
@@ -830,55 +836,33 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 <div className="flex justify-end gap-3 p-4 border-t border-gray-200 flex-shrink-0 bg-gray-50 rounded-b-xl">
                     {isSavingTemplate ? (
                         <>
-                            <button
-                                type="button"
-                                onClick={() => setIsSavingTemplate(false)}
-                                className="px-4 py-2 text-gray-700 hover:bg-gray-200 rounded-lg transition-colors"
-                            >
+                            <Button variant="secondary" size="md" onClick={() => setIsSavingTemplate(false)}>
                                 Atšaukti
-                            </button>
-                            <button
-                                type="button"
-                                onClick={handleConfirmSaveTemplate}
-                                disabled={loading}
-                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50"
-                            >
+                            </Button>
+                            <Button variant="primary" size="md" onClick={handleConfirmSaveTemplate} loading={loading}>
                                 Išsaugoti šabloną
-                            </button>
+                            </Button>
                         </>
                     ) : (
                         <>
-                            <>
-                                <div className="flex-1 flex items-center justify-start gap-2">
-                                    {!task && isManagerRole(role) && (
-                                        <button
-                                            type="button"
-                                            onClick={handleSaveTemplateClick}
-                                            className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 transition-colors font-normal text-xs"
-                                            title="Išsaugoti, keisti, ištrinti šabloną"
-                                        >
-                                            Išsaugoti, keisti, ištrinti šabloną
-                                        </button>
-                                    )}
-
-                                </div>
-
-                                <button
-                                    type="button"
-                                    onClick={onClose}
-                                    className="px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-200 rounded-lg transition-colors border border-gray-300"
-                                >
-                                    Atšaukti
-                                </button>
-                                <button
-                                    type="submit"
-                                    form="task-form"
-                                    disabled={loading}
-                                    className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 min-w-[80px]"
-                                >
-                                    {loading ? (selectedFiles.length > 0 ? 'Keliama...' : 'Saugoma...') : 'Išsaugoti'}
-                                </button>
-                            </>
+                            <div className="flex flex-1 items-center justify-start">
+                                {!task && isManagerRole(role) && (
+                                    <Button
+                                        variant="ghost"
+                                        size="md"
+                                        onClick={handleSaveTemplateClick}
+                                        title="Išsaugoti, keisti ar ištrinti šabloną"
+                                    >
+                                        Šablonai
+                                    </Button>
+                                )}
+                            </div>
+                            <Button variant="secondary" size="md" onClick={onClose}>
+                                Atšaukti
+                            </Button>
+                            <Button type="submit" form="task-form" variant="primary" size="md" loading={loading}>
+                                {loading ? (selectedFiles.length > 0 ? 'Keliama…' : 'Saugoma…') : 'Išsaugoti'}
+                            </Button>
                         </>
                     )}
                 </div>
