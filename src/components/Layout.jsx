@@ -1,14 +1,17 @@
-import React, { useEffect, useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, User } from 'lucide-react';
+import { LogOut, User, WifiOff } from 'lucide-react';
 import BottomNavigation from './BottomNavigation';
 import InstallPrompt from './InstallPrompt';
+import IconButton from './ui/IconButton';
 import { checkAndPromoteTasks, shouldRunAutomation } from '../utils/automationUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { useSessionNotification } from '../hooks/useSessionNotification';
+import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
+import { cn } from '../utils/cn';
 
 export default function Layout({ children }) {
-    const { currentUser, userData, userRole, logout, isTakingBreak, workStatus } = useAuth(); // userData added
+    const { currentUser, userData, userRole, logout, isTakingBreak, workStatus } = useAuth();
 
     const roleNames = {
         manager: 'Vadovas',
@@ -23,7 +26,7 @@ export default function Layout({ children }) {
         }
     }, [userRole]);
 
-    const [isOnline, setIsOnline] = React.useState(navigator.onLine);
+    const [isOnline, setIsOnline] = useState(navigator.onLine);
 
     useEffect(() => {
         const handleOnline = () => setIsOnline(true);
@@ -39,66 +42,62 @@ export default function Layout({ children }) {
     }, []);
 
     // Derive active session type — activeSession is the primary source of truth.
-    // Legacy flags are only used as fallback when no activeSession exists.
+    // Legacy flags are only used as a fallback when no activeSession exists.
     const sessionType = userData?.activeSession?.type || null;
 
     const isQuickWorking = sessionType === 'quickWork' || (!sessionType && (userData?.quickWorkState?.isQuickWorking || false));
     const isCalling = sessionType === 'call' || (!sessionType && (userData?.callState?.isCalling || false));
     const isRunning = sessionType === 'task' || (!sessionType && workStatus?.status === 'running');
 
-    // Determine background color based on activeSession.type (primary source of truth).
-    // Priority: Quick Work (Red) > Call (Blue) > Break (Amber) > Task Running (Green) > Default (White)
-    const bgColor = useMemo(() => {
-        if (sessionType) {
-            switch (sessionType) {
-                case 'quickWork': return 'bg-red-500';
-                case 'call': return 'bg-blue-100';
-                case 'break': return 'bg-amber-100';
-                case 'task': return 'bg-green-200';
-                default: return 'bg-white';
-            }
-        }
-        // Legacy fallback (for cases where activeSession is absent but legacy flags exist)
-        if (isQuickWorking) return 'bg-red-500';
-        if (isCalling) return 'bg-blue-100';
-        if (isTakingBreak) return 'bg-amber-100';
-        if (isRunning) return 'bg-green-200';
-        return 'bg-white';
-    }, [sessionType, isQuickWorking, isCalling, isTakingBreak, isRunning]);
+    // Resolve a single effective session type (precedence: quick work > call > break > task),
+    // then read ALL presentation from the one SESSION_COLORS map so the shell, label and icon
+    // can never drift (DESIGN_SYSTEM §4-B).
+    let effectiveSessionType = null;
+    if (sessionType) {
+        effectiveSessionType = getSessionColors(sessionType) ? sessionType : null;
+    } else if (isQuickWorking) {
+        effectiveSessionType = 'quickWork';
+    } else if (isCalling) {
+        effectiveSessionType = 'call';
+    } else if (isTakingBreak) {
+        effectiveSessionType = 'break';
+    } else if (isRunning) {
+        effectiveSessionType = 'task';
+    }
+
+    const session = getSessionColors(effectiveSessionType);
+    const bgColor = session?.shell || IDLE_SHELL;
 
     // Use system notification hook to show notification in phone's status bar
     useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning });
 
     return (
-        <div className={`min-h-screen ${bgColor} transition-colors duration-300 pb-32 sm:pb-36`}>
-            {/* Offline Banner */}
+        <div className={cn('min-h-screen transition-colors duration-slow pb-32 sm:pb-36', bgColor)}>
+            {/* Offline banner — neutral slate, NOT red, so it never collides with the
+                quick-work shell (DESIGN_SYSTEM §4-C). Paired with a wifi-off icon. */}
             {!isOnline && (
-                <div className="bg-red-500 text-white px-4 py-1 text-xs text-center font-medium shadow-sm z-50 relative animate-in fade-in slide-in-from-top-2">
-                    Jūs esate neprisijungęs. Duomenys bus išsaugoti telefone ir sinchronizuoti vėliau.
+                <div className="relative z-toast flex items-center justify-center gap-2 bg-feedback-offline px-4 py-1 text-center text-xs font-medium text-white shadow-sm">
+                    <WifiOff className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>Jūs esate neprisijungęs. Duomenys bus išsaugoti telefone ir sinchronizuoti vėliau.</span>
                 </div>
             )}
+
             <nav className="bg-white shadow-sm border-b border-gray-200">
                 <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
                     {/* Mobile Layout - User Info & Logout */}
                     <div className="flex flex-col sm:hidden py-2 gap-2">
                         <div className="flex justify-between items-center">
                             <div className="flex items-center gap-2">
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800">
+                                <span className="px-2 py-0.5 rounded-full text-caption font-medium bg-brand-soft text-brand-hover">
                                     {roleNames[userRole] || userRole}
                                 </span>
                                 <InstallPrompt />
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
                                 <span className="text-xs font-medium text-gray-700">
                                     {formatDisplayName(currentUser?.displayName)}
                                 </span>
-                                <button
-                                    onClick={() => logout()}
-                                    className="p-1.5 rounded-full text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                                    title="Sign out"
-                                >
-                                    <LogOut className="h-4 w-4" />
-                                </button>
+                                <IconButton icon={LogOut} label="Atsijungti" onClick={() => logout()} />
                             </div>
                         </div>
                     </div>
@@ -106,7 +105,7 @@ export default function Layout({ children }) {
                     {/* Desktop Layout - Single Row */}
                     <div className="hidden sm:flex justify-between h-16">
                         <div className="flex items-center gap-3">
-                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 capitalize">
+                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-brand-soft text-brand-hover capitalize">
                                 {roleNames[userRole] || userRole}
                             </span>
                         </div>
@@ -128,17 +127,24 @@ export default function Layout({ children }) {
                                 </span>
                                 <InstallPrompt />
                             </div>
-                            <button
-                                onClick={() => logout()}
-                                className="p-2 rounded-full text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
-                                title="Sign out"
-                            >
-                                <LogOut className="h-5 w-5" />
-                            </button>
+                            <IconButton icon={LogOut} label="Atsijungti" onClick={() => logout()} />
                         </div>
                     </div>
                 </div>
             </nav>
+
+            {/* Persistent session-state label: color is never the sole signal (DESIGN_SYSTEM §4-A,
+                WCAG 1.4.1). Always visible while a session is active, regardless of the shell color. */}
+            {session && (
+                <div
+                    role="status"
+                    className="flex items-center justify-center gap-2 border-b border-line bg-surface-card px-4 py-1.5 text-caption font-semibold text-ink-strong"
+                >
+                    <session.Icon className={cn('h-4 w-4', session.accent)} aria-hidden="true" />
+                    <span>{session.label}</span>
+                </div>
+            )}
+
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 relative">
                 <div className="relative z-10">
                     {children}
