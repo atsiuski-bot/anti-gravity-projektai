@@ -13,6 +13,8 @@ service cloud.firestore {
     }
 
     // Helper to check if user is not disabled - safe version
+    // Uses `!= true` which passes for both `false` and missing/null fields,
+    // so legacy user documents without an `isDisabled` field still work.
     function isUserActive() {
       return isAuthenticated() && 
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
@@ -39,11 +41,17 @@ service cloud.firestore {
     match /users/{userId} {
       // Allow authenticated users to read user data (needed for viewing coworker info, calendars, etc.)
       allow read: if isAuthenticated();
+      // Users can create their own document on first login
       allow create: if isAuthenticated() && request.auth.uid == userId; 
+      // Update: users can update their own doc (but not change role or isDisabled).
+      // Managers/admins can update any user. Only admins can change roles.
+      // The isDisabled guard uses `get()` with a fallback so legacy documents
+      // that lack the field entirely don't block normal profile updates.
       allow update: if isAuthenticated()
                     && (request.auth.uid == userId || isManagerOrAdmin())
                     && (isAdmin() || request.resource.data.role == resource.data.role)
-                    && (isManagerOrAdmin() || request.resource.data.isDisabled == resource.data.isDisabled);
+                    && (isManagerOrAdmin() || 
+                        request.resource.data.isDisabled == resource.data.get('isDisabled', false));
       allow delete: if isAdmin();
     }
 
