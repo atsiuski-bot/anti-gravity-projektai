@@ -9,11 +9,13 @@ import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirma
 import { InlineEditModal } from './InlineEditModal';
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
-import { completeTask } from '../utils/taskCompletionActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
+import Button from './ui/Button';
+import IconButton from './ui/IconButton';
+import ConfirmDialog from './ui/ConfirmDialog';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { STATUS_LABELS, STATUS_STYLES } from '../utils/taskConstants';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
@@ -28,6 +30,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const [editCommentText, setEditCommentText] = useState('');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [spentMinutes, setSpentMinutes] = useState(0);
+    const [confirmRevert, setConfirmRevert] = useState(false);
+    const [revertError, setRevertError] = useState('');
+    const [confirmApprove, setConfirmApprove] = useState(false);
+    const [confirmDeleteCommentIdx, setConfirmDeleteCommentIdx] = useState(null);
 
     const handleUpdateComment = async (index, newText) => {
         try {
@@ -39,12 +45,38 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         }
     };
 
-    const handleDeleteComment = async (index) => {
-        if (!window.confirm("Ar tikrai norite ištrinti komentarą?")) return;
+    const performDeleteComment = async (index) => {
         try {
             await deleteComment(task.id, index, task.comments);
         } catch (err) {
-            // Error managed in utility or silent fail
+            console.error('Error deleting comment:', err);
+        } finally {
+            setConfirmDeleteCommentIdx(null);
+        }
+    };
+
+    const performRevert = async () => {
+        try {
+            await revertTask(task);
+            setConfirmRevert(false);
+        } catch (err) {
+            console.error('Error reverting task:', err);
+            setRevertError('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
+        }
+    };
+
+    const performApprove = async () => {
+        try {
+            await updateDoc(doc(db, 'tasks', task.id), {
+                status: 'in-progress',
+                isApproved: true,
+                approvedAt: new Date().toISOString(),
+                approvedBy: currentUser.uid,
+                updatedAt: new Date().toISOString()
+            });
+            setConfirmApprove(false);
+        } catch (err) {
+            console.error('Error approving task:', err);
         }
     };
 
@@ -89,7 +121,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
             setShowDeleteModal(false);
         } catch (err) {
             console.error("Error deleting task:", err);
-            alert("Nepavyko ištrinti užduoties: " + err.message);
+            alert("Nepavyko ištrinti užduoties. Bandykite dar kartą.");
         }
     };
 
@@ -133,19 +165,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         setLastTap(now);
     };
 
-    // Swipe handlers for mobile gestures
-    const handleSwipeLeft = async () => {
-        if (!isAssignedToMe || taskStatus === 'confirmed' || taskStatus === 'unapproved') return;
-
-        if (!window.confirm("Ar tikrai norite užbaigti užduotį?")) return;
-
-        try {
-            await completeTask(task, currentUser.uid, userRole, task.managerId);
-        } catch (error) {
-            console.error('Error completing task via swipe:', error);
-        }
-    };
-
+    // Swipe handler for the (reversible) status toggle. The destructive finish-by-swipe was
+    // removed: finishing now happens only via the explicit, confirmed Užbaigti button, so a
+    // stray horizontal swipe during a vertical scroll can never irreversibly end a task.
     const handleSwipeRight = async () => {
         if (!isAssignedToMe || taskStatus === 'confirmed' || taskStatus === 'unapproved') return;
 
@@ -168,11 +190,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     };
 
     const swipeHandlers = useSwipeable({
-        onSwipedLeft: handleSwipeLeft,
         onSwipedRight: handleSwipeRight,
         trackMouse: false,
         trackTouch: true,
-        delta: 50
+        delta: 80,
+        swipeDuration: 500
     });
 
     // Compute dynamic limit state based on raw math instead of just the task.timeLimitReached flag.
@@ -201,20 +223,18 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                         <div className="flex justify-between items-start mb-1.5 gap-2"> {/* Reduced margin (mb-3->mb-1.5) */}
                             {showReorderControls && (
                                 <div className="flex flex-col gap-0.5 mr-1">
-                                    <button
+                                    <IconButton
+                                        icon={ArrowUp}
+                                        label="Perkelti aukštyn"
+                                        variant="ghost"
                                         onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
-                                        className="p-0.5 hover:bg-gray-100 rounded text-gray-500 hover:text-blue-600"
-                                        title="Perkelti aukštyn"
-                                    >
-                                        <ArrowUp className="w-3.5 h-3.5" />
-                                    </button>
-                                    <button
+                                    />
+                                    <IconButton
+                                        icon={ArrowDown}
+                                        label="Perkelti žemyn"
+                                        variant="ghost"
                                         onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
-                                        className="p-0.5 hover:bg-gray-100 rounded text-gray-500 hover:text-blue-600"
-                                        title="Perkelti žemyn"
-                                    >
-                                        <ArrowDown className="w-3.5 h-3.5" />
-                                    </button>
+                                    />
                                 </div>
                             )}
                             <div
@@ -226,7 +246,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             >
                                 {task.title}
                                 {task.isDeleted && (
-                                    <span className="ml-2 inline-block px-1.5 py-0.5 text-[9px] font-bold bg-red-100 text-red-600 rounded border border-red-200 align-middle" style={{ textDecoration: 'none' }}>
+                                    <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-bold bg-red-100 text-red-600 rounded border border-red-200 align-middle" style={{ textDecoration: 'none' }}>
                                         Ištrintas
                                     </span>
                                 )}
@@ -236,7 +256,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 {task.priority && (
                                     <span
                                         className={clsx(
-                                            "px-1.5 py-0.5 text-[10px] font-bold rounded-full whitespace-nowrap shadow-sm border border-black/5"
+                                            "px-1.5 py-0.5 text-caption font-bold rounded-full whitespace-nowrap shadow-sm border border-black/5"
                                         )}
                                         style={{
                                             backgroundColor: getPriorityColor(task.priority),
@@ -246,20 +266,17 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                         {getPriorityLabel(task.priority)}
                                     </span>
                                 )}
-                                <span className="px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
+                                <span className="px-1.5 py-0.5 text-caption font-medium rounded-full bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
                                     {STATUS_LABELS[taskStatus] || taskStatus}
                                 </span>
                                 {isManager && (
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleDeleteTask();
-                                        }}
-                                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-md transition-colors flex-shrink-0 -mr-1" // Reduced padding
-                                        title="Ištrinti užduotį"
-                                    >
-                                        <Trash2 className="w-4 h-4" /> {/* Reduced icon size */}
-                                    </button>
+                                    <IconButton
+                                        icon={Trash2}
+                                        label="Ištrinti užduotį"
+                                        variant="danger"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteTask(); }}
+                                        className="flex-shrink-0 -mr-1"
+                                    />
                                 )}
                             </div>
                         </div>
@@ -272,7 +289,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                     className="inline-flex items-center justify-center p-[2px] rounded-full"
                                     style={{ backgroundColor: displayColor || WORKER_FALLBACK_COLOR }}
                                 >
-                                    <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-white text-gray-800 border border-white/50">
+                                    <span className="px-1.5 py-0.5 rounded-full text-caption font-bold bg-white text-gray-800 border border-white/50">
                                         👤 {formatDisplayName(task.assignedUserName)}
                                     </span>
                                 </div>
@@ -280,7 +297,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                             {/* Deadline */}
                             {task.deadline && (
-                                <div className="flex items-center gap-1 text-[10px] text-orange-600 font-medium bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
+                                <div className="flex items-center gap-1 text-caption text-orange-600 font-medium bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
                                     <Calendar className="w-3 h-3" />
                                     {task.deadline}
                                 </div>
@@ -288,7 +305,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                             {/* Planned Time */}
                             {task.estimatedTime && (
-                                <div className={clsx("inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-gray-100 border border-gray-200", task.completed ? "text-gray-400" : "text-gray-700")}>
+                                <div className={clsx("inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-semibold bg-gray-100 border border-gray-200", task.completed ? "text-gray-400" : "text-gray-700")}>
                                     <Clock className="w-3 h-3" />
                                     {task.estimatedTime}
                                 </div>
@@ -296,7 +313,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                             {/* Spent Time */}
                             {(spentMinutes > 0 || (task.status && task.status !== 'pending')) && (
-                                <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-100">
+                                <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-semibold bg-blue-50 text-blue-700 border border-blue-100">
                                     <Clock className="w-3 h-3" />
                                     {formatMinutesToTimeString(spentMinutes)}
                                 </div>
@@ -304,7 +321,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                             {/* Tag */}
                             {task.tag && (
-                                <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                                <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-semibold bg-purple-100 text-purple-800 border border-purple-200">
                                     <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
                                     {task.tag}
                                 </div>
@@ -312,7 +329,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                             {/* Manager Name */}
                             {(task.managerName || task.creatorName) && (
-                                <div className="inline-flex items-center py-0.5 text-[9px] font-medium text-purple-600 opacity-80">
+                                <div className="inline-flex items-center py-0.5 text-caption font-medium text-purple-600 opacity-80">
                                     Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
                                 </div>
                             )}
@@ -355,10 +372,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                         <div key={index} className="bg-indigo-50/50 p-2 rounded-lg border border-indigo-100 hover:bg-indigo-50 transition-colors">
                                             <div className="flex justify-between items-start mb-0.5">
                                                 <div className="flex items-center gap-1.5">
-                                                    <span className="text-[9px] font-bold text-indigo-700">
+                                                    <span className="text-caption font-bold text-indigo-700">
                                                         {formatDisplayName(comment.user)}
                                                     </span>
-                                                    <span className="text-[8px] text-gray-400">
+                                                    <span className="text-caption text-gray-400">
                                                         {new Date(comment.createdAt).toLocaleDateString()}
                                                     </span>
                                                 </div>
@@ -375,11 +392,12 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                                         </button>
                                                         <button
+                                                            aria-label="Ištrinti komentarą"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
-                                                                handleDeleteComment(index);
+                                                                setConfirmDeleteCommentIdx(index);
                                                             }}
-                                                            className="text-gray-400 hover:text-red-600 p-2 -my-2"
+                                                            className="text-gray-400 hover:text-red-600 p-2 -my-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
                                                         >
                                                             <Trash2 className="w-4 h-4" />
                                                         </button>
@@ -496,46 +514,24 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                     <div className="flex items-center gap-2">
                         {(task.completed || task.isDeleted) && isManager && (
-                            <button
-                                onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (!window.confirm('Ar tikrai norite grąžinti šią užduotį?')) return;
-                                    try {
-                                        await revertTask(task);
-                                    } catch (err) {
-                                        alert('Nepavyko grąžinti užduoties: ' + err.message);
-                                    }
-                                }}
-                                className="text-xs bg-amber-500 text-white px-3 py-1.5 rounded-lg font-medium shadow-sm active:scale-95 transition-all flex items-center gap-1"
-                                title="Grąžinti užduotį"
+                            <Button
+                                variant="secondary"
+                                icon={Undo2}
+                                onClick={(e) => { e.stopPropagation(); setRevertError(''); setConfirmRevert(true); }}
+                                className="text-amber-700"
                             >
-                                <Undo2 className="w-3.5 h-3.5" />
                                 Grąžinti
-                            </button>
+                            </Button>
                         )}
 
                         {isManager && taskStatus === 'unapproved' && (
-                        <button
-                            onClick={(e) => {
-                                e.stopPropagation();
-                                const confirmApprove = window.confirm("Patvirtinti šią užduotį?");
-                                if (confirmApprove) {
-                                    updateDoc(doc(db, 'tasks', task.id), {
-                                        status: 'in-progress',
-                                        isApproved: true,
-                                        approvedAt: new Date().toISOString(),
-                                        approvedBy: currentUser.uid,
-                                        updatedAt: new Date().toISOString()
-                                    });
-                                }
-                            }}
-                            className="text-xs bg-green-500 text-white px-3 py-1.5 rounded-lg font-medium shadow-sm active:scale-95 transition-all ml-2"
-                        >
-                            Patvirtinti
-                        </button>
-                    )}
-
-
+                            <Button
+                                variant="primary"
+                                onClick={(e) => { e.stopPropagation(); setConfirmApprove(true); }}
+                            >
+                                Patvirtinti
+                            </Button>
+                        )}
                     </div>
                 </div>
             </div >
@@ -580,6 +576,43 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 onConfirm={confirmDelete}
                 taskTitle={task.title}
             />
+
+            {confirmRevert && (
+                <ConfirmDialog
+                    open
+                    title="Grąžinti užduotį?"
+                    message="Užduotis bus grąžinta į aktyvių sąrašą."
+                    warning={revertError || undefined}
+                    confirmLabel="Grąžinti"
+                    variant="primary"
+                    onConfirm={performRevert}
+                    onCancel={() => setConfirmRevert(false)}
+                />
+            )}
+
+            {confirmApprove && (
+                <ConfirmDialog
+                    open
+                    title="Patvirtinti užduotį?"
+                    message="Užduotis bus patvirtinta ir perkelta į vykdomas."
+                    confirmLabel="Patvirtinti"
+                    variant="primary"
+                    onConfirm={performApprove}
+                    onCancel={() => setConfirmApprove(false)}
+                />
+            )}
+
+            {confirmDeleteCommentIdx !== null && (
+                <ConfirmDialog
+                    open
+                    title="Ištrinti komentarą?"
+                    message="Komentaras bus pašalintas visam laikui."
+                    confirmLabel="Ištrinti"
+                    variant="danger"
+                    onConfirm={() => performDeleteComment(confirmDeleteCommentIdx)}
+                    onCancel={() => setConfirmDeleteCommentIdx(null)}
+                />
+            )}
         </>
     );
 };
