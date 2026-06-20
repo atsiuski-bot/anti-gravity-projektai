@@ -1,6 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
+import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
@@ -13,14 +13,30 @@ const firebaseConfig = {
     measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || "G-J9ZMTZZSTF"
 };
 
+// Surface a misconfigured deploy loudly instead of silently connecting to the baked-in
+// fallback project (which would later fail as confusing permission/listener errors).
+if (!import.meta.env.VITE_FIREBASE_API_KEY || !import.meta.env.VITE_FIREBASE_PROJECT_ID) {
+    console.warn('[firebase] VITE_FIREBASE_* env vars missing — using built-in fallback config.');
+}
+
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 
-// Initialize Firestore with persistent cache for instant loads
-// Cache serves data immediately while syncing with the server in background
-export const db = initializeFirestore(app, {
-    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-});
+// Initialize Firestore with persistent cache for instant loads. Cache serves data
+// immediately while syncing with the server in the background. In private-browsing or
+// storage-disabled contexts persistentLocalCache can THROW at import time — before React
+// (and the ErrorBoundary) mount — which would blank the screen. Fall back to an in-memory
+// Firestore so the app still loads.
+let db;
+try {
+    db = initializeFirestore(app, {
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+    });
+} catch (err) {
+    console.warn('[firebase] Persistent cache unavailable, falling back to memory cache:', err);
+    db = getFirestore(app);
+}
+export { db };
 
 export const storage = getStorage(app);
 

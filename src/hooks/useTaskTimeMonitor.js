@@ -35,6 +35,14 @@ export function useTaskTimeMonitor(tasks) {
         return true;
     });
 
+    // Keep a live reference to the active task so the interval can read fresh data each tick
+    // WITHOUT being torn down and recreated on every render. `activeTask` is a brand-new
+    // object on every Firestore snapshot (and every 1s parent re-render), so depending on the
+    // object directly churned the 10s interval before it could ever fire — making the
+    // auto-pause/alarm detection unreliable. We depend on stable primitives instead.
+    const activeTaskRef = useRef(null);
+    activeTaskRef.current = activeTask;
+
     // Check thresholds on an interval
     useEffect(() => {
         if (!activeTask) return;
@@ -52,19 +60,23 @@ export function useTaskTimeMonitor(tasks) {
         lastEstimatedRef.current.set(taskId, estimatedMinutes);
 
         const checkTime = async () => {
-            const currentMinutes = calculateCurrentTotalMinutes(activeTask);
+            // Read the freshest task snapshot from the ref; bail if it changed/cleared.
+            const task = activeTaskRef.current;
+            if (!task || task.id !== taskId) return;
+
+            const currentMinutes = calculateCurrentTotalMinutes(task);
             const percentage = (currentMinutes / estimatedMinutes) * 100;
 
             // Dynamic Unlatching: If time was manually deducted, re-arm the triggers and auto-heal the DB flags
             if (percentage < 100) {
                 if (limitReachedRef.current.has(taskId)) limitReachedRef.current.delete(taskId);
-                if (activeTask.timeLimitReached) {
+                if (task.timeLimitReached) {
                     try { updateDoc(doc(db, 'tasks', taskId), { timeLimitReached: false }); } catch(e) { /* intentionally ignored */ }
                 }
             }
             if (percentage < 70) {
                 if (warned70Ref.current.has(taskId)) warned70Ref.current.delete(taskId);
-                if (activeTask.warningShown70) {
+                if (task.warningShown70) {
                     try { updateDoc(doc(db, 'tasks', taskId), { warningShown70: false }); } catch(e) { /* intentionally ignored */ }
                 }
             }
@@ -72,10 +84,10 @@ export function useTaskTimeMonitor(tasks) {
             // 70% warning
             if (percentage >= 70 && percentage < 100 && !warned70Ref.current.has(taskId)) {
                 // Check Firestore flag — maybe warning was already shown in a previous session
-                if (!activeTask.warningShown70) {
+                if (!task.warningShown70) {
                     warned70Ref.current.add(taskId);
                     const remaining = Math.max(0, Math.round(estimatedMinutes - currentMinutes));
-                    setWarningPopup({ task: activeTask, remaining });
+                    setWarningPopup({ task, remaining });
                     SoundManager.playTimeWarning70Sound();
 
                     // Mark on Firestore so it doesn't re-fire after page reload
@@ -91,12 +103,12 @@ export function useTaskTimeMonitor(tasks) {
 
             // 100% limit
             if (percentage >= 100 && !limitReachedRef.current.has(taskId)) {
-                if (!activeTask.timeLimitReached) {
+                if (!task.timeLimitReached) {
                     limitReachedRef.current.add(taskId);
 
                     // 1. Auto-pause the task
                     try {
-                        await pauseTask(activeTask);
+                        await pauseTask(task);
                     } catch (e) {
                         console.error('Failed to auto-pause task at time limit:', e);
                     }
@@ -114,8 +126,8 @@ export function useTaskTimeMonitor(tasks) {
                     // 3. Show popup
                     const actualTime = Math.round(currentMinutes);
                     setLimitPopup({
-                        task: activeTask,
-                        estimatedTime: activeTask.estimatedTime,
+                        task,
+                        estimatedTime: task.estimatedTime,
                         actualMinutes: actualTime
                     });
 
@@ -123,15 +135,15 @@ export function useTaskTimeMonitor(tasks) {
                     SoundManager.startTimeLimitRepeat();
 
                     // 5. Send notification to manager
-                    const managerId = activeTask.managerId || activeTask.taskAuditor;
+                    const managerId = task.managerId || task.taskAuditor;
                     if (managerId) {
                         try {
                             await addDoc(collection(db, 'request_notifications'), {
                                 recipientId: managerId,
                                 type: 'time_extension_request',
                                 taskId: taskId,
-                                taskTitle: activeTask.title || 'Užduotis',
-                                estimatedTime: activeTask.estimatedTime,
+                                taskTitle: task.title || 'Užduotis',
+                                estimatedTime: task.estimatedTime,
                                 actualMinutes: actualTime,
                                 userName: currentUser?.displayName || currentUser?.email || 'Darbuotojas',
                                 userId: currentUser?.uid,
@@ -154,7 +166,10 @@ export function useTaskTimeMonitor(tasks) {
         // Then check every 10 seconds
         const interval = setInterval(checkTime, 10000);
         return () => clearInterval(interval);
-    }, [activeTask, currentUser]);
+        // Depend on stable primitives, not the activeTask object reference, so the interval
+        // survives snapshot churn and only resets on a genuine task / estimate / user change.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [activeTask?.id, activeTask?.estimatedTime, currentUser?.uid]);
 
     // Dismiss handlers
     const dismissWarning = useCallback(() => {

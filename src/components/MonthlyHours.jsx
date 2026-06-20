@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 import { Calendar, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
-import { formatMinutesToTimeString } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString } from '../utils/timeUtils';
 import Card from './ui/Card';
 import EmptyState from './ui/EmptyState';
 import { Spinner } from './ui/Loading';
@@ -50,15 +50,16 @@ export default function MonthlyHours({ users }) {
         const stats = {};
 
         sessions.forEach(session => {
-            if (!session.startTime) return;
+            // Bucket by the canonical Lithuanian-local `date` string (YYYY-MM-DD), not by
+            // new Date(startTime).getMonth(): the latter parses a UTC instant and reads the
+            // month in the runtime's local zone, mis-bucketing month-boundary sessions
+            // off-Vilnius and in tests. Fall back to startTime only when `date` is missing.
+            const dayStr = (typeof session.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(session.date))
+                ? session.date
+                : (session.startTime ? getLithuanianDateString(session.startTime) : null);
+            if (!dayStr) return;
 
-            // Extract Year-Month from startTime (safest) or date field
-            const dateObj = new Date(session.startTime);
-            if (isNaN(dateObj.getTime())) return;
-
-            const year = dateObj.getFullYear();
-            const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-            const key = `${year}-${month}`;
+            const key = dayStr.slice(0, 7); // YYYY-MM
 
             if (!stats[key]) {
                 stats[key] = {

@@ -76,6 +76,11 @@ export const SoundManager = {
 
             oscillator.start(now);
             oscillator.stop(now + 1.3);
+            // Release the graph nodes once the tone ends so they don't accumulate on the
+            // long-lived shared AudioContext across a long session of repeated beeps.
+            oscillator.onended = () => {
+                try { oscillator.disconnect(); gainNode.disconnect(); } catch { /* already gone */ }
+            };
 
             // Trigger System Notification
             this.triggerNotification();

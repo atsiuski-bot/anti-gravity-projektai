@@ -192,14 +192,19 @@ export default function TaskHistory({ userId, users = [] }) {
                 // Fetch work sessions to get session times
                 const sessionsQuery = query(collection(db, 'work_sessions'), where('taskId', '==', task.id));
                 const sessionsSnap = await getDocs(sessionsQuery);
-                const sessionTimes = sessionsSnap.docs.map(doc => {
-                    const data = doc.data();
-                    return {
-                        date: data.date,
-                        durationMinutes: data.durationMinutes ? Math.round(data.durationMinutes) : 0,
-                        formattedDuration: data.durationMinutes ? formatMinutesToTimeString(data.durationMinutes) : '0h 0m'
-                    };
-                }).filter(s => s.durationMinutes > 0);
+                const sessionTimes = sessionsSnap.docs
+                    // Manual adjustments are reported separately under `timeAdjustments`;
+                    // excluding them here stops the same correction appearing twice in the
+                    // export (once as a session, once as an adjustment).
+                    .filter(doc => !doc.data().isManualAdjustment)
+                    .map(doc => {
+                        const data = doc.data();
+                        return {
+                            date: data.date,
+                            durationMinutes: data.durationMinutes ? Math.round(data.durationMinutes) : 0,
+                            formattedDuration: data.durationMinutes ? formatMinutesToTimeString(data.durationMinutes) : '0h 0m'
+                        };
+                    }).filter(s => s.durationMinutes > 0);
 
                 const cleanedAdjustments = (task.timeAdjustments || []).map(adj => ({
                     date: adj.date,

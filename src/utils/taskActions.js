@@ -2,6 +2,7 @@ import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setD
 import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString } from './timeUtils';
 import { isManagerRole } from './formatters';
+import { logError } from './errorLog';
 
 /**
  * Updates the user's work status in Firestore.
@@ -86,7 +87,12 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
     try {
         const now = getLithuanianNow();
         const start = new Date(task.timerStartedAt);
-        const elapsedMinutes = (now - start) / (1000 * 60); // minutes using float for precision
+        // Guard against an invalid stored start or cross-device clock skew (start in the
+        // future -> negative elapsed). Mirror calculateCurrentTotalMinutes: only accept a
+        // finite, non-negative elapsed; otherwise treat this pause as logging no new time
+        // rather than corrupting the timer with NaN/negative minutes.
+        const rawElapsed = (now - start) / (1000 * 60); // minutes, float for precision
+        const elapsedMinutes = (Number.isFinite(rawElapsed) && rawElapsed >= 0) ? rawElapsed : 0;
 
         // 1. Get current Timer Minutes
         const currentTimerMinutes = task.timerMinutes || 0;
@@ -140,7 +146,7 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
                     durationMinutes: elapsedMinutes,
                     date: sessionDate,
                     createdAt: new Date().toISOString()
-                }).catch(logErr => console.error("Error logging work session:", logErr))
+                }).catch(logErr => logError(logErr, { source: 'writeFail:pauseTask.workSession' }))
             );
         }
 

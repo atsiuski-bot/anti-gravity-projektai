@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, orderBy, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, calculateCurrentTotalMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment } from '../utils/commentActions';
+import { logError } from '../utils/errorLog';
 import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, Zap, MessageSquare, Check, Filter, RotateCcw, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
@@ -98,7 +99,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             });
             setBreakSessions(breaksData);
         }, (error) => {
-            console.error("Error fetching break sessions:", error);
+            logError(error, { source: 'onSnapshot:breakSessions' });
         });
 
         // (Optional: Keep listening to daily_stats only if needed for legacy reasons, 
@@ -124,7 +125,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 });
             setSessions(sessionsData);
         }, (error) => {
-            console.error("Error fetching sessions:", error);
+            logError(error, { source: 'onSnapshot:workSessions' });
             setLoading(false);
         });
 
@@ -234,8 +235,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     // Split finished tasks into Today, Earlier, and Archived
     const splitTasks = useMemo(() => {
         const cutoff = get3AMCutoff();
-        // nextDayCutoff is exactly 24 hours after current cutoff
-        const nextDayCutoff = new Date(cutoff.getTime() + 24 * 60 * 60 * 1000);
+        // End the window at the NEXT calendar day's 03:00 cutoff, not "cutoff + 24h":
+        // across a DST switch a fixed +24h drifts the boundary by an hour, dropping or
+        // double-counting work done in that hour.
+        const nextDayCutoff = getLithuanian3AMCutoff(addDaysToDateString(selectedDate, 1));
 
         const todayTasksList = [];
         const earlierTasksList = [];
@@ -392,10 +395,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     // AND belong to the selected date's work day (3AM - 3AM)
     const manualTasks = useMemo(() => {
         const cutoff = get3AMCutoff();
-        const nextDayCutoff = new Date(cutoff.getTime() + 24 * 60 * 60 * 1000);
+        // Calendar-day next cutoff (DST-safe), not "cutoff + 24h" — see splitTasks above.
+        const nextDayCutoff = getLithuanian3AMCutoff(addDaysToDateString(selectedDate, 1));
 
-        // Build a set of taskIds that already have explicit work_sessions
-        const taskIdsWithSessions = new Set(sessions.map(s => s.taskId).filter(Boolean));
+        // Build a set of taskIds that already have explicit work_sessions.
+        // Exclude manual-adjustment sessions: an adjustment is a correction layered on top
+        // of a task's own total (already reflected via the task's manualMinutes /
+        // timeAdjustments), not the task's primary tracked work. If an adjustment-only
+        // session marked the task as "has sessions", the task's base manualMinutes would be
+        // wrongly dropped from the daily total — counting only the correction.
+        const taskIdsWithSessions = new Set(
+            sessions.filter(s => !s.isManualAdjustment).map(s => s.taskId).filter(Boolean)
+        );
 
         return finishedTasks.filter(t => {
             if (!t.manualMinutes) return false;

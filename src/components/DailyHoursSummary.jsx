@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { Clock, AlertTriangle } from 'lucide-react';
 import { formatDisplayName, parseTimeToHours } from '../utils/formatters';
+import { getLithuanianDateString, getLithuanianWeekday } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 
 export default function DailyHoursSummary() {
@@ -75,6 +76,10 @@ export default function DailyHoursSummary() {
         // We want to filter for the CURRENT week, matching the column headers Monday-Sunday
         const weekStart = startOfWeek(now, currentParams);
         const weekEnd = endOfWeek(now, currentParams);
+        // Compare week membership on the canonical YYYY-MM-DD strings (timezone-independent),
+        // not by re-parsing session.date as a UTC instant against local week bounds.
+        const weekStartStr = getLithuanianDateString(weekStart);
+        const weekEndStr = getLithuanianDateString(weekEnd);
 
         users.forEach(user => {
             stats[user.id] = {
@@ -96,15 +101,13 @@ export default function DailyHoursSummary() {
             if (user.work_hours && Array.isArray(user.work_hours)) {
                 user.work_hours.forEach(wh => {
                     if (wh.dayOfWeek && stats[user.id].days[wh.dayOfWeek] !== undefined) {
-                        stats[user.id].days[wh.dayOfWeek].available = parseTimeToHours(wh.hours);
+                        // Accumulate (+=): a worker may have multiple availability blocks on the
+                        // same weekday (split shift); overwriting (=) silently dropped all but
+                        // the last and made the overbooked check mis-fire.
+                        stats[user.id].days[wh.dayOfWeek].available += parseTimeToHours(wh.hours);
                     }
                 });
             }
-
-            // A helper to check if a date is in the current week
-            const isInCurrentWeek = (dateObj) => {
-                return dateObj >= weekStart && dateObj <= weekEnd;
-            };
 
             // Add planned hours from tasks (ONLY if task is scheduled for this week OR generally? 
             // Usually planned tasks are recurring or just per weekday. 
@@ -127,25 +130,12 @@ export default function DailyHoursSummary() {
             // Add actual hours from work_sessions (FILTERED BY CURRENT WEEK)
             workSessions.forEach(session => {
                 try {
-                    if (session.userId === user.id && session.date) {
-                        const sessionDate = new Date(session.date);
-
-                        // CRITICAL FIX: Filter by current week
-                        if (!isNaN(sessionDate.getTime()) && isInCurrentWeek(sessionDate)) {
-                            // Map session date to day name
-                            // Note: getDay() 0=Sun. Our dayNames array: 0=Mon, ... 6=Sun.
-                            // Need to map correctly. 
-                            // dayNames index: 0->Mon(1), 1->Tue(2)... 5->Sat(6), 6->Sun(0)
-
-                            let mappedDayName = '';
-                            const dayNum = sessionDate.getDay();
-                            if (dayNum === 0) mappedDayName = 'Sekmadienis';
-                            else if (dayNum === 1) mappedDayName = 'Pirmadienis';
-                            else if (dayNum === 2) mappedDayName = 'Antradienis';
-                            else if (dayNum === 3) mappedDayName = 'Trečiadienis';
-                            else if (dayNum === 4) mappedDayName = 'Ketvirtadienis';
-                            else if (dayNum === 5) mappedDayName = 'Penktadienis';
-                            else if (dayNum === 6) mappedDayName = 'Šeštadienis';
+                    if (session.userId === user.id && typeof session.date === 'string') {
+                        // String-based week membership + weekday derivation: avoids re-parsing
+                        // the local date string as a UTC instant (which mis-buckets the day
+                        // off-Vilnius and in tests).
+                        if (session.date >= weekStartStr && session.date <= weekEndStr) {
+                            const mappedDayName = getLithuanianWeekday(session.date);
 
                             if (stats[user.id].days[mappedDayName]) {
                                 const durationHours = (session.durationMinutes || 0) / 60;

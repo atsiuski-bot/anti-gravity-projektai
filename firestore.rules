@@ -119,5 +119,16 @@ service cloud.firestore {
     match /user_settings/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
     }
+
+    // ERROR LOGS (durable crash log)
+    // Any authenticated user may APPEND a crash report (kept permissive so a broken
+    // session can still record its failure); only managers/admins may read them.
+    // Entries are immutable; only admins may clear them.
+    match /error_logs/{logId} {
+      allow create: if isAuthenticated();
+      allow read:   if isManagerOrAdmin();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
   }
 }

@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { useAuth } from './AuthContext';
+import { logError } from '../utils/errorLog';
 
 const UsersContext = createContext();
 
@@ -44,7 +45,7 @@ export const UsersProvider = ({ children }) => {
                 setLoading(false);
             },
             (error) => {
-                console.error("Error fetching users collection in UsersContext:", error);
+                logError(error, { source: 'onSnapshot:users' });
                 setLoading(false);
             }
         );

@@ -17,6 +17,7 @@ import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
+import { logError } from '../utils/errorLog';
 import { STATUS_LABELS, STATUS_STYLES } from '../utils/taskConstants';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 
@@ -28,6 +29,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const [lastTap, setLastTap] = useState(0);
     const [editingCommentIndex, setEditingCommentIndex] = useState(null);
     const [editCommentText, setEditCommentText] = useState('');
+    const [commentError, setCommentError] = useState('');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [spentMinutes, setSpentMinutes] = useState(0);
     const [confirmRevert, setConfirmRevert] = useState(false);
@@ -37,11 +39,14 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
     const handleUpdateComment = async (index, newText) => {
         try {
+            setCommentError('');
             await updateComment(task.id, index, newText, task.comments);
             setEditingCommentIndex(null);
             setEditCommentText('');
         } catch (err) {
-            alert("Nepavyko atnaujinti komentaro.");
+            // Inline accessible error instead of the banned window.alert; also log durably.
+            logError(err, { source: 'handler:updateComment' });
+            setCommentError('Nepavyko atnaujinti komentaro. Bandykite dar kartą.');
         }
     };
 
@@ -414,9 +419,14 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                         className="w-full text-xs p-1.5 border rounded" // Reduced padding and text size
                                                         rows={2}
                                                     />
+                                                    {commentError && (
+                                                        <p role="alert" className="mt-1 text-caption font-medium text-feedback-danger">
+                                                            {commentError}
+                                                        </p>
+                                                    )}
                                                     <div className="flex justify-end gap-2 mt-1">
                                                         <button
-                                                            onClick={() => setEditingCommentIndex(null)}
+                                                            onClick={() => { setCommentError(''); setEditingCommentIndex(null); }}
                                                             className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
                                                         >
                                                             Atšaukti
