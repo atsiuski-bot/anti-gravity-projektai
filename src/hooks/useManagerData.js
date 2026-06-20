@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, orderBy, doc, getDoc, setDoc } from 'firebase/firestore';
 import { useUsers } from '../context/UsersContext';
+import { logError } from '../utils/errorLog';
 
 export const useManagerData = (currentUser) => {
     const { users: usersList, usersMap, loading: usersLoading } = useUsers();
@@ -72,7 +73,7 @@ export const useManagerData = (currentUser) => {
                 setError(null);
                 setLoading(false);
             }, (err) => {
-                console.error("Error fetching tasks:", err);
+                logError(err, { source: 'onSnapshot:managerTasks' });
                 setError("Nepavyko užkrauti užduočių. Patikrinkite teises arba bandykite vėliau.");
                 setLoading(false);
             });

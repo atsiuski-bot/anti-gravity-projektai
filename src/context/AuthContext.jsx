@@ -8,6 +8,7 @@ import {
     onAuthStateChanged
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { logError } from '../utils/errorLog';
 
 const AuthContext = createContext();
 
@@ -57,11 +58,11 @@ export function AuthProvider({ children }) {
 
         } catch (error) {
             console.error("Auth: Login Error:", error.code, error.message);
-            if (error.code === 'auth/popup-blocked') {
-                alert('Login popup was blocked. Please allow popups for this site.');
-            } else if (error.code === 'auth/popup-closed-by-user') {
+            if (error.code === 'auth/popup-closed-by-user') {
                 console.log('Login cancelled by user');
             } else {
+                // Let the Login page map this to friendly Lithuanian copy (loginErrorMessage).
+                // The previous window.alert was banned (§) and its English text bypassed that.
                 throw error;
             }
         }
@@ -237,7 +238,7 @@ export function AuthProvider({ children }) {
                         }
                     }
                 }, (error) => {
-                    console.error("Auth: Snapshot error:", error);
+                    logError(error, { source: 'onSnapshot:authUser' });
                     // On permission-denied, the user document may not exist yet (first login).
                     // Retry creating it so the snapshot can re-attach successfully.
                     if (error.code === 'permission-denied' && !isProcessingRedirect.current) {
@@ -306,21 +307,31 @@ export function AuthProvider({ children }) {
                     <div className="flex flex-col items-center gap-4 p-6 text-center">
                         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
                         <div>
-                            <p className="text-gray-700 font-medium">Initializing application...</p>
-                            <p className="text-gray-500 text-sm mt-1">Connecting to authentication services</p>
+                            <p className="text-gray-700 font-medium">Paleidžiama programa…</p>
+                            <p className="text-gray-500 text-sm mt-1">Jungiamasi prie autentifikacijos</p>
                         </div>
 
                         {showForceButton && (
                             <div className="mt-6 animate-in fade-in duration-500">
-                                <p className="text-red-500 text-sm mb-3">Connection is taking longer than expected.</p>
+                                <p className="text-red-500 text-sm mb-3">Jungimasis užtrunka ilgiau nei įprastai.</p>
                                 <button
-                                    onClick={() => setLoading(false)}
+                                    onClick={() => window.location.reload()}
                                     className="px-4 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                                 >
-                                    Skip Loading (Debug Mode)
+                                    Perkrauti puslapį
                                 </button>
+                                {/* Debug-only escape hatch: bypassing the auth-loading guard renders the
+                                    protected tree before auth resolves, so it must never ship to users. */}
+                                {import.meta.env.DEV && (
+                                    <button
+                                        onClick={() => setLoading(false)}
+                                        className="ml-2 px-4 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                    >
+                                        Skip Loading (Debug)
+                                    </button>
+                                )}
                                 <p className="text-gray-400 text-xs mt-4">
-                                    Check your internet connection or browser console for errors.
+                                    Patikrinkite interneto ryšį ir bandykite dar kartą.
                                 </p>
                             </div>
                         )}

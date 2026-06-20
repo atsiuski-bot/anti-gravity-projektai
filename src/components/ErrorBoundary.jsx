@@ -1,6 +1,7 @@
 import React from 'react';
 import { AlertTriangle, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import Button from './ui/Button';
+import { logError } from '../utils/errorLog';
 
 class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -25,7 +26,26 @@ class ErrorBoundary extends React.Component {
             errorInfo: errorInfo,
             timestamp: new Date().toISOString()
         });
-        console.error("Uncaught error:", error, errorInfo);
+        // Persist to the durable crash log (localStorage ring buffer + Firestore),
+        // not just the ephemeral console that the "Reload" button wipes.
+        logError(error, {
+            source: this.props.boundaryName ? `boundary:${this.props.boundaryName}` : 'boundary',
+            componentStack: errorInfo?.componentStack
+        });
+    }
+
+    // When used as a per-tab/per-page boundary, allow recovery on navigation:
+    // if any resetKeys value changes, clear the error so the new view can render
+    // instead of leaving the user stuck on the crash screen until a full reload.
+    componentDidUpdate(prevProps) {
+        if (!this.state.hasError) return;
+        const prev = prevProps.resetKeys;
+        const next = this.props.resetKeys;
+        if (!prev || !next) return;
+        const changed = prev.length !== next.length || next.some((k, i) => k !== prev[i]);
+        if (changed) {
+            this.setState({ hasError: false, error: null, errorInfo: null, timestamp: null });
+        }
     }
 
     getErrorDetails = () => {

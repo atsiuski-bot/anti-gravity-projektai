@@ -101,7 +101,10 @@ export default function Reports({ users }) {
             if (selectedMonth === '2026-01') {
                 startStr = '2026-01-19';
             }
-            const endStr = `${selectedMonth}-31`;
+            // Real last day of the month (28/29/30/31), not a hardcoded "-31".
+            const [yr, mo] = selectedMonth.split('-').map(Number);
+            const lastDay = new Date(yr, mo, 0).getDate();
+            const endStr = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
 
             // NOTE: We are fetching ALL data for the date range and filtering client-side
             // because adding 'where(userId == ...)' with 'where(date >= ...)' requires a composite index
@@ -113,12 +116,14 @@ export default function Reports({ users }) {
                 where('date', '<=', endStr)
             );
 
-            // break_sessions uses 'startTime' field, not 'date'
-            // Query by startTime range (ISO datetime strings)
+            // Query break_sessions by their canonical Lithuanian-local 'date' field too, so
+            // breaks bucket into the same day/month as the work they sit alongside. The old
+            // query filtered by the UTC 'startTime', which mis-bucketed breaks taken near
+            // UTC midnight and split a Vilnius day across two months at the boundary.
             const breakQ = query(
                 collection(db, 'break_sessions'),
-                where('startTime', '>=', `${startStr}T00:00:00`),
-                where('startTime', '<=', `${endStr}T23:59:59`)
+                where('date', '>=', startStr),
+                where('date', '<=', endStr)
             );
 
             const [workSnap, breakSnap] = await Promise.all([
@@ -524,9 +529,12 @@ export default function Reports({ users }) {
     };
 
     const getAvg = (totalMins, daysObj) => {
-        const daysCount = Object.keys(daysObj).length;
-        if (daysCount === 0) return 0;
-        return Math.round(totalMins / daysCount);
+        // Average work minutes over days that actually had WORK. Counting every day key would
+        // include break-only days (a break creates a day bucket too), inflating the
+        // denominator and understating the per-day average.
+        const workDaysCount = Object.values(daysObj).filter(d => (d.totalWork || 0) > 0).length;
+        if (workDaysCount === 0) return 0;
+        return Math.round(totalMins / workDaysCount);
     };
 
     // Group tasks by date

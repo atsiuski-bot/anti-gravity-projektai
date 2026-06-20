@@ -6,6 +6,12 @@ import './index.css'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import PwaUpdatePrompt from './components/PwaUpdatePrompt.jsx'
 import { runDatabaseMigration, diagnoseTasks } from './utils/migrateDB.js'
+import { installGlobalErrorLogging } from './utils/errorLog.js'
+
+// Capture async failures React error boundaries cannot see (timer/interval throws,
+// unhandled promise rejections, Firestore listener errors) into the durable crash log.
+// Installed before createRoot so even module-load/pre-mount errors are recorded.
+installGlobalErrorLogging();
 
 // Expose migration to window for manual execution in console
 window.runMigration = runDatabaseMigration;

@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, Clock } from 'lucide-react';
 import { doc, updateDoc, collection, addDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
+import { logError } from '../utils/errorLog';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import Button from './ui/Button';
@@ -43,9 +44,18 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     // Inline accessible error for the start/pause/resume controls (replaces window.alert).
     const [actionError, setActionError] = useState('');
 
+    // Live task reference so the 1s ticker reads fresh data without being torn down and
+    // recreated on every Firestore snapshot (which hands us a brand-new `task` object).
+    const taskRef = useRef(task);
+    taskRef.current = task;
+    // Guards a start/pause/resume action while its Firestore round-trip is in flight, so a
+    // rapid double-tap on a slow connection cannot fire the handler twice and double-count
+    // (a second pause would recompute elapsed from the same timerStartedAt and add it again).
+    const actionInFlightRef = useRef(false);
+
     useEffect(() => {
         const updateTime = () => {
-            const totalMinutes = calculateCurrentTotalMinutes(task);
+            const totalMinutes = calculateCurrentTotalMinutes(taskRef.current);
             const h = Math.floor(totalMinutes / 60);
             const m = Math.floor(totalMinutes % 60);
             setElapsedString(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
@@ -58,7 +68,9 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             interval = setInterval(updateTime, 1000);
         }
         return () => clearInterval(interval);
-    }, [isRunning, task]);
+        // Stable primitive deps: refresh the static display when the relevant fields change,
+        // and (re)start the ticker only on run-state change — never on bare object identity.
+    }, [isRunning, task.id, task.timerStatus, task.timerStartedAt, task.timerMinutes, task.manualMinutes]);
 
     // Only allow the assigned worker to control the task
     // And restrict managers from controlling tasks in the Team View (where role === 'manager')
@@ -67,6 +79,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     const handleStart = async (e) => {
         e.stopPropagation();
         if (isSecondarySessionActive) return;
+        if (actionInFlightRef.current) return;
+        actionInFlightRef.current = true;
         setActionError('');
         try {
             if (currentUser) {
@@ -97,12 +111,16 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             if (navigator.onLine) {
                 setActionError('Nepavyko pradėti laikmačio. Bandykite dar kartą.');
             }
+        } finally {
+            actionInFlightRef.current = false;
         }
     };
 
     const handlePause = async (e) => {
         e.stopPropagation();
         if (!task.timerStartedAt) return;
+        if (actionInFlightRef.current) return;
+        actionInFlightRef.current = true;
         setActionError('');
 
         try {
@@ -120,12 +138,16 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             if (navigator.onLine) {
                 setActionError('Nepavyko sustabdyti laikmačio. Bandykite dar kartą.');
             }
+        } finally {
+            actionInFlightRef.current = false;
         }
     };
 
     const handleResume = async (e) => {
         e.stopPropagation();
         if (isSecondarySessionActive) return;
+        if (actionInFlightRef.current) return;
+        actionInFlightRef.current = true;
         setActionError('');
         try {
             if (currentUser) {
@@ -154,6 +176,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             if (navigator.onLine) {
                 setActionError('Nepavyko atnaujinti laikmačio. Bandykite dar kartą.');
             }
+        } finally {
+            actionInFlightRef.current = false;
         }
     };
 
@@ -221,7 +245,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         durationMinutes: elapsedMinutes,
                         date: sessionDate,
                         createdAt: new Date().toISOString()
-                    }).catch(logErr => console.error("Error logging final work session:", logErr));
+                    }).catch(logErr => logError(logErr, { source: 'writeFail:finishTask.workSession' }));
                 }
             }
 

@@ -2,34 +2,35 @@ export const parseTimeStringToMinutes = (str) => {
     // Add safety checks
     if (!str || typeof str !== 'string') return 0;
 
-    let total = 0;
     try {
-        // Handle 'val' or 'h' for hours (supports both period and comma as decimal separator)
-        const hMatch = str.replace(',', '.').match(/(\d+\.?\d*)\s*(h|val)/);
-        // Handle 'min' or 'm' for minutes
-        const mMatch = str.match(/(\d+)\s*(m|min)/);
+        // Normalize: lowercase, trim, comma -> period as the decimal separator (applied to
+        // the WHOLE string, so "1,5h" and "30,5m" are handled consistently).
+        const norm = str.trim().toLowerCase().replace(',', '.');
 
-        if (hMatch) {
-            const hours = parseFloat(hMatch[1]);
-            if (Number.isFinite(hours) && hours >= 0) {
-                total += hours * 60;
-            }
-        }
-        if (mMatch) {
-            const mins = parseInt(mMatch[1], 10);
-            if (Number.isFinite(mins) && mins >= 0) {
-                total += mins;
-            }
-        }
+        // Strict, fully-anchored match: optional "<num>h|val" followed by optional "<int>m|min".
+        // Anchoring (^...$) is deliberate: it REJECTS malformed input (e.g. "-30m", "2h 2h",
+        // "30.5m", "10m20m") to 0 instead of silently partial-matching it to a surprising,
+        // wrong number — the previous regex matched the first fragment anywhere in the string.
+        const match = norm.match(/^(?:(\d+(?:\.\d+)?)\s*(?:h|val))?\s*(?:(\d+)\s*(?:m|min))?$/);
+        if (!match) return 0;
+
+        let total = 0;
+        const hours = match[1] ? parseFloat(match[1]) : 0;
+        const mins = match[2] ? parseInt(match[2], 10) : 0;
+        if (Number.isFinite(hours) && hours >= 0) total += hours * 60;
+        if (Number.isFinite(mins) && mins >= 0) total += mins;
+
+        return Number.isFinite(total) ? total : 0;
     } catch (error) {
         console.warn('Error parsing time string:', str, error);
         return 0;
     }
-    return total;
 };
 
 export const formatMinutesToTimeString = (minutes) => {
-    if (minutes === null || minutes === undefined) return '';
+    // Guard non-finite too: a NaN/Infinity slipping through (e.g. a malformed session summed
+    // into a total) previously rendered the literal "NaNh NaNm" / "Infinityh NaNm" to users.
+    if (minutes === null || minutes === undefined || !Number.isFinite(minutes)) return '';
     const isNegative = minutes < 0;
     const totalMinutes = Math.round(Math.abs(minutes));
     const prefix = isNegative ? '-' : '';
@@ -107,6 +108,26 @@ export const getLithuanianDateString = (date = new Date()) => {
     const month = parts.find(p => p.type === 'month').value;
     const day = parts.find(p => p.type === 'day').value;
     return `${year}-${month}-${day}`;
+};
+
+/**
+ * Adds (or subtracts) whole calendar days to a YYYY-MM-DD string and returns a YYYY-MM-DD
+ * string. Pure UTC calendar arithmetic, so it is DST-independent and never lands on a
+ * non-existent local hour. Use this to derive a day-window's end as the NEXT day's 03:00
+ * cutoff (getLithuanian3AMCutoff of dateStr+1) instead of "cutoff + 24h": across a DST
+ * boundary a fixed +24h leaves a 1-hour gap (work dropped) or overlap (work double-counted).
+ *
+ * @param {string} dateStr - A YYYY-MM-DD date string.
+ * @param {number} [days=1] - Days to add (may be negative).
+ * @returns {string} The shifted YYYY-MM-DD string.
+ */
+export const addDaysToDateString = (dateStr, days = 1) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d + days));
+    const yy = dt.getUTCFullYear();
+    const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getUTCDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
 };
 
 /**

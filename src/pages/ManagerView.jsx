@@ -13,6 +13,7 @@ import DailyStatistics from '../components/DailyStatistics';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import ManagerNotifications from '../components/ManagerNotifications';
 import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
+import ErrorBoundary from '../components/ErrorBoundary';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -262,31 +263,41 @@ export default function ManagerView() {
 
             <div className={activeTab === 'my-calendar' ? 'block' : 'hidden'}>
                 <div className="w-full">
-                    <WorkPlanner />
+                    <ErrorBoundary boundaryName="manager:my-calendar" resetKeys={[activeTab]}>
+                        <WorkPlanner />
+                    </ErrorBoundary>
                 </div>
             </div>
 
             <div className={activeTab === 'team-calendar' ? 'block' : 'hidden'}>
-                <AllUsersCalendar />
+                <ErrorBoundary boundaryName="manager:team-calendar" resetKeys={[activeTab]}>
+                    <AllUsersCalendar />
+                </ErrorBoundary>
             </div>
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
-                <Reports users={allUsers || users} />
+                <ErrorBoundary boundaryName="manager:reports" resetKeys={[activeTab]}>
+                    <Reports users={allUsers || users} />
+                </ErrorBoundary>
             </div>
 
             <div className={activeTab === 'my-reports' ? 'block' : 'hidden'}>
                 <div className="space-y-6">
-                    <DailyStatistics
-                        currentUser={currentUser}
-                        userRole="worker" // Force worker role to show only personal stats
-                        users={[]}
-                    />
+                    <ErrorBoundary boundaryName="manager:my-reports" resetKeys={[activeTab]}>
+                        <DailyStatistics
+                            currentUser={currentUser}
+                            userRole="worker" // Force worker role to show only personal stats
+                            users={[]}
+                        />
+                    </ErrorBoundary>
                 </div>
             </div>
 
             {userRole === 'admin' && (
                 <div className={activeTab === 'users' ? 'block' : 'hidden'}>
-                    <UserManagement />
+                    <ErrorBoundary boundaryName="manager:users" resetKeys={[activeTab]}>
+                        <UserManagement />
+                    </ErrorBoundary>
                 </div>
             )}
 

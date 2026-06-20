@@ -14,8 +14,10 @@ import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/ta
 import { getPriorityRank } from '../utils/priority';
 import Reports from '../components/Reports';
 import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
+import { logError } from '../utils/errorLog';
 import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
+import ErrorBoundary from '../components/ErrorBoundary';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
@@ -90,7 +92,7 @@ export default function WorkerView() {
                 setTasks(tasksData);
                 setError(null);
             }, (err) => {
-                console.error("Error fetching worker tasks:", err);
+                logError(err, { source: 'onSnapshot:workerTasks' });
                 setError("Nepavyko užkrauti užduočių. Bandykite vėliau.");
             });
         } catch (err) {
@@ -273,17 +275,23 @@ export default function WorkerView() {
             {/* Calendar Tab */}
             <div className={activeTab === 'calendar' ? 'block' : 'hidden'}>
                 <div className="w-full">
-                    <WorkPlanner />
+                    <ErrorBoundary boundaryName="worker:calendar" resetKeys={[activeTab]}>
+                        <WorkPlanner />
+                    </ErrorBoundary>
                 </div>
             </div>
 
             {/* Team Calendar Tab */}
             <div className={activeTab === 'team-calendar' ? 'block' : 'hidden'}>
-                <AllUsersCalendar />
+                <ErrorBoundary boundaryName="worker:team-calendar" resetKeys={[activeTab]}>
+                    <AllUsersCalendar />
+                </ErrorBoundary>
             </div>
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
-                <Reports users={[currentUser]} />
+                <ErrorBoundary boundaryName="worker:reports" resetKeys={[activeTab]}>
+                    <Reports users={[currentUser]} />
+                </ErrorBoundary>
             </div>
 
             {isModalOpen && (

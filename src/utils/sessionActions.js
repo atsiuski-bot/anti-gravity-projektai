@@ -2,6 +2,7 @@ import { doc, getDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
 import { getLithuanianNow, getLithuanianDateString } from './timeUtils';
+import { logError } from './errorLog';
 
 /**
  * Starts a new session for the user.
@@ -282,12 +283,12 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
                             durationMinutes,
                             date: sessionDate,
                             metadata: session
-                        }).catch(() => { /* ignore */ })
+                        }).catch(err => logError(err, { source: 'writeFail:endSession.sessionLog' }))
                     );
                 }
                 logPromises.push(
                     handleLegacyLogging(userId, userData, session, now, durationMinutes)
-                        .catch(e => console.warn("Legacy log error:", e))
+                        .catch(e => logError(e, { source: 'writeFail:endSession.legacyLog' }))
                 );
                 await Promise.all(logPromises);
             } catch (e) { /* swallow */ }
