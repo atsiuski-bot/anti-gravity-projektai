@@ -5,11 +5,13 @@ import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekda
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment } from '../utils/commentActions';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, Zap, MessageSquare, Check, Filter, RotateCcw } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, Zap, MessageSquare, Check, Filter, RotateCcw, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
 import SessionTypeIcon from './SessionTypeIcon';
+import IconButton from './ui/IconButton';
+import ConfirmDialog from './ui/ConfirmDialog';
 
 export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     // Managers can see everyone, Workers only themselves
@@ -37,6 +39,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     // Modal state
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null, task: null });
+
+    // Friendly, mapped error copy shown in the inline banner (never raw err.message — §10)
+    const [actionError, setActionError] = useState('');
+
+    // Restore confirmation (replaces window.confirm — §8)
+    const [restoreTarget, setRestoreTarget] = useState(null);
+    const [restoring, setRestoring] = useState(false);
 
     // Calculate previous/next day
     const handleDateChange = (offset) => {
@@ -606,11 +615,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
         } catch (err) {
             console.error("Error confirming task:", err);
-            // Try to recover - maybe it's in the other collection?
+            // Map to friendly Lithuanian copy — never surface raw err.message (§10).
             if (err.code === 'not-found') {
-                alert("Klaida: Dokumentas nerastas. Pabandykite perkrauti puslapį.");
+                setActionError("Dokumento nerasta. Perkraukite puslapį ir bandykite vėl.");
             } else {
-                alert("Klaida keičiant statusą: " + err.message);
+                setActionError("Nepavyko atnaujinti būsenos. Perkraukite puslapį ir bandykite vėl.");
             }
         }
     };
@@ -646,12 +655,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             await addComment(task.id, text, currentUser, task.comments || [], collectionName);
         } catch (err) {
             console.error("Error adding comment:", err);
-            alert("Nepavyko pridėti komentaro.");
+            setActionError("Komentaras nebuvo išsaugotas. Bandykite vėl.");
         }
     };
 
-    const handleRestore = async (task) => {
-        if (!window.confirm('Ar norite grąžinti užduotį į aktyvių sąrašą?')) return;
+    // Open the restore confirmation (replaces window.confirm — §8).
+    const handleRestore = (task) => {
+        setRestoreTarget(task);
+    };
+
+    const confirmRestore = async () => {
+        const task = restoreTarget;
+        if (!task) return;
+        setRestoring(true);
         try {
             const restoredTask = {
                 ...task,
@@ -682,9 +698,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
             // Update local state to remove from finished tasks
             setFinishedTasks(prev => prev.filter(t => t.id !== task.id));
+            setRestoreTarget(null);
         } catch (err) {
             console.error("Error restoring task:", err);
-            alert("Klaida grąžinant užduotį: " + err.message);
+            setActionError("Nepavyko grąžinti užduoties. Patikrinkite ryšį ir bandykite iš naujo.");
+        } finally {
+            setRestoring(false);
         }
     };
 
@@ -747,7 +766,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             ));
         } catch (err) {
             console.error('Error changing task time:', err);
-            alert('Nepavyko pakeisti laiko: ' + err.message);
+            setActionError("Laiko keitimas nepavyko. Patikrinkite įvesties reikšmes ir bandykite iš naujo.");
         }
     };
 
@@ -771,20 +790,39 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
     return (
         <div className="space-y-6">
+            {actionError && (
+                <div
+                    role="alert"
+                    className="flex items-start justify-between gap-3 rounded-card border border-red-200 bg-red-50 px-4 py-3 text-body text-red-700"
+                >
+                    <span>{actionError}</span>
+                    <IconButton
+                        icon={X}
+                        label="Užverti pranešimą"
+                        variant="ghost"
+                        onClick={() => setActionError('')}
+                    />
+                </div>
+            )}
+
             {/* Header Controls */}
             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-col md:flex-row gap-4 items-center justify-between">
 
                 <div className="flex items-center gap-4 bg-gray-50 p-1.5 rounded-lg border border-gray-200">
-                    <button onClick={() => handleDateChange(-1)} className="p-2 hover:bg-white rounded-md transition-colors text-gray-600">
-                        <ChevronLeft className="w-5 h-5" />
-                    </button>
+                    <IconButton
+                        icon={ChevronLeft}
+                        label="Ankstesnė diena"
+                        onClick={() => handleDateChange(-1)}
+                    />
                     <div className="flex items-center gap-2 px-2 min-w-[140px] justify-center font-medium text-gray-900">
                         <Calendar className="w-4 h-4 text-gray-500" />
                         {selectedDate}
                     </div>
-                    <button onClick={() => handleDateChange(1)} className="p-2 hover:bg-white rounded-md transition-colors text-gray-600">
-                        <ChevronRight className="w-5 h-5" />
-                    </button>
+                    <IconButton
+                        icon={ChevronRight}
+                        label="Kita diena"
+                        onClick={() => handleDateChange(1)}
+                    />
                 </div>
 
                 {(isManagerRole(userRole)) && users.length > 0 && (
@@ -1062,6 +1100,21 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     onAddComment={handleAddComment}
                 />
             )}
+
+            {/* Restore confirmation (replaces window.confirm — §8) */}
+            {restoreTarget && (
+                <ConfirmDialog
+                    open
+                    title="Grąžinti užduotį?"
+                    message="Užduotis bus iš naujo pridėta į aktyvius sąrašus."
+                    confirmLabel="Grąžinti"
+                    cancelLabel="Atšaukti"
+                    variant="primary"
+                    loading={restoring}
+                    onConfirm={confirmRestore}
+                    onCancel={() => setRestoreTarget(null)}
+                />
+            )}
         </div>
     );
 }
@@ -1103,13 +1156,13 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                         {task.title}
                     </div>
                     {task.isDeleted && (
-                        <span className="text-[9px] font-bold text-red-600 uppercase bg-red-50 px-1 py-0.5 rounded">Ištrinta</span>
+                        <span className="text-caption font-bold text-red-600 uppercase bg-red-50 px-1 py-0.5 rounded">Ištrinta</span>
                     )}
                 </div>
 
                 <span
                     className={clsx(
-                        "px-1.5 py-0.5 text-[10px] font-bold rounded-md border border-black/5 uppercase whitespace-nowrap ml-2"
+                        "px-1.5 py-0.5 text-caption font-bold rounded-md border border-black/5 uppercase whitespace-nowrap ml-2"
                     )}
                     style={{
                         backgroundColor: getPriorityColor(task.priority),
@@ -1127,13 +1180,13 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
             )}
 
             {(task.managerName || task.creatorName) && (
-                <div className="text-[10px] text-gray-500 mb-2 flex items-center gap-1">
+                <div className="text-caption text-gray-500 mb-2 flex items-center gap-1">
                     <User className="w-3 h-3" />
                     <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
                 </div>
             )}
 
-            <div className="flex flex-wrap items-center gap-2 mb-2 text-[10px] text-gray-500">
+            <div className="flex flex-wrap items-center gap-2 mb-2 text-caption text-gray-500">
                 <div className="bg-gray-100 px-1.5 py-0.5 rounded flex items-center gap-1">
                     <User className="w-3 h-3" />
                     <span className="font-medium">{formatDisplayName(userName)}</span>
@@ -1141,23 +1194,26 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                 <div className="bg-gray-100 px-1.5 py-0.5 rounded font-mono">
                     {editingTime ? (
                         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                            <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} className="w-10 px-1 py-0.5 border rounded text-center text-[10px]" />h
-                            <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} className="w-10 px-1 py-0.5 border rounded text-center text-[10px]" />m
-                            <button onClick={saveTimeEdit} className="px-1.5 py-0.5 text-[9px] bg-green-600 text-white rounded hover:bg-green-700">✓</button>
-                            <button onClick={() => setEditingTime(false)} className="px-1.5 py-0.5 text-[9px] bg-gray-400 text-white rounded hover:bg-gray-500">✗</button>
+                            <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />h
+                            <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                            <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" onClick={saveTimeEdit} />
+                            <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => setEditingTime(false)} />
                         </div>
                     ) : (
                         <span className="flex items-center gap-1">
                             {task.estimatedTime || '-'} / {calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}
                             {canEditTime && (
-                                <button onClick={startTimeEdit} className="text-blue-500 hover:text-blue-700 ml-0.5" title="Keisti laiką">
-                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                </button>
+                                <IconButton
+                                    icon={Pencil}
+                                    label="Keisti darbo laiką"
+                                    title="Keisti laiką"
+                                    onClick={startTimeEdit}
+                                />
                             )}
                         </span>
                     )}
                     {task.timeChanged && (
-                        <span className="block text-red-600 font-bold text-[10px] uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</span>
+                        <span className="block text-red-600 font-bold text-caption uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</span>
                     )}
                 </div>
                 {task.deadline && (
@@ -1197,26 +1253,28 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                 </div>
 
                 <div className="flex items-center gap-1">
-                    <button
+                    <IconButton
+                        icon={RotateCcw}
+                        label="Grąžinti užduotį"
+                        title="Grąžinti"
                         onClick={(e) => {
                             e.stopPropagation();
                             onRestore(task);
                         }}
-                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded"
-                        title="Grąžinti"
-                    >
-                        <RotateCcw className="w-4 h-4" />
-                    </button>
-                    <button
+                    />
+                    <IconButton
+                        label={`Komentarai (${task.comments?.length || 0})`}
+                        title="Komentarai"
                         onClick={(e) => {
                             e.stopPropagation();
                             setActiveModal({ type: 'comments', taskId: task.id, task: task });
                         }}
-                        className="flex items-center gap-1 text-gray-500 hover:text-blue-600 p-1.5 hover:bg-gray-50 rounded"
                     >
-                        <MessageSquare className="w-4 h-4" />
-                        <span className="text-xs font-bold">{task.comments?.length || 0}</span>
-                    </button>
+                        <span className="flex items-center gap-1">
+                            <MessageSquare className="w-4 h-4" aria-hidden="true" />
+                            <span className="text-xs font-bold">{task.comments?.length || 0}</span>
+                        </span>
+                    </IconButton>
                 </div>
             </div>
 
@@ -1228,7 +1286,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                         </div>
                     ))}
                     {task.comments.length > 2 && (
-                        <div className="text-[10px] text-gray-400 italic mt-1">
+                        <div className="text-caption text-gray-400 italic mt-1">
                             + dar {task.comments.length - 2} komentarai...
                         </div>
                     )}
@@ -1290,15 +1348,15 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                     <table className="w-full md:w-auto divide-y divide-gray-200 text-sm md:table-auto table-fixed">
                         <thead className="bg-gray-50">
                             <tr>
-                                {(isManagerRole(userRole)) && <th className="px-2 py-2 text-center w-8 text-[10px] font-bold text-gray-500 uppercase tracking-wider">OK</th>}
-                                <th className="px-2 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">DARB.</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">PRIO</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-[10px] font-bold text-gray-500 uppercase tracking-wider w-10 md:w-auto">KOM.</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-[10px] font-bold text-gray-500 uppercase tracking-wider w-10 md:w-auto"></th>
+                                {(isManagerRole(userRole)) && <th className="px-2 py-2 text-center w-8 text-caption font-bold text-gray-500 uppercase tracking-wider">OK</th>}
+                                <th className="px-2 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-gray-500 uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">DARB.</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-right text-caption font-bold text-gray-500 uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">PRIO</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-caption font-bold text-gray-500 uppercase tracking-wider w-10 md:w-auto">KOM.</th>
+                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-caption font-bold text-gray-500 uppercase tracking-wider w-10 md:w-auto"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200">
@@ -1341,13 +1399,13 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                     {task.title}
                                                 </div>
                                                 {task.deadline && (
-                                                    <div className="text-[9px] text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                    <div className="text-caption text-gray-500 flex items-center gap-1 mt-0.5 whitespace-nowrap">
                                                         <Calendar className="w-2.5 h-2.5" />
                                                         {task.deadline}
                                                     </div>
                                                 )}
                                                 <div className={clsx(
-                                                    "text-[10px] text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
+                                                    "text-caption text-gray-500 mt-0.5 flex items-start gap-1 cursor-pointer hover:text-gray-700 whitespace-normal break-words",
                                                     expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
                                                 )}>
                                                     <SessionTypeIcon
@@ -1358,33 +1416,33 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                 </div>
                                                 {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
                                                     <div className="mt-2 pl-4 border-l-2 border-gray-200">
-                                                        <div className="text-[10px] font-semibold text-gray-500 mb-1">Komentarai:</div>
+                                                        <div className="text-caption font-semibold text-gray-500 mb-1">Komentarai:</div>
                                                         {task.comments.map((comment, idx) => (
-                                                            <div key={idx} className="text-[10px] text-gray-600 mb-1">
+                                                            <div key={idx} className="text-caption text-gray-600 mb-1">
                                                                 <span className="font-medium">{comment.user}:</span> {comment.text}
                                                             </div>
                                                         ))}
                                                     </div>
                                                 )}
                                                 {(task.managerName || task.creatorName) && (
-                                                    <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
+                                                    <div className="text-caption text-gray-500 mt-1 flex items-center gap-1">
                                                         <User className="w-2.5 h-2.5" />
                                                         <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
                                                     </div>
                                                 )}
                                             </td>
                                             <td className="px-1 py-2 whitespace-nowrap">
-                                                <span className="px-2 py-1 rounded-full text-[10px] font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                                                <span className="px-2 py-1 rounded-full text-caption font-medium bg-gray-100 text-gray-700 border border-gray-200">
                                                     {formatDisplayName(userName).split(' ')[0]}
                                                 </span>
                                             </td>
-                                            <td className="px-1 py-2 text-right text-gray-900 font-mono text-[10px] whitespace-nowrap">
+                                            <td className="px-1 py-2 text-right text-gray-900 font-mono text-caption whitespace-nowrap">
                                                 {editingTimeTaskId === task.id ? (
                                                     <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                                                        <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} className="w-10 px-1 py-0.5 border rounded text-center text-[10px]" autoFocus />h
-                                                        <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} className="w-10 px-1 py-0.5 border rounded text-center text-[10px]" />m
-                                                        <button onClick={() => saveTimeEdit(task)} className="px-1.5 py-0.5 text-[9px] bg-green-600 text-white rounded hover:bg-green-700">✓</button>
-                                                        <button onClick={() => setEditingTimeTaskId(null)} className="px-1.5 py-0.5 text-[9px] bg-gray-400 text-white rounded hover:bg-gray-500">✗</button>
+                                                        <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h
+                                                        <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                                                        <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" onClick={() => saveTimeEdit(task)} />
+                                                        <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => setEditingTimeTaskId(null)} />
                                                     </div>
                                                 ) : (
                                                     <>
@@ -1392,23 +1450,27 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         <span className="text-gray-400 mx-1">/</span>
                                                         <span>{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
                                                         {canEditTime && (
-                                                            <button onClick={(e) => { e.stopPropagation(); startTimeEdit(task); }} className="text-blue-500 hover:text-blue-700 ml-1 inline-flex" title="Keisti laiką">
-                                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                                            </button>
+                                                            <IconButton
+                                                                icon={Pencil}
+                                                                label="Keisti darbo laiką"
+                                                                title="Keisti laiką"
+                                                                className="ml-1 align-middle"
+                                                                onClick={(e) => { e.stopPropagation(); startTimeEdit(task); }}
+                                                            />
                                                         )}
                                                     </>
                                                 )}
                                                 {task.timeChanged && (
-                                                    <div className="text-red-600 font-bold text-[10px] uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</div>
+                                                    <div className="text-red-600 font-bold text-caption uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</div>
                                                 )}
                                             </td>
-                                            <td className="px-1 py-2 whitespace-nowrap text-[10px] text-gray-600">
+                                            <td className="px-1 py-2 whitespace-nowrap text-caption text-gray-600">
                                                 {task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
                                             </td>
                                             <td className="px-1 py-2 whitespace-nowrap">
                                                 <span
                                                     className={clsx(
-                                                        "px-1.5 py-0.5 inline-flex text-[10px] leading-3 font-semibold rounded-md border border-black/5 uppercase"
+                                                        "px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md border border-black/5 uppercase"
                                                     )}
                                                     style={{
                                                         backgroundColor: getPriorityColor(task.priority),
@@ -1420,45 +1482,47 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                             </td>
                                             <td className="px-1 py-2 whitespace-nowrap">
                                                 {(task.isDeleted || task.status === 'deleted') ? (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-800 border border-red-200">
+                                                    <span className="px-2 py-0.5 rounded text-caption font-semibold bg-red-100 text-red-800 border border-red-200">
                                                         Ištrinta
                                                     </span>
                                                 ) : isConfirmed ? (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-100 text-green-800 border border-green-200">
+                                                    <span className="px-2 py-0.5 rounded text-caption font-semibold bg-green-100 text-green-800 border border-green-200">
                                                         Patvirt.
                                                     </span>
                                                 ) : (
-                                                    <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-800">
+                                                    <span className="px-2 py-0.5 rounded text-caption font-medium bg-gray-100 text-gray-800">
                                                         Nepatv.
                                                     </span>
                                                 )}
                                             </td>
                                             <td className="px-1 py-2 text-center whitespace-nowrap">
-                                                <button
+                                                <IconButton
+                                                    label={`Komentarai (${task.comments?.length || 0})`}
+                                                    title="Komentarai"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         setActiveModal({ type: 'comments', taskId: task.id, task: task });
                                                     }}
-                                                    className="inline-flex items-center justify-center text-gray-400 hover:text-blue-600 transition-colors p-1"
-                                                    title="Komentarai"
                                                 >
-                                                    <MessageSquare className="w-4 h-4" />
-                                                    {task.comments?.length > 0 && (
-                                                        <span className="ml-0.5 text-[10px] font-bold">{task.comments.length}</span>
-                                                    )}
-                                                </button>
+                                                    <span className="inline-flex items-center">
+                                                        <MessageSquare className="w-4 h-4" aria-hidden="true" />
+                                                        {task.comments?.length > 0 && (
+                                                            <span className="ml-0.5 text-caption font-bold">{task.comments.length}</span>
+                                                        )}
+                                                    </span>
+                                                </IconButton>
                                             </td>
                                             <td className="px-1 py-2 text-center whitespace-nowrap">
-                                                <button
+                                                <IconButton
+                                                    icon={RotateCcw}
+                                                    label="Grąžinti užduotį"
+                                                    title="Grąžinti"
+                                                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         onRestore(task);
                                                     }}
-                                                    className="p-1 text-blue-600 hover:bg-blue-50 rounded opacity-0 group-hover:opacity-100 transition-opacity"
-                                                    title="Grąžinti"
-                                                >
-                                                    <RotateCcw className="w-3.5 h-3.5" />
-                                                </button>
+                                                />
                                             </td>
                                         </tr>
                                     );
