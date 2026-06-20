@@ -40,6 +40,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     const [confirmFinish, setConfirmFinish] = useState(false);
     const [finishing, setFinishing] = useState(false);
     const [finishError, setFinishError] = useState('');
+    // Inline accessible error for the start/pause/resume controls (replaces window.alert).
+    const [actionError, setActionError] = useState('');
 
     useEffect(() => {
         const updateTime = () => {
@@ -65,6 +67,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     const handleStart = async (e) => {
         e.stopPropagation();
         if (isSecondarySessionActive) return;
+        setActionError('');
         try {
             if (currentUser) {
                 // Check if Quick Work is running - if so, prompt to stop it first
@@ -90,9 +93,9 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         } catch (err) {
             console.error("Error starting timer:", err);
             setOptimisticUserData(null); // Revert on error
-            // Only alert if we think it's a critical failure and we are online
+            // Only surface if we think it's a critical failure and we are online
             if (navigator.onLine) {
-                alert("Nepavyko pradėti laikmačio.");
+                setActionError('Nepavyko pradėti laikmačio. Bandykite dar kartą.');
             }
         }
     };
@@ -100,6 +103,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     const handlePause = async (e) => {
         e.stopPropagation();
         if (!task.timerStartedAt) return;
+        setActionError('');
 
         try {
             // Optimistic UI: instantly show paused state
@@ -114,7 +118,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             console.error("Error pausing timer:", err);
             setOptimisticUserData(null);
             if (navigator.onLine) {
-                alert("Nepavyko sustabdyti laikmačio.");
+                setActionError('Nepavyko sustabdyti laikmačio. Bandykite dar kartą.');
             }
         }
     };
@@ -122,6 +126,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     const handleResume = async (e) => {
         e.stopPropagation();
         if (isSecondarySessionActive) return;
+        setActionError('');
         try {
             if (currentUser) {
                 // Check if Quick Work is running
@@ -147,7 +152,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             console.error("Error resuming timer:", err);
             setOptimisticUserData(null); // Revert
             if (navigator.onLine) {
-                alert("Nepavyko atnaujinti laikmačio.");
+                setActionError('Nepavyko atnaujinti laikmačio. Bandykite dar kartą.');
             }
         }
     };
@@ -376,6 +381,16 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     Užbaigti
                 </Button>
             </div>
+
+            {actionError && (
+                <div
+                    role="alert"
+                    aria-live="assertive"
+                    className="mt-2 text-caption font-medium text-feedback-danger"
+                >
+                    {actionError}
+                </div>
+            )}
 
             {confirmFinish && (
                 <ConfirmDialog

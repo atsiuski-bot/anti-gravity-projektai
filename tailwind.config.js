@@ -15,9 +15,9 @@ export default {
                 ink: { strong: '#111827', DEFAULT: '#374151', muted: '#6B7280' },
                 line: '#E5E7EB',
                 session: {
-                    quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#DC2626' },
+                    quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#B91C1C' },
                     call: { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB' },
-                    break: { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#D97706' },
+                    break: { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309' },
                     task: { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D' },
                 },
                 feedback: {

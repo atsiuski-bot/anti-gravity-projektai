@@ -204,9 +204,9 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                 <div className="flex justify-between text-xs font-medium text-gray-500 mb-1">
                     <span>{label}</span>
                     <span className="text-gray-900">
-                        {formatTime(current)} <span className="text-gray-400">/ {formatTime(total)}</span>
+                        {formatTime(current)} <span className="text-ink-muted">/ {formatTime(total)}</span>
                         {currentSessionHours > 0 && label.includes('Dienos') && (
-                            <span className="text-xs text-green-600 ml-1">(+vyksta)</span>
+                            <span className="text-xs text-session-task-accent ml-1">(+vyksta)</span>
                         )}
                     </span>
                 </div>

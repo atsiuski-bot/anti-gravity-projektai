@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
@@ -146,6 +146,12 @@ export default function WorkPlanner() {
         typeof window !== 'undefined' && window.innerWidth < 768
     );
 
+    // Refs for the three hand-rolled dialog panels, so each can take focus on open
+    // and restore focus to the triggering element on close (4.1.2 focus management).
+    const editEventPanelRef = useRef(null);
+    const approvalFeedbackPanelRef = useRef(null);
+    const reasonPanelRef = useRef(null);
+
     useEffect(() => {
         if (typeof window === 'undefined' || !window.matchMedia) return undefined;
         const mql = window.matchMedia('(max-width: 767px)');
@@ -154,6 +160,55 @@ export default function WorkPlanner() {
         mql.addEventListener('change', onChange);
         return () => mql.removeEventListener('change', onChange);
     }, []);
+
+    // Dialog semantics for the three hand-rolled modals: close the open one on Escape,
+    // move focus into it on open, and restore focus to the previously focused element on
+    // close (2.1.1 / 4.1.2). Keyed on which modal is open so only one is ever active.
+    useEffect(() => {
+        const openModal = editingEvent
+            ? { panelRef: editEventPanelRef, close: () => setEditingEvent(null) }
+            : showApprovalFeedback
+                ? { panelRef: approvalFeedbackPanelRef, close: () => setShowApprovalFeedback(false) }
+                : showReasonModal
+                    ? {
+                        panelRef: reasonPanelRef,
+                        close: () => {
+                            setShowReasonModal(false);
+                            setReasonValue('');
+                            setPendingAction(null);
+                        },
+                    }
+                    : null;
+
+        if (!openModal) return undefined;
+
+        const previouslyFocused = typeof document !== 'undefined' ? document.activeElement : null;
+
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                openModal.close();
+            }
+        };
+        document.addEventListener('keydown', handleKeyDown);
+
+        // Move focus into the dialog on open: prefer the first focusable control, fall back
+        // to the panel itself (panels carry tabIndex={-1} so they can hold focus).
+        const panel = openModal.panelRef.current;
+        if (panel) {
+            const focusable = panel.querySelector(
+                'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+            );
+            (focusable || panel).focus();
+        }
+
+        return () => {
+            document.removeEventListener('keydown', handleKeyDown);
+            if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
+                previouslyFocused.focus();
+            }
+        };
+    }, [editingEvent, showApprovalFeedback, showReasonModal]);
 
     useEffect(() => {
 
@@ -533,10 +588,22 @@ export default function WorkPlanner() {
             // near-black block (color is never the sole signal, §5).
             const isVacation = event.isVacation;
             const isWfh = !isVacation && event.isWorkFromHome;
+            const stateLabel = isVacation ? 'Atostogos' : isWfh ? 'Iš namų' : 'Dirbtuvėse';
+            const eventAriaLabel = `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, redaguoti`;
             return (
                 <div
+                    role="button"
+                    tabIndex={0}
+                    aria-label={eventAriaLabel}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            handleSelectEvent(event);
+                        }
+                    }}
                     className={clsx(
                         'flex h-full flex-wrap items-center gap-x-2 gap-y-0.5 overflow-hidden px-1.5 py-0.5 leading-tight rounded-input',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
                         // Vacation = calm indigo "free" state (brand, not a session colour);
                         // work events keep the calendar's own (blue) fill, so white text reads.
                         isVacation ? 'bg-brand-soft text-brand-hover' : 'text-white'
@@ -693,10 +760,12 @@ export default function WorkPlanner() {
                 editingEvent && (
                     <div className="fixed inset-0 z-top flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
                         <div
+                            ref={editEventPanelRef}
                             role="dialog"
                             aria-modal="true"
                             aria-labelledby="edit-event-title"
-                            className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200"
+                            tabIndex={-1}
+                            className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200 focus-visible:outline-none"
                         >
                             <h3 id="edit-event-title" className="text-h2 text-ink-strong mb-4">
                                 {editingEvent.id ? 'Redaguoti laiką' : 'Pridėti darbo laiką'}
@@ -837,10 +906,12 @@ export default function WorkPlanner() {
             {showApprovalFeedback && (
                 <div className="fixed inset-0 z-top flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
                     <div
+                        ref={approvalFeedbackPanelRef}
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="approval-feedback-title"
-                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-300"
+                        tabIndex={-1}
+                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-300 focus-visible:outline-none"
                     >
                         {feedbackVariant === 'approved' ? (
                             <div className="w-16 h-16 bg-green-100 text-feedback-success rounded-full flex items-center justify-center mx-auto mb-4">
@@ -870,10 +941,12 @@ export default function WorkPlanner() {
             {showReasonModal && (
                 <div className="fixed inset-0 z-modal flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
                     <div
+                        ref={reasonPanelRef}
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="reason-modal-title"
-                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 animate-in fade-in slide-in-from-bottom-4 duration-300"
+                        tabIndex={-1}
+                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 animate-in fade-in slide-in-from-bottom-4 duration-300 focus-visible:outline-none"
                     >
                         <h3 id="reason-modal-title" className="text-h2 text-ink-strong mb-2">Pakeitimų priežastis</h3>
                         <label htmlFor="reasonValue" className="block text-body text-ink-muted mb-4">Prašome nurodyti kodėl darote šį pakeitimą (min. 10 simbolių).</label>

@@ -264,6 +264,7 @@ export default function AllUsersCalendar() {
                                         const style = getEventStyle(event.start, event.end);
                                         if (!style) return null;
                                         const status = eventStatus(event);
+                                        const timeRange = `${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}`;
                                         return (
                                             <div
                                                 key={event.id}
@@ -272,7 +273,8 @@ export default function AllUsersCalendar() {
                                                     ...style,
                                                     backgroundColor: event.isVacation ? VACATION_COLOR : event.color
                                                 }}
-                                                title={`${event.title} (${format(event.start, 'HH:mm')} - ${format(event.end, 'HH:mm')})`}
+                                                title={`${event.title} (${timeRange})`}
+                                                aria-label={`${user.displayName}, ${event.title}${status ? `, ${status.label}` : ''}, ${timeRange}`}
                                             >
                                                 <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-caption font-bold bg-white text-gray-800 border border-white/50 shadow-sm z-20 relative whitespace-nowrap leading-tight">
                                                     <span aria-hidden="true">👤</span>

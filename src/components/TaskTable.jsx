@@ -610,6 +610,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                         }
                                                     }}
                                                     disabled={!isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved'}
+                                                    aria-label="Pažymėti atlikta"
                                                     className={clsx(
                                                         "w-4 h-4 rounded border-line text-brand focus:ring-brand",
                                                         isAssignedToMe && task.status !== 'confirmed' && task.status !== 'unapproved' ? "cursor-pointer" : "cursor-not-allowed opacity-50"
@@ -836,35 +837,34 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             </div>
                                             {((task.attachmentUrls && task.attachmentUrls.length > 0) || task.attachmentUrl) && (
                                                 <div className="mt-1 flex justify-center">
-                                                    <button
+                                                    <IconButton
+                                                        icon={ImageIcon}
+                                                        label="Peržiūrėti nuotrauką"
+                                                        variant="ghost"
+                                                        className="text-pink-600"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setActiveModal({ type: 'image', taskId: task.id });
                                                         }}
-                                                        className="text-pink-600 hover:text-pink-800 transition-transform active:scale-90"
-                                                        title="Peržiūrėti nuotrauką"
-                                                        aria-label="Peržiūrėti nuotrauką"
-                                                    >
-                                                        <ImageIcon className="w-4 h-4" aria-hidden="true" />
-                                                    </button>
+                                                    />
                                                 </div>
                                             )}
                                         </td>
                                         <td className="px-1 py-3 text-center">
-                                            <button
+                                            <IconButton
+                                                label="Komentarai"
+                                                variant="ghost"
+                                                className="text-green-600"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     setActiveModal({ type: 'comments', taskId: task.id });
                                                 }}
-                                                className="inline-flex items-center gap-1 text-green-600 hover:text-green-800 transition-colors"
-                                                title="Komentarai"
-                                                aria-label="Komentarai"
                                             >
                                                 <MessageSquare className="w-4 h-4" aria-hidden="true" />
                                                 {task.comments?.length > 0 && (
                                                     <span className="text-caption font-bold">{task.comments.length}</span>
                                                 )}
-                                            </button>
+                                            </IconButton>
                                         </td>
                                         {canManage && (
                                             <td className="px-1 py-3 text-center">
@@ -876,6 +876,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                             onChange={() => handleConfirmTask(task.id)}
                                                             className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
                                                             title="Patvirtinti atlikimą"
+                                                            aria-label="Patvirtinti atlikimą"
                                                         />
                                                     ) : null
                                                 )}

@@ -1,15 +1,14 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
-import ReactDOM from 'react-dom';
-import { Zap, Square, X, Check, ShieldAlert } from 'lucide-react';
+import { Zap, Square, Check, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
-import IconButton from './ui/IconButton';
 import Button from './ui/Button';
+import Modal from './ui/Modal';
 
 // Separate memoized modal component to prevent re-renders from timer updates
 const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) => {
@@ -24,65 +23,55 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
         }
     };
 
-    return ReactDOM.createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4">
-            <form
-                onSubmit={handleSubmit}
-                className="bg-white w-full max-w-md rounded-modal shadow-2xl flex flex-col overflow-hidden"
-                style={{ maxHeight: '80vh' }}
-            >
-                {/* Header */}
-                <div className="p-4 border-b border-gray-200 flex justify-between items-center bg-gray-50">
-                    <div>
-                        <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-                            <Zap className="w-6 h-6 text-red-500 fill-current" />
-                            Greito darbo pabaiga
-                        </h3>
-                        <p className="text-sm text-gray-500 mt-1">Įveskite atlikto darbo aprašymą</p>
-                    </div>
-                    <IconButton icon={X} label="Uždaryti" variant="ghost" onClick={onClose} />
+    return (
+        <Modal
+            open
+            onClose={onClose}
+            title="Greito darbo pabaiga"
+            size="md"
+            initialFocusRef={textareaRef}
+        >
+            <form onSubmit={handleSubmit} className="flex flex-col">
+                <p className="text-body text-ink-muted mb-4 flex items-center gap-2">
+                    <Zap className="w-5 h-5 text-session-quickWork-accent fill-current shrink-0" aria-hidden="true" />
+                    Įveskite atlikto darbo aprašymą
+                </p>
+
+                <div className="mb-5 bg-session-quickWork-surface rounded-2xl p-4 border border-red-200 flex items-center justify-between">
+                    <span className="text-red-700 font-semibold text-body-lg">Užfiksuotas laikas:</span>
+                    <span className="text-4xl font-mono font-bold text-session-quickWork-accent">{totalDisplay}</span>
                 </div>
 
-                {/* Content */}
-                <div className="p-5 flex-1 overflow-y-auto">
-                    <div className="mb-5 bg-red-50 rounded-2xl p-4 border border-red-200 flex items-center justify-between">
-                        <span className="text-red-700 font-semibold text-base">Užfiksuotas laikas:</span>
-                        <span className="text-4xl font-mono font-bold text-red-600">{totalDisplay}</span>
-                    </div>
-
-                    <div>
-                        <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">
-                            Ką nuveikėte?
-                        </label>
-                        <textarea
-                            ref={textareaRef}
-                            id="quickWorkTextarea"
-                            name="taskDescription"
-                            placeholder="Trumpai aprašykite atliktą darbą..."
-                            autoFocus
-                            lang="en"
-                            dir="ltr"
-                            rows={4}
-                            style={{
-                                width: '100%',
-                                padding: '12px',
-                                fontSize: '16px',
-                                border: '2px solid #e5e7eb',
-                                borderRadius: '12px',
-                                resize: 'none',
-                                background: 'white',
-                                color: '#000',
-                                fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                                direction: 'ltr',
-                                textAlign: 'left'
-                            }}
-                            required
-                        />
-                    </div>
+                <div>
+                    <label htmlFor="quickWorkTextarea" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
+                        Ką nuveikėte?
+                    </label>
+                    <textarea
+                        ref={textareaRef}
+                        id="quickWorkTextarea"
+                        name="taskDescription"
+                        placeholder="Trumpai aprašykite atliktą darbą..."
+                        lang="en"
+                        dir="ltr"
+                        rows={4}
+                        style={{
+                            width: '100%',
+                            padding: '12px',
+                            fontSize: '16px',
+                            border: '2px solid #e5e7eb',
+                            borderRadius: '12px',
+                            resize: 'none',
+                            background: 'white',
+                            color: '#000',
+                            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                            direction: 'ltr',
+                            textAlign: 'left'
+                        }}
+                        required
+                    />
                 </div>
 
-                {/* Footer */}
-                <div className="p-4 border-t border-gray-200 bg-gray-50 flex gap-3 justify-end">
+                <div className="mt-6 flex gap-3 justify-end">
                     <Button type="button" variant="secondary" onClick={onClose}>
                         Atšaukti
                     </Button>
@@ -91,8 +80,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                     </Button>
                 </div>
             </form>
-        </div>,
-        document.body
+        </Modal>
     );
 });
 QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
@@ -287,7 +275,7 @@ export default function QuickWorkTimer({ compact = false }) {
                         )}
                     </div>
                     <div className="flex flex-col items-start leading-tight">
-                        <span className="text-xs font-bold uppercase tracking-wider opacity-70">Greitas</span>
+                        <span className="text-xs font-bold uppercase tracking-wider text-ink-muted">Greitas</span>
                         {isQuickWorking && <span className="text-caption font-semibold text-session-quickWork-accent">Vyksta...</span>}
                     </div>
                 </div>
