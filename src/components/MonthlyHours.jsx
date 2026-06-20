@@ -4,6 +4,19 @@ import { collection, query, onSnapshot } from 'firebase/firestore';
 import { Calendar, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
+import Card from './ui/Card';
+import EmptyState from './ui/EmptyState';
+import { Spinner } from './ui/Loading';
+
+// Per-worker row, sorted by minutes desc. Shared by the mobile card stack and the
+// desktop table so both render identical data + figures.
+function sortedUsers(stat) {
+    return Object.values(stat.users).sort((a, b) => b.minutes - a.minutes);
+}
+
+function sharePercent(minutes, totalMinutes) {
+    return totalMinutes > 0 ? Math.round((minutes / totalMinutes) * 100) : 0;
+}
 
 export default function MonthlyHours({ users }) {
     const [sessions, setSessions] = useState([]);
@@ -13,8 +26,8 @@ export default function MonthlyHours({ users }) {
 
     useEffect(() => {
         setLoading(true);
-        // We listen to ALL work_sessions. 
-        // In a large production app, this should probably be a backend aggregation or 
+        // We listen to ALL work_sessions.
+        // In a large production app, this should probably be a backend aggregation or
         // limited by date (e.g., last 12 months).
         // Since we want robust calculation of history, we fetch all.
         const q = query(collection(db, 'work_sessions'));
@@ -79,96 +92,128 @@ export default function MonthlyHours({ users }) {
 
     }, [sessions, users]);
 
-    if (loading) return <div className="p-4 text-center text-gray-500">Kraunami duomenys...</div>;
+    if (loading) return <Spinner label="Kraunami duomenys…" />;
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
+        <Card className="mb-6 overflow-hidden">
             <button
+                type="button"
                 onClick={() => setIsCollapsed(!isCollapsed)}
-                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
+                aria-expanded={!isCollapsed}
+                className="flex min-h-touch w-full items-center justify-between bg-surface-sunken p-4 transition-colors hover:bg-surface-base focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
             >
                 <div className="flex items-center gap-2">
-                    <Calendar className="w-5 h-5 text-indigo-600" />
-                    <h3 className="font-semibold text-gray-900">Mėnesinė komandos ataskaita</h3>
+                    <Calendar className="h-5 w-5 text-brand" aria-hidden="true" />
+                    <h3 className="text-h3 text-ink-strong">Mėnesinė komandos ataskaita</h3>
                 </div>
-                {isCollapsed ? <ChevronDown className="w-5 h-5 text-gray-500" /> : <ChevronUp className="w-5 h-5 text-gray-500" />}
+                {isCollapsed
+                    ? <ChevronDown className="h-5 w-5 text-ink-muted" aria-hidden="true" />
+                    : <ChevronUp className="h-5 w-5 text-ink-muted" aria-hidden="true" />}
             </button>
 
             {!isCollapsed && (
-                <div className="border-t border-gray-200">
+                <div className="border-t border-line">
                     {monthlyStats.length === 0 ? (
-                        <div className="p-8 text-center text-gray-500 italic">
-                            Nėra duomenų.
-                        </div>
+                        <EmptyState
+                            icon={Calendar}
+                            title="Nėra duomenų"
+                            description="Kai darbuotojai pradės registruoti laiką, čia matysite mėnesinę ataskaitą."
+                        />
                     ) : (
-                        <div className="divide-y divide-gray-100">
-                            {monthlyStats.map((stat) => (
-                                <div key={stat.monthKey} className="bg-white">
-                                    <button
-                                        onClick={() => setExpandedMonth(expandedMonth === stat.monthKey ? null : stat.monthKey)}
-                                        className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors text-left"
-                                    >
-                                        <div className="flex items-center gap-4">
-                                            <span className="text-lg font-bold text-gray-800">
-                                                {stat.monthKey}
-                                            </span>
-                                            <span className="text-sm font-medium text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-                                                Viso: {formatMinutesToTimeString(stat.totalMinutes)}
-                                            </span>
-                                        </div>
-                                        {expandedMonth === stat.monthKey ?
-                                            <ChevronUp className="w-4 h-4 text-gray-400" /> :
-                                            <ChevronDown className="w-4 h-4 text-gray-400" />
-                                        }
-                                    </button>
+                        <div className="divide-y divide-line">
+                            {monthlyStats.map((stat) => {
+                                const isOpen = expandedMonth === stat.monthKey;
+                                return (
+                                    <div key={stat.monthKey} className="bg-surface-card">
+                                        <button
+                                            type="button"
+                                            onClick={() => setExpandedMonth(isOpen ? null : stat.monthKey)}
+                                            aria-expanded={isOpen}
+                                            aria-label={`${stat.monthKey} mėnuo, viso ${formatMinutesToTimeString(stat.totalMinutes)}`}
+                                            className="flex min-h-touch w-full items-center justify-between p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+                                        >
+                                            <div className="flex flex-wrap items-center gap-3">
+                                                <span className="text-h3 font-bold text-ink-strong">
+                                                    {stat.monthKey}
+                                                </span>
+                                                <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-sunken px-2 py-0.5 text-caption font-medium text-ink">
+                                                    <Clock className="h-3.5 w-3.5 opacity-75" aria-hidden="true" />
+                                                    Viso: {formatMinutesToTimeString(stat.totalMinutes)}
+                                                </span>
+                                            </div>
+                                            {isOpen
+                                                ? <ChevronUp className="h-5 w-5 text-ink-muted" aria-hidden="true" />
+                                                : <ChevronDown className="h-5 w-5 text-ink-muted" aria-hidden="true" />}
+                                        </button>
 
-                                    {expandedMonth === stat.monthKey && (
-                                        <div className="px-4 pb-4">
-                                            <div className="overflow-x-auto rounded-lg border border-gray-200">
-                                                <table className="min-w-full divide-y divide-gray-200">
-                                                    <thead className="bg-gray-50/50">
-                                                        <tr>
-                                                            <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Darbuotojas</th>
-                                                            <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Valandos</th>
-                                                            <th className="px-4 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider md:w-32">% nuo bendro</th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-gray-200 bg-white">
-                                                        {Object.values(stat.users)
-                                                            .sort((a, b) => b.minutes - a.minutes)
-                                                            .map((user) => (
-                                                                <tr key={user.userId} className="hover:bg-gray-50">
+                                        {isOpen && (
+                                            <div className="px-4 pb-4">
+                                                {/* Mobile / touch: one card per worker — hours are the prominent figure (§9, never a scrolling table) */}
+                                                <ul className="space-y-2 md:hidden">
+                                                    {sortedUsers(stat).map((user) => (
+                                                        <li
+                                                            key={user.userId}
+                                                            className="rounded-card border border-line bg-surface-card p-4"
+                                                        >
+                                                            <p className="truncate text-body font-medium text-ink-strong">
+                                                                {formatDisplayName(user.name)}
+                                                            </p>
+                                                            <div className="mt-2 flex items-end justify-between gap-3">
+                                                                <span className="inline-flex items-center gap-1.5 font-mono text-h2 font-bold text-brand">
+                                                                    <Clock className="h-4 w-4 opacity-75" aria-hidden="true" />
+                                                                    {formatMinutesToTimeString(user.minutes)}
+                                                                </span>
+                                                                <span className="text-caption text-ink-muted">
+                                                                    {sharePercent(user.minutes, stat.totalMinutes)}% nuo bendro
+                                                                </span>
+                                                            </div>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+
+                                                {/* Desktop / wide: denser table is allowed (§9) */}
+                                                <div className="hidden overflow-x-auto rounded-card border border-line md:block">
+                                                    <table className="min-w-full divide-y divide-line">
+                                                        <thead className="bg-surface-sunken">
+                                                            <tr>
+                                                                <th className="px-4 py-2 text-left text-caption font-medium uppercase tracking-wider text-ink-muted">Darbuotojas</th>
+                                                                <th className="px-4 py-2 text-right text-caption font-medium uppercase tracking-wider text-ink-muted">Valandos</th>
+                                                                <th className="px-4 py-2 text-right text-caption font-medium uppercase tracking-wider text-ink-muted md:w-32">% nuo bendro</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-line bg-surface-card">
+                                                            {sortedUsers(stat).map((user) => (
+                                                                <tr key={user.userId} className="hover:bg-surface-sunken">
                                                                     <td className="px-4 py-2">
-                                                                        <div className="text-sm font-medium text-gray-900">
+                                                                        <div className="text-body font-medium text-ink-strong">
                                                                             {formatDisplayName(user.name)}
                                                                         </div>
                                                                     </td>
                                                                     <td className="px-4 py-2 text-right">
-                                                                        <div className="flex items-center justify-end gap-1.5 font-mono text-sm font-semibold text-indigo-700">
-                                                                            <Clock className="w-3.5 h-3.5 opacity-50" />
+                                                                        <div className="flex items-center justify-end gap-1.5 font-mono text-body-lg font-semibold text-brand">
+                                                                            <Clock className="h-3.5 w-3.5 opacity-75" aria-hidden="true" />
                                                                             {formatMinutesToTimeString(user.minutes)}
                                                                         </div>
                                                                     </td>
                                                                     <td className="px-4 py-2 text-right">
-                                                                        <div className="text-xs text-gray-500">
-                                                                            {stat.totalMinutes > 0
-                                                                                ? Math.round((user.minutes / stat.totalMinutes) * 100)
-                                                                                : 0}%
+                                                                        <div className="text-caption text-ink-muted">
+                                                                            {sharePercent(user.minutes, stat.totalMinutes)}%
                                                                         </div>
                                                                     </td>
                                                                 </tr>
                                                             ))}
-                                                    </tbody>
-                                                </table>
+                                                        </tbody>
+                                                    </table>
+                                                </div>
                                             </div>
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                     )}
                 </div>
             )}
-        </div>
+        </Card>
     );
 }
