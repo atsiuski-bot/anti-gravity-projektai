@@ -1,7 +1,7 @@
 import { doc, getDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
-import { getLithuanianNow, getLithuanianDateString } from './timeUtils';
+import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from './timeUtils';
 import { logError } from './errorLog';
 
 /**
@@ -51,7 +51,11 @@ export const startSession = async (userId, type, metadata = {}) => {
                     if (taskDoc.exists()) {
                         return pauseTask({ id: taskDoc.id, ...taskDoc.data() }, { skipUserStatusUpdate: true });
                     }
-                }).catch(e => console.warn("Task pause error:", e));
+                // Route the failure to the durable crash log, not just console: if this
+                // pause fails the task stays timerStatus:'running' with a stale start and
+                // would later credit ghost time, so the failure must be diagnosable. The
+                // on-load orphan recovery + the clamp bound the damage; this makes it visible.
+                }).catch(e => logError(e, { source: 'pauseFail:startSession.taskPause', taskId: userData.activeSession.taskId }));
                 newPausedSession = userData.activeSession;
             } else {
                 newPausedSession = userData.activeSession;
@@ -61,7 +65,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                 if ((userData.activeSession.type === 'quickWork' || userData.activeSession.type === 'call') && userData.activeSession.startTime) {
                     const interruptNow = getLithuanianNow();
                     const interruptStart = new Date(userData.activeSession.startTime);
-                    const partialDuration = (interruptNow - interruptStart) / (1000 * 60);
+                    const partialDuration = clampSessionMinutes((interruptNow - interruptStart) / (1000 * 60));
                     if (partialDuration > (10 / 60)) {
                         // Log the partial segment and capture doc ID for later renaming
                         const partialType = userData.activeSession.type;
@@ -84,7 +88,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                             // Store partial doc ID on the paused session so we can rename it later
                             newPausedSession = { ...newPausedSession, partialDocId: partialDocRef.id };
                         } catch (e) {
-                            console.warn('Partial session log error:', e);
+                            logError(e, { source: 'writeFail:startSession.partialLog', userId });
                         }
                     }
                 }
@@ -105,7 +109,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                             }
                         }
                     }
-                } catch (e) { console.warn("Legacy cleanup error:", e); }
+                } catch (e) { logError(e, { source: 'writeFail:startSession.legacyCleanup', userId }); }
             };
             legacyCleanup(); // Fire and forget
         }
@@ -172,7 +176,10 @@ export const startSession = async (userId, type, metadata = {}) => {
         ]);
 
     } catch (err) {
-        console.error("Error starting session:", err);
+        // Record durably before rethrowing — every caller only console.errors the
+        // rethrow, so without this a Firestore/permission/network failure that aborts a
+        // session start would never reach the ring buffer or remote error_logs.
+        logError(err, { source: 'startSession', userId, sessionType: type });
         throw err;
     }
 };
@@ -208,7 +215,12 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
 
         const now = getLithuanianNow();
         const start = new Date(session.startTime);
-        const durationMinutes = (now - start) / (1000 * 60);
+        // Sanitize through the shared clamp before this value is logged AND accumulated
+        // into breakState.dailyAccumulatedMinutes: a backward device clock would otherwise
+        // write a NEGATIVE duration into the permanent work_sessions/sessions log and
+        // SUBTRACT from the running break total. pauseTask already guards this way; endSession
+        // did not. (Also caps an implausibly large value, matching the timer paths.)
+        const durationMinutes = clampSessionMinutes((now - start) / (1000 * 60));
         const sessionDate = getLithuanianDateString(now);
 
         // 1. Prepare User State Update (CRITICAL PATH - must be fast)
@@ -291,7 +303,7 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
                         .catch(e => logError(e, { source: 'writeFail:endSession.legacyLog' }))
                 );
                 await Promise.all(logPromises);
-            } catch (e) { /* swallow */ }
+            } catch (e) { logError(e, { source: 'writeFail:endSession.doLogging', userId }); }
         };
         doLogging(); // Fire and forget — no await
 
@@ -355,7 +367,7 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
                         });
                         await Promise.allSettled(resumePromises);
                     } catch (e) {
-                        console.warn("Task resume error:", e);
+                        logError(e, { source: 'writeFail:endSession.taskResume', userId });
                     }
                 };
                 doResume(); // Fire and forget — no await
@@ -363,7 +375,9 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
         }
 
     } catch (err) {
-        console.error("Error ending session:", err);
+        // endSession swallowed its failure (no rethrow) and never logged it, so a failed
+        // critical user-doc update left the session in limbo with no durable trace. Record it.
+        logError(err, { source: 'endSession', userId });
     }
 };
 
@@ -383,7 +397,7 @@ const endLegacySession = async (userId, type, userData) => {
         if (startTime) {
             const fakeSession = { type, startTime };
             now = getLithuanianNow(); // Update now
-            duration = (now - new Date(startTime)) / (1000 * 60);
+            duration = clampSessionMinutes((now - new Date(startTime)) / (1000 * 60));
 
             // Log session (safely)
             try {

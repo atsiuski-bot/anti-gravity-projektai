@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, Clock } from 'lucide-react';
 import { doc, updateDoc, collection, addDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
 import { logError } from '../utils/errorLog';
@@ -196,10 +196,10 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             const start = task.timerStartedAt ? new Date(task.timerStartedAt) : null;
             const now = getLithuanianNow();
 
-            // 1. If running, calculate elapsed
+            // 1. If running, calculate elapsed (clamped like the pause path, so finishing
+            // a task whose timer was orphaned across a crash cannot credit ghost hours).
             if (isRunning && start) {
-                const elapsedMinutes = (now - start) / (1000 * 60);
-                finalTimerMinutes += elapsedMinutes;
+                finalTimerMinutes += clampSessionMinutes((now - start) / (1000 * 60));
             }
 
             // 2. Prepare task data for completion
@@ -229,7 +229,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
 
             // 3. Run task update + user status update in PARALLEL, work session log fire-and-forget
             if (isRunning && start) {
-                const elapsedMinutes = (now - start) / (1000 * 60);
+                const elapsedMinutes = clampSessionMinutes((now - start) / (1000 * 60));
                 if (elapsedMinutes > 0.1) {
                     // Fire and forget work session log
                     // Attribute to the end date (now), consistent with the other

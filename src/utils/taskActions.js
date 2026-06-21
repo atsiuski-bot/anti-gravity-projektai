@@ -1,6 +1,6 @@
 import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
-import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString } from './timeUtils';
+import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from './timeUtils';
 import { isManagerRole } from './formatters';
 import { logError } from './errorLog';
 
@@ -76,6 +76,14 @@ export const startTask = async (task, userId) => {
     }
 };
 
+// Task ids with a pause currently in flight. Two code paths can race to pause the
+// SAME running task in one tick — e.g. the crash-recovery hook and the time-limit
+// monitor both fire pauseTask on an orphaned task that is also over its limit. Both
+// read the same (stale) timerStatus:'running' object, so the top guard does not
+// dedupe them, and each would write a duplicate work_sessions log. This in-flight set
+// makes the second concurrent call a no-op until the first settles.
+const pauseInFlight = new Set();
+
 /**
  * Pauses a task, calculating elapsed time and updating the database.
  * @param {Object} task - The task object to pause.
@@ -83,16 +91,17 @@ export const startTask = async (task, userId) => {
  */
 export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => {
     if (!task.timerStartedAt || task.timerStatus !== 'running') return;
+    if (pauseInFlight.has(task.id)) return; // a concurrent pause for this task is already running
+    pauseInFlight.add(task.id);
 
     try {
         const now = getLithuanianNow();
         const start = new Date(task.timerStartedAt);
-        // Guard against an invalid stored start or cross-device clock skew (start in the
-        // future -> negative elapsed). Mirror calculateCurrentTotalMinutes: only accept a
-        // finite, non-negative elapsed; otherwise treat this pause as logging no new time
-        // rather than corrupting the timer with NaN/negative minutes.
-        const rawElapsed = (now - start) / (1000 * 60); // minutes, float for precision
-        const elapsedMinutes = (Number.isFinite(rawElapsed) && rawElapsed >= 0) ? rawElapsed : 0;
+        // Sanitize the elapsed delta through the shared clamp: a future/invalid start
+        // (clock skew) collapses to 0, and an implausibly large value — e.g. a timer
+        // left running across a crash/reload before this pause — is capped to
+        // MAX_SESSION_MINUTES so an orphaned interval cannot credit hours of ghost time.
+        const elapsedMinutes = clampSessionMinutes((now - start) / (1000 * 60)); // minutes, float for precision
 
         // 1. Get current Timer Minutes
         const currentTimerMinutes = task.timerMinutes || 0;
@@ -156,6 +165,8 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
     } catch (err) {
         console.error("Error pausing task:", err);
         throw err;
+    } finally {
+        pauseInFlight.delete(task.id);
     }
 };
 

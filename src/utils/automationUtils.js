@@ -1,7 +1,7 @@
 import { db } from '../firebase';
 import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { archiveTask } from './taskActions';
-import { getLithuanianNow, getLithuanianDateString } from './timeUtils';
+import { getLithuanianNow, getLithuanianDateString, getLithuanian3AMCutoff, addDaysToDateString } from './timeUtils';
 
 /**
  * Checks all active tasks and promotes their priority based on deadline proximity.
@@ -21,44 +21,36 @@ export async function checkAndPromoteTasks() {
         const snapshot = await getDocs(tasksQuery);
         const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-        // Get today's date at midnight for comparison
+        // Compare deadlines as Vilnius calendar-day strings (YYYY-MM-DD), which sort
+        // lexically and are timezone-correct. The old code built local-midnight Date
+        // objects from the browser's timezone, so a UTC-stamped deadline (e.g.
+        // 2025-12-01T22:00:00Z = 2025-12-02 in Vilnius) was bucketed on the wrong day and
+        // priority promotion fired a day late.
         const now = getLithuanianNow();
         const todayStr = getLithuanianDateString(now);
-        const today = new Date(todayStr); // 00:00 local time on that date
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        const dayAfterTomorrow = new Date(today);
-        dayAfterTomorrow.setDate(dayAfterTomorrow.getDate() + 2);
-        const threeDaysFromNow = new Date(today);
-        threeDaysFromNow.setDate(threeDaysFromNow.getDate() + 3);
+        const dayAfterTomorrowStr = addDaysToDateString(todayStr, 2);
+        const threeDaysStr = addDaysToDateString(todayStr, 3);
 
         let updatedCount = 0;
 
         for (const task of tasks) {
             if (!task.deadline) continue;
 
-            const deadline = new Date(task.deadline);
-            const deadlineDate = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate());
+            // Bucket the deadline to its Vilnius calendar day, however it was stored.
+            const deadlineStr = getLithuanianDateString(new Date(task.deadline));
 
             let newPriority = null;
 
-            // Rule 1: Today, Tomorrow, or Overdue -> Urgent
-            if (deadlineDate < threeDaysFromNow && deadlineDate >= today) {
-                if (deadlineDate < dayAfterTomorrow) {
-                    // Today or Tomorrow
-                    if (task.priority !== 'Urgent') {
-                        newPriority = 'Urgent';
-                    }
-                } else if (deadlineDate >= dayAfterTomorrow && deadlineDate < threeDaysFromNow) {
-                    // Day After Tomorrow
-                    if (task.priority !== 'Urgent' && task.priority !== 'High') {
-                        newPriority = 'High';
-                    }
-                }
-            } else if (deadlineDate < today) {
-                // Overdue
+            // Overdue, today, or tomorrow -> Urgent. (dayAfterTomorrowStr == today+2, so
+            // deadlineStr < it covers everything up to and including tomorrow.)
+            if (deadlineStr < dayAfterTomorrowStr) {
                 if (task.priority !== 'Urgent') {
                     newPriority = 'Urgent';
+                }
+            } else if (deadlineStr < threeDaysStr) {
+                // Day after tomorrow -> High
+                if (task.priority !== 'Urgent' && task.priority !== 'High') {
+                    newPriority = 'High';
                 }
             }
 
@@ -128,13 +120,16 @@ export async function archiveOldTasks() {
         deletedSnap.docs.forEach(d => taskMap.set(d.id, { id: d.id, ...d.data() }));
         const tasks = Array.from(taskMap.values());
 
-        // Archive rule: Flip "today" at 3:00 AM
+        // Archive rule: the work-day flips at 03:00 Vilnius time. Derive the current
+        // work-day as a Vilnius date string, rolling back one day when the moment is
+        // still before today's 03:00 Vilnius cutoff. The old code used the BROWSER's
+        // local getHours() < 3, so an off-Vilnius device flipped the day at the wrong
+        // hour and mis-archived (or skipped archiving) yesterday's tasks.
         const now = getLithuanianNow();
-        const cutOff = new Date(now);
-        if (now.getHours() < 3) {
-            cutOff.setDate(cutOff.getDate() - 1);
-        }
-        const cutOffStr = getLithuanianDateString(cutOff);
+        const todayStr = getLithuanianDateString(now);
+        const cutOffStr = (now < getLithuanian3AMCutoff(todayStr))
+            ? addDaysToDateString(todayStr, -1)
+            : todayStr;
 
         let archivedCount = 0;
 

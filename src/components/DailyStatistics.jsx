@@ -81,22 +81,26 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
 
 
-        // 1. Listen to Break Sessions (New Logic: Query by startTime range for robustness)
-        // This ensures we catch historical sessions that might lack the 'date' field
-        const startOfDay = `${selectedDate}T00:00:00`;
-        const endOfDay = `${selectedDate}T23:59:59`;
-
+        // 1. Listen to Break Sessions by the canonical Vilnius-local 'date' field, the
+        // same key the work_sessions query below and Reports.jsx use. The old query
+        // filtered a naive `${date}T00:00:00`..`T23:59:59` range against the UTC
+        // `startTime`, so a break taken after Vilnius midnight (stored under the previous
+        // UTC date) fell out of the day and breaks in the 00:00-03:00 window bled across
+        // the work-day boundary. Equality on a single field needs only the automatic
+        // index (no composite), so we sort by startTime client-side rather than via
+        // orderBy on a second field (which would demand a composite index this repo
+        // has no firestore.indexes.json to declare).
         const breaksQ = query(collection(db, 'break_sessions'),
-            where('startTime', '>=', startOfDay),
-            where('startTime', '<=', endOfDay),
-            orderBy('startTime', 'asc'));
+            where('date', '==', selectedDate));
 
         const unsubBreaks = onSnapshot(breaksQ, (snap) => {
-            const breaksData = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(brk => {
-                const brkUserId = resolveUserId(brk);
-                if (selectedUserId !== 'all' && brkUserId !== selectedUserId) return false;
-                return true;
-            });
+            const breaksData = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+                .filter(brk => {
+                    const brkUserId = resolveUserId(brk);
+                    if (selectedUserId !== 'all' && brkUserId !== selectedUserId) return false;
+                    return true;
+                })
+                .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
             setBreakSessions(breaksData);
         }, (error) => {
             logError(error, { source: 'onSnapshot:breakSessions' });

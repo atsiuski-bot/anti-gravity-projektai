@@ -43,6 +43,23 @@ export const formatMinutesToTimeString = (minutes) => {
     return `${prefix}${h}h ${m}m`;
 };
 
+// Hard ceiling for a single continuous timer/session interval (minutes). A real
+// break, call, quick-work, or task run never approaches this; a larger raw value can
+// only come from device-clock skew or a session/timer orphaned across a crash or
+// reload. Clamping every (now - start) delta to this bound is what stops "ghost time"
+// from being credited and stops the auto-pause limit from firing on an absurd elapsed.
+// 16h is comfortably above any real shift, so legitimate intervals are never clipped.
+export const MAX_SESSION_MINUTES = 16 * 60;
+
+// Sanitize a raw (now - start) minute delta before it is credited or logged: a
+// non-finite or negative value (clock set backward, a future start time) collapses to
+// 0; an implausibly large value is capped to MAX_SESSION_MINUTES. Every place that
+// turns a wall-clock delta into credited time funnels through this.
+export const clampSessionMinutes = (minutes) => {
+    if (!Number.isFinite(minutes) || minutes < 0) return 0;
+    return Math.min(minutes, MAX_SESSION_MINUTES);
+};
+
 // Calculate current total time including active session if running
 export const calculateCurrentTotalMinutes = (task) => {
     // Add safety check for task object
@@ -66,16 +83,16 @@ export const calculateCurrentTotalMinutes = (task) => {
             });
         }
 
-        // Add currently running session time if any      
+        // Add currently running session time if any. clampSessionMinutes rejects a
+        // negative delta (clock skew / future start) and caps an implausibly large one
+        // (a timer left running across a crash/reload), so a stale timerStartedAt can no
+        // longer inflate the displayed total or trip the auto-pause limit on a ghost value.
         if (task.timerStatus === 'running' && task.timerStartedAt) {
             try {
                 const start = new Date(task.timerStartedAt);
                 if (!isNaN(start.getTime())) {
                     const now = new Date();
-                    const elapsedMinutes = (now - start) / (1000 * 60);
-                    if (Number.isFinite(elapsedMinutes) && elapsedMinutes >= 0) {
-                        total += elapsedMinutes;
-                    }
+                    total += clampSessionMinutes((now - start) / (1000 * 60));
                 }
             } catch (dateError) {
                 console.warn('Invalid timer start date:', task.timerStartedAt);

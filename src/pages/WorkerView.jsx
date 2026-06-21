@@ -19,6 +19,7 @@ import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
+import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
@@ -38,6 +39,10 @@ export default function WorkerView() {
 
     // Task time monitoring — 80% warning and 100% limit
     const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(tasks);
+
+    // Crash/reload recovery — auto-pause any task left "running" across a restart so
+    // it cannot credit hours of ghost time on the next pause.
+    useOrphanedTaskRecovery(tasks);
 
 
     useEffect(() => {
