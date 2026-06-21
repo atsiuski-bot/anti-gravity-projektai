@@ -154,10 +154,13 @@ export default function CombinedHoursSummary() {
                 }
             });
 
-            // 3. From Break Sessions (for progress bar display only)
+            // 3. Breaks are tracked SEPARATELY — never folded into workedMinutes. The worked
+            // bar must mean actual work so it is comparable to the planned bar (which never
+            // contains breaks); summing breaks in would silently overstate the comparison.
+            let breakMinutes = 0;
             breakSessions.forEach(session => {
                 if (session.userId === user.id) {
-                    workedMinutes += (session.durationMinutes || 0);
+                    breakMinutes += (session.durationMinutes || 0);
                 }
             });
 
@@ -166,11 +169,12 @@ export default function CombinedHoursSummary() {
                 const bStart = new Date(user.breakState.lastStartedAt);
                 const currentDiff = (now - bStart) / (1000 * 60);
                 if (currentDiff > 0) {
-                    workedMinutes += currentDiff;
+                    breakMinutes += currentDiff;
                 }
             }
 
             const workedHours = workedMinutes / 60;
+            const breakHours = breakMinutes / 60;
             if (plannedHours > maxVal) maxVal = plannedHours;
             if (workedHours > maxVal) maxVal = workedHours;
 
@@ -179,7 +183,8 @@ export default function CombinedHoursSummary() {
                 name: user.displayName || user.email,
                 color: user.color || WORKER_FALLBACK_COLOR,
                 plannedHours,
-                workedHours
+                workedHours,
+                breakHours
             });
         });
 
@@ -316,8 +321,9 @@ export default function CombinedHoursSummary() {
 
                                     {/* Bars Area */}
                                     <div className="flex-1 flex flex-col gap-1.5">
-                                        {/* Planned Bar */}
+                                        {/* Planned Bar — labelled so colour is never the sole signal (§5) */}
                                         <div className="flex items-center gap-2">
+                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Planuota</span>
                                             <span className="text-body-lg text-gray-500 font-mono w-16 text-right tabular-nums">
                                                 {user.plannedHours.toFixed(1)}h
                                             </span>
@@ -329,8 +335,9 @@ export default function CombinedHoursSummary() {
                                             </div>
                                         </div>
 
-                                        {/* Worked Bar */}
+                                        {/* Worked Bar — work only, comparable to Planned above */}
                                         <div className="flex items-center gap-2">
+                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Dirbta</span>
                                             <span className="text-body-lg text-gray-900 font-bold font-mono w-16 text-right tabular-nums">
                                                 {user.workedHours.toFixed(1)}h
                                             </span>
@@ -341,6 +348,13 @@ export default function CombinedHoursSummary() {
                                                 />
                                             </div>
                                         </div>
+
+                                        {/* Breaks — surfaced separately, NOT part of the worked comparison */}
+                                        {user.breakHours > 0 && (
+                                            <span className="text-caption text-ink-muted">
+                                                Pertraukos: {user.breakHours.toFixed(1)}h (neįskaičiuota į „Dirbta“)
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             ))
