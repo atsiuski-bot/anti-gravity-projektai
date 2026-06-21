@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import clsx from 'clsx';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
-import { format, parse, startOfWeek, getDay } from 'date-fns';
+import { format, parse, startOfWeek, getDay, endOfWeek, subWeeks, addDays } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
-import { Clock, Plus, Trash2, AlertCircle, Info, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2 } from 'lucide-react';
+import { Clock, Plus, Trash2, AlertCircle, Info, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
@@ -92,6 +92,20 @@ const CustomToolbar = (toolbar) => {
                     >
                         Pridėti rankiniu būdu
                     </Button>
+                    {toolbar.onCopyLastWeek && (
+                        <Button
+                            variant="secondary"
+                            size="md"
+                            icon={Copy}
+                            onClick={toolbar.onCopyLastWeek}
+                            disabled={toolbar.copyDisabled}
+                            title={toolbar.copyDisabled
+                                ? 'Kopijuoti galima tik planavimo metu (penktadienį nuo 13:00 iki sekmadienio 21:00)'
+                                : 'Nukopijuoti praėjusios savaitės darbotvarkę į šią savaitę'}
+                        >
+                            Kopijuoti praeitą savaitę
+                        </Button>
+                    )}
                 </div>
             </div>
 
@@ -245,12 +259,10 @@ export default function WorkPlanner() {
         if (!currentUser) return;
 
         // Check for overlaps
-        const hasOverlap = events.some(event => {
-            return (start < event.end && end > event.start);
-        });
+        const conflict = events.find(event => (start < event.end && end > event.start));
 
-        if (hasOverlap) {
-            setError('Pasirinktas laikas persidengia su jau esamu įrašu.');
+        if (conflict) {
+            setError(overlapMessage(conflict));
             return;
         }
 
@@ -282,13 +294,73 @@ export default function WorkPlanner() {
         const now = new Date();
         const day = now.getDay(); // 0 is Sunday, 5 is Friday
         const hour = now.getHours();
-        
+
         // Disable from Friday 13:00 to Sunday 21:00 inclusive
         if (day === 5 && hour >= 13) return false; // Friday after 13:00
         if (day === 6) return false; // Saturday all day
         if (day === 0 && hour < 21) return false; // Sunday before 21:00
-        
+
         return true;
+    };
+
+    // Name the entry an action collides with, so the overlap error points at the real culprit
+    // instead of a generic "something overlaps" the worker then has to hunt for.
+    const describeEvent = (ev) => {
+        const typeLabel = ev.isVacation ? 'Atostogos' : (ev.isWorkFromHome ? 'Darbas iš namų' : 'Darbas');
+        return `${typeLabel} ${format(ev.start, 'MM-dd HH:mm')}–${format(ev.end, 'HH:mm')}`;
+    };
+    const overlapMessage = (ev) => `Pasirinktas laikas persidengia su įrašu: ${describeEvent(ev)}.`;
+
+    // Copy last week's plan into the current week (each entry shifted +7 days). Available only
+    // during the free-planning window (approval inactive): copies are direct, auto-approved
+    // adds, so allowing them mid-week would bypass the per-change approval the workflow requires.
+    const handleCopyLastWeek = async () => {
+        if (!currentUser) return;
+        if (isApprovalFeatureActive()) {
+            setError('Kopijuoti galima tik planavimo metu (penktadienį nuo 13:00 iki sekmadienio 21:00).');
+            return;
+        }
+
+        const now = new Date();
+        const thisWeekStart = startOfWeek(now, { weekStartsOn: 1 });
+        const lastWeekStart = subWeeks(thisWeekStart, 1);
+        const lastWeekEnd = endOfWeek(lastWeekStart, { weekStartsOn: 1 });
+
+        const lastWeekEvents = events.filter(ev => ev.start >= lastWeekStart && ev.start <= lastWeekEnd);
+        if (lastWeekEvents.length === 0) {
+            setError('Praėjusią savaitę nėra įrašų, kuriuos būtų galima kopijuoti.');
+            return;
+        }
+
+        let copied = 0;
+        for (const ev of lastWeekEvents) {
+            const newStart = addDays(ev.start, 7);
+            const newEnd = addDays(ev.end, 7);
+            // Sources never overlap each other (the add path forbids it), so the +7 copies don't
+            // either; we only skip a copy that lands on an entry already present this week.
+            const conflict = events.some(other => newStart < other.end && newEnd > other.start);
+            if (conflict) continue;
+            await executeDirectCalendarUpdate({
+                type: 'add',
+                data: {
+                    id: null,
+                    start: newStart.toISOString(),
+                    end: newEnd.toISOString(),
+                    title: ev.title,
+                    isWorkFromHome: ev.isWorkFromHome || false,
+                    isVacation: ev.isVacation || false
+                }
+            });
+            copied++;
+        }
+
+        if (copied > 0) {
+            setError('');
+            setFeedbackVariant('approved');
+            setShowApprovalFeedback(true);
+        } else {
+            setError('Nėra ką kopijuoti — visi praėjusios savaitės įrašai jau turi atitikmenį šią savaitę.');
+        }
     };
 
     const executeDirectCalendarUpdate = async (action) => {
@@ -355,14 +427,13 @@ export default function WorkPlanner() {
                 return;
             }
 
-            // Check for overlaps
-            const hasOverlap = events.some(event => {
-                if (event.id === editingEvent.id) return false; // Skip current event if editing
-                return (startDateTime < event.end && endDateTime > event.start);
-            });
+            // Check for overlaps (ignore the entry being edited)
+            const conflict = events.find(event =>
+                event.id !== editingEvent.id && (startDateTime < event.end && endDateTime > event.start)
+            );
 
-            if (hasOverlap) {
-                setError('Pasirinktas laikas persidengia su jau esamu įrašu.');
+            if (conflict) {
+                setError(overlapMessage(conflict));
                 return;
             }
 
@@ -443,12 +514,10 @@ export default function WorkPlanner() {
             }
 
             // Check for overlaps
-            const hasOverlap = events.some(event => {
-                return (startDateTime < event.end && endDateTime > event.start);
-            });
+            const conflict = events.find(event => (startDateTime < event.end && endDateTime > event.start));
 
-            if (hasOverlap) {
-                setError('Pasirinktas laikas persidengia su jau esamu įrašu.');
+            if (conflict) {
+                setError(overlapMessage(conflict));
                 return;
             }
 
@@ -581,6 +650,10 @@ export default function WorkPlanner() {
         timeOptions.push(`${hour}:30`);
     }
 
+    // Evaluated at render so the save buttons + copy control reflect whether changes will go
+    // straight in (weekend planning window) or be submitted for a manager's approval (week).
+    const approvalActive = isApprovalFeatureActive();
+
     const components = {
         event: ({ event }) => {
             // Horizontal layout: time first (always readable), then icon + state label.
@@ -634,6 +707,8 @@ export default function WorkPlanner() {
             <CustomToolbar
                 {...props}
                 onManualClick={() => setShowManualInput(!showManualInput)}
+                onCopyLastWeek={handleCopyLastWeek}
+                copyDisabled={approvalActive}
             />
         )
     };
@@ -716,12 +791,17 @@ export default function WorkPlanner() {
                     </div>
                     <div className="flex gap-2 mt-4">
                         <Button type="submit" variant="primary" size="md">
-                            Išsaugoti
+                            {approvalActive ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
                         </Button>
                         <Button type="button" variant="secondary" size="md" onClick={() => setShowManualInput(false)}>
                             Atšaukti
                         </Button>
                     </div>
+                    <p className="mt-2 text-caption text-ink-muted">
+                        {approvalActive
+                            ? 'Pakeitimą turės patvirtinti vadovas — reikės nurodyti priežastį.'
+                            : 'Planavimo metu pakeitimai išsaugomi ir patvirtinami iš karto.'}
+                    </p>
                 </form>
             )
             }
@@ -880,10 +960,15 @@ export default function WorkPlanner() {
                                             </Button>
                                         )}
                                         <Button type="submit" variant="primary" size="md">
-                                            Išsaugoti
+                                            {approvalActive ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
                                         </Button>
                                     </div>
                                 </div>
+                                <p className="mt-3 text-caption text-ink-muted">
+                                    {approvalActive
+                                        ? 'Pakeitimą turės patvirtinti vadovas — reikės nurodyti priežastį.'
+                                        : 'Planavimo metu pakeitimai išsaugomi ir patvirtinami iš karto.'}
+                                </p>
                             </form>
                         </div >
                     </div >
