@@ -7,7 +7,6 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
-import { getSessionColors } from '../utils/sessionColors';
 
 export default function CombinedHoursSummary() {
     const { currentUser } = useAuth();
@@ -154,10 +153,13 @@ export default function CombinedHoursSummary() {
                 }
             });
 
-            // 3. From Break Sessions (for progress bar display only)
+            // 3. Breaks are tracked SEPARATELY — never folded into workedMinutes. The worked
+            // bar must mean actual work so it is comparable to the planned bar (which never
+            // contains breaks); summing breaks in would silently overstate the comparison.
+            let breakMinutes = 0;
             breakSessions.forEach(session => {
                 if (session.userId === user.id) {
-                    workedMinutes += (session.durationMinutes || 0);
+                    breakMinutes += (session.durationMinutes || 0);
                 }
             });
 
@@ -166,11 +168,12 @@ export default function CombinedHoursSummary() {
                 const bStart = new Date(user.breakState.lastStartedAt);
                 const currentDiff = (now - bStart) / (1000 * 60);
                 if (currentDiff > 0) {
-                    workedMinutes += currentDiff;
+                    breakMinutes += currentDiff;
                 }
             }
 
             const workedHours = workedMinutes / 60;
+            const breakHours = breakMinutes / 60;
             if (plannedHours > maxVal) maxVal = plannedHours;
             if (workedHours > maxVal) maxVal = workedHours;
 
@@ -179,7 +182,8 @@ export default function CombinedHoursSummary() {
                 name: user.displayName || user.email,
                 color: user.color || WORKER_FALLBACK_COLOR,
                 plannedHours,
-                workedHours
+                workedHours,
+                breakHours
             });
         });
 
@@ -187,72 +191,10 @@ export default function CombinedHoursSummary() {
         return { data: stats, max: Math.max(maxVal, 40) }; // Minimum scale 40h
     }, [users, workHours, workSessions, tasks, breakSessions]);
 
-    // Active Sessions Logic
-    const activeSessions = useMemo(() => {
-        return users.map(user => {
-            if (!user.activeSession) return null;
-
-            // Map session type to display properties
-            let displayProps = {
-                label: 'Veikla',
-                colorClass: 'bg-surface-sunken text-ink',
-                startTime: user.activeSession.startTime
-            };
-
-            switch (user.activeSession.type) {
-                case 'break':
-                    displayProps = {
-                        label: 'Pertrauka',
-                        colorClass: `${getSessionColors('break').surface} ${getSessionColors('break').accent}`,
-                        startTime: user.activeSession.startTime
-                    };
-                    break;
-                case 'call':
-                    displayProps = {
-                        label: 'Skambutis',
-                        colorClass: `${getSessionColors('call').surface} ${getSessionColors('call').accent}`,
-                        startTime: user.activeSession.startTime
-                    };
-                    break;
-                case 'quickWork':
-                    displayProps = {
-                        label: 'Greitas darbas',
-                        colorClass: `${getSessionColors('quickWork').surface} ${getSessionColors('quickWork').accent}`,
-                        startTime: user.activeSession.startTime
-                    };
-                    break;
-                case 'task': {
-                    // Find generic task title if available
-                    let title = user.activeSession.taskTitle || 'Užduotis';
-                    // Try to find specific task in loaded tasks if ID matches
-                    const foundTask = tasks.find(t => t.id === user.activeSession.taskId);
-                    if (foundTask) {
-                        title = foundTask.title;
-                    }
-                    displayProps = {
-                        label: title,
-                        colorClass: `${getSessionColors('task').surface} ${getSessionColors('task').accent}`,
-                        startTime: user.activeSession.startTime
-                    };
-                    break;
-                }
-                default:
-                    // Fallback for unknown types
-                    displayProps = {
-                        label: user.activeSession.type || 'Veikla',
-                        colorClass: 'bg-surface-sunken text-ink',
-                        startTime: user.activeSession.startTime
-                    };
-            }
-
-            return {
-                userId: user.id,
-                userName: user.displayName || user.email,
-                userColor: user.color || WORKER_FALLBACK_COLOR,
-                ...displayProps
-            };
-        }).filter(Boolean);
-    }, [users, tasks]);
+    // NOTE: the live "Aktyvi veikla" list used to be duplicated here. It now lives solely in
+    // ActiveWorkSessions (mounted right after this panel), which has the more correct task-time
+    // logic (calculateCurrentTotalMinutes) and a faster refresh, so this component stays focused
+    // on the weekly planned-vs-worked bars.
 
     if (usersLoading) return null;
     if (error) return null;
@@ -276,20 +218,6 @@ export default function CombinedHoursSummary() {
 
             {!isCollapsed && (
                 <div className="p-4 space-y-6">
-                    {/* Active Sessions (Veikla) */}
-                    {activeSessions.length > 0 && (
-                        <div>
-                            <h4 className="text-caption font-semibold text-ink-muted uppercase tracking-wider mb-3 pl-1">
-                                Veikla
-                            </h4>
-                            <div className="space-y-2">
-                                {activeSessions.map(session => (
-                                    <ActiveSessionRow key={session.userId} session={session} />
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
                     {/* Weekly Hours Bars */}
                     <div>
                         {combinedStats.data.length > 0 && (
@@ -316,8 +244,9 @@ export default function CombinedHoursSummary() {
 
                                     {/* Bars Area */}
                                     <div className="flex-1 flex flex-col gap-1.5">
-                                        {/* Planned Bar */}
+                                        {/* Planned Bar — labelled so colour is never the sole signal (§5) */}
                                         <div className="flex items-center gap-2">
+                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Planuota</span>
                                             <span className="text-body-lg text-ink-muted font-mono w-16 text-right tabular-nums">
                                                 {user.plannedHours.toFixed(1)}h
                                             </span>
@@ -329,8 +258,9 @@ export default function CombinedHoursSummary() {
                                             </div>
                                         </div>
 
-                                        {/* Worked Bar */}
+                                        {/* Worked Bar — work only, comparable to Planned above */}
                                         <div className="flex items-center gap-2">
+                                            <span className="w-14 shrink-0 text-caption text-ink-muted">Dirbta</span>
                                             <span className="text-body-lg text-ink-strong font-bold font-mono w-16 text-right tabular-nums">
                                                 {user.workedHours.toFixed(1)}h
                                             </span>
@@ -341,6 +271,13 @@ export default function CombinedHoursSummary() {
                                                 />
                                             </div>
                                         </div>
+
+                                        {/* Breaks — surfaced separately, NOT part of the worked comparison */}
+                                        {user.breakHours > 0 && (
+                                            <span className="text-caption text-ink-muted">
+                                                Pertraukos: {user.breakHours.toFixed(1)}h (neįskaičiuota į „Dirbta“)
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             ))
@@ -348,66 +285,6 @@ export default function CombinedHoursSummary() {
                     </div>
                 </div>
             )}
-        </div>
-    );
-}
-
-// Helper Component for Active Session Row to manage own timer
-function ActiveSessionRow({ session }) {
-    const [durationStr, setDurationStr] = useState('');
-
-    useEffect(() => {
-        const updateTime = () => {
-            if (!session.startTime) {
-                setDurationStr('');
-                return;
-            }
-            const start = new Date(session.startTime);
-            const now = getLithuanianNow();
-            const diffMs = now - start;
-            if (diffMs < 0) {
-                setDurationStr('0m');
-                return;
-            }
-
-            const diffMinutes = Math.floor(diffMs / (1000 * 60));
-
-            if (diffMinutes < 60) {
-                setDurationStr(`${diffMinutes}m`);
-            } else {
-                const hours = Math.floor(diffMinutes / 60);
-                const mins = diffMinutes % 60;
-                setDurationStr(`${hours}h ${mins}m`);
-            }
-        };
-
-        updateTime(); // Initial
-        // Update every minute (60,000 ms)
-        // Align to minute boundary for better UX? Or just simple interval.
-        // Simple interval is fine for "once a minute" requirement.
-        const interval = setInterval(updateTime, 60000);
-
-        return () => clearInterval(interval);
-    }, [session.startTime]);
-
-    return (
-        <div className={`p-3 rounded-card flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
-            <div className="flex items-center gap-3 overflow-hidden">
-                <div
-                    className="w-2 h-2 rounded-full flex-shrink-0 bg-current opacity-50"
-                    // Fallback if needed, but usually bg-current works with text color logic or just use user color
-                    style={{ backgroundColor: session.userColor || 'currentColor' }}
-                />
-                <span className="font-semibold text-sm truncate">
-                    {session.userName}
-                </span>
-                <span className="text-sm border-l border-current/20 pl-3 truncate">
-                    {session.label}
-                </span>
-            </div>
-            <span className="font-mono font-bold text-body-lg ml-4 whitespace-nowrap tabular-nums">
-                {durationStr}
-            </span>
         </div>
     );
 }

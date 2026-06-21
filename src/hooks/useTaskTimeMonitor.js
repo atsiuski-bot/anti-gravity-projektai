@@ -32,6 +32,11 @@ export function useTaskTimeMonitor(tasks) {
         if (t.timerStatus !== 'running' || !t.estimatedTime) return false;
         // Must be assigned to current user
         if (t.assignedUserId !== currentUser?.uid) return false;
+        // Must not be finished. A task can briefly be both "completed/confirmed" AND still
+        // carry timerStatus:'running' (e.g. a same-day completed task left in the list); without
+        // this guard the monitor would auto-pause, alarm, and fire a manager time-extension
+        // request on a task the worker already closed. Mirrors the resume guard in sessionActions.
+        if (t.completed || t.status === 'completed' || t.status === 'confirmed' || t.status === 'deleted') return false;
         return true;
     });
 

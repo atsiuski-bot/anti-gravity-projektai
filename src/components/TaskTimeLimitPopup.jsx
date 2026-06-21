@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { XOctagon, PauseCircle, BellOff } from 'lucide-react';
 import { SoundManager } from '../utils/soundUtils';
+import { formatMinutesToTimeString } from '../utils/timeUtils';
 
 /**
  * Hard stop shown to the worker when 100% of the estimated time is reached. The task is
@@ -9,10 +10,14 @@ import { SoundManager } from '../utils/soundUtils';
  * TaskTimeWarningPopup (an FYI), this one is red, names the "time is up" state explicitly,
  * shows that work was stopped, and lets the worker silence the alarm immediately.
  */
-export default function TaskTimeLimitPopup({ task, onDismiss }) {
+export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes, onDismiss }) {
     const [muted, setMuted] = useState(false);
 
     if (!task) return null;
+
+    // The monitor auto-sends a time-extension request to the manager when one is set, so the
+    // worker doesn't need to do anything manually — tell them that, instead of "go discuss it".
+    const hasManager = !!(task.managerId || task.taskAuditor);
 
     const handleMute = () => {
         SoundManager.stopTimeLimitRepeat();
@@ -43,12 +48,35 @@ export default function TaskTimeLimitPopup({ task, onDismiss }) {
                 {/* Body */}
                 <div className="space-y-4 px-6 py-5">
                     <p className="text-body font-medium leading-relaxed text-ink-strong">
-                        Laikas skirtas užduočiai „{task.title}“ atlikti baigėsi. Aptarkite tolesnę užduoties eigą su darbo vadovu.
+                        Laikas skirtas užduočiai „{task.title}“ atlikti baigėsi.
                     </p>
+
+                    {/* Planned vs actual — the numbers the worker needs to judge the overrun. */}
+                    {(estimatedTime || Number.isFinite(actualMinutes)) && (
+                        <div className="rounded-control bg-surface-sunken px-3 py-2 text-body">
+                            <div className="flex items-center justify-between">
+                                <span className="text-ink-muted">Planuota</span>
+                                <span className="font-semibold text-ink-strong">{estimatedTime || '—'}</span>
+                            </div>
+                            <div className="mt-1 flex items-center justify-between">
+                                <span className="text-ink-muted">Sugaišta</span>
+                                <span className="font-semibold text-ink-strong">
+                                    {Number.isFinite(actualMinutes) ? formatMinutesToTimeString(actualMinutes) : '—'}
+                                </span>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="flex items-center gap-2 rounded-control bg-feedback-danger/10 px-3 py-2 text-body font-semibold text-feedback-danger">
                         <PauseCircle className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
                         Darbas automatiškai sustabdytas.
                     </div>
+
+                    <p className="text-body text-ink-muted">
+                        {hasManager
+                            ? 'Vadovui jau išsiųsta laiko pratęsimo užklausa. Palaukite jo sprendimo arba aptarkite tolesnę eigą.'
+                            : 'Aptarkite tolesnę užduoties eigą su darbo vadovu.'}
+                    </p>
                 </div>
 
                 {/* Footer */}

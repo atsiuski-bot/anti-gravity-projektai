@@ -87,6 +87,10 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
             snapshot.docs.forEach(doc => {
                 try {
                     const data = doc.data();
+                    // Vacation blocks are stored in the same work_hours collection but are NOT
+                    // planned work time. Counting them would inflate the goal denominator and
+                    // make the target unreachable for any worker who plans leave.
+                    if (data.isVacation) return;
                     const start = new Date(data.start);
                     const end = new Date(data.end);
 
@@ -187,35 +191,43 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
         return `${h}h ${m}m`;
     };
 
-    // Calculate totals including current session AND BREAKS
-    // Current session counts towards both Day and Week
-    const totalDayWorked = dayWorked + currentSessionHours + dayBreakHours;
-    const totalWeekWorked = weekWorked + currentSessionHours + weekBreakHours;
+    // The progress bars measure WORKED time against the planned goal, so they must NOT
+    // include breaks: planned hours never contain breaks, so folding break minutes into the
+    // numerator would overstate progress toward the goal. Breaks are shown as a separate,
+    // clearly-labelled figure below (mirroring the Darbas/Pertraukos split in Reports).
+    // Current session counts towards both Day and Week.
+    const totalDayWorked = dayWorked + currentSessionHours;
+    const totalWeekWorked = weekWorked + currentSessionHours;
 
     const renderProgressBar = (label, current, total, colorClass = "bg-brand") => {
-        // Prevent division by zero
-        const percent = total > 0 ? (current / total) * 100 : 0;
-        // Cap at 100% for the bar visual, but allow text to show real values? 
-        // User might want to see over-achievement.
-        // Let's just cap the visual bar at 100%.
+        // When no shift hours are planned (total === 0) there is no goal to measure against, so
+        // showing "X / 0h 0m" with an empty bar reads as a broken tracker. Show the worked figure
+        // alone plus a hint to plan hours, and distinguish "no plan set" from "plan, zero worked".
+        const hasPlan = total > 0;
+        const percent = hasPlan ? (current / total) * 100 : 0; // bar capped at 100% below
 
         return (
             <div className="relative">
                 <div className="flex justify-between text-caption font-medium text-ink-muted mb-1">
                     <span>{label}</span>
                     <span className="text-ink-strong">
-                        {formatTime(current)} <span className="text-ink-muted">/ {formatTime(total)}</span>
+                        {formatTime(current)}
+                        {hasPlan && <span className="text-ink-muted"> / {formatTime(total)}</span>}
                         {currentSessionHours > 0 && label.includes('Dienos') && (
                             <span className="text-caption text-session-task-accent ml-1">(+vyksta)</span>
                         )}
                     </span>
                 </div>
-                <div className="h-4 w-full bg-surface-sunken rounded-full overflow-hidden">
-                    <div
-                        className={`h-full ${colorClass} rounded-full transition-all duration-500 ease-in-out`}
-                        style={{ width: `${Math.min(percent, 100)}%` }}
-                    ></div>
-                </div>
+                {hasPlan ? (
+                    <div className="h-4 w-full bg-surface-sunken rounded-full overflow-hidden">
+                        <div
+                            className={`h-full ${colorClass} rounded-full transition-all duration-500 ease-in-out`}
+                            style={{ width: `${Math.min(percent, 100)}%` }}
+                        ></div>
+                    </div>
+                ) : (
+                    <p className="text-caption text-ink-muted">Nesuplanuota darbo laiko. Susiplanuokite valandas kalendoriuje.</p>
+                )}
             </div>
         );
     };
@@ -246,6 +258,16 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                     "bg-session-task-accent" // Slightly different color for distinction
                 )}
             </div>
+
+            {/* Breaks — shown separately and explicitly NOT counted toward the goal above. */}
+            {(dayBreakHours > 0 || weekBreakHours > 0) && (
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-1 border-t border-gray-100 pt-3 text-xs text-gray-500">
+                    <span>Pertraukos (neįskaičiuotos į tikslą)</span>
+                    <span className="font-medium text-gray-700">
+                        Šiandien {formatTime(dayBreakHours)} · Savaitę {formatTime(weekBreakHours)}
+                    </span>
+                </div>
+            )}
         </div>
     );
 }

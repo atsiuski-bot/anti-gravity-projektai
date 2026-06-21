@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
-import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
+import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 
 /**
  * Custom hook to manage timer state for Break, Call, and QuickWork.
@@ -24,6 +24,11 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
     // Use refs to track previous values and avoid unnecessary updates
     const prevIsActiveRef = useRef(false);
     const prevStartTimeRef = useRef(null);
+    // Tracks whether THIS hook instance started the shared periodic reminder beep, so only the
+    // hook that started it stops it. The beep is a SoundManager singleton and all three timer
+    // hooks (break/call/quickWork) are mounted at once; without this, an inactive sibling hook
+    // would stop the active session's reminder.
+    const didStartBeepRef = useRef(false);
 
     // 1. React to userData changes globally instead of creating independent listeners
     useEffect(() => {
@@ -116,11 +121,27 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
     useEffect(() => {
         let interval;
 
+        // The periodic reminder applies to EVERY secondary session, not just breaks: a
+        // forgotten quick-work or call timer would otherwise run silently and keep billing
+        // time. This hook only ever manages secondary sessions (break/call/quickWork).
+        const isReminderSession =
+            sessionType === 'break' || sessionType === 'call' || sessionType === 'quickWork' ||
+            activeFlagKey === 'isTakingBreak' || activeFlagKey === 'isCalling' || activeFlagKey === 'isQuickWorking';
+
+        const stopBeepIfOurs = () => {
+            if (didStartBeepRef.current) {
+                SoundManager.stopPeriodicBeep();
+                didStartBeepRef.current = false;
+            }
+        };
+
         if (isActive && startTime) {
             // Initial update
             const updateTimer = () => {
                 const now = getLithuanianNow();
-                const session = (now - startTime) / (1000 * 60);
+                // Sanitize the live delta through the shared clamp: a backward device clock
+                // (now < startTime) would otherwise render a negative "-Xm" on the pill.
+                const session = clampSessionMinutes((now - startTime) / (1000 * 60));
                 setCurrentSessionMinutes(session);
             };
             updateTimer();
@@ -128,24 +149,20 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
             // Interval update
             interval = setInterval(updateTimer, 1000);
 
-            // Start periodic sound (every 7 mins by default in components)
-            // Only play this reminder beep for breaks.
-            if (activeFlagKey === 'isTakingBreak' || sessionType === 'break') {
+            // Start the periodic reminder beep (~7 min) for this active secondary session.
+            if (isReminderSession) {
                 SoundManager.startPeriodicBeep(420000, false);
+                didStartBeepRef.current = true;
             }
 
         } else {
             setCurrentSessionMinutes(0);
-            if (activeFlagKey === 'isTakingBreak' || sessionType === 'break') {
-                SoundManager.stopPeriodicBeep();
-            }
+            stopBeepIfOurs();
         }
 
         return () => {
             clearInterval(interval);
-            if (activeFlagKey === 'isTakingBreak' || sessionType === 'break') {
-                SoundManager.stopPeriodicBeep();
-            }
+            stopBeepIfOurs();
         };
     }, [isActive, startTime, activeFlagKey, sessionType]);
 

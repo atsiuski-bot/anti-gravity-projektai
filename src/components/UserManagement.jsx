@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
-import { UserCog, ShieldAlert, Check, Sliders, Trash2 } from 'lucide-react';
+import { collection, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { pauseTask } from '../utils/taskActions';
+import { logError } from '../utils/errorLog';
 import { formatDisplayName } from '../utils/formatters';
 import { getContrastingTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
@@ -101,17 +103,36 @@ function ManagerControl({ user, managers, onChange }) {
     );
 }
 
+// A pending account is disabled AND flagged status:'pending' (newly self-signed-in, awaiting
+// approval), as opposed to a manually blocked one.
+function isPendingUser(user) {
+    return user.isDisabled && user.status === 'pending';
+}
+
+// Disabled-state pill: distinguishes "awaiting approval" from "blocked" so an admin can tell a
+// new sign-up apart from a deliberately disabled account.
+function DisabledPill({ user }) {
+    if (!user.isDisabled) return null;
+    return isPendingUser(user)
+        ? <StatusPill tone="pending" icon={Clock}>Laukia patvirtinimo</StatusPill>
+        : <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>;
+}
+
 function BlockButton({ user, isSelf, onRequest, fullWidth }) {
+    const pending = isPendingUser(user);
+    // The action only ever toggles isDisabled — nothing is deleted — so the enable side reads
+    // "Patvirtinti" (pending) / "Atblokuoti" (blocked) and the disable side reads "Blokuoti",
+    // not the misleading "Blokuoti / Ištrinti" with a trash icon.
     return (
         <Button
-            variant={user.isDisabled ? 'secondary' : 'danger'}
+            variant={user.isDisabled ? (pending ? 'primary' : 'secondary') : 'danger'}
             size="md"
-            icon={user.isDisabled ? Check : Trash2}
+            icon={user.isDisabled ? Check : Ban}
             disabled={isSelf}
             fullWidth={fullWidth}
             onClick={() => onRequest(user)}
         >
-            {user.isDisabled ? 'Atblokuoti' : 'Blokuoti / Ištrinti'}
+            {user.isDisabled ? (pending ? 'Patvirtinti' : 'Atblokuoti') : 'Blokuoti'}
         </Button>
     );
 }
@@ -138,6 +159,18 @@ function ColorSlider({ label, labelClass, value, onChange, track, accent }) {
                 )}
             />
         </div>
+    );
+}
+
+// True when the user is mid-session (any live timer). A disabled user is force-logged-out
+// and can no longer stop their own timer, so we must settle this before flipping isDisabled.
+function hasOpenSession(user) {
+    return !!(
+        user.activeSession ||
+        user.workStatus?.status === 'running' ||
+        user.breakState?.isTakingBreak ||
+        user.callState?.isCalling ||
+        user.quickWorkState?.isQuickWorking
     );
 }
 
@@ -191,6 +224,15 @@ export default function UserManagement() {
     const handleRoleChange = async (userId, newRole) => {
         setError('');
         try {
+            // Never strip the last remaining admin: demoting the only active admin would lock
+            // the whole team out of every admin-only surface, and the in-app "become admin"
+            // bootstrap is denied by the security rules — so recovery would need direct DB edits.
+            const target = users.find(u => u.id === userId);
+            if (target?.role === 'admin' && !target?.isDisabled && newRole !== 'admin' && countAdmins() <= 1) {
+                setError('Negalima pašalinti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+                return;
+            }
+
             if (newRole === 'admin') {
                 const adminCount = countAdmins();
                 if (adminCount >= 2) {
@@ -268,17 +310,68 @@ export default function UserManagement() {
             setError('Negalite užblokuoti savęs.');
             return;
         }
+        // Same floor as role demotion: never disable the last active admin (re-enabling is fine).
+        if (!user.isDisabled && user.role === 'admin' && countAdmins() <= 1) {
+            setError('Negalima užblokuoti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+            return;
+        }
         setError('');
         setBlockTarget(user);
+    };
+
+    // Settle a mid-session worker before disabling them. A disabled user is force-logged-out
+    // and cannot stop their own timer, so otherwise the running segment is never logged and
+    // they show "working" forever. We pause a running TASK (its work_sessions log is allowed
+    // for managers/admins) and clear every live-session flag on the user doc. Non-task break/
+    // call/quick-work tails cannot be logged by an admin (those collections are owner-only),
+    // but clearing the flags at least removes the ghost session. Failure here must not block
+    // the disable itself, so it is logged and swallowed.
+    const closeActiveSessionForUser = async (user) => {
+        try {
+            const activeTaskId = user.activeSession?.taskId || user.workStatus?.activeTaskId;
+            if (activeTaskId) {
+                const taskSnap = await getDoc(doc(db, 'tasks', activeTaskId));
+                if (taskSnap.exists()) {
+                    const t = { id: taskSnap.id, ...taskSnap.data() };
+                    if (t.timerStatus === 'running') {
+                        await pauseTask(t); // logs the segment + clears the user's activeSession/workStatus
+                    }
+                }
+            }
+            await updateDoc(doc(db, 'users', user.id), {
+                activeSession: null,
+                'workStatus.isWorking': false,
+                'workStatus.status': 'idle',
+                'workStatus.activeTaskId': null,
+                'breakState.isTakingBreak': false,
+                'callState.isCalling': false,
+                'quickWorkState.isQuickWorking': false
+            });
+        } catch (e) {
+            logError(e, { source: 'closeActiveSessionForUser', userId: user.id });
+        }
     };
 
     const confirmBlock = async () => {
         if (!blockTarget) return;
         const user = blockTarget;
+        // Backstop the last-admin floor in case the admin count changed while the dialog was open.
+        if (!user.isDisabled && user.role === 'admin' && countAdmins() <= 1) {
+            setError('Negalima užblokuoti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+            setBlockTarget(null);
+            return;
+        }
         setBlocking(true);
         try {
+            // Only on DISABLE (not on re-enable): close any open session first.
+            if (!user.isDisabled && hasOpenSession(user)) {
+                await closeActiveSessionForUser(user);
+            }
             const userRef = doc(db, 'users', user.id);
-            await updateDoc(userRef, { isDisabled: !user.isDisabled });
+            const updates = { isDisabled: !user.isDisabled };
+            // Approving/unblocking clears the pending flag so the account is fully active.
+            if (user.isDisabled) updates.status = 'active';
+            await updateDoc(userRef, updates);
             setBlockTarget(null);
         } catch (err) {
             console.error("Error updating user status:", err);
@@ -323,7 +416,7 @@ export default function UserManagement() {
                                     <p className="truncate text-body font-semibold text-ink-strong">
                                         {formatDisplayName(user.displayName) || 'Be vardo'}
                                     </p>
-                                    {user.isDisabled && <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>}
+                                    <DisabledPill user={user} />
                                 </div>
                                 <p className="truncate text-body text-ink-muted">{user.email}</p>
                                 <div className="mt-2">
@@ -381,9 +474,7 @@ export default function UserManagement() {
                                         <div>
                                             <div className="flex items-center gap-2 text-body font-medium text-ink-strong">
                                                 {formatDisplayName(user.displayName) || 'Be vardo'}
-                                                {user.isDisabled && (
-                                                    <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>
-                                                )}
+                                                <DisabledPill user={user} />
                                             </div>
                                             <div className="text-body text-ink-muted">{user.email}</div>
                                         </div>
@@ -475,10 +566,20 @@ export default function UserManagement() {
             {blockTarget && (
                 <ConfirmDialog
                     open
-                    title={blockTarget.isDisabled ? 'Atblokuoti vartotoją?' : 'Blokuoti / ištrinti vartotoją?'}
+                    title={
+                        blockTarget.isDisabled
+                            ? (isPendingUser(blockTarget) ? 'Patvirtinti vartotoją?' : 'Atblokuoti vartotoją?')
+                            : 'Blokuoti vartotoją?'
+                    }
                     message={`Vartotojas: ${formatDisplayName(blockTarget.displayName) || blockTarget.email}.`}
-                    warning={blockTarget.isDisabled ? undefined : 'Vartotojas neteks prieigos prie sistemos.'}
-                    confirmLabel={blockTarget.isDisabled ? 'Atblokuoti' : 'Blokuoti'}
+                    warning={
+                        blockTarget.isDisabled
+                            ? undefined
+                            : hasOpenSession(blockTarget)
+                                ? 'Vartotojas neteks prieigos prie sistemos. Jis šiuo metu turi aktyvią sesiją — ji bus automatiškai užbaigta.'
+                                : 'Vartotojas neteks prieigos prie sistemos.'
+                    }
+                    confirmLabel={blockTarget.isDisabled ? (isPendingUser(blockTarget) ? 'Patvirtinti' : 'Atblokuoti') : 'Blokuoti'}
                     variant={blockTarget.isDisabled ? 'primary' : 'danger'}
                     loading={blocking}
                     onConfirm={confirmBlock}

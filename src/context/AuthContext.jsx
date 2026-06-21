@@ -78,24 +78,36 @@ export function AuthProvider({ children }) {
 
         if (!userSnap.exists()) {
 
+            // New accounts are provisioned in a PENDING (disabled) state — an admin must
+            // approve them in User Management before they get any access. This replaces silent
+            // auto-provisioning, where anyone who reached the URL became an active worker with
+            // team-wide read access to tasks, sessions, calendars and the full roster. We sign
+            // the user out and surface a clear "pending approval" message (mapped in Login).
             const newUserData = {
                 email: user.email,
                 displayName: user.displayName,
                 photoURL: user.photoURL,
                 role: 'worker',
                 createdAt: new Date().toISOString(),
-                isDisabled: false
+                isDisabled: true,
+                status: 'pending'
             };
-            // Create new user with default role 'worker'
             await setDoc(userRef, newUserData);
 
-            // Don't set state here - let the onSnapshot listener handle it
+            await signOut(auth);
+            const pendingErr = new Error('Account pending approval');
+            pendingErr.code = 'app/pending-approval';
+            throw pendingErr;
         } else {
             const data = userSnap.data();
             if (data.isDisabled) {
 
                 await signOut(auth);
-                throw new Error("Jūsų paskyra yra užblokuota/ištrinta.");
+                // Distinguish a not-yet-approved account from a manually blocked one so Login
+                // can show the right message (coded, never a raw thrown string — §10).
+                const disabledErr = new Error('Account disabled');
+                disabledErr.code = data.status === 'pending' ? 'app/pending-approval' : 'app/account-disabled';
+                throw disabledErr;
             }
 
 

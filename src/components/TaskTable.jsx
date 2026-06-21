@@ -10,7 +10,7 @@ import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Button from './ui/Button';
 import StatusPill from './ui/StatusPill';
-import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow } from '../utils/timeUtils';
+import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
@@ -283,7 +283,22 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     };
 
     const isTaskRunning = (task) => {
-        if (currentUser?.uid !== task.assignedUserId || task.timerStatus !== 'running') return false;
+        if (task.timerStatus !== 'running' || !task.timerStartedAt) return false;
+        // Guard against an orphaned timer (a worker's app died mid-run): a started-at older
+        // than a full max session is a not-yet-recovered stale timer, not a live run, so it
+        // must not light up green forever in the manager's team view.
+        const startedAt = new Date(task.timerStartedAt).getTime();
+        if (Number.isFinite(startedAt) &&
+            (getLithuanianNow().getTime() - startedAt) > MAX_SESSION_MINUTES * 60 * 1000) {
+            return false;
+        }
+        // Manager/team view: the running highlight must reflect ANY worker's live timer, so
+        // drive it from the team-wide-visible task field alone. The viewer-identity +
+        // activeSession cross-check below is only meaningful for a worker viewing their OWN
+        // task (the user doc we have is the viewer's), so restrict it to the worker view.
+        if (isManagerRole(role)) return true;
+
+        if (currentUser?.uid !== task.assignedUserId) return false;
         const activeSession = userData?.activeSession;
         if (activeSession) return activeSession.type === 'task' && activeSession.taskId === task.id;
         if (userData?.workStatus?.status === 'running') return userData.workStatus.activeTaskId === task.id;
