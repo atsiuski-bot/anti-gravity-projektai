@@ -7,7 +7,6 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
-import { getSessionColors } from '../utils/sessionColors';
 
 export default function CombinedHoursSummary() {
     const { currentUser } = useAuth();
@@ -192,72 +191,10 @@ export default function CombinedHoursSummary() {
         return { data: stats, max: Math.max(maxVal, 40) }; // Minimum scale 40h
     }, [users, workHours, workSessions, tasks, breakSessions]);
 
-    // Active Sessions Logic
-    const activeSessions = useMemo(() => {
-        return users.map(user => {
-            if (!user.activeSession) return null;
-
-            // Map session type to display properties
-            let displayProps = {
-                label: 'Veikla',
-                colorClass: 'bg-gray-100 text-gray-800',
-                startTime: user.activeSession.startTime
-            };
-
-            switch (user.activeSession.type) {
-                case 'break':
-                    displayProps = {
-                        label: 'Pertrauka',
-                        colorClass: `${getSessionColors('break').surface} ${getSessionColors('break').accent}`,
-                        startTime: user.activeSession.startTime
-                    };
-                    break;
-                case 'call':
-                    displayProps = {
-                        label: 'Skambutis',
-                        colorClass: `${getSessionColors('call').surface} ${getSessionColors('call').accent}`,
-                        startTime: user.activeSession.startTime
-                    };
-                    break;
-                case 'quickWork':
-                    displayProps = {
-                        label: 'Greitas darbas',
-                        colorClass: `${getSessionColors('quickWork').surface} ${getSessionColors('quickWork').accent}`,
-                        startTime: user.activeSession.startTime
-                    };
-                    break;
-                case 'task': {
-                    // Find generic task title if available
-                    let title = user.activeSession.taskTitle || 'Užduotis';
-                    // Try to find specific task in loaded tasks if ID matches
-                    const foundTask = tasks.find(t => t.id === user.activeSession.taskId);
-                    if (foundTask) {
-                        title = foundTask.title;
-                    }
-                    displayProps = {
-                        label: title,
-                        colorClass: `${getSessionColors('task').surface} ${getSessionColors('task').accent}`,
-                        startTime: user.activeSession.startTime
-                    };
-                    break;
-                }
-                default:
-                    // Fallback for unknown types
-                    displayProps = {
-                        label: user.activeSession.type || 'Veikla',
-                        colorClass: 'bg-gray-100 text-gray-800',
-                        startTime: user.activeSession.startTime
-                    };
-            }
-
-            return {
-                userId: user.id,
-                userName: user.displayName || user.email,
-                userColor: user.color || WORKER_FALLBACK_COLOR,
-                ...displayProps
-            };
-        }).filter(Boolean);
-    }, [users, tasks]);
+    // NOTE: the live "Aktyvi veikla" list used to be duplicated here. It now lives solely in
+    // ActiveWorkSessions (mounted right after this panel), which has the more correct task-time
+    // logic (calculateCurrentTotalMinutes) and a faster refresh, so this component stays focused
+    // on the weekly planned-vs-worked bars.
 
     if (usersLoading) return null;
     if (error) return null;
@@ -281,20 +218,6 @@ export default function CombinedHoursSummary() {
 
             {!isCollapsed && (
                 <div className="p-4 space-y-6">
-                    {/* Active Sessions (Veikla) */}
-                    {activeSessions.length > 0 && (
-                        <div>
-                            <h4 className="text-caption font-semibold text-ink-muted uppercase tracking-wider mb-3 pl-1">
-                                Veikla
-                            </h4>
-                            <div className="space-y-2">
-                                {activeSessions.map(session => (
-                                    <ActiveSessionRow key={session.userId} session={session} />
-                                ))}
-                            </div>
-                        </div>
-                    )}
-
                     {/* Weekly Hours Bars */}
                     <div>
                         {combinedStats.data.length > 0 && (
@@ -362,66 +285,6 @@ export default function CombinedHoursSummary() {
                     </div>
                 </div>
             )}
-        </div>
-    );
-}
-
-// Helper Component for Active Session Row to manage own timer
-function ActiveSessionRow({ session }) {
-    const [durationStr, setDurationStr] = useState('');
-
-    useEffect(() => {
-        const updateTime = () => {
-            if (!session.startTime) {
-                setDurationStr('');
-                return;
-            }
-            const start = new Date(session.startTime);
-            const now = getLithuanianNow();
-            const diffMs = now - start;
-            if (diffMs < 0) {
-                setDurationStr('0m');
-                return;
-            }
-
-            const diffMinutes = Math.floor(diffMs / (1000 * 60));
-
-            if (diffMinutes < 60) {
-                setDurationStr(`${diffMinutes}m`);
-            } else {
-                const hours = Math.floor(diffMinutes / 60);
-                const mins = diffMinutes % 60;
-                setDurationStr(`${hours}h ${mins}m`);
-            }
-        };
-
-        updateTime(); // Initial
-        // Update every minute (60,000 ms)
-        // Align to minute boundary for better UX? Or just simple interval.
-        // Simple interval is fine for "once a minute" requirement.
-        const interval = setInterval(updateTime, 60000);
-
-        return () => clearInterval(interval);
-    }, [session.startTime]);
-
-    return (
-        <div className={`p-3 rounded-lg flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
-            <div className="flex items-center gap-3 overflow-hidden">
-                <div
-                    className="w-2 h-2 rounded-full flex-shrink-0 bg-current opacity-50"
-                    // Fallback if needed, but usually bg-current works with text color logic or just use user color
-                    style={{ backgroundColor: session.userColor || 'currentColor' }}
-                />
-                <span className="font-semibold text-sm truncate">
-                    {session.userName}
-                </span>
-                <span className="text-sm border-l border-current/20 pl-3 truncate">
-                    {session.label}
-                </span>
-            </div>
-            <span className="font-mono font-bold text-body-lg ml-4 whitespace-nowrap tabular-nums">
-                {durationStr}
-            </span>
         </div>
     );
 }

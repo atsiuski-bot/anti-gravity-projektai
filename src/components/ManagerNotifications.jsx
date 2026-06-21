@@ -315,8 +315,21 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     };
 
     const allNotifications = [...calendarNotifications, ...calendarRequests, ...taskNotifications];
-    
-    // Sort all notifications so newest is at the top
+
+    // Action-required items must float above informational ones regardless of arrival order:
+    // a blocked worker's time-extension request or a pending calendar approval should never sit
+    // below a "someone commented" notice just because the notice is newer. Lower rank = higher.
+    const urgencyRank = (notif) => {
+        if (notif.source === 'calendar_approval') return 0;          // blocks the worker's planning
+        if (notif.source === 'task') {
+            if (notif.type === 'time_extension_request') return 0;   // worker is blocked on the task
+            if (notif.type === 'new_comment') return 2;              // informational
+            return 1;                                                // task_completion / assignment — needs action
+        }
+        return 2;                                                    // calendar-change notice — informational
+    };
+
+    // Sort by urgency tier first, then newest within a tier.
     const sortedNotifications = allNotifications.sort((a, b) => {
         const getTimestamp = (notif) => {
             if (notif.createdAt) return new Date(notif.createdAt).getTime();
@@ -324,7 +337,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
             if (notif.changes && notif.changes.length > 0) return new Date(notif.changes[notif.changes.length - 1].timestamp).getTime();
             return 0;
         };
-        return getTimestamp(b) - getTimestamp(a);
+        return (urgencyRank(a) - urgencyRank(b)) || (getTimestamp(b) - getTimestamp(a));
     });
 
     if (sortedNotifications.length === 0) return null;
