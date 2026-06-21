@@ -205,6 +205,15 @@ export default function UserManagement() {
     const handleRoleChange = async (userId, newRole) => {
         setError('');
         try {
+            // Never strip the last remaining admin: demoting the only active admin would lock
+            // the whole team out of every admin-only surface, and the in-app "become admin"
+            // bootstrap is denied by the security rules — so recovery would need direct DB edits.
+            const target = users.find(u => u.id === userId);
+            if (target?.role === 'admin' && !target?.isDisabled && newRole !== 'admin' && countAdmins() <= 1) {
+                setError('Negalima pašalinti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+                return;
+            }
+
             if (newRole === 'admin') {
                 const adminCount = countAdmins();
                 if (adminCount >= 2) {
@@ -282,6 +291,11 @@ export default function UserManagement() {
             setError('Negalite užblokuoti savęs.');
             return;
         }
+        // Same floor as role demotion: never disable the last active admin (re-enabling is fine).
+        if (!user.isDisabled && user.role === 'admin' && countAdmins() <= 1) {
+            setError('Negalima užblokuoti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+            return;
+        }
         setError('');
         setBlockTarget(user);
     };
@@ -322,6 +336,12 @@ export default function UserManagement() {
     const confirmBlock = async () => {
         if (!blockTarget) return;
         const user = blockTarget;
+        // Backstop the last-admin floor in case the admin count changed while the dialog was open.
+        if (!user.isDisabled && user.role === 'admin' && countAdmins() <= 1) {
+            setError('Negalima užblokuoti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+            setBlockTarget(null);
+            return;
+        }
         setBlocking(true);
         try {
             // Only on DISABLE (not on re-enable): close any open session first.
