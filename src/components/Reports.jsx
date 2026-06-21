@@ -128,9 +128,15 @@ export default function Reports({ users }) {
                 where('date', '<=', endStr)
             );
 
-            const [workSnap, breakSnap] = await Promise.all([
+            // Planned hours come from the calendar (work_hours): start/end ISO timestamps, no
+            // 'date' field, so we read the collection and bucket client-side by the Lithuanian
+            // calendar day of each entry's start — same read permission as the session queries.
+            const plannedQ = query(collection(db, 'work_hours'));
+
+            const [workSnap, breakSnap, plannedSnap] = await Promise.all([
                 getDocs(workQ),
-                getDocs(breakQ)
+                getDocs(breakQ),
+                getDocs(plannedQ)
             ]);
 
             const workSessions = workSnap.docs
@@ -158,6 +164,7 @@ export default function Reports({ users }) {
                         name: getUserName(uid, sessionName),
                         totalMinutes: 0,
                         totalBreakMinutes: 0,
+                        plannedMinutes: 0,
                         days: {} // { date: { totalWork: 0, totalBreak: 0, sessions: [] } }
                     };
                 }
@@ -269,6 +276,25 @@ export default function Reports({ users }) {
                     }
                 });
             });
+
+            // Planned vs actual: sum each worker's calendar-scheduled minutes that fall inside the
+            // selected span, then attach to their row so the summary can show an overtime/undertime
+            // delta. Only attached to workers who already have worked/break data in the span.
+            plannedSnap.docs.forEach(d => {
+                const wh = d.data();
+                if (!wh.start || !wh.end) return;
+                const uid = wh.userId;
+                if (!uid) return;
+                if (!isManager && uid !== currentUser.uid) return;
+                const dayStr = getLithuanianDateString(new Date(wh.start));
+                if (dayStr < startStr || dayStr > endStr) return;
+                const mins = (new Date(wh.end).getTime() - new Date(wh.start).getTime()) / (1000 * 60);
+                if (!Number.isFinite(mins) || mins <= 0) return;
+                if (userMap[uid]) {
+                    userMap[uid].plannedMinutes += mins;
+                }
+            });
+            Object.values(userMap).forEach(u => { u.plannedMinutes = Math.round(u.plannedMinutes); });
 
             // Convert to array
             const results = Object.values(userMap).sort((a, b) => b.totalMinutes - a.totalMinutes);
@@ -539,6 +565,18 @@ export default function Reports({ users }) {
         return Math.round(totalMins / workDaysCount);
     };
 
+    // Worked-minus-planned for the row. Positive = overtime, negative = under the plan; null
+    // when the worker has no plan in the span (a delta against zero would be meaningless).
+    const getPlanDelta = (userStats) => {
+        if (!userStats.plannedMinutes || userStats.plannedMinutes <= 0) return null;
+        return userStats.totalMinutes - userStats.plannedMinutes;
+    };
+    const formatSignedDuration = (mins) => {
+        const rounded = Math.round(mins);
+        const sign = rounded > 0 ? '+' : (rounded < 0 ? '−' : '');
+        return `${sign}${formatMinutesToTimeString(Math.abs(rounded))}`;
+    };
+
     // Quick date-range presets for the hours tab. All math is pure date-string arithmetic
     // (addDaysToDateString is DST-safe), and weeks are Monday-started per Lithuanian convention.
     const applyPreset = (preset) => {
@@ -603,8 +641,13 @@ export default function Reports({ users }) {
             const mins = Math.round(Math.abs(totalMinutes) % 60);
             return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
         };
+        const formatSignedHHMM = (mins) => {
+            const rounded = Math.round(mins);
+            const sign = rounded < 0 ? '-' : (rounded > 0 ? '+' : '');
+            return `${sign}${formatMinutesToHHMM(Math.abs(rounded))}`;
+        };
 
-        const headers = ['Darbuotojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)'];
+        const headers = ['Darbuotojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
         const rows = [];
 
         workData.forEach(userStats => {
@@ -617,13 +660,18 @@ export default function Reports({ users }) {
                         escapeCSV(date),
                         escapeCSV(formatMinutesToHHMM(dayData.totalWork)),
                         escapeCSV(formatMinutesToHHMM(dayData.totalBreak)),
+                        '',
+                        '',
                     ].join(','));
                 });
+            const hasPlan = userStats.plannedMinutes > 0;
             rows.push([
                 escapeCSV(workerName),
                 escapeCSV('Viso'),
                 escapeCSV(formatMinutesToHHMM(userStats.totalMinutes)),
                 escapeCSV(formatMinutesToHHMM(userStats.totalBreakMinutes)),
+                escapeCSV(hasPlan ? formatMinutesToHHMM(userStats.plannedMinutes) : ''),
+                escapeCSV(hasPlan ? formatSignedHHMM(userStats.totalMinutes - userStats.plannedMinutes) : ''),
             ].join(','));
         });
 
@@ -1117,6 +1165,20 @@ export default function Reports({ users }) {
                                             <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Vid.</span>
                                             <span className="text-ink font-medium">{formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}</span>
                                         </div>
+                                        <div className="flex flex-col">
+                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Planuota</span>
+                                            <span className="text-ink font-medium">{userStats.plannedMinutes > 0 ? formatMinutesToTimeString(userStats.plannedMinutes) : '—'}</span>
+                                        </div>
+                                        <div className="flex flex-col" title="Faktas − planas: teigiamas = viršvalandžiai, neigiamas = trūksta">
+                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Skirtumas</span>
+                                            {getPlanDelta(userStats) === null ? (
+                                                <span className="text-ink-muted font-medium">—</span>
+                                            ) : (
+                                                <span className={`font-bold ${getPlanDelta(userStats) >= 0 ? 'text-feedback-success' : 'text-feedback-danger'}`}>
+                                                    {formatSignedDuration(getPlanDelta(userStats))}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="p-3">
@@ -1187,6 +1249,20 @@ export default function Reports({ users }) {
                                                         <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Vid.</span>
                                                         <span className="text-ink font-medium">{formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}</span>
                                                     </div>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Planuota</span>
+                                                        <span className="text-ink font-medium">{userStats.plannedMinutes > 0 ? formatMinutesToTimeString(userStats.plannedMinutes) : '—'}</span>
+                                                    </div>
+                                                    <div className="flex flex-col" title="Faktas − planas: teigiamas = viršvalandžiai, neigiamas = trūksta">
+                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Skirtumas</span>
+                                                        {getPlanDelta(userStats) === null ? (
+                                                            <span className="text-ink-muted font-medium">—</span>
+                                                        ) : (
+                                                            <span className={`font-bold ${getPlanDelta(userStats) >= 0 ? 'text-feedback-success' : 'text-feedback-danger'}`}>
+                                                                {formatSignedDuration(getPlanDelta(userStats))}
+                                                            </span>
+                                                        )}
+                                                    </div>
                                                 </div>
                                             </div>
                                             {isExpanded && (
@@ -1210,6 +1286,8 @@ export default function Reports({ users }) {
                                             <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted" title="Bendras laikas: apima darbą ir pertraukas — ne tik darbo valandos.">Bendras laikas</th>
                                             <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Dienų</th>
                                             <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Vid.</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Planuota</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted" title="Faktas − planas: teigiamas = viršvalandžiai, neigiamas = trūksta">Skirtumas</th>
                                             <th scope="col" className="px-6 py-3 w-10"></th>
                                         </tr>
                                     </thead>
@@ -1241,13 +1319,25 @@ export default function Reports({ users }) {
                                                         <td className="px-6 py-4 whitespace-nowrap text-body text-right text-ink-muted">
                                                             {formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}
                                                         </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-ink-muted">
+                                                            {userStats.plannedMinutes > 0 ? formatMinutesToTimeString(userStats.plannedMinutes) : '—'}
+                                                        </td>
+                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right font-bold">
+                                                            {getPlanDelta(userStats) === null ? (
+                                                                <span className="text-ink-muted font-normal">—</span>
+                                                            ) : (
+                                                                <span className={getPlanDelta(userStats) >= 0 ? 'text-feedback-success' : 'text-feedback-danger'}>
+                                                                    {formatSignedDuration(getPlanDelta(userStats))}
+                                                                </span>
+                                                            )}
+                                                        </td>
                                                         <td className="px-6 py-4 text-right text-ink-muted">
                                                             {isExpanded ? <ChevronUp className="w-4 h-4" aria-hidden="true" /> : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
                                                         </td>
                                                     </tr>
                                                     {isExpanded && (
                                                         <tr className="bg-surface-sunken">
-                                                            <td colSpan="7" className="px-6 py-4">
+                                                            <td colSpan="9" className="px-6 py-4">
                                                                 <DayBreakdown userStats={userStats} />
                                                             </td>
                                                         </tr>
