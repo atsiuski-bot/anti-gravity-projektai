@@ -341,8 +341,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         const totalMinutes = calculateCurrentTotalMinutes(task);
         return (
             <div className="mt-3 border-t pt-2 flex items-center justify-between">
-                <span className="text-xs font-semibold text-gray-500">Praleistas laikas:</span>
-                <span className="text-sm font-bold text-ink-strong flex items-center gap-1">
+                <span className="text-caption font-semibold text-ink-muted">Praleistas laikas:</span>
+                <span className="text-body font-bold text-ink-strong flex items-center gap-1">
                     <Clock className="w-4 h-4" />
                     {formatMinutesToTimeString(totalMinutes)}
                 </span>
@@ -374,7 +374,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     /* Start removed once the time limit is exceeded (occupies the primary slot). */
                     <div
                         role="status"
-                        className="flex min-h-touch flex-[2] items-center justify-center gap-1.5 rounded-control border border-red-100 bg-red-50 px-2 text-body font-semibold text-red-700"
+                        className="flex min-h-touch flex-[2] items-center justify-center gap-1.5 rounded-control border border-feedback-danger/20 bg-feedback-danger/10 px-2 text-body font-semibold text-feedback-danger"
                     >
                         <Clock className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
                         Laikas išnaudotas

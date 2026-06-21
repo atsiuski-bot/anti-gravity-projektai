@@ -30,7 +30,7 @@ export default function TaskTimeLimitPopup({ task, onDismiss }) {
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby="time-limit-title"
-                className="w-full max-w-md overflow-hidden rounded-modal bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-300"
+                className="w-full max-w-md overflow-hidden rounded-modal bg-surface-card shadow-2xl animate-in fade-in zoom-in-95 duration-300"
             >
                 {/* Header */}
                 <div className="flex items-center gap-3 bg-gradient-to-r from-red-500 to-red-600 px-6 py-4">
@@ -45,7 +45,7 @@ export default function TaskTimeLimitPopup({ task, onDismiss }) {
                     <p className="text-body font-medium leading-relaxed text-ink-strong">
                         Laikas skirtas užduočiai „{task.title}“ atlikti baigėsi. Aptarkite tolesnę užduoties eigą su darbo vadovu.
                     </p>
-                    <div className="flex items-center gap-2 rounded-control bg-red-50 px-3 py-2 text-body font-semibold text-red-700">
+                    <div className="flex items-center gap-2 rounded-control bg-feedback-danger/10 px-3 py-2 text-body font-semibold text-feedback-danger">
                         <PauseCircle className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
                         Darbas automatiškai sustabdytas.
                     </div>
@@ -56,7 +56,7 @@ export default function TaskTimeLimitPopup({ task, onDismiss }) {
                     <button
                         onClick={handleMute}
                         disabled={muted}
-                        className="inline-flex min-h-touch items-center gap-2 rounded-control border border-line bg-white px-4 text-body font-semibold text-ink shadow-sm transition-colors hover:bg-surface-sunken disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        className="inline-flex min-h-touch items-center gap-2 rounded-control border border-line bg-surface-card px-4 text-body font-semibold text-ink shadow-sm transition-colors hover:bg-surface-sunken disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
                         <BellOff className="h-4 w-4" aria-hidden="true" />
                         {muted ? 'Nutildyta' : 'Nutildyti garsą'}

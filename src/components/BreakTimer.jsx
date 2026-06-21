@@ -131,10 +131,13 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                     )}
                 </button>
 
+                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1) */}
+                <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Pertrauka</span>
+
                 {error && (
-                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-2" role="alert">
+                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2" role="alert">
                         <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
-                        <p className="text-caption text-red-700">{error}</p>
+                        <p className="text-caption text-feedback-danger">{error}</p>
                     </div>
                 )}
             </div>
@@ -180,9 +183,9 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                 </button>
 
                 {error && (
-                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-2" role="alert">
+                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2" role="alert">
                         <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
-                        <p className="text-caption text-red-700">{error}</p>
+                        <p className="text-caption text-feedback-danger">{error}</p>
                     </div>
                 )}
             </div>

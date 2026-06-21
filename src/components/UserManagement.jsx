@@ -306,9 +306,9 @@ export default function UserManagement() {
             </div>
 
             {error && (
-                <div className="m-4 flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-red-50 p-4">
+                <div className="m-4 flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4">
                     <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-red-700">{error}</p>
+                    <p className="text-body text-feedback-danger">{error}</p>
                 </div>
             )}
 
@@ -463,7 +463,7 @@ export default function UserManagement() {
                             className="flex h-16 w-full items-center justify-center rounded-card border border-line shadow-inner"
                             style={{ backgroundColor: `rgb(${tempColor.r}, ${tempColor.g}, ${tempColor.b})` }}
                         >
-                            <span className="rounded bg-white/90 px-2 py-1 font-mono text-caption text-ink-muted shadow-sm">
+                            <span className="rounded bg-surface-card/90 px-2 py-1 font-mono text-caption text-ink-muted shadow-sm">
                                 rgb({tempColor.r}, {tempColor.g}, {tempColor.b})
                             </span>
                         </div>

@@ -15,6 +15,7 @@ import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUt
 import { logError } from '../utils/errorLog';
 import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
+import Button from '../components/ui/Button';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
@@ -198,7 +199,7 @@ export default function WorkerView() {
                 {error && (
                     <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-red-50 p-4" role="alert">
                         <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                        <p className="text-body text-red-700">{error}</p>
+                        <p className="text-body text-feedback-danger">{error}</p>
                     </div>
                 )}
             </div>
@@ -254,6 +255,14 @@ export default function WorkerView() {
                             icon={ClipboardList}
                             title="Nėra užduočių"
                             description="Jums dar nepriskirta jokių užduočių."
+                            action={
+                                <Button
+                                    variant="primary"
+                                    onClick={() => window.dispatchEvent(new CustomEvent('open-task-modal'))}
+                                >
+                                    Sukurti užduotį
+                                </Button>
+                            }
                         />
                     </div>
                 ) : (

@@ -68,7 +68,7 @@ export function LinksModal({ isOpen, onClose, links }) {
                             href={link}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex items-center gap-2 p-3 bg-blue-50 hover:bg-blue-100 rounded-lg text-blue-600 hover:text-blue-800 transition-colors break-all"
+                            className="flex items-center gap-2 p-3 bg-brand-soft rounded-lg text-brand hover:text-brand-hover transition-colors break-all"
                         >
                             <LinkIcon className="w-4 h-4 flex-shrink-0" />
                             <span className="text-sm">{link}</span>
@@ -76,7 +76,7 @@ export function LinksModal({ isOpen, onClose, links }) {
                     ))}
                 </div>
             ) : (
-                <p className="text-gray-500">Nėra nuorodų</p>
+                <p className="text-ink-muted">Nėra nuorodų</p>
             )}
         </DetailsModal>
     );
@@ -129,36 +129,36 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
                 <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {displayComments.length > 0 ? (
                         displayComments.map((comment, idx) => (
-                            <div key={idx} className={`bg-gray-50 p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
+                            <div key={idx} className={`bg-surface-sunken p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
                                 <div className="flex justify-between items-start mb-2">
-                                    <span className="font-medium text-gray-900">
-                                        {comment.isOptimistic ? <span className="text-blue-500 italic text-sm">{comment.user}</span> : formatDisplayName(comment.user)}
+                                    <span className="font-medium text-ink-strong">
+                                        {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : formatDisplayName(comment.user)}
                                     </span>
-                                    <span className="text-xs text-gray-500">
+                                    <span className="text-xs text-ink-muted">
                                         {new Date(comment.createdAt).toLocaleString()}
                                     </span>
                                 </div>
-                                <p className="text-gray-700 whitespace-pre-wrap">{comment.text}</p>
+                                <p className="text-ink whitespace-pre-wrap">{comment.text}</p>
                             </div>
                         ))
                     ) : (
-                        <p className="text-gray-500 text-center py-4">Nėra komentarų</p>
+                        <p className="text-ink-muted text-center py-4">Nėra komentarų</p>
                     )}
                 </div>
 
-                <form onSubmit={handleSubmit} className="mt-auto pt-4 border-t border-gray-100 flex gap-2">
+                <form onSubmit={handleSubmit} className="mt-auto pt-4 border-t border-line flex gap-2">
                     <input
                         type="text"
                         value={newComment}
                         onChange={(e) => setNewComment(e.target.value)}
                         placeholder="Rašyti komentarą..."
-                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                        className="flex-1 px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
                         disabled={isSubmitting}
                     />
                     <button
                         type="submit"
                         disabled={!newComment.trim() || isSubmitting}
-                        className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                         {isSubmitting ? 'Saugoma...' : 'Skelbti'}
                     </button>
@@ -172,9 +172,9 @@ export function DescriptionModal({ isOpen, onClose, description }) {
     return (
         <DetailsModal isOpen={isOpen} onClose={onClose} title="Aprašymas" icon={FileText}>
             {description ? (
-                <p className="text-gray-700 whitespace-pre-wrap leading-relaxed">{description}</p>
+                <p className="text-ink whitespace-pre-wrap leading-relaxed">{description}</p>
             ) : (
-                <p className="text-gray-500">Nėra aprašymo</p>
+                <p className="text-ink-muted">Nėra aprašymo</p>
             )}
         </DetailsModal>
     );
@@ -214,15 +214,15 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                 <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {adjustments.length > 0 ? (
                         adjustments.map((adj, idx) => (
-                            <div key={idx} className="bg-gray-50 p-4 rounded-lg flex justify-between items-center">
+                            <div key={idx} className="bg-surface-sunken p-4 rounded-lg flex justify-between items-center">
                                 <div>
                                     <div className="flex items-center gap-2 mb-1">
-                                        <span className="font-semibold text-gray-900">{adj.date}</span>
+                                        <span className="font-semibold text-ink-strong">{adj.date}</span>
                                         <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
                                             {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
                                         </span>
                                     </div>
-                                    <p className="text-gray-600 text-sm">{adj.reason || 'Be priežasties'}</p>
+                                    <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
                                 </div>
                                 <IconButton
                                     icon={Trash2}
@@ -233,19 +233,19 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                             </div>
                         ))
                     ) : (
-                        <p className="text-gray-500 text-center py-4">Nėra papildomų laiko įrašų</p>
+                        <p className="text-ink-muted text-center py-4">Nėra papildomų laiko įrašų</p>
                     )}
                 </div>
 
-                <form onSubmit={handleSubmit} className="mt-auto pt-4 border-t border-gray-100 flex flex-col gap-3">
-                    <h4 className="text-sm font-semibold text-gray-700">Pridėti naują įrašą</h4>
+                <form onSubmit={handleSubmit} className="mt-auto pt-4 border-t border-line flex flex-col gap-3">
+                    <h4 className="text-sm font-semibold text-ink">Pridėti naują įrašą</h4>
                     <div className="flex flex-wrap gap-2">
                         <input
                             type="date"
                             value={date}
                             onChange={(e) => setDate(e.target.value)}
                             max={new Date().toISOString().split('T')[0]}
-                            className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm flex-1 min-w-[120px]"
+                            className="px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm flex-1 min-w-[120px]"
                             required
                         />
                         <div className="flex items-center gap-1">
@@ -254,17 +254,17 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                                 value={hours}
                                 onChange={(e) => setHours(e.target.value)}
                                 placeholder="Valandos"
-                                className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm text-center"
+                                className="w-20 px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
                             />
-                            <span className="text-sm text-gray-500 font-medium">h</span>
+                            <span className="text-sm text-ink-muted font-medium">h</span>
                             <input
                                 type="number"
                                 value={mins}
                                 onChange={(e) => setMins(e.target.value)}
                                 placeholder="Minutės"
-                                className="w-20 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm text-center"
+                                className="w-20 px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
                             />
-                            <span className="text-sm text-gray-500 font-medium">m</span>
+                            <span className="text-sm text-ink-muted font-medium">m</span>
                         </div>
                     </div>
                     <div className="flex gap-2">
@@ -273,17 +273,17 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                             value={reason}
                             onChange={(e) => setReason(e.target.value)}
                             placeholder="Priežastis (pvz. 'Pamiršo įjungti taimerį')"
-                            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 text-sm"
+                            className="flex-1 px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
                         />
                         <button
                             type="submit"
                             disabled={isSubmitting || (parseInt(hours) === 0 && parseInt(mins) === 0)}
-                            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                            className="bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                         >
                             {isSubmitting ? 'Saugoma...' : 'Pridėti'}
                         </button>
                     </div>
-                    <p className="text-xs text-gray-500">Patarimas: norėdami atimti laiką, naudokite minuso ženklą (pvz. -1 valanda).</p>
+                    <p className="text-xs text-ink-muted">Patarimas: norėdami atimti laiką, naudokite minuso ženklą (pvz. -1 valanda).</p>
                 </form>
             </div>
         </DetailsModal>
@@ -496,17 +496,17 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50 p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in duration-200">
             <div
                 ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={titleId}
                 tabIndex={-1}
-                className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 duration-200 focus:outline-none"
+                className="bg-surface-card rounded-modal shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 duration-200 focus:outline-none"
             >
                 <div className="p-6">
-                    <div className="flex items-center gap-3 mb-4 text-red-600">
+                    <div className="flex items-center gap-3 mb-4 text-feedback-danger">
                         <div className="p-2 bg-red-50 rounded-full">
                             <AlertTriangle className="w-6 h-6" />
                         </div>
@@ -514,11 +514,11 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                     </div>
 
                     <div className="space-y-4 mb-6">
-                        <p className="text-gray-600">
+                        <p className="text-ink-muted">
                             {isTask ? (
-                                <>Pasirinkite, kaip norite ištrinti įrašą <span className="font-semibold text-gray-900">&quot;{taskTitle}&quot;</span>:</>
+                                <>Pasirinkite, kaip norite ištrinti įrašą <span className="font-semibold text-ink-strong">&quot;{taskTitle}&quot;</span>:</>
                             ) : (
-                                <>Ar tikrai norite ištrinti įrašą <span className="font-semibold text-gray-900">&quot;{taskTitle}&quot;</span>? Šio veiksmo atšaukti nebus galima.</>
+                                <>Ar tikrai norite ištrinti įrašą <span className="font-semibold text-ink-strong">&quot;{taskTitle}&quot;</span>? Šio veiksmo atšaukti nebus galima.</>
                             )}
                         </p>
                     </div>
@@ -526,7 +526,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                     <div className="flex flex-col gap-3">
                         <button
                             onClick={onClose}
-                            className="w-full px-4 py-3 text-sm font-medium text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors text-left text-center"
+                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-gray-200 rounded-lg transition-colors text-left text-center"
                         >
                             Atšaukti{isTask ? ' trynimą' : ''}
                         </button>

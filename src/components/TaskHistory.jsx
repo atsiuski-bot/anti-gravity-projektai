@@ -546,7 +546,7 @@ export default function TaskHistory({ userId, users = [] }) {
                     icon={UserCheck}
                     label="Patvirtinti"
                     onClick={() => handleConfirm(task)}
-                    className="text-feedback-success hover:bg-green-50"
+                    className="text-feedback-success hover:bg-feedback-success/10"
                 />
             )}
             <CommentsButton task={task} />
@@ -607,12 +607,12 @@ export default function TaskHistory({ userId, users = [] }) {
 
             {/* Friendly error banner — replaces the banned alert() with mapped LT copy (§10) */}
             {error && (
-                <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-red-50 p-4" role="alert">
+                <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4" role="alert">
                     <AlertCircle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-red-700">{error}</p>
+                    <p className="text-body text-feedback-danger">{error}</p>
                     <button
                         onClick={() => setError('')}
-                        className="ml-auto text-body font-medium text-red-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                        className="ml-auto text-body font-medium text-feedback-danger underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
                     >
                         Uždaryti
                     </button>

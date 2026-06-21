@@ -21,9 +21,9 @@ export const STATUS_COLORS = {
 };
 
 export const STATUS_STYLES = {
-    'pending': 'bg-white border-gray-200',
-    'in-progress': 'bg-white border-gray-200',
-    'completed': 'bg-gray-200 border-gray-300',
-    'confirmed': 'bg-gray-100 border-gray-200',
+    'pending': 'bg-surface-card border-line',
+    'in-progress': 'bg-surface-card border-line',
+    'completed': 'bg-surface-sunken border-line',
+    'confirmed': 'bg-surface-sunken border-line',
     'unapproved': 'bg-amber-50 border-amber-200'
 };

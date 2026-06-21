@@ -15,7 +15,7 @@ export default function TaskTimeWarningPopup({ task, remaining, onDismiss }) {
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="time-warning-title"
-                className="w-full max-w-md overflow-hidden rounded-modal bg-white shadow-2xl animate-in fade-in zoom-in-95 duration-300"
+                className="w-full max-w-md overflow-hidden rounded-modal bg-surface-card shadow-2xl animate-in fade-in zoom-in-95 duration-300"
             >
                 {/* Header */}
                 <div className="flex items-center gap-3 bg-gradient-to-r from-amber-400 to-orange-400 px-6 py-4">

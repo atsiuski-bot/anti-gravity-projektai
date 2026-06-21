@@ -39,7 +39,7 @@ export default function ActiveWorkSessions() {
             // Map session type to display properties
             let displayProps = {
                 label: 'Veikla',
-                colorClass: 'bg-gray-100 text-gray-800',
+                colorClass: 'bg-surface-sunken text-ink',
                 startTime: user.activeSession.startTime
             };
 
@@ -89,7 +89,7 @@ export default function ActiveWorkSessions() {
                     // Fallback for unknown types
                     displayProps = {
                         label: user.activeSession.type || 'Veikla',
-                        colorClass: 'bg-gray-100 text-gray-800',
+                        colorClass: 'bg-surface-sunken text-ink',
                         startTime: user.activeSession.startTime
                     };
             }
@@ -107,18 +107,18 @@ export default function ActiveWorkSessions() {
     if (activeSessions.length === 0) return null; // Hide completely if empty? Or show empty state? Let's hide to reduce clutter.
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
+        <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden mb-6">
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
                 aria-expanded={!isCollapsed}
                 aria-controls="active-work-sessions-panel"
-                className="w-full flex items-center justify-between p-4 bg-gray-50 hover:bg-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                className="w-full flex items-center justify-between p-4 bg-surface-sunken hover:bg-surface-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
             >
                 <div className="flex items-center gap-2">
                     <Activity className="w-5 h-5 text-brand" />
-                    <h3 className="font-semibold text-gray-900">Aktyvi veikla</h3>
+                    <h3 className="font-semibold text-ink-strong">Aktyvi veikla</h3>
                 </div>
-                {isCollapsed ? <ChevronDown className="w-5 h-5 text-gray-500" /> : <ChevronUp className="w-5 h-5 text-gray-500" />}
+                {isCollapsed ? <ChevronDown className="w-5 h-5 text-ink-muted" /> : <ChevronUp className="w-5 h-5 text-ink-muted" />}
             </button>
 
             {!isCollapsed && (
@@ -178,7 +178,7 @@ const ActiveSessionRow = React.memo(({ session }) => {
     }, [session.startTime, session.task]);
 
     return (
-        <div className={`p-3 rounded-lg flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
+        <div className={`p-3 rounded-card flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
             <div className="flex-shrink-0">
                 <SessionTypeIcon type={session.type} className="w-5 h-5" />
             </div>
@@ -192,7 +192,7 @@ const ActiveSessionRow = React.memo(({ session }) => {
                     {session.label}
                 </div>
             </div>
-            <span className="font-mono font-bold text-base ml-4 whitespace-nowrap">
+            <span className="font-mono font-bold text-body-lg ml-4 whitespace-nowrap">
                 {durationStr}
             </span>
         </div>

@@ -37,8 +37,8 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                     Įveskite atlikto darbo aprašymą
                 </p>
 
-                <div className="mb-5 bg-session-quickWork-surface rounded-2xl p-4 border border-red-200 flex items-center justify-between">
-                    <span className="text-red-700 font-semibold text-body-lg">Užfiksuotas laikas:</span>
+                <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-red-200 flex items-center justify-between">
+                    <span className="text-session-quickWork-accent font-semibold text-body-lg">Užfiksuotas laikas:</span>
                     <span className="text-4xl font-mono font-bold text-session-quickWork-accent">{totalDisplay}</span>
                 </div>
 
@@ -51,8 +51,6 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                         id="quickWorkTextarea"
                         name="taskDescription"
                         placeholder="Trumpai aprašykite atliktą darbą..."
-                        lang="en"
-                        dir="ltr"
                         rows={4}
                         className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
                         style={{
@@ -60,7 +58,6 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                             padding: '12px',
                             fontSize: '16px',
                             resize: 'none',
-                            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                             direction: 'ltr',
                             textAlign: 'left'
                         }}
@@ -234,10 +231,13 @@ export default function QuickWorkTimer({ compact = false }) {
                     )}
                 </button>
 
+                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1) */}
+                <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Greitas</span>
+
                 {error && (
-                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-2" role="alert">
+                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2" role="alert">
                         <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
-                        <p className="text-caption text-red-700">{error}</p>
+                        <p className="text-caption text-feedback-danger">{error}</p>
                     </div>
                 )}
 
@@ -259,7 +259,7 @@ export default function QuickWorkTimer({ compact = false }) {
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isQuickWorking
                             ? 'bg-session-quickWork-surface border-red-200 text-red-900 ring-1 ring-red-200'
-                            : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-gray-300'
+                            : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-line'
                 )}
                 title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
             >
@@ -272,7 +272,7 @@ export default function QuickWorkTimer({ compact = false }) {
                         )}
                     </div>
                     <div className="flex flex-col items-start leading-tight">
-                        <span className="text-xs font-bold uppercase tracking-wider text-ink-muted">Greitas</span>
+                        <span className="text-caption font-bold uppercase tracking-wider text-ink-muted">Greitas</span>
                         {isQuickWorking && <span className="text-caption font-semibold text-session-quickWork-accent">Vyksta...</span>}
                     </div>
                 </div>
@@ -285,9 +285,9 @@ export default function QuickWorkTimer({ compact = false }) {
             </button>
 
             {error && (
-                <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-3" role="alert">
+                <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-3" role="alert">
                     <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-red-700">{error}</p>
+                    <p className="text-body text-feedback-danger">{error}</p>
                 </div>
             )}
 

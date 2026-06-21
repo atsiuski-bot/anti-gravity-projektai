@@ -643,9 +643,9 @@ export default function WorkPlanner() {
             {/* Floating button removed */}
 
             {error && (
-                <div role="alert" className="mb-3 bg-red-50 border-l-4 border-feedback-danger p-3 rounded-card flex items-start gap-2">
+                <div role="alert" className="mb-3 bg-feedback-danger/10 border-l-4 border-feedback-danger p-3 rounded-card flex items-start gap-2">
                     <AlertCircle className="w-5 h-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-red-700">
+                    <p className="text-body text-feedback-danger">
                         <span className="font-semibold">Klaida: </span>{error}
                     </p>
                 </div>
@@ -914,7 +914,7 @@ export default function WorkPlanner() {
                         className="bg-surface-card rounded-modal shadow-xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-300 focus-visible:outline-none"
                     >
                         {feedbackVariant === 'approved' ? (
-                            <div className="w-16 h-16 bg-green-100 text-feedback-success rounded-full flex items-center justify-center mx-auto mb-4">
+                            <div className="w-16 h-16 bg-feedback-success/10 text-feedback-success rounded-full flex items-center justify-center mx-auto mb-4">
                                 <CheckCircle2 className="w-8 h-8" aria-hidden="true" />
                             </div>
                         ) : (
