@@ -4,7 +4,7 @@ import { LogOut, User, WifiOff } from 'lucide-react';
 import BottomNavigation from './BottomNavigation';
 import InstallPrompt from './InstallPrompt';
 import IconButton from './ui/IconButton';
-import { checkAndPromoteTasks, shouldRunAutomation } from '../utils/automationUtils';
+import { runDailyAutomation } from '../utils/automationUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { useSessionNotification } from '../hooks/useSessionNotification';
 import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
@@ -19,10 +19,12 @@ export default function Layout({ children }) {
         admin: 'Administratorius'
     };
 
-    // Run task automation once per day for managers/admins
+    // Run the full daily automation (promote + archive) once per day for managers/admins.
+    // Both this and Dashboard call the same gated entry point, so neither can consume the
+    // daily latch with only a partial subset of the work.
     useEffect(() => {
-        if (isManagerRole(userRole) && shouldRunAutomation()) {
-            checkAndPromoteTasks();
+        if (isManagerRole(userRole)) {
+            runDailyAutomation();
         }
     }, [userRole]);
 

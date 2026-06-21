@@ -89,6 +89,19 @@ export function shouldRunAutomation() {
 }
 
 /**
+ * Runs the FULL daily automation set (promote + archive) behind the once-per-day latch.
+ * Both Dashboard and Layout call this. Previously each gated `shouldRunAutomation()` and then
+ * ran a different subset (Dashboard: promote + archive; Layout: promote only), so whichever
+ * mounted first consumed the latch — and when Layout won, archiveOldTasks never ran that day.
+ * Defining the latch and the work it gates together makes them impossible to drift.
+ */
+export async function runDailyAutomation() {
+    if (!shouldRunAutomation()) return;
+    await checkAndPromoteTasks();
+    await archiveOldTasks();
+}
+
+/**
  * ARCHIVE OLD TASKS
  * Checks for tasks that are 'completed' or 'confirmed' and were finished BEFORE today.
  * Moves them to 'archived_tasks'.

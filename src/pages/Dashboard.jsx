@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
 import AdminBootstrap from '../components/AdminBootstrap';
-import { shouldRunAutomation, checkAndPromoteTasks, archiveOldTasks } from '../utils/automationUtils';
+import { runDailyAutomation } from '../utils/automationUtils';
 const ManagerView = React.lazy(() => import('./ManagerView'));
 const WorkerView = React.lazy(() => import('./WorkerView'));
 
@@ -18,10 +18,9 @@ export default function Dashboard() {
             // localStorage flag, suppress the manager's run for the rest of the day.
             // Mirrors the manager-gated trigger in Layout.jsx. `userRole` is in the deps
             // so the effect re-runs once auth resolves the role (it is undefined at mount).
-            if (isManagerRole(userRole) && shouldRunAutomation()) {
+            if (isManagerRole(userRole)) {
                 console.log("[Dashboard] Running daily automation...");
-                await checkAndPromoteTasks();
-                await archiveOldTasks();
+                await runDailyAutomation();
             }
         };
         runAutomation();
