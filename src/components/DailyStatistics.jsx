@@ -722,10 +722,21 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
         }
     };
 
-    const handleTimeChange = async (task, newTotalMinutes) => {
+    const handleTimeChange = async (task, newTotalMinutes, reason) => {
+        // A manual time edit changes payable hours, so it must be justified. Block an
+        // unattributed write and tell the editor why instead of silently overriding.
+        const trimmedReason = (reason || '').trim();
+        if (!trimmedReason) {
+            setActionError("Nurodykite laiko keitimo priežastį.");
+            return;
+        }
         try {
             const collectionName = (task.archivedAt || task.isDeleted || task.status === 'deleted') ? 'archived_tasks' : 'tasks';
-            
+
+            // Snapshot the pre-edit total BEFORE writing, so the report row can show "from → to"
+            // and an auditor can see what the tracked figure was before the override.
+            const previousTotalMinutes = Math.round(calculateCurrentTotalMinutes(task)) || 0;
+
             // Calculate how much time is already accounted for in timeAdjustments
             let adjustmentsTotal = 0;
             if (task.timeAdjustments && Array.isArray(task.timeAdjustments)) {
@@ -745,26 +756,32 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                 manualMinutes: newManualMinutes,
                 timeChanged: true,
                 timeChangedBy: currentUser?.uid || 'unknown',
+                timeChangedByName: currentUser?.displayName || currentUser?.email || 'Nežinomas',
                 timeChangedAt: new Date().toISOString(),
+                timeChangedFrom: previousTotalMinutes,
+                timeChangedTo: (newTotalMinutes || 0),
+                timeChangedReason: trimmedReason,
                 updatedAt: new Date().toISOString()
             };
-            
+
             if (!task.id) throw new Error("Missing task ID");
             await updateDoc(doc(db, collectionName, task.id), updates);
 
             // True database update to ensure time goes to statistics
-            const currentTotal = Math.round(calculateCurrentTotalMinutes(task)) || 0;
-            const difference = (newTotalMinutes || 0) - currentTotal;
+            const difference = (newTotalMinutes || 0) - previousTotalMinutes;
 
             if (difference !== 0) {
                 const completedDateDate = task.completedAt ? new Date(task.completedAt) : new Date();
-                
-                // Construct payload explicitly removing undefined to prevent Firestore assertions
+
+                // Construct payload explicitly removing undefined to prevent Firestore assertions.
+                // Carries the reason + who made it so the adjustment row is self-describing.
                 const payload = {
                     taskId: task.id || 'unknown_id',
                     taskTitle: `🕒 Laiko korekcija: ${task.title || 'Užduotis'}`,
+                    reason: trimmedReason,
                     userId: task.assignedUserId || task.creatorId || 'unknown',
                     userName: task.assignedUserName || task.creatorName || 'Nežinomas darbuotojas',
+                    adjustedBy: currentUser?.uid || 'unknown',
                     startTime: completedDateDate.toISOString(),
                     endTime: new Date().toISOString(),
                     durationMinutes: difference,
@@ -772,13 +789,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     createdAt: new Date().toISOString(),
                     isManualAdjustment: true
                 };
-                
+
                 await addDoc(collection(db, 'work_sessions'), payload);
             }
 
             setFinishedTasks(prev => prev.map(t =>
                 t.id === task.id ? { ...t, ...updates } : t
             ));
+            setActionError('');
         } catch (err) {
             console.error('Error changing task time:', err);
             setActionError("Laiko keitimas nepavyko. Patikrinkite įvesties reikšmes ir bandykite iš naujo.");
@@ -1228,19 +1246,22 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
     const [editingTime, setEditingTime] = useState(false);
     const [editHours, setEditHours] = useState(0);
     const [editMins, setEditMins] = useState(0);
+    const [editReason, setEditReason] = useState('');
     const canEditTime = (userRole === 'admin');
 
     const startTimeEdit = () => {
         const totalMins = Math.round(calculateCurrentTotalMinutes(task));
         setEditHours(Math.floor(totalMins / 60));
         setEditMins(totalMins % 60);
+        setEditReason('');
         setEditingTime(true);
     };
 
     const saveTimeEdit = () => {
         const newTotal = (editHours * 60) + editMins;
-        onTimeChange(task, newTotal);
+        onTimeChange(task, newTotal, editReason);
         setEditingTime(false);
+        setEditReason('');
     };
 
     return (
@@ -1294,11 +1315,23 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                 </div>
                 <div className="bg-surface-sunken px-1.5 py-0.5 rounded font-mono">
                     {editingTime ? (
-                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                            <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />h
-                            <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
-                            <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" onClick={saveTimeEdit} />
-                            <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => setEditingTime(false)} />
+                        <div className="flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
+                            <div className="flex items-center gap-1">
+                                <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />h
+                                <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                            </div>
+                            <input
+                                type="text"
+                                value={editReason}
+                                onChange={(e) => setEditReason(e.target.value)}
+                                aria-label="Laiko keitimo priežastis"
+                                placeholder="Keitimo priežastis (privaloma)"
+                                className="w-40 px-1.5 py-0.5 border border-line rounded text-caption font-sans"
+                            />
+                            <div className="flex items-center gap-1">
+                                <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={saveTimeEdit} />
+                                <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => { setEditingTime(false); setEditReason(''); }} />
+                            </div>
                         </div>
                     ) : (
                         <span className="flex items-center gap-1">
@@ -1314,7 +1347,19 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                         </span>
                     )}
                     {task.timeChanged && (
-                        <span className="block text-feedback-danger font-bold text-caption uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</span>
+                        <span className="block mt-0.5">
+                            <span className="block text-feedback-danger font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</span>
+                            {Number.isFinite(task.timeChangedFrom) && Number.isFinite(task.timeChangedTo) && (
+                                <span className="block text-caption text-ink-muted font-sans normal-case font-normal">
+                                    {formatMinutesToTimeString(task.timeChangedFrom)} → {formatMinutesToTimeString(task.timeChangedTo)}
+                                </span>
+                            )}
+                            {task.timeChangedReason && (
+                                <span className="block text-caption text-ink-muted font-sans normal-case font-normal italic break-words">
+                                    „{task.timeChangedReason}“{task.timeChangedByName ? ` — ${formatDisplayName(task.timeChangedByName)}` : ''}
+                                </span>
+                            )}
+                        </span>
                     )}
                 </div>
                 {task.deadline && (
@@ -1402,19 +1447,22 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
     const [editingTimeTaskId, setEditingTimeTaskId] = useState(null);
     const [editHours, setEditHours] = useState(0);
     const [editMins, setEditMins] = useState(0);
+    const [editReason, setEditReason] = useState('');
     const canEditTime = (userRole === 'admin');
 
     const startTimeEdit = (task) => {
         const totalMins = Math.round(calculateCurrentTotalMinutes(task));
         setEditHours(Math.floor(totalMins / 60));
         setEditMins(totalMins % 60);
+        setEditReason('');
         setEditingTimeTaskId(task.id);
     };
 
     const saveTimeEdit = (task) => {
         const newTotal = (editHours * 60) + editMins;
-        onTimeChange(task, newTotal);
+        onTimeChange(task, newTotal, editReason);
         setEditingTimeTaskId(null);
+        setEditReason('');
     };
 
     return (
@@ -1539,11 +1587,23 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                             </td>
                                             <td className="px-1 py-2 text-right text-ink-strong font-mono text-sm whitespace-nowrap">
                                                 {editingTimeTaskId === task.id ? (
-                                                    <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                                                        <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h
-                                                        <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
-                                                        <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" onClick={() => saveTimeEdit(task)} />
-                                                        <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => setEditingTimeTaskId(null)} />
+                                                    <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
+                                                        <div className="flex items-center gap-1">
+                                                            <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h
+                                                            <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                                                        </div>
+                                                        <input
+                                                            type="text"
+                                                            value={editReason}
+                                                            onChange={(e) => setEditReason(e.target.value)}
+                                                            aria-label="Laiko keitimo priežastis"
+                                                            placeholder="Keitimo priežastis (privaloma)"
+                                                            className="w-44 px-1.5 py-0.5 border border-line rounded text-caption font-sans text-left"
+                                                        />
+                                                        <div className="flex items-center gap-1">
+                                                            <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={() => saveTimeEdit(task)} />
+                                                            <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => { setEditingTimeTaskId(null); setEditReason(''); }} />
+                                                        </div>
                                                     </div>
                                                 ) : (
                                                     <>
@@ -1562,7 +1622,19 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                     </>
                                                 )}
                                                 {task.timeChanged && (
-                                                    <div className="text-feedback-danger font-bold text-caption uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</div>
+                                                    <div className="mt-0.5">
+                                                        <div className="text-feedback-danger font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</div>
+                                                        {Number.isFinite(task.timeChangedFrom) && Number.isFinite(task.timeChangedTo) && (
+                                                            <div className="text-caption text-ink-muted font-sans normal-case font-normal">
+                                                                {formatMinutesToTimeString(task.timeChangedFrom)} → {formatMinutesToTimeString(task.timeChangedTo)}
+                                                            </div>
+                                                        )}
+                                                        {task.timeChangedReason && (
+                                                            <div className="text-caption text-ink-muted font-sans normal-case font-normal italic break-words max-w-[12rem] ml-auto">
+                                                                „{task.timeChangedReason}“{task.timeChangedByName ? ` — ${formatDisplayName(task.timeChangedByName)}` : ''}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </td>
                                             <td className="px-1 py-2 whitespace-nowrap text-caption text-ink-muted">
