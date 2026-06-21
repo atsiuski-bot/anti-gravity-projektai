@@ -13,25 +13,31 @@ service cloud.firestore {
     }
 
     // Active = authenticated, the user doc exists, and isDisabled is not true.
-    // `!= true` passes for both `false` and a missing/null field, so legacy user
-    // documents without the field still work. (Repeated get()/exists() on the same
-    // user doc are cached within one rule evaluation, so the role helpers below add
-    // no extra document-read cost beyond this single lookup.)
+    // We read the field with .get('isDisabled', false) — NOT dot notation. In
+    // Firestore rules, accessing a MISSING map key with `.field` raises an
+    // evaluation error that denies the rule; only .get(key, default) is safe for an
+    // absent field. Legacy user docs created before the isDisabled convention have
+    // no such field, so dot access there silently denied EVERY team-wide read for
+    // those users (their own-doc reads still passed via the uid match, so the app
+    // shell rendered while every collection listener failed permission-denied).
+    // The default `false` => a missing field is treated as "not disabled" = active.
+    // (Repeated get()/exists() on the same user doc are cached within one rule
+    // evaluation, so the role helpers below add no extra document-read cost.)
     function isUserActive() {
       return isAuthenticated() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isDisabled != true;
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isDisabled', false) != true;
     }
 
     function isAdmin() {
       return isUserActive() &&
-             (getUserData().role == 'admin' ||
-              getUserData().role == 'Administratorius');
+             (getUserData().get('role', '') == 'admin' ||
+              getUserData().get('role', '') == 'Administratorius');
     }
 
     function isManager() {
       return isUserActive() &&
-             getUserData().role == 'manager';
+             getUserData().get('role', '') == 'manager';
     }
 
     function isManagerOrAdmin() {
