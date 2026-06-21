@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
 import { UserCog, ShieldAlert, Check, Sliders, Trash2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { pauseTask } from '../utils/taskActions';
+import { logError } from '../utils/errorLog';
 import { formatDisplayName } from '../utils/formatters';
 import { getContrastingTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
@@ -141,6 +143,18 @@ function ColorSlider({ label, labelClass, value, onChange, track, accent }) {
     );
 }
 
+// True when the user is mid-session (any live timer). A disabled user is force-logged-out
+// and can no longer stop their own timer, so we must settle this before flipping isDisabled.
+function hasOpenSession(user) {
+    return !!(
+        user.activeSession ||
+        user.workStatus?.status === 'running' ||
+        user.breakState?.isTakingBreak ||
+        user.callState?.isCalling ||
+        user.quickWorkState?.isQuickWorking
+    );
+}
+
 export default function UserManagement() {
     const { currentUser, userRole } = useAuth();
     const [users, setUsers] = useState([]);
@@ -272,11 +286,48 @@ export default function UserManagement() {
         setBlockTarget(user);
     };
 
+    // Settle a mid-session worker before disabling them. A disabled user is force-logged-out
+    // and cannot stop their own timer, so otherwise the running segment is never logged and
+    // they show "working" forever. We pause a running TASK (its work_sessions log is allowed
+    // for managers/admins) and clear every live-session flag on the user doc. Non-task break/
+    // call/quick-work tails cannot be logged by an admin (those collections are owner-only),
+    // but clearing the flags at least removes the ghost session. Failure here must not block
+    // the disable itself, so it is logged and swallowed.
+    const closeActiveSessionForUser = async (user) => {
+        try {
+            const activeTaskId = user.activeSession?.taskId || user.workStatus?.activeTaskId;
+            if (activeTaskId) {
+                const taskSnap = await getDoc(doc(db, 'tasks', activeTaskId));
+                if (taskSnap.exists()) {
+                    const t = { id: taskSnap.id, ...taskSnap.data() };
+                    if (t.timerStatus === 'running') {
+                        await pauseTask(t); // logs the segment + clears the user's activeSession/workStatus
+                    }
+                }
+            }
+            await updateDoc(doc(db, 'users', user.id), {
+                activeSession: null,
+                'workStatus.isWorking': false,
+                'workStatus.status': 'idle',
+                'workStatus.activeTaskId': null,
+                'breakState.isTakingBreak': false,
+                'callState.isCalling': false,
+                'quickWorkState.isQuickWorking': false
+            });
+        } catch (e) {
+            logError(e, { source: 'closeActiveSessionForUser', userId: user.id });
+        }
+    };
+
     const confirmBlock = async () => {
         if (!blockTarget) return;
         const user = blockTarget;
         setBlocking(true);
         try {
+            // Only on DISABLE (not on re-enable): close any open session first.
+            if (!user.isDisabled && hasOpenSession(user)) {
+                await closeActiveSessionForUser(user);
+            }
             const userRef = doc(db, 'users', user.id);
             await updateDoc(userRef, { isDisabled: !user.isDisabled });
             setBlockTarget(null);
@@ -477,7 +528,13 @@ export default function UserManagement() {
                     open
                     title={blockTarget.isDisabled ? 'Atblokuoti vartotoją?' : 'Blokuoti / ištrinti vartotoją?'}
                     message={`Vartotojas: ${formatDisplayName(blockTarget.displayName) || blockTarget.email}.`}
-                    warning={blockTarget.isDisabled ? undefined : 'Vartotojas neteks prieigos prie sistemos.'}
+                    warning={
+                        blockTarget.isDisabled
+                            ? undefined
+                            : hasOpenSession(blockTarget)
+                                ? 'Vartotojas neteks prieigos prie sistemos. Jis šiuo metu turi aktyvią sesiją — ji bus automatiškai užbaigta.'
+                                : 'Vartotojas neteks prieigos prie sistemos.'
+                    }
                     confirmLabel={blockTarget.isDisabled ? 'Atblokuoti' : 'Blokuoti'}
                     variant={blockTarget.isDisabled ? 'primary' : 'danger'}
                     loading={blocking}
