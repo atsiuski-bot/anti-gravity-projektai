@@ -4,9 +4,10 @@ import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'fire
 import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { addComment } from '../utils/commentActions';
-import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, Coffee, Info, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, Coffee, Info, AlertTriangle, Download } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
+import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
 
 import DailyStatistics from './DailyStatistics';
@@ -537,6 +538,63 @@ export default function Reports({ users }) {
         return Math.round(totalMins / workDaysCount);
     };
 
+    // Export the already-computed hours summary to a CSV the manager can hand to payroll.
+    // One row per worker-day (work + break, HH:MM), then a per-worker "Viso" total row.
+    // Mirrors TaskHistory.handleExportCSV: same escapeCSV rules + UTF-8 BOM so Excel reads
+    // the Lithuanian characters correctly. workData is whatever the current month resolved to.
+    const handleExportHoursCSV = () => {
+        const escapeCSV = (str) => {
+            if (str === null || str === undefined) return '';
+            const s = String(str);
+            if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+                return `"${s.replace(/"/g, '""')}"`;
+            }
+            return s;
+        };
+
+        const formatMinutesToHHMM = (totalMinutes) => {
+            if (!totalMinutes || isNaN(totalMinutes)) return '00:00';
+            const hours = Math.floor(Math.abs(totalMinutes) / 60);
+            const mins = Math.round(Math.abs(totalMinutes) % 60);
+            return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+        };
+
+        const headers = ['Darbuotojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)'];
+        const rows = [];
+
+        workData.forEach(userStats => {
+            const workerName = formatDisplayName(userStats.name);
+            Object.entries(userStats.days)
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .forEach(([date, dayData]) => {
+                    rows.push([
+                        escapeCSV(workerName),
+                        escapeCSV(date),
+                        escapeCSV(formatMinutesToHHMM(dayData.totalWork)),
+                        escapeCSV(formatMinutesToHHMM(dayData.totalBreak)),
+                    ].join(','));
+                });
+            rows.push([
+                escapeCSV(workerName),
+                escapeCSV('Viso'),
+                escapeCSV(formatMinutesToHHMM(userStats.totalMinutes)),
+                escapeCSV(formatMinutesToHHMM(userStats.totalBreakMinutes)),
+            ].join(','));
+        });
+
+        const csvContent = [headers.join(','), ...rows].join('\n');
+        // BOM so Excel recognises UTF-8 (Lithuanian diacritics).
+        const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `darbo_valandos_${selectedMonth}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     // Group tasks by date
     const groupedTasks = React.useMemo(() => {
         const groups = {};
@@ -927,6 +985,15 @@ export default function Reports({ users }) {
                                 className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                             />
                         </div>
+                        <Button
+                            variant="success"
+                            icon={Download}
+                            onClick={handleExportHoursCSV}
+                            disabled={loading || workData.length === 0}
+                            className="ml-auto self-end"
+                        >
+                            Eksportuoti CSV
+                        </Button>
                     </div>
 
                     {loading && (
