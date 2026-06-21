@@ -7,7 +7,7 @@ import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
 import { logError } from '../utils/errorLog';
 import { useAuth } from '../context/AuthContext';
-import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
+import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
 
@@ -15,7 +15,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 
 export default function TaskTimerControls({ task, onShowModal: _onShowModal, role }) {
     const { currentUser, userRole, userData, setOptimisticUserData } = useAuth();
-    const { isSecondarySessionActive } = useActiveSessionStatus();
+    const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
     const isAssignedToMe = currentUser?.uid === task.assignedUserId;
 
     // Strict UI logic: The task document (timerStatus) is the ULTIMATE source of truth for the timer.
@@ -385,7 +385,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         icon={Play}
                         onClick={isPaused ? handleResume : handleStart}
                         disabled={isSecondarySessionActive}
-                        title={isSecondarySessionActive ? 'Kitas veiksmas jau aktyvus' : undefined}
+                        title={isSecondarySessionActive ? getInterruptionReason(activeSessionType) : undefined}
                         className="flex-[2] whitespace-nowrap"
                     >
                         {isPaused ? 'Tęsti' : 'Pradėti'} {elapsedString !== '00:00' ? elapsedString : ''}
@@ -399,7 +399,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     icon={Square}
                     onClick={openFinish}
                     disabled={isSecondarySessionActive}
-                    title={isSecondarySessionActive ? 'Kitas veiksmas jau aktyvus' : undefined}
+                    title={isSecondarySessionActive ? getInterruptionReason(activeSessionType) : undefined}
                     className="flex-1 whitespace-nowrap text-ink-muted"
                 >
                     Užbaigti

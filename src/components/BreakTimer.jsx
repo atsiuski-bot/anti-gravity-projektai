@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
+import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { Coffee, Play, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
@@ -111,7 +111,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                 <button
                     onClick={handleToggleBreak}
                     disabled={isDisabled}
-                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pertrauka")}
+                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                     className={clsx(
                         "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -121,7 +121,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                                 ? 'bg-session-break-accent text-white ring-2 ring-amber-100'
                                 : 'text-ink hover:bg-surface-sunken'
                     )}
-                    title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pertrauka")}
+                    title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                 >
                     {isTakingBreak ? (
                         <Play className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -157,7 +157,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                 <button
                     onClick={handleToggleBreak}
                     disabled={isDisabled}
-                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pertrauka")}
+                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                     className={clsx(
                         "inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2.5 rounded-control text-body font-medium transition-colors shadow-sm",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -166,7 +166,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                                 ? 'bg-session-break-surface text-amber-800 hover:bg-amber-100 border border-amber-200'
                                 : 'bg-surface-card text-ink hover:bg-surface-sunken border border-line'
                     )}
-                    title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
+                    title={isDisabled ? getInterruptionReason(activeSessionType) : ""}
                 >
                     {isTakingBreak ? (
                         <>

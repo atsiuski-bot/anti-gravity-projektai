@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
+import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { Zap, Square, Check, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes } from '../utils/timeUtils';
@@ -81,7 +81,7 @@ QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
 
 export default function QuickWorkTimer({ compact = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
-    const { isSecondarySessionActive } = useActiveSessionStatus();
+    const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
     // useTimerState now handles generic 'quickWork' type
     const {
         isActive: isQuickWorking,
@@ -212,7 +212,7 @@ export default function QuickWorkTimer({ compact = false }) {
                 <button
                     onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                     disabled={isDisabled}
-                    aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Greitas darbas")}
+                    aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
                     className={clsx(
                         "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -222,7 +222,7 @@ export default function QuickWorkTimer({ compact = false }) {
                                 ? 'bg-session-quickWork-shell text-white ring-2 ring-red-200 shadow-lg shadow-red-500/20'
                                 : 'text-ink hover:bg-surface-sunken'
                     )}
-                    title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Greitas darbas")}
+                    title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
                 >
                     {isQuickWorking ? (
                         <Square className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -252,7 +252,7 @@ export default function QuickWorkTimer({ compact = false }) {
             <button
                 onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                 disabled={isDisabled}
-                aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti greitą darbą")}
+                aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti greitą darbą")}
                 className={clsx(
                     "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition-all shadow-sm active:scale-95 border min-w-[140px]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -261,7 +261,7 @@ export default function QuickWorkTimer({ compact = false }) {
                             ? 'bg-session-quickWork-surface border-red-200 text-red-900 ring-1 ring-red-200'
                             : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-line'
                 )}
-                title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
+                title={isDisabled ? getInterruptionReason(activeSessionType) : ""}
             >
                 <div className="flex items-center gap-3">
                     <div className={clsx("rounded-control", isQuickWorking ? "text-session-quickWork-accent" : "text-ink-muted")}>

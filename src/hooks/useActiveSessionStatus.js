@@ -1,6 +1,20 @@
 import { useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 
+// Human label for whatever session is currently blocking a new action, so a disabled
+// timer can say *which* activity is in progress instead of a generic "another action".
+const SESSION_TYPE_LABELS = {
+    break: 'pertrauka',
+    call: 'skambutis',
+    quickWork: 'greitas darbas',
+    task: 'užduotis',
+};
+
+export const getActiveSessionLabel = (type) => SESSION_TYPE_LABELS[type] || 'kitas veiksmas';
+
+// Reason shown on a disabled timer (aria-label + tooltip): names the in-progress activity.
+export const getInterruptionReason = (type) => `Šiuo metu vyksta ${getActiveSessionLabel(type)}`;
+
 export const useActiveSessionStatus = () => {
     const { userData } = useAuth();
 

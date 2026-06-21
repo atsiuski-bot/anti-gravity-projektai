@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
-import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
+import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { Phone, Square, Check, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
@@ -230,7 +230,7 @@ export default function CallTimer({ compact = false }) {
                 <button
                     onClick={handleToggleCall}
                     disabled={isDisabled}
-                    aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti skambutį")}
+                    aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
                     className={clsx(
                         "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -240,7 +240,7 @@ export default function CallTimer({ compact = false }) {
                                 ? 'bg-session-call-accent text-white ring-2 ring-blue-100'
                                 : 'text-ink hover:bg-surface-sunken'
                     )}
-                    title={isCalling ? "Baigti skambutį" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti skambutį")}
+                    title={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
                 >
                     {isCalling ? (
                         <Square className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -270,7 +270,7 @@ export default function CallTimer({ compact = false }) {
             <button
                 onClick={handleToggleCall}
                 disabled={isDisabled}
-                aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? "Kitas veiksmas jau aktyvus" : "Pradėti skambutį")}
+                aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
                 className={clsx(
                     "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition-all shadow-sm active:scale-95 border min-w-[140px]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -279,7 +279,7 @@ export default function CallTimer({ compact = false }) {
                             ? clsx('bg-session-call-surface border-line ring-1 ring-line', getSessionColors('call').accent)
                             : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-line'
                 )}
-                title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
+                title={isDisabled ? getInterruptionReason(activeSessionType) : ""}
             >
                 <div className="flex items-center gap-3">
                     <div className={clsx("rounded-control", isCalling ? "text-session-call-accent" : "text-ink-muted")}>
