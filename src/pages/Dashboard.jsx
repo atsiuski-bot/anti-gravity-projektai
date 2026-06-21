@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
 import AdminBootstrap from '../components/AdminBootstrap';
 import { shouldRunAutomation, checkAndPromoteTasks, archiveOldTasks } from '../utils/automationUtils';
+import { Spinner } from '../components/ui/Loading';
 const ManagerView = React.lazy(() => import('./ManagerView'));
 const WorkerView = React.lazy(() => import('./WorkerView'));
 
@@ -32,7 +33,7 @@ export default function Dashboard() {
             <AdminBootstrap />
             <React.Suspense fallback={
                 <div className="flex items-center justify-center p-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900"></div>
+                    <Spinner />
                 </div>
             }>
                 {isManagerRole(userRole) ? <ManagerView /> : <WorkerView />}

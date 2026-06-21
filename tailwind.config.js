@@ -42,6 +42,7 @@ export default {
             borderRadius: { input: '6px', control: '8px', card: '12px', modal: '16px' },
             zIndex: { header: '20', nav: '30', backdrop: '40', modal: '50', toast: '60', top: '70' },
             transitionDuration: { fast: '150', base: '200', slow: '300' },
+            spacing: { navclear: '8rem', 'navclear-lg': '9rem' },
             minHeight: { touch: '44px' },
             minWidth: { touch: '44px' },
         },

@@ -5,7 +5,7 @@
 > `theme.extend` implements this table and components reference token names — not raw
 > Tailwind utilities with arbitrary values.
 
-**Status:** Proposed (config not yet wired) · See [ADR 0001](../adr/0001-visual-design-system.md).
+**Status:** Active — wired in `tailwind.config.js` · See [ADR 0001](../adr/0001-visual-design-system.md).
 
 Values are expressed as Tailwind palette references where possible (so the migration is
 mechanical) with the resolved hex in parentheses.
@@ -46,13 +46,17 @@ Each session has a `shell` (full-screen bg), a `surface` (the running card), and
 
 | Session | `shell` | `surface` | `accent` | Label (LT) |
 |---|---|---|---|---|
-| `session.quickWork` | red-500 (`#EF4444`) | red-50 (`#FEF2F2`) | red-600 (`#DC2626`) | "Greitas darbas" |
+| `session.quickWork` | red-500 (`#EF4444`) | red-50 (`#FEF2F2`) | red-700 (`#B91C1C`) | "Greitas darbas" |
 | `session.call` | blue-100 (`#DBEAFE`) | blue-50 (`#EFF6FF`) | blue-600 (`#2563EB`) | "Skambutis" |
-| `session.break` | amber-100 (`#FEF3C7`) | amber-50 (`#FFFBEB`) | amber-600 (`#D97706`) | "Pertrauka" |
+| `session.break` | amber-100 (`#FEF3C7`) | amber-50 (`#FFFBEB`) | amber-700 (`#B45309`) | "Pertrauka" |
 | `session.task` | green-200 (`#BBF7D0`) | green-100 (`#DCFCE7`) | green-700 (`#15803D`) | "Vyksta darbas" |
 
 > **call** is `blue`, never `sky` — unify `CallTimer` onto this. Saturated red is **only**
 > `session.quickWork`.
+>
+> **Accent contrast note:** the `quickWork` accent (`#B91C1C`) and `break` accent (`#B45309`)
+> were darkened from red-600/amber-600 to red-700/amber-700 so the timer/icon/label text clears
+> ≥4.5:1 against the session `surface` tint (WCAG 1.4.3).
 
 ### Feedback (messages & validation — never decorative)
 
@@ -76,7 +80,7 @@ a light gray.
 |---|---|---|---|
 | URGENT | `#000000` | white | 21:1 ✓ |
 | HIGH | `#666666` | white | 5.74:1 ✓ |
-| **MEDIUM (default)** | `#A3A3A3` | **dark `#111111`** | **was white = 2.52:1 FAIL → use dark** |
+| **MEDIUM (default)** | `#A3A3A3` | **dark `#111111`** | **white was 2.52:1 FAIL → fixed; now uses dark** |
 | LOW | `#E0E0E0` | dark `#111111` | ✓ |
 | VERY_LOW | `#FAFAFA` | dark `#111111` | ✓ |
 
@@ -121,7 +125,7 @@ Banned for content: `text-[8px]`, `text-[9px]`, `text-[10px]`, `text-[11px]`.
 | Card padding (mobile / desktop) | `4` (16) / `5`–`6` (20–24) |
 | Section gap | `4` (16) |
 | Modal body padding | `6` (24) |
-| Bottom content clearance | `--nav-clearance` token (derive from nav height; replaces `pb-32`/`pb-36`) |
+| Bottom content clearance | `pb-navclear` (8rem) / `pb-navclear-lg` (9rem) — names the bottom-nav clearance; replaces raw `pb-32`/`pb-36` |
 
 ---
 
@@ -185,9 +189,9 @@ markup keeps working during migration).
 
 ---
 
-## 8. Proposed `tailwind.config.js` (`theme.extend`)
+## 8. Active `tailwind.config.js` (`theme.extend`)
 
-Target end state, wired in [ADR 0001](../adr/0001-visual-design-system.md) follow-up #1.
+Wired per [ADR 0001](../adr/0001-visual-design-system.md) follow-up #1.
 
 **Class-name keys are collision-safe** — they do not override Tailwind defaults or clash with
 existing utilities (which is why text color is `ink`, border color is `line`, and radii use
@@ -203,9 +207,9 @@ extend: {
     ink:     { strong: '#111827', DEFAULT: '#374151', muted: '#6B7280' }, // text-ink, -strong, -muted
     line:    '#E5E7EB',                                                   // border-line
     session: {
-      quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#DC2626' },
+      quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#B91C1C' },
       call:      { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB' },
-      break:     { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#D97706' },
+      break:     { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309' },
       task:      { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D' },
     },
     feedback: { success: '#16A34A', warning: '#F59E0B', danger: '#DC2626', info: '#4F46E5', offline: '#1E293B', scrim: 'rgb(0 0 0 / 0.5)' },

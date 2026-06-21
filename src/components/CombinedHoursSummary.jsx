@@ -195,7 +195,7 @@ export default function CombinedHoursSummary() {
             // Map session type to display properties
             let displayProps = {
                 label: 'Veikla',
-                colorClass: 'bg-gray-100 text-gray-800',
+                colorClass: 'bg-surface-sunken text-ink',
                 startTime: user.activeSession.startTime
             };
 
@@ -240,7 +240,7 @@ export default function CombinedHoursSummary() {
                     // Fallback for unknown types
                     displayProps = {
                         label: user.activeSession.type || 'Veikla',
-                        colorClass: 'bg-gray-100 text-gray-800',
+                        colorClass: 'bg-surface-sunken text-ink',
                         startTime: user.activeSession.startTime
                     };
             }
@@ -258,20 +258,20 @@ export default function CombinedHoursSummary() {
     if (error) return null;
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
+        <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden mb-6">
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
                 aria-expanded={!isCollapsed}
                 aria-label="Komandos savaitės darbai"
-                className="w-full flex items-center justify-between p-4 min-h-touch bg-gray-50 hover:bg-gray-100 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+                className="w-full flex items-center justify-between p-4 min-h-touch bg-surface-sunken hover:bg-surface-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
             >
                 <div className="flex items-center gap-2">
                     <Users className="w-5 h-5 text-brand" aria-hidden="true" />
-                    <h3 className="font-semibold text-gray-900">Komandos darbai (Savaitės)</h3>
+                    <h3 className="font-semibold text-ink-strong">Komandos darbai (Savaitės)</h3>
                 </div>
                 {isCollapsed
-                    ? <ChevronDown className="w-5 h-5 text-gray-500" aria-hidden="true" />
-                    : <ChevronUp className="w-5 h-5 text-gray-500" aria-hidden="true" />}
+                    ? <ChevronDown className="w-5 h-5 text-ink-muted" aria-hidden="true" />
+                    : <ChevronUp className="w-5 h-5 text-ink-muted" aria-hidden="true" />}
             </button>
 
             {!isCollapsed && (
@@ -309,7 +309,7 @@ export default function CombinedHoursSummary() {
                                             className="w-3 h-3 rounded-full flex-shrink-0"
                                             style={{ backgroundColor: user.color }}
                                         />
-                                        <span className="text-sm font-medium text-gray-900 truncate" title={user.name}>
+                                        <span className="text-sm font-medium text-ink-strong truncate" title={user.name}>
                                             {user.name}
                                         </span>
                                     </div>
@@ -318,10 +318,10 @@ export default function CombinedHoursSummary() {
                                     <div className="flex-1 flex flex-col gap-1.5">
                                         {/* Planned Bar */}
                                         <div className="flex items-center gap-2">
-                                            <span className="text-body-lg text-gray-500 font-mono w-16 text-right tabular-nums">
+                                            <span className="text-body-lg text-ink-muted font-mono w-16 text-right tabular-nums">
                                                 {user.plannedHours.toFixed(1)}h
                                             </span>
-                                            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
+                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden relative">
                                                 <div
                                                     className="absolute top-0 left-0 h-full bg-blue-300 rounded-full"
                                                     style={{ width: `${(user.plannedHours / combinedStats.max) * 100}%` }}
@@ -331,12 +331,12 @@ export default function CombinedHoursSummary() {
 
                                         {/* Worked Bar */}
                                         <div className="flex items-center gap-2">
-                                            <span className="text-body-lg text-gray-900 font-bold font-mono w-16 text-right tabular-nums">
+                                            <span className="text-body-lg text-ink-strong font-bold font-mono w-16 text-right tabular-nums">
                                                 {user.workedHours.toFixed(1)}h
                                             </span>
-                                            <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden relative">
+                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden relative">
                                                 <div
-                                                    className="absolute top-0 left-0 h-full bg-green-500 rounded-full"
+                                                    className="absolute top-0 left-0 h-full bg-feedback-success rounded-full"
                                                     style={{ width: `${(user.workedHours / combinedStats.max) * 100}%` }}
                                                 />
                                             </div>
@@ -391,7 +391,7 @@ function ActiveSessionRow({ session }) {
     }, [session.startTime]);
 
     return (
-        <div className={`p-3 rounded-lg flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
+        <div className={`p-3 rounded-card flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
             <div className="flex items-center gap-3 overflow-hidden">
                 <div
                     className="w-2 h-2 rounded-full flex-shrink-0 bg-current opacity-50"

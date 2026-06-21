@@ -72,17 +72,17 @@ export default function Layout({ children }) {
     useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning });
 
     return (
-        <div className={cn('min-h-screen transition-colors duration-slow pb-32 sm:pb-36', bgColor)}>
+        <div className={cn('min-h-screen transition-colors duration-slow pb-navclear sm:pb-navclear-lg', bgColor)}>
             {/* Offline banner — neutral slate, NOT red, so it never collides with the
                 quick-work shell (DESIGN_SYSTEM §4-C). Paired with a wifi-off icon. */}
             {!isOnline && (
-                <div className="relative z-toast flex items-center justify-center gap-2 bg-feedback-offline px-4 py-1 text-center text-xs font-medium text-white shadow-sm">
+                <div className="relative z-toast flex items-center justify-center gap-2 bg-feedback-offline px-4 py-1 text-center text-caption font-medium text-white shadow-sm">
                     <WifiOff className="h-4 w-4 shrink-0" aria-hidden="true" />
                     <span>Jūs esate neprisijungęs. Duomenys bus išsaugoti telefone ir sinchronizuoti vėliau.</span>
                 </div>
             )}
 
-            <nav className="bg-white shadow-sm border-b border-gray-200">
+            <nav className="bg-surface-card shadow-sm border-b border-line">
                 <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
                     {/* Mobile Layout - User Info & Logout */}
                     <div className="flex flex-col sm:hidden py-2 gap-2">
@@ -94,7 +94,7 @@ export default function Layout({ children }) {
                                 <InstallPrompt />
                             </div>
                             <div className="flex items-center gap-1">
-                                <span className="text-xs font-medium text-gray-700">
+                                <span className="text-caption font-medium text-ink">
                                     {formatDisplayName(currentUser?.displayName)}
                                 </span>
                                 <IconButton icon={LogOut} label="Atsijungti" onClick={() => logout()} />
@@ -118,11 +118,11 @@ export default function Layout({ children }) {
                                         className="h-8 w-8 rounded-full"
                                     />
                                 ) : (
-                                    <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center">
-                                        <User className="h-5 w-5 text-gray-500" />
+                                    <div className="h-8 w-8 rounded-full bg-surface-sunken flex items-center justify-center">
+                                        <User className="h-5 w-5 text-ink-muted" />
                                     </div>
                                 )}
-                                <span className="text-sm font-medium text-gray-700">
+                                <span className="text-sm font-medium text-ink">
                                     {formatDisplayName(currentUser?.displayName)}
                                 </span>
                                 <InstallPrompt />

@@ -37,7 +37,7 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                 <p className="text-body text-ink-muted mb-4">Įveskite skambučio aprašymą</p>
 
                 <div className="mb-5 bg-session-call-surface rounded-card p-4 border border-blue-200 flex items-center justify-between">
-                    <span className="text-body-lg font-semibold text-blue-700">Užfiksuotas laikas:</span>
+                    <span className="text-body-lg font-semibold text-session-call-accent">Užfiksuotas laikas:</span>
                     <span className="text-4xl font-mono font-bold text-session-call-accent">{totalDisplay}</span>
                 </div>
 
@@ -50,8 +50,6 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                         id="callTextarea"
                         name="callDescription"
                         placeholder="Trumpai aprašykite skambutį..."
-                        lang="en"
-                        dir="ltr"
                         rows={4}
                         className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
                         style={{
@@ -59,7 +57,6 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                             padding: '12px',
                             fontSize: '16px',
                             resize: 'none',
-                            fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                             direction: 'ltr',
                             textAlign: 'left'
                         }}
@@ -253,10 +250,13 @@ export default function CallTimer({ compact = false }) {
                     )}
                 </button>
 
+                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1) */}
+                <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Skambutis</span>
+
                 {error && (
-                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-2" role="alert">
+                    <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2" role="alert">
                         <ShieldAlert className="h-4 w-4 shrink-0 text-feedback-danger" aria-hidden="true" />
-                        <p className="text-caption text-red-700">{error}</p>
+                        <p className="text-caption text-feedback-danger">{error}</p>
                     </div>
                 )}
 
@@ -278,7 +278,7 @@ export default function CallTimer({ compact = false }) {
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isCalling
                             ? clsx('bg-session-call-surface border-line ring-1 ring-line', getSessionColors('call').accent)
-                            : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-gray-300'
+                            : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-line'
                 )}
                 title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}
             >
@@ -305,9 +305,9 @@ export default function CallTimer({ compact = false }) {
             </button>
 
             {error && (
-                <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-red-50 p-3" role="alert">
+                <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-3" role="alert">
                     <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-red-700">{error}</p>
+                    <p className="text-body text-feedback-danger">{error}</p>
                 </div>
             )}
 

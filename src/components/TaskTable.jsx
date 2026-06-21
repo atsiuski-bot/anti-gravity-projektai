@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { db } from '../firebase';
 import { doc, updateDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock } from 'lucide-react';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
@@ -18,6 +18,7 @@ import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { STATUS_LABELS, STATUS_COLORS } from '../utils/taskConstants';
+import { logError } from '../utils/errorLog';
 import SessionTypeIcon from './SessionTypeIcon';
 
 const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown, hideCheckboxes }) => {
@@ -37,6 +38,10 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     const [completeTarget, setCompleteTarget] = useState(null);        // taskId (marking completed)
     const [revertTarget, setRevertTarget] = useState(null);            // task object
     const [reverting, setReverting] = useState(false);
+
+    // Friendly error banner (replaces banned window.alert — §8/§10). Never holds raw err.message;
+    // failures are mapped to Lithuanian copy here and recorded durably via logError.
+    const [error, setError] = useState('');
 
     // Auto-refresh timer for running tasks (every 60 seconds)
     useEffect(() => {
@@ -81,13 +86,13 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                 updatedAt: new Date().toISOString()
             });
         } catch (err) {
-            console.error('Error adding adjustment:', err);
+            logError(err, { source: 'TaskTable.handleAddAdjustment' });
             if (err.code === 'permission-denied') {
-                alert('Neturite leidimo pridėti korekciją.');
+                setError('Neturite leidimo pridėti korekciją.');
             } else if (err.code === 'not-found') {
-                alert('Užduotis nebeegzistuoja.');
+                setError('Užduotis nebeegzistuoja.');
             } else {
-                alert('Nepavyko pridėti laiko korekcijos. Bandykite vėliau.');
+                setError('Nepavyko pridėti laiko korekcijos. Bandykite vėliau.');
             }
         }
     };
@@ -116,8 +121,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             });
             setAdjDeleteTarget(null);
         } catch (err) {
-            console.error('Error deleting adjustment:', err);
-            alert('Nepavyko ištrinti korekcijos.');
+            logError(err, { source: 'TaskTable.confirmDeleteAdjustment' });
+            setError('Nepavyko ištrinti korekcijos.');
             setAdjDeleteTarget(null);
         }
     };
@@ -129,7 +134,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             setEditingComment({ taskId: null, index: null });
             setEditCommentText('');
         } catch (err) {
-            alert("Nepavyko atnaujinti komentaro.");
+            logError(err, { source: 'TaskTable.handleUpdateComment' });
+            setError("Nepavyko atnaujinti komentaro.");
         }
     };
 
@@ -193,9 +199,10 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
         // Task-level managers (who are not system managers) cannot confirm.
         if (!isManagerRole(userRole)) {
-            alert("Tik vadovai gali patvirtinti užduotis.");
+            setError("Tik vadovai gali patvirtinti užduotis.");
             return;
         }
+        setError('');
 
         try {
             const task = tasks.find(t => t.id === taskId);
@@ -245,11 +252,11 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             await deleteTask(deleteModalTask, currentUser.uid, { keepWorkHours });
             setDeleteModalTask(null);
         } catch (err) {
-            console.error("Error deleting task:", err);
+            logError(err, { source: 'TaskTable.confirmDeleteTask' });
             if (err.code === 'not-found') {
-                alert("Užduotis neegzistuoja.");
+                setError("Užduotis neegzistuoja.");
             } else {
-                alert("Nepavyko ištrinti užduoties. Bandykite vėliau.");
+                setError("Nepavyko ištrinti užduoties. Bandykite vėliau.");
             }
         }
     };
@@ -263,11 +270,11 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             await revertTask(revertTarget);
             setRevertTarget(null);
         } catch (err) {
-            console.error("Error reverting task:", err);
+            logError(err, { source: 'TaskTable.confirmRevert' });
             if (err.code === 'permission-denied') {
-                alert('Tik vadovai gali grąžinti užduotis.');
+                setError('Tik vadovai gali grąžinti užduotis.');
             } else {
-                alert('Nepavyko grąžinti užduoties. Bandykite vėliau.');
+                setError('Nepavyko grąžinti užduoties. Bandykite vėliau.');
             }
             setRevertTarget(null);
         } finally {
@@ -291,7 +298,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         if (status === 'confirmed') return 'bg-gray-50';
         if (status === 'completed') return 'bg-gray-100';
         if (status === 'unapproved') return 'bg-amber-50';
-        return 'bg-white';
+        return 'bg-surface-card';
     };
 
 
@@ -304,7 +311,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             // However, tasks prop usually has comments.
             await addComment(taskId, text, currentUser, task?.comments);
         } catch (err) {
-            alert("Nepavyko pridėti komentaro.");
+            logError(err, { source: 'TaskTable.handleAddComment' });
+            setError("Nepavyko pridėti komentaro.");
         }
     };
 
@@ -313,6 +321,21 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
     return (
         <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
+            {/* Friendly error banner — replaces the banned window.alert with mapped LT copy (§8/§10) */}
+            {error && (
+                <div className="flex items-start gap-3 border-b border-feedback-danger bg-red-50 p-4" role="alert">
+                    <AlertCircle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                    <p className="text-body text-red-700">{error}</p>
+                    <button
+                        type="button"
+                        onClick={() => setError('')}
+                        aria-label="Uždaryti pranešimą"
+                        className="ml-auto text-body font-medium text-red-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                    >
+                        Uždaryti
+                    </button>
+                </div>
+            )}
             {/* Mobile / touch: one card per task (never a horizontally-scrolling table — §9).
                 Actions are always-visible 44px controls (group-hover is invisible on touch). */}
             <ul className="divide-y divide-line md:hidden">
@@ -375,7 +398,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         className="inline-flex items-center justify-center p-[3px] rounded-full"
                                         style={{ backgroundColor: task.assignedWorkerColor || WORKER_FALLBACK_COLOR }}
                                     >
-                                        <span className="px-1.5 py-0.5 rounded-full text-caption font-bold bg-white text-ink-strong border border-white/50 max-w-[160px] truncate block">
+                                        <span className="px-1.5 py-0.5 rounded-full text-caption font-bold bg-surface-card text-ink-strong border border-white/50 max-w-[160px] truncate block">
                                             👤 {formatDisplayName(task.assignedUserName)}
                                         </span>
                                     </span>
@@ -549,26 +572,26 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                     <thead className="bg-surface-sunken">
                         <tr>
                             {showReorderControls && (
-                                <th className="px-2 py-3 text-center text-xs font-medium text-ink-muted uppercase tracking-wider w-10">
+                                <th className="px-2 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-10">
                                     #
                                 </th>
                             )}
                             {!hideCheckboxes && (
-                                <th className="px-2 py-3 text-center text-xs font-medium text-ink-muted uppercase tracking-wider w-10">
+                                <th className="px-2 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-10">
                                     ✓
                                 </th>
                             )}
-                            <th className={`px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider ${!isWorker ? 'w-72' : ''}`}>Užduotis</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider w-24">Darb.</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider w-16">Žyma</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider w-16">Atlikti iki</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider w-16">Prior.</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider w-20">Būsena</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider w-14" title="Numatytas laikas">Num.</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider w-16">Nuorodos</th>
-                            <th className="px-1 py-3 text-left text-xs font-medium text-ink-muted uppercase tracking-wider w-10 text-center">Kom.</th>
-                            {canManage && <th className="px-1 py-3 text-center text-xs font-medium text-ink-muted uppercase tracking-wider w-12">Patv.</th>}
-                            <th className="px-1 py-3 text-right text-xs font-medium text-ink-muted uppercase tracking-wider w-24">Veik.</th>
+                            <th className={`px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider ${!isWorker ? 'w-72' : ''}`}>Užduotis</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">Darb.</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-16">Žyma</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-16">Atlikti iki</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-16">Prior.</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-20">Būsena</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-14" title="Numatytas laikas">Num.</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-16">Nuorodos</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-10 text-center">Kom.</th>
+                            {canManage && <th className="px-1 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-12">Patv.</th>}
+                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-24">Veik.</th>
                         </tr>
                     </thead>
                     <tbody className="bg-surface-card divide-y divide-line">
@@ -737,7 +760,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     className="inline-flex items-center justify-center p-[3px] rounded-full"
                                                     style={{ backgroundColor: task.assignedWorkerColor || WORKER_FALLBACK_COLOR }}
                                                 >
-                                                    <span className="px-1.5 py-0.5 rounded-full text-caption font-bold bg-white text-ink-strong border border-white/50 max-w-[120px] truncate block">
+                                                    <span className="px-1.5 py-0.5 rounded-full text-caption font-bold bg-surface-card text-ink-strong border border-white/50 max-w-[120px] truncate block">
                                                         👤 {formatDisplayName(task.assignedUserName)}
                                                     </span>
                                                 </div>
@@ -750,7 +773,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 </span>
                                             )}
                                         </td>
-                                        <td className="px-1 py-3 whitespace-nowrap text-xs text-ink">
+                                        <td className="px-1 py-3 whitespace-nowrap text-caption text-ink">
                                             {formatDeadline(task.deadline)}
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
@@ -812,10 +835,10 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 )}
                                             </div>
                                         </td>
-                                        <td className="px-1 py-3 whitespace-nowrap text-xs text-ink-muted">
+                                        <td className="px-1 py-3 whitespace-nowrap text-caption text-ink-muted">
                                             {task.estimatedTime || '-'}
                                         </td>
-                                        <td className="px-1 py-3 text-xs">
+                                        <td className="px-1 py-3 text-caption">
                                             <div className="flex flex-wrap gap-1.5 min-w-[60px]">
                                                 {(() => {
                                                     const allLinks = (task.links || []).flatMap(l => l.split('\n')).filter(l => l.trim().length > 0);
@@ -874,7 +897,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                             type="checkbox"
                                                             checked={false}
                                                             onChange={() => handleConfirmTask(task.id)}
-                                                            className="w-4 h-4 rounded border-gray-300 text-green-600 focus:ring-green-500 cursor-pointer"
+                                                            className="w-4 h-4 rounded border-line text-green-600 focus:ring-green-500 cursor-pointer"
                                                             title="Patvirtinti atlikimą"
                                                             aria-label="Patvirtinti atlikimą"
                                                         />
@@ -896,7 +919,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 )}
                                             </td>
                                         )}
-                                        <td className="px-1 py-3 text-right text-xs font-medium valign-top">
+                                        <td className="px-1 py-3 text-right text-caption font-medium valign-top">
                                             <div className="flex flex-col items-end gap-2">
                                                 {onEdit && (
                                                     <button

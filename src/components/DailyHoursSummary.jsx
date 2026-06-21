@@ -157,26 +157,26 @@ export default function DailyHoursSummary() {
 
     if (loading) {
         return (
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+            <div className="bg-surface-card rounded-card shadow-sm border border-line p-6 mb-6">
                 <div className="flex items-center justify-center">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand"></div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6">
-            <div className="p-4 border-b border-gray-200 bg-gray-50">
+        <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden mb-6">
+            <div className="p-4 border-b border-line bg-surface-sunken">
                 <div className="flex items-center gap-2">
-                    <Clock className="w-5 h-5 text-blue-600" />
-                    <h3 className="font-semibold text-gray-900">Dienos valandos pagal vartotoją</h3>
+                    <Clock className="w-5 h-5 text-brand" />
+                    <h3 className="font-semibold text-ink-strong">Dienos valandos pagal vartotoją</h3>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">Planuotos / Faktinės / Galimos valandos kiekvienai dienai</p>
+                <p className="text-caption text-ink-muted mt-1">Planuotos / Faktinės / Galimos valandos kiekvienai dienai</p>
             </div>
 
             {/* Mobile: one card per user — never a horizontal table on a phone (§9) */}
-            <ul className="divide-y divide-gray-200 md:hidden">
+            <ul className="divide-y divide-line md:hidden">
                 {Object.entries(dailyStats).map(([userId, userData]) => (
                     <li key={userId} className="p-4">
                         <div className="flex items-center gap-2">
@@ -184,7 +184,7 @@ export default function DailyHoursSummary() {
                                 className="w-3 h-3 rounded-full flex-shrink-0"
                                 style={{ backgroundColor: userData.color }}
                             />
-                            <span className="text-sm font-medium text-gray-900 truncate" title={userData.name}>
+                            <span className="text-sm font-medium text-ink-strong truncate" title={userData.name}>
                                 {userData.name}
                             </span>
                         </div>
@@ -196,8 +196,8 @@ export default function DailyHoursSummary() {
 
                                 return (
                                     <div key={day} className="flex items-center justify-between gap-3">
-                                        <dt className="text-caption text-gray-500">{day}</dt>
-                                        <dd className={`text-sm font-medium ${isOverbooked ? 'text-red-600' : 'text-gray-700'}`}>
+                                        <dt className="text-caption text-ink-muted">{day}</dt>
+                                        <dd className={`text-sm font-medium ${isOverbooked ? 'text-feedback-danger' : 'text-ink'}`}>
                                             {hasData ? (
                                                 <span className="flex items-center gap-1">
                                                     {isOverbooked && (
@@ -207,11 +207,11 @@ export default function DailyHoursSummary() {
                                                         </>
                                                     )}
                                                     <span>
-                                                        {dayData.planned.toFixed(1)} / <span className="text-green-600 font-bold">{dayData.actual.toFixed(1)}</span> / {dayData.available.toFixed(1)}h
+                                                        {dayData.planned.toFixed(1)} / <span className="text-feedback-success font-bold">{dayData.actual.toFixed(1)}</span> / {dayData.available.toFixed(1)}h
                                                     </span>
                                                 </span>
                                             ) : (
-                                                <span className="text-gray-400">-</span>
+                                                <span className="text-ink-muted">-</span>
                                             )}
                                         </dd>
                                     </div>
@@ -225,29 +225,29 @@ export default function DailyHoursSummary() {
             {/* Desktop: dense weekly hours table */}
             <div className="hidden md:block overflow-x-auto">
                 <table className="min-w-full">
-                    <thead className="bg-gray-50 border-b border-gray-200">
+                    <thead className="bg-surface-sunken border-b border-line">
                         <tr>
-                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider sticky left-0 bg-gray-50 z-10">
+                            <th scope="col" className="px-4 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider sticky left-0 bg-surface-sunken z-10">
                                 Vartotojas
                             </th>
                             {dayAbbr.map((day, idx) => (
-                                <th key={idx} scope="col" className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                <th key={idx} scope="col" className="px-3 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider">
                                     <div className="hidden sm:block">{dayNames[idx]}</div>
                                     <div className="sm:hidden">{day}</div>
                                 </th>
                             ))}
                         </tr>
                     </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
+                    <tbody className="bg-surface-card divide-y divide-line">
                         {Object.entries(dailyStats).map(([userId, userData]) => (
-                            <tr key={userId} className="hover:bg-gray-50">
-                                <th scope="row" className="px-4 py-3 whitespace-nowrap sticky left-0 bg-white text-left font-normal">
+                            <tr key={userId} className="hover:bg-surface-sunken">
+                                <th scope="row" className="px-4 py-3 whitespace-nowrap sticky left-0 bg-surface-card text-left font-normal">
                                     <div className="flex items-center gap-2">
                                         <div
                                             className="w-3 h-3 rounded-full flex-shrink-0"
                                             style={{ backgroundColor: userData.color }}
                                         />
-                                        <span className="text-sm font-medium text-gray-900 truncate max-w-[120px]" title={userData.name}>
+                                        <span className="text-sm font-medium text-ink-strong truncate max-w-[120px]" title={userData.name}>
                                             {userData.name}
                                         </span>
                                     </div>
@@ -259,7 +259,7 @@ export default function DailyHoursSummary() {
                                     return (
                                         <td key={idx} className="px-3 py-3 whitespace-nowrap text-center">
                                             {dayData.available > 0 || dayData.planned > 0 ? (
-                                                <div className={`text-sm font-medium ${isOverbooked ? 'text-red-600' : 'text-gray-700'}`}>
+                                                <div className={`text-sm font-medium ${isOverbooked ? 'text-feedback-danger' : 'text-ink'}`}>
                                                     <div className="flex items-center justify-center gap-1">
                                                         {isOverbooked && (
                                                             <>
@@ -268,12 +268,12 @@ export default function DailyHoursSummary() {
                                                             </>
                                                         )}
                                                         <span>
-                                                            {dayData.planned.toFixed(1)} / <span className="text-green-600 font-bold">{dayData.actual.toFixed(1)}</span> / {dayData.available.toFixed(1)}h
+                                                            {dayData.planned.toFixed(1)} / <span className="text-feedback-success font-bold">{dayData.actual.toFixed(1)}</span> / {dayData.available.toFixed(1)}h
                                                         </span>
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <span className="text-sm text-gray-400">-</span>
+                                                <span className="text-sm text-ink-muted">-</span>
                                             )}
                                         </td>
                                     );
@@ -285,7 +285,7 @@ export default function DailyHoursSummary() {
             </div>
 
             {Object.keys(dailyStats).length === 0 && (
-                <div className="p-8 text-center text-gray-500">
+                <div className="p-8 text-center text-ink-muted">
                     Nėra vartotojų su darbo valandomis
                 </div>
             )}

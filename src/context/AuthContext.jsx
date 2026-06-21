@@ -303,20 +303,20 @@ export function AuthProvider({ children }) {
     return (
         <AuthContext.Provider value={value}>
             {loading ? (
-                <div className="flex h-screen items-center justify-center bg-gray-50">
+                <div className="flex h-screen items-center justify-center bg-surface-base">
                     <div className="flex flex-col items-center gap-4 p-6 text-center">
-                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand"></div>
                         <div>
-                            <p className="text-gray-700 font-medium">Paleidžiama programa…</p>
-                            <p className="text-gray-500 text-sm mt-1">Jungiamasi prie autentifikacijos</p>
+                            <p className="text-ink font-medium">Paleidžiama programa…</p>
+                            <p className="text-ink-muted text-body mt-1">Jungiamasi prie autentifikacijos</p>
                         </div>
 
                         {showForceButton && (
                             <div className="mt-6 animate-in fade-in duration-500">
-                                <p className="text-red-500 text-sm mb-3">Jungimasis užtrunka ilgiau nei įprastai.</p>
+                                <p className="text-feedback-danger text-body mb-3">Jungimasis užtrunka ilgiau nei įprastai.</p>
                                 <button
                                     onClick={() => window.location.reload()}
-                                    className="px-4 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                    className="px-4 py-2 bg-surface-card border border-line rounded-control shadow-sm text-body font-medium text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
                                 >
                                     Perkrauti puslapį
                                 </button>
@@ -325,12 +325,12 @@ export function AuthProvider({ children }) {
                                 {import.meta.env.DEV && (
                                     <button
                                         onClick={() => setLoading(false)}
-                                        className="ml-2 px-4 py-2 bg-white border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                                        className="ml-2 px-4 py-2 bg-surface-card border border-line rounded-control shadow-sm text-body font-medium text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
                                     >
                                         Skip Loading (Debug)
                                     </button>
                                 )}
-                                <p className="text-gray-400 text-xs mt-4">
+                                <p className="text-ink-muted text-caption mt-4">
                                     Patikrinkite interneto ryšį ir bandykite dar kartą.
                                 </p>
                             </div>

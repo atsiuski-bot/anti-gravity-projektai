@@ -114,8 +114,8 @@ export default function ManagerView() {
     return (
         <div className="pt-1 sm:pt-4">
             {error && (
-                <div className="mb-6 bg-red-50 border-l-4 border-red-500 p-4">
-                    <p className="text-sm text-red-700">{error}</p>
+                <div className="mb-6 bg-red-50 border-l-4 border-feedback-danger p-4" role="alert">
+                    <p className="text-body text-feedback-danger">{error}</p>
                 </div>
             )}
 
@@ -134,11 +134,11 @@ export default function ManagerView() {
                     {/* Filters */}
                     <div className="flex flex-wrap gap-2 items-center">
                         <div className="relative">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
                             <select
                                 value={filterUser}
                                 onChange={(e) => setFilterUser(e.target.value)}
-                                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 <option value="">Visi darbuotojai</option>
                                 {users.map(user => (
@@ -149,11 +149,11 @@ export default function ManagerView() {
                             </select>
                         </div>
                         <div className="relative">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
                             <select
                                 value={filterPriority}
                                 onChange={(e) => setFilterPriority(e.target.value)}
-                                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 <option value="">Visi prioritetai</option>
                                 <option value={PRIORITIES.URGENT}>{getPriorityLabel(PRIORITIES.URGENT)}</option>
@@ -164,11 +164,11 @@ export default function ManagerView() {
                             </select>
                         </div>
                         <div className="relative">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
                             <select
                                 value={filterTag}
                                 onChange={(e) => setFilterTag(e.target.value)}
-                                className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 <option value="">Visi Tagai</option>
                                 {TASK_TAGS.map(tag => (
@@ -180,11 +180,11 @@ export default function ManagerView() {
 
                     {/* Sort dropdown */}
                     <div className="relative">
-                        <ArrowUpDown className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <ArrowUpDown className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
                         <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value)}
-                            className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                            className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <option value="none">Numatyta tvarka</option>
                             <option value="status">Pagal būseną</option>
@@ -240,8 +240,8 @@ export default function ManagerView() {
                                 <DailyWorkProgress currentUser={currentUser} tasks={filterTasksByVisibility(filteredMyTasks)} />
                             </div>
                             {sortedMyTasks.length === 0 ? (
-                                <div className="text-center py-12 bg-white rounded-xl shadow-sm border border-gray-200">
-                                    <p className="text-gray-500">Jums dar nepriskirta jokių užduočių.</p>
+                                <div className="text-center py-12 bg-surface-card rounded-card shadow-sm border border-line">
+                                    <p className="text-body text-ink-muted">Jums dar nepriskirta jokių užduočių.</p>
                                 </div>
                             ) : viewMode === 'mobile' ? (
                                 <div className="space-y-4">

@@ -88,13 +88,13 @@ const BottomNavigation = () => {
                 className="fixed left-0 right-0 z-nav flex w-full justify-center px-2 pb-2 pointer-events-none"
                 style={{ bottom: 'calc(64px + env(safe-area-inset-bottom))' }}
             >
-                <div className="pointer-events-auto mx-2 flex max-w-full items-center gap-3 overflow-x-auto rounded-card border border-line bg-white/95 p-2 shadow-lg backdrop-blur-sm">
+                <div className="pointer-events-auto mx-2 flex max-w-full items-center gap-3 overflow-x-auto rounded-card border border-line bg-surface-card/95 p-2 shadow-lg backdrop-blur-sm">
                     {showCreateButton && (
                         <div className="flex-shrink-0">
                             <CreateButton />
                         </div>
                     )}
-                    {showCreateButton && <div className="h-8 w-px flex-shrink-0 bg-gray-200" />}
+                    {showCreateButton && <div className="h-8 w-px flex-shrink-0 bg-surface-sunken" />}
 
                     <div className="flex items-center gap-2">
                         <QuickWorkTimer compact={true} />
@@ -105,13 +105,13 @@ const BottomNavigation = () => {
             </div>
 
             {/* Main bottom bar */}
-            <div className="fixed bottom-0 left-0 right-0 z-nav border-t border-gray-200 bg-white pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
+            <div className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-card pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
                 <div className="relative mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-2">
                     {/* Desktop: full tab set (centered, with the personal/team separator) */}
                     <div className="hidden flex-1 items-center justify-center gap-2 sm:flex">
                         {tabs.map((tab, idx) => {
                             if (tab.type === 'separator') {
-                                return <div key={`sep-${idx}`} className="mx-3 h-10 w-px bg-gray-200" />;
+                                return <div key={`sep-${idx}`} className="mx-3 h-10 w-px bg-surface-sunken" />;
                             }
                             const active = activeTab === tab.id;
                             return (
@@ -121,7 +121,7 @@ const BottomNavigation = () => {
                                     aria-current={active ? 'page' : undefined}
                                     className={cn(
                                         navItemBase,
-                                        'min-w-[90px] px-4 py-2.5 hover:bg-gray-50',
+                                        'min-w-[90px] px-4 py-2.5 hover:bg-surface-sunken',
                                         active ? 'bg-brand-soft text-brand' : 'text-ink-muted'
                                     )}
                                 >

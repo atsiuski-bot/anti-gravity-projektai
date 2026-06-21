@@ -56,15 +56,15 @@ export default function CalendarRequestStatusBanner() {
                 return (
                     <div 
                         key={notif.id}
-                        className={`max-w-xl w-full p-4 rounded-lg shadow-sm border flex items-start gap-4 animate-in fade-in slide-in-from-top-2 relative ${
+                        className={`max-w-xl w-full p-4 rounded-card shadow-sm border flex items-start gap-4 animate-in fade-in slide-in-from-top-2 relative ${
                             isApproved 
                                 ? 'bg-green-50 border-green-200 text-green-900' 
                                 : 'bg-red-50 border-red-200 text-red-900'
                         }`}
                     >
-                        <button 
+                        <button
                             onClick={() => handleDismiss(notif.id)}
-                            className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 p-1 transition-colors"
+                            className="absolute top-2 right-2 text-ink-muted hover:text-ink p-1 transition-colors"
                             title="Uždaryti pranešimą"
                         >
                             <X className="w-5 h-5" />
@@ -87,7 +87,7 @@ export default function CalendarRequestStatusBanner() {
                                     ? `Jūsų ${dayStr} kalendoriaus užklausa buvo patvirtinta.`
                                     : `Jūsų ${dayStr} kalendoriaus užklausa buvo atmesta.`}
                             </p>
-                            <div className="mt-3 bg-white/40 rounded-lg p-3 border border-black/5">
+                            <div className="mt-3 bg-white/40 rounded-card p-3 border border-black/5">
                                 <p className="text-xs font-bold uppercase tracking-wider mb-1 opacity-70">Jūsų nurodyta priežastis:</p>
                                 <p className="text-sm italic font-medium opacity-80">&quot;{notif.reason}&quot;</p>
                             </div>

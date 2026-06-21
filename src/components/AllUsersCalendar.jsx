@@ -158,9 +158,9 @@ export default function AllUsersCalendar() {
     };
 
     return (
-        <div className="w-full bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden flex flex-col h-[70vh] min-h-[480px] max-h-[850px]">
+        <div className="w-full bg-surface-card rounded-card shadow-lg border border-line overflow-hidden flex flex-col h-[70vh] min-h-[480px] max-h-[850px]">
             {/* Toolbar */}
-            <div className="p-4 border-b border-gray-200 flex flex-col gap-4">
+            <div className="p-4 border-b border-line flex flex-col gap-4">
                 <div className="flex justify-end items-center">
                     <Button
                         variant="secondary"
@@ -178,10 +178,10 @@ export default function AllUsersCalendar() {
                         onClick={() => setCurrentDate(addDays(currentDate, -1))}
                     />
                     <div className="text-center">
-                        <h2 className="text-2xl font-bold text-gray-900 capitalize">
+                        <h2 className="text-h2 font-bold text-ink-strong capitalize">
                             {WEEKDAYS[getDay(currentDate)]}
                         </h2>
-                        <p className="text-lg text-gray-500 capitalize">
+                        <p className="text-body-lg text-ink-muted capitalize">
                             {format(currentDate, 'MMMM d', { locale: lt })}d.
                         </p>
                     </div>
@@ -197,7 +197,7 @@ export default function AllUsersCalendar() {
             {error && (
                 <div
                     role="alert"
-                    className="mx-4 mt-4 flex items-start gap-2 rounded-card border border-red-200 bg-red-50 px-3 py-2.5 text-body text-red-700"
+                    className="mx-4 mt-4 flex items-start gap-2 rounded-card border border-red-200 bg-red-50 px-3 py-2.5 text-body text-feedback-danger"
                 >
                     <AlertTriangle className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                     <span>{error}</span>
@@ -208,17 +208,17 @@ export default function AllUsersCalendar() {
             <div className="hidden md:flex flex-1 overflow-auto relative flex-col">
                 <div className="relative flex flex-col min-w-full px-4">
                     {/* Time Scale Header */}
-                    <div className="flex border-b border-gray-300 bg-white sticky top-0 z-20 h-10">
+                    <div className="flex border-b border-line bg-surface-card sticky top-0 z-20 h-10">
                         <div className="w-full relative">
                             {hours.map((hour, i) => (
                                 <div
                                     key={hour}
-                                    className="absolute top-0 bottom-0 border-l border-gray-300"
+                                    className="absolute top-0 bottom-0 border-l border-line"
                                     style={{
                                         left: `${(i / TOTAL_HOURS) * 100}%`
                                     }}
                                 >
-                                    <span className="absolute -top-1 left-0 -translate-x-1/2 text-caption text-gray-500 font-medium">
+                                    <span className="absolute -top-1 left-0 -translate-x-1/2 text-caption text-ink-muted font-medium">
                                         {hour}:00
                                     </span>
                                 </div>
@@ -250,10 +250,10 @@ export default function AllUsersCalendar() {
                                     const left = ((nowHour - START_HOUR) / TOTAL_HOURS) * 100;
                                     return (
                                         <div
-                                            className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-30 pointer-events-none transition-all duration-1000"
+                                            className="absolute top-0 bottom-0 w-0.5 bg-feedback-danger z-30 pointer-events-none transition-all duration-1000"
                                             style={{ left: `${left}%` }}
                                         >
-                                            <div className="absolute -top-1 -translate-x-1/2 w-2 h-2 bg-red-500 rounded-full"></div>
+                                            <div className="absolute -top-1 -translate-x-1/2 w-2 h-2 bg-feedback-danger rounded-full"></div>
                                         </div>
                                     );
                                 }
@@ -282,7 +282,7 @@ export default function AllUsersCalendar() {
                                                 title={`${event.title} (${timeRange})`}
                                                 aria-label={`${user.displayName}, ${event.title}${status ? `, ${status.label}` : ''}, ${timeRange}`}
                                             >
-                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-caption font-bold bg-white text-gray-800 border border-white/50 shadow-sm z-20 relative whitespace-nowrap leading-tight">
+                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-caption font-bold bg-surface-card text-ink border border-white/50 shadow-sm z-20 relative whitespace-nowrap leading-tight">
                                                     <span aria-hidden="true">👤</span>
                                                     {user.displayName}
                                                     {status && (
@@ -321,9 +321,9 @@ export default function AllUsersCalendar() {
                     usersWithEvents.map((user) => (
                         <div
                             key={user.id}
-                            className="rounded-card border border-gray-200 bg-white shadow-sm overflow-hidden"
+                            className="rounded-card border border-line bg-surface-card shadow-sm overflow-hidden"
                         >
-                            <div className="flex items-center gap-2 px-4 py-3 border-b border-gray-100">
+                            <div className="flex items-center gap-2 px-4 py-3 border-b border-line">
                                 <span
                                     className="w-3 h-3 rounded-full flex-shrink-0"
                                     style={{ backgroundColor: user.color || WORKER_FALLBACK_COLOR }}

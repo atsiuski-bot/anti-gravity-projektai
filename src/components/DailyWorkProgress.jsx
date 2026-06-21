@@ -201,16 +201,16 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
 
         return (
             <div className="relative">
-                <div className="flex justify-between text-xs font-medium text-gray-500 mb-1">
+                <div className="flex justify-between text-caption font-medium text-ink-muted mb-1">
                     <span>{label}</span>
-                    <span className="text-gray-900">
+                    <span className="text-ink-strong">
                         {formatTime(current)} <span className="text-ink-muted">/ {formatTime(total)}</span>
                         {currentSessionHours > 0 && label.includes('Dienos') && (
-                            <span className="text-xs text-session-task-accent ml-1">(+vyksta)</span>
+                            <span className="text-caption text-session-task-accent ml-1">(+vyksta)</span>
                         )}
                     </span>
                 </div>
-                <div className="h-4 w-full bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-4 w-full bg-surface-sunken rounded-full overflow-hidden">
                     <div
                         className={`h-full ${colorClass} rounded-full transition-all duration-500 ease-in-out`}
                         style={{ width: `${Math.min(percent, 100)}%` }}
@@ -221,11 +221,11 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
     };
 
     return (
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 mb-6 relative">
+        <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line mb-6 relative">
             {loading && (
-                <div className="absolute inset-0 bg-white/50 z-10 animate-pulse rounded-xl" />
+                <div className="absolute inset-0 bg-surface-card/50 z-10 animate-pulse rounded-card" />
             )}
-            <h3 className="text-sm font-semibold text-gray-900 mb-4 uppercase tracking-wide">
+            <h3 className="text-sm font-semibold text-ink-strong mb-4 uppercase tracking-wide">
                 Darbo Progresas
             </h3>
 

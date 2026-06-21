@@ -12,8 +12,8 @@
 ## 0. Reading order
 
 1. This file — principles, visual language, components, accessibility, copy.
-2. [`tokens.md`](./tokens.md) — the machine-facing token tables + the proposed
-   `tailwind.config.js` block that implements them.
+2. [`tokens.md`](./tokens.md) — the machine-facing token tables + the
+   `tailwind.config.js` block that implements them (now wired and active).
 3. [ADR 0001](../adr/0001-visual-design-system.md) — why these choices were made.
 
 When this document and the current code disagree, **this document wins** and the code

@@ -562,24 +562,24 @@ export default function Reports({ users }) {
 
     // Helper to render table
     const TaskListTable = ({ tasks, title }) => (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
-            <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
-                <h3 className="text-sm font-bold text-gray-700">{title} ({tasks.length})</h3>
+        <div className="hidden md:block bg-surface-card rounded-card shadow-sm border border-line overflow-hidden mb-6">
+            <div className="px-4 py-3 bg-surface-sunken border-b border-line">
+                <h3 className="text-body font-bold text-ink">{title} ({tasks.length})</h3>
             </div>
-            <table className="min-w-full divide-y divide-gray-200 table-fixed">
-                <thead className="bg-gray-50">
+            <table className="min-w-full divide-y divide-line table-fixed">
+                <thead className="bg-surface-sunken">
                     <tr>
-                        <th scope="col" className="px-2 py-2 text-center w-8 text-caption font-bold text-gray-500 uppercase tracking-wider">OK</th>
-                        <th scope="col" className="px-2 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">UŽDUOTIS</th>
-                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-12">DARB.</th>
-                        <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-gray-500 uppercase tracking-wider w-24">LAIKAS</th>
-                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16">PRIO</th>
-                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-gray-500 uppercase tracking-wider w-16">BŪSENA</th>
-                        <th scope="col" className="px-1 py-2 text-center text-caption font-bold text-gray-500 uppercase tracking-wider w-10">KOM.</th>
-                        <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-gray-500 uppercase tracking-wider w-16"></th>
+                        <th scope="col" className="px-2 py-2 text-center w-8 text-caption font-bold text-ink-muted uppercase tracking-wider">OK</th>
+                        <th scope="col" className="px-2 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">UŽDUOTIS</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-12">DARB.</th>
+                        <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-24">LAIKAS</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIO</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">BŪSENA</th>
+                        <th scope="col" className="px-1 py-2 text-center text-caption font-bold text-ink-muted uppercase tracking-wider w-10">KOM.</th>
+                        <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-16"></th>
                     </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody className="divide-y divide-line">
                     {tasks.map((task) => {
                         const dateStr = task.completedAt || task.archivedAt || task.updatedAt;
                         const worker = users?.find(u => u.id === task.assignedUserId);
@@ -594,7 +594,7 @@ export default function Reports({ users }) {
                         return (
                             <tr
                                 key={task.id}
-                                className={`border-b border-gray-100 last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-white' : 'bg-blue-50'}`}
+                                className={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-blue-50'}`}
                             >
                                 <td className="px-2 py-2 text-center">
                                     <input
@@ -603,12 +603,12 @@ export default function Reports({ users }) {
                                         onChange={() => handleToggleConfirm(task)}
                                         disabled={task.isArchived}
                                         aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
-                                        className="w-5 h-5 rounded border-gray-300 text-green-600 focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 cursor-pointer"
+                                        className="w-5 h-5 rounded border-line text-green-600 focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 cursor-pointer"
                                     />
                                 </td>
                                 <td className="px-2 py-2">
                                     <div className="flex items-center gap-2">
-                                        <div className={`text-sm font-bold text-gray-900 whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-gray-500' : ''}`}>
+                                        <div className={`text-sm font-bold text-ink-strong whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-ink-muted' : ''}`}>
                                             {task.title}
                                         </div>
                                         {(task.isDeleted || task.status === 'deleted') && (
@@ -617,28 +617,28 @@ export default function Reports({ users }) {
                                             </span>
                                         )}
                                     </div>
-                                    <div className="text-caption text-gray-500 mt-0.5 flex items-start gap-1">
-                                        <Briefcase className="w-3 h-3 text-gray-400 flex-shrink-0 mt-0.5" />
+                                    <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1">
+                                        <Briefcase className="w-3 h-3 text-ink-muted flex-shrink-0 mt-0.5" />
                                         <span className="whitespace-normal break-words">{task.description || (task.tag ? `${task.tag}` : 'Užduotis')}</span>
                                     </div>
                                     {dateStr && (
-                                        <div className="text-caption text-gray-500 mt-1">
+                                        <div className="text-caption text-ink-muted mt-1">
                                             {new Date(dateStr).toLocaleString()}
                                         </div>
                                     )}
                                 </td>
                                 <td className="px-1 py-2 whitespace-nowrap">
-                                    <span className="px-2 py-1 rounded-full text-caption font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                                    <span className="px-2 py-1 rounded-full text-caption font-medium bg-surface-sunken text-ink border border-line">
                                         {formatDisplayName(userName).split(' ')[0]}
                                     </span>
                                 </td>
                                 <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium font-mono">
                                     <span className="text-blue-600">{task.estimatedTime || '-'}</span>
-                                    <span className="text-gray-400 mx-1">/</span>
-                                    <span className="text-gray-900">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
+                                    <span className="text-ink-muted mx-1">/</span>
+                                    <span className="text-ink-strong">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
                                 </td>
                                 <td className="px-1 py-2 whitespace-nowrap">
-                                    <span className="px-1.5 py-0.5 rounded text-caption bg-gray-100 text-gray-600 font-medium border border-gray-200 uppercase">
+                                    <span className="px-1.5 py-0.5 rounded text-caption bg-surface-sunken text-ink-muted font-medium border border-line uppercase">
                                         {task.priority || 'Vidut.'}
                                     </span>
                                 </td>
@@ -652,7 +652,7 @@ export default function Reports({ users }) {
                                             Patvirt.
                                         </span>
                                     ) : (
-                                        <span className="px-2 py-0.5 rounded text-caption font-medium bg-white text-gray-800 border border-gray-200 shadow-sm">
+                                        <span className="px-2 py-0.5 rounded text-caption font-medium bg-surface-card text-ink border border-line shadow-sm">
                                             Nepatv.
                                         </span>
                                     )}
@@ -692,12 +692,12 @@ export default function Reports({ users }) {
     // Per-user "Dienos Išklotinė" panel — shared by the desktop expanded row and the mobile card
     // (keeps the day breakdown identical across both layouts instead of duplicating ~80 lines).
     const DayBreakdown = ({ userStats }) => (
-        <div className="bg-white border rounded-lg overflow-hidden">
-            <div className="px-4 py-2 bg-gray-50 border-b flex justify-between items-center">
-                <h4 className="text-body font-bold text-gray-700">Dienos Išklotinė</h4>
-                <span className="text-caption text-gray-500">Spauskite ant dienos detalesnei informacijai</span>
+        <div className="bg-surface-card border border-line rounded-control overflow-hidden">
+            <div className="px-4 py-2 bg-surface-sunken border-b border-line flex justify-between items-center">
+                <h4 className="text-body font-bold text-ink">Dienos Išklotinė</h4>
+                <span className="text-caption text-ink-muted">Spauskite ant dienos detalesnei informacijai</span>
             </div>
-            <div className="divide-y divide-gray-100">
+            <div className="divide-y divide-line">
                 {Object.entries(userStats.days)
                     .sort((a, b) => new Date(b[0]) - new Date(a[0]))
                     .map(([date, dayData]) => {
@@ -709,19 +709,19 @@ export default function Reports({ users }) {
                                     onClick={() => toggleDayExpand(userStats.userId, date)}
                                     aria-expanded={!!isDayExpanded}
                                     aria-label={isDayExpanded ? `Slėpti ${date} dienos detales` : `Rodyti ${date} dienos detales`}
-                                    className={`w-full min-h-touch p-2 flex items-center justify-between cursor-pointer text-left hover:bg-blue-50 transition-colors border-b border-gray-100 last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset ${isDayExpanded ? 'bg-blue-50/50' : ''}`}
+                                    className={`w-full min-h-touch p-2 flex items-center justify-between cursor-pointer text-left hover:bg-blue-50 transition-colors border-b border-line last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset ${isDayExpanded ? 'bg-blue-50/50' : ''}`}
                                 >
                                     <div className="flex items-center gap-2">
-                                        <div className="inline-flex items-center justify-center w-9 h-9 bg-white border rounded text-gray-400 group-hover:text-blue-500 group-hover:border-blue-200 transition-colors">
+                                        <div className="inline-flex items-center justify-center w-9 h-9 bg-surface-card border border-line rounded text-ink-muted group-hover:text-blue-500 group-hover:border-blue-200 transition-colors">
                                             {isDayExpanded ? <ChevronUp className="w-3.5 h-3.5" aria-hidden="true" /> : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
                                         </div>
-                                        <span className="text-caption font-bold text-gray-700">{date}</span>
+                                        <span className="text-caption font-bold text-ink">{date}</span>
                                     </div>
                                     <div className="flex items-center gap-2 text-caption font-mono">
                                         {dayData.dayStart && dayData.dayEnd && (
-                                            <div className="text-gray-500 mr-2 hidden sm:block">
-                                                <span className="text-gray-400 mr-1">Laikas:</span>
-                                                <span className="font-medium text-gray-700">{formatTime(dayData.dayStart)} - {formatTime(dayData.dayEnd)}</span>
+                                            <div className="text-ink-muted mr-2 hidden sm:block">
+                                                <span className="text-ink-muted mr-1">Laikas:</span>
+                                                <span className="font-medium text-ink">{formatTime(dayData.dayStart)} - {formatTime(dayData.dayEnd)}</span>
                                             </div>
                                         )}
                                         {dayData.totalBreak > 0 && (
@@ -737,19 +737,19 @@ export default function Reports({ users }) {
                                     </div>
                                 </button>
                                 {isDayExpanded && (
-                                    <div className="bg-gray-50 px-4 py-2 border-t border-gray-100 shadow-inner">
+                                    <div className="bg-surface-sunken px-4 py-2 border-t border-line shadow-inner">
                                         <div className="space-y-1 pl-2 md:pl-10">
                                             {dayData.sessions.map((session, idx) => (
-                                                <div key={session.id || idx} className={`text-caption flex items-center gap-3 py-1.5 border-b border-gray-100 last:border-0 ${session._type === 'break' ? 'text-amber-700' : session._type === 'inactive' ? 'text-gray-400 italic' : 'text-gray-600'}`}>
+                                                <div key={session.id || idx} className={`text-caption flex items-center gap-3 py-1.5 border-b border-line last:border-0 ${session._type === 'break' ? 'text-amber-700' : session._type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
                                                     <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${session._type === 'break' ? 'bg-amber-400' : session._type === 'inactive' ? 'bg-gray-300' : 'bg-blue-400'}`}></div>
-                                                    <div className="font-mono text-gray-500 w-24 flex-shrink-0">
+                                                    <div className="font-mono text-ink-muted w-24 flex-shrink-0">
                                                         {formatTime(session.startTime)} - {formatTime(session.endTime)}
                                                     </div>
                                                     <div className="font-medium flex-grow truncate">
                                                         {session._type === 'break' ? (
                                                             <span className="flex items-center gap-1.5"><SessionTypeIcon type="break" className="w-3.5 h-3.5" /> Pertrauka</span>
                                                         ) : session._type === 'inactive' ? (
-                                                            <span className="flex items-center gap-1.5 text-gray-400">{session.taskTitle || 'Neaktyvus'}</span>
+                                                            <span className="flex items-center gap-1.5 text-ink-muted">{session.taskTitle || 'Neaktyvus'}</span>
                                                         ) : (
                                                             <span className="flex items-center gap-1.5">
                                                                 <SessionTypeIcon
@@ -760,13 +760,13 @@ export default function Reports({ users }) {
                                                             </span>
                                                         )}
                                                     </div>
-                                                    <div className={`font-mono font-bold w-12 text-right ${session._type === 'break' ? 'text-amber-600' : session._type === 'inactive' ? 'text-gray-400' : 'text-blue-600'}`}>
+                                                    <div className={`font-mono font-bold w-12 text-right ${session._type === 'break' ? 'text-amber-600' : session._type === 'inactive' ? 'text-ink-muted' : 'text-blue-600'}`}>
                                                         {formatMinutesToTimeString(session.durationMinutes)}
                                                     </div>
                                                 </div>
                                             ))}
                                             {dayData.sessions.length === 0 && (
-                                                <div className="text-caption text-gray-400 italic py-1">Nėra detalių įrašų.</div>
+                                                <div className="text-caption text-ink-muted italic py-1">Nėra detalių įrašų.</div>
                                             )}
                                         </div>
                                     </div>
@@ -807,7 +807,7 @@ export default function Reports({ users }) {
         const evt = item.requestedEvent || item.originalEvent || {};
         let TypeIcon = Briefcase;
         let typeLabel = "Darbas ofise";
-        let typeColor = "text-gray-600";
+        let typeColor = "text-ink-muted";
         if (evt.isVacation) {
             TypeIcon = null;
             typeLabel = "Atostogos";
@@ -846,35 +846,35 @@ export default function Reports({ users }) {
 
     return (
         <div className="space-y-6">
-            <h2 className="text-xl font-bold text-gray-900">Ataskaitos ir Duomenys</h2>
+            <h2 className="text-h2 font-bold text-ink-strong">Ataskaitos ir Duomenys</h2>
 
             {/* TABS */}
-            <div className="flex border-b border-gray-200 overflow-x-auto">
+            <div className="flex border-b border-line overflow-x-auto">
 
                 <button
                     onClick={() => setActiveTab('daily-stats')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'daily-stats' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'daily-stats' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
                         }`}
                 >
                     Dienos Ataskaita
                 </button>
                 <button
                     onClick={() => setActiveTab('hours')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'hours' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'hours' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
                         }`}
                 >
                     Detali Darbo Suvestinė
                 </button>
                 <button
                     onClick={() => setActiveTab('calendar-history')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
                         }`}
                 >
                     Kalendoriaus pakeitimų istorija
                 </button>
                 {/* <button
                     onClick={() => setActiveTab('tasks')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${activeTab === 'tasks' ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'
+                    className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${activeTab === 'tasks' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
                         }`}
                 >
                     Užduočių Analizė
@@ -917,37 +917,37 @@ export default function Reports({ users }) {
                 <div className="space-y-4">
                     {/* (MonthlyHours removed from here to separate tab) */}
 
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap gap-4 items-center">
+                    <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line flex flex-wrap gap-4 items-center">
                         <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Pasirinkite mėnesį</label>
+                            <label className="block text-caption font-semibold text-ink-muted mb-1">Pasirinkite mėnesį</label>
                             <input
                                 type="month"
                                 value={selectedMonth}
                                 onChange={(e) => setSelectedMonth(e.target.value)}
-                                className="border border-gray-300 rounded-lg px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                             />
                         </div>
                     </div>
 
                     {loading && (
-                        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center text-gray-500">Kraunami duomenys...</div>
+                        <div className="bg-surface-card p-8 rounded-card shadow-sm border border-line text-center text-ink-muted">Kraunami duomenys...</div>
                     )}
                     {!loading && workData.length === 0 && (
-                        <div className="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center text-gray-500">Nėra duomenų šiam mėnesiui.</div>
+                        <div className="bg-surface-card p-8 rounded-card shadow-sm border border-line text-center text-ink-muted">Nėra duomenų šiam mėnesiui.</div>
                     )}
 
                     {/* Single-user simplified view (worker viewing own data) */}
                     {!loading && workData.length === 1 && (() => {
                         const userStats = workData[0];
                         return (
-                            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                            <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
                                 {/* Stats header — work hours are the dominant month metric (§5/ISSUE #18) */}
-                                <div className="px-4 py-4 bg-gray-50 border-b border-gray-200 space-y-3">
-                                    <div className="text-body font-bold text-gray-900">{formatDisplayName(userStats.name).split(' ')[0]}</div>
+                                <div className="px-4 py-4 bg-surface-sunken border-b border-line space-y-3">
+                                    <div className="text-body font-bold text-ink-strong">{formatDisplayName(userStats.name).split(' ')[0]}</div>
 
                                     {/* Primary metric: actual work hours, promoted to display size */}
                                     <div>
-                                        <div className="text-caption uppercase font-bold tracking-wide text-gray-500">Darbas</div>
+                                        <div className="text-caption uppercase font-bold tracking-wide text-ink-muted">Darbas</div>
                                         <div className="text-display font-bold text-indigo-600 leading-none">
                                             {formatMinutesToTimeString(userStats.totalMinutes)}
                                         </div>
@@ -956,17 +956,17 @@ export default function Reports({ users }) {
                                     {/* Secondary peers: breaks, combined time, days, average */}
                                     <div className="flex flex-wrap items-start gap-x-6 gap-y-2 text-body">
                                         <div className="flex flex-col">
-                                            <span className="text-caption uppercase font-bold tracking-wide text-gray-500">Pertraukos</span>
+                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Pertraukos</span>
                                             <span className="text-amber-600 font-bold">{formatMinutesToTimeString(userStats.totalBreakMinutes)}</span>
                                         </div>
                                         <div className="flex flex-col">
-                                            <span className="flex items-center gap-1 text-caption uppercase font-bold tracking-wide text-gray-500">
+                                            <span className="flex items-center gap-1 text-caption uppercase font-bold tracking-wide text-ink-muted">
                                                 Bendras laikas
                                                 <span
                                                     className="inline-flex items-center"
                                                     title="Apima darbą ir pertraukas — tai NE tik darbo valandos."
                                                 >
-                                                    <Info className="w-3.5 h-3.5 text-gray-400" aria-hidden="true" />
+                                                    <Info className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
                                                     <span className="sr-only">Apima darbą ir pertraukas, ne tik darbo valandas.</span>
                                                 </span>
                                             </span>
@@ -974,15 +974,15 @@ export default function Reports({ users }) {
                                                 <Briefcase className="w-3 h-3" aria-hidden="true" />
                                                 {formatMinutesToTimeString(userStats.totalMinutes + userStats.totalBreakMinutes)}
                                             </span>
-                                            <span className="text-caption text-gray-500">Darbas + Pertraukos</span>
+                                            <span className="text-caption text-ink-muted">Darbas + Pertraukos</span>
                                         </div>
                                         <div className="flex flex-col">
-                                            <span className="text-caption uppercase font-bold tracking-wide text-gray-500">Dienų</span>
-                                            <span className="text-gray-700 font-medium">{Object.keys(userStats.days).length} d.</span>
+                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Dienų</span>
+                                            <span className="text-ink font-medium">{Object.keys(userStats.days).length} d.</span>
                                         </div>
                                         <div className="flex flex-col">
-                                            <span className="text-caption uppercase font-bold tracking-wide text-gray-500">Vid.</span>
-                                            <span className="text-gray-700 font-medium">{formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}</span>
+                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Vid.</span>
+                                            <span className="text-ink font-medium">{formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -1004,12 +1004,12 @@ export default function Reports({ users }) {
                                     const isExpanded = expandedUser === userStats.userId;
                                     const workerName = formatDisplayName(userStats.name).split(' ')[0];
                                     return (
-                                        <li key={userStats.userId} className="bg-white rounded-card border border-line shadow-sm overflow-hidden">
+                                        <li key={userStats.userId} className="bg-surface-card rounded-card border border-line shadow-sm overflow-hidden">
                                             <div className="p-4 space-y-3">
                                                 <div className="flex items-start justify-between gap-2">
                                                     <div className="min-w-0">
-                                                        <div className="text-caption uppercase font-bold tracking-wide text-gray-500">Darbuotojas</div>
-                                                        <div className="text-body font-bold text-gray-900 truncate">{workerName}</div>
+                                                        <div className="text-caption uppercase font-bold tracking-wide text-ink-muted">Darbuotojas</div>
+                                                        <div className="text-body font-bold text-ink-strong truncate">{workerName}</div>
                                                     </div>
                                                     <IconButton
                                                         icon={isExpanded ? ChevronUp : ChevronDown}
@@ -1021,7 +1021,7 @@ export default function Reports({ users }) {
 
                                                 {/* Primary metric: actual work hours */}
                                                 <div>
-                                                    <div className="text-caption uppercase font-bold tracking-wide text-gray-500">Darbas</div>
+                                                    <div className="text-caption uppercase font-bold tracking-wide text-ink-muted">Darbas</div>
                                                     <div className="text-h1 font-bold text-indigo-600 leading-none">
                                                         {formatMinutesToTimeString(userStats.totalMinutes)}
                                                     </div>
@@ -1030,14 +1030,14 @@ export default function Reports({ users }) {
                                                 {/* Secondary peers */}
                                                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body">
                                                     <div className="flex flex-col">
-                                                        <span className="text-caption uppercase font-bold tracking-wide text-gray-500">Pertraukos</span>
+                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Pertraukos</span>
                                                         <span className="text-amber-600 font-bold">{formatMinutesToTimeString(userStats.totalBreakMinutes)}</span>
                                                     </div>
                                                     <div className="flex flex-col">
-                                                        <span className="flex items-center gap-1 text-caption uppercase font-bold tracking-wide text-gray-500">
+                                                        <span className="flex items-center gap-1 text-caption uppercase font-bold tracking-wide text-ink-muted">
                                                             Bendras laikas
                                                             <span className="inline-flex items-center" title="Apima darbą ir pertraukas — tai NE tik darbo valandos.">
-                                                                <Info className="w-3.5 h-3.5 text-gray-400" aria-hidden="true" />
+                                                                <Info className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
                                                                 <span className="sr-only">Apima darbą ir pertraukas, ne tik darbo valandas.</span>
                                                             </span>
                                                         </span>
@@ -1047,17 +1047,17 @@ export default function Reports({ users }) {
                                                         </span>
                                                     </div>
                                                     <div className="flex flex-col">
-                                                        <span className="text-caption uppercase font-bold tracking-wide text-gray-500">Dienų</span>
-                                                        <span className="text-gray-700 font-medium">{Object.keys(userStats.days).length} d.</span>
+                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Dienų</span>
+                                                        <span className="text-ink font-medium">{Object.keys(userStats.days).length} d.</span>
                                                     </div>
                                                     <div className="flex flex-col">
-                                                        <span className="text-caption uppercase font-bold tracking-wide text-gray-500">Vid.</span>
-                                                        <span className="text-gray-700 font-medium">{formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}</span>
+                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Vid.</span>
+                                                        <span className="text-ink font-medium">{formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}</span>
                                                     </div>
                                                 </div>
                                             </div>
                                             {isExpanded && (
-                                                <div className="bg-gray-50/50 border-t border-line p-3">
+                                                <div className="bg-surface-sunken border-t border-line p-3">
                                                     <DayBreakdown userStats={userStats} />
                                                 </div>
                                             )}
@@ -1067,30 +1067,30 @@ export default function Reports({ users }) {
                             </ul>
 
                             {/* Desktop / wide: denser table is allowed (§9) */}
-                            <div className="hidden bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto md:block">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
+                            <div className="hidden bg-surface-card rounded-card shadow-sm border border-line overflow-x-auto md:block">
+                                <table className="min-w-full divide-y divide-line">
+                                    <thead className="bg-surface-sunken">
                                         <tr>
-                                            <th scope="col" className="px-6 py-3 text-left text-caption uppercase tracking-wider font-bold text-gray-500">Darb.</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Darbas</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Pertraukos</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500" title="Bendras laikas: apima darbą ir pertraukas — ne tik darbo valandos.">Bendras laikas</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Dienų</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-gray-500">Vid.</th>
+                                            <th scope="col" className="px-6 py-3 text-left text-caption uppercase tracking-wider font-bold text-ink-muted">Darb.</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Darbas</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Pertraukos</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted" title="Bendras laikas: apima darbą ir pertraukas — ne tik darbo valandos.">Bendras laikas</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Dienų</th>
+                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Vid.</th>
                                             <th scope="col" className="px-6 py-3 w-10"></th>
                                         </tr>
                                     </thead>
-                                    <tbody className="bg-white divide-y divide-gray-200">
+                                    <tbody className="bg-surface-card divide-y divide-line">
                                         {workData.map((userStats) => {
                                             const isExpanded = expandedUser === userStats.userId;
                                             const workerName = formatDisplayName(userStats.name).split(' ')[0];
                                             return (
                                                 <React.Fragment key={userStats.userId}>
                                                     <tr
-                                                        className={`hover:bg-gray-50 cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50' : ''}`}
+                                                        className={`hover:bg-surface-sunken cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50' : ''}`}
                                                         onClick={() => setExpandedUser(isExpanded ? null : userStats.userId)}
                                                     >
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body font-medium text-gray-900">
+                                                        <td className="px-6 py-4 whitespace-nowrap text-body font-medium text-ink-strong">
                                                             {workerName}
                                                         </td>
                                                         <td className="px-6 py-4 whitespace-nowrap text-body text-right text-indigo-600 font-medium">
@@ -1102,18 +1102,18 @@ export default function Reports({ users }) {
                                                         <td className="px-6 py-4 whitespace-nowrap text-body text-right text-blue-700 font-bold bg-blue-50/10">
                                                             {formatMinutesToTimeString(userStats.totalMinutes + userStats.totalBreakMinutes)}
                                                         </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-gray-600">
+                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-ink-muted">
                                                             {Object.keys(userStats.days).length} d.
                                                         </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-gray-500">
+                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-ink-muted">
                                                             {formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}
                                                         </td>
-                                                        <td className="px-6 py-4 text-right text-gray-400">
+                                                        <td className="px-6 py-4 text-right text-ink-muted">
                                                             {isExpanded ? <ChevronUp className="w-4 h-4" aria-hidden="true" /> : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
                                                         </td>
                                                     </tr>
                                                     {isExpanded && (
-                                                        <tr className="bg-gray-50/50">
+                                                        <tr className="bg-surface-sunken">
                                                             <td colSpan="7" className="px-6 py-4">
                                                                 <DayBreakdown userStats={userStats} />
                                                             </td>
@@ -1133,24 +1133,24 @@ export default function Reports({ users }) {
             {/* --- CALENDAR HISTORY TAB CONTENT --- */}
             {activeTab === 'calendar-history' && (
                 <div className="space-y-4">
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 flex flex-wrap gap-4 items-center">
+                    <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line flex flex-wrap gap-4 items-center">
                         <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Pasirinkite mėnesį</label>
+                            <label className="block text-caption font-semibold text-ink-muted mb-1">Pasirinkite mėnesį</label>
                             <input
                                 type="month"
                                 value={historyMonth}
                                 onChange={(e) => setHistoryMonth(e.target.value)}
-                                className="border border-gray-300 rounded-lg px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                             />
                         </div>
                     </div>
 
                     {loading && (
-                        <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">Kraunami duomenys...</div>
+                        <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">Kraunami duomenys...</div>
                     )}
-                    
+
                     {!loading && calendarHistory.length === 0 && (
-                        <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">
+                        <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                             Pagal pasirinktą mėnesį nėra išsaugota jokių kalendoriaus pakeitimų istorijoje.
                         </div>
                     )}
@@ -1163,9 +1163,9 @@ export default function Reports({ users }) {
                                     const e = deriveCalendarEntry(item);
                                     const { TypeIcon } = e;
                                     return (
-                                        <li key={item.id} className="bg-white rounded-card border border-line shadow-sm p-4 space-y-3">
+                                        <li key={item.id} className="bg-surface-card rounded-card border border-line shadow-sm p-4 space-y-3">
                                             <div className="flex items-start justify-between gap-2">
-                                                <span className="text-body font-bold text-gray-900 truncate">{e.workerLabel}</span>
+                                                <span className="text-body font-bold text-ink-strong truncate">{e.workerLabel}</span>
                                                 <span className={`shrink-0 px-2 py-0.5 rounded-full text-caption font-bold ${e.statusColor}`}>
                                                     {e.statusLabel}
                                                 </span>
@@ -1181,21 +1181,21 @@ export default function Reports({ users }) {
                                             </div>
                                             <dl className="grid grid-cols-1 gap-1 text-body">
                                                 <div className="flex flex-col">
-                                                    <dt className="text-caption uppercase font-bold tracking-wide text-gray-500">Data ir laikas</dt>
-                                                    <dd className="font-mono text-gray-700">{e.calendarTimeLabel}</dd>
+                                                    <dt className="text-caption uppercase font-bold tracking-wide text-ink-muted">Data ir laikas</dt>
+                                                    <dd className="font-mono text-ink">{e.calendarTimeLabel}</dd>
                                                 </div>
                                                 <div className="flex flex-col">
-                                                    <dt className="text-caption uppercase font-bold tracking-wide text-gray-500">Keitimo laikas</dt>
-                                                    <dd className="font-mono text-gray-500">{e.actionTimeLabel}</dd>
+                                                    <dt className="text-caption uppercase font-bold tracking-wide text-ink-muted">Keitimo laikas</dt>
+                                                    <dd className="font-mono text-ink-muted">{e.actionTimeLabel}</dd>
                                                 </div>
                                                 <div className="flex flex-col">
-                                                    <dt className="text-caption uppercase font-bold tracking-wide text-gray-500">Patvirtino</dt>
-                                                    <dd className="text-gray-700">{e.managerLabel}</dd>
+                                                    <dt className="text-caption uppercase font-bold tracking-wide text-ink-muted">Patvirtino</dt>
+                                                    <dd className="text-ink">{e.managerLabel}</dd>
                                                 </div>
                                                 {e.reasonLabel !== '-' && (
                                                     <div className="flex flex-col">
-                                                        <dt className="text-caption uppercase font-bold tracking-wide text-gray-500">Priežastis</dt>
-                                                        <dd className="italic text-gray-700 break-words">{e.reasonLabel}</dd>
+                                                        <dt className="text-caption uppercase font-bold tracking-wide text-ink-muted">Priežastis</dt>
+                                                        <dd className="italic text-ink break-words">{e.reasonLabel}</dd>
                                                     </div>
                                                 )}
                                             </dl>
@@ -1205,28 +1205,28 @@ export default function Reports({ users }) {
                             </ul>
 
                             {/* Desktop / wide: denser table is allowed (§9) */}
-                            <div className="hidden bg-white rounded-xl shadow-sm border border-gray-200 overflow-x-auto md:block">
-                                <table className="min-w-full divide-y divide-gray-200">
-                                    <thead className="bg-gray-50">
+                            <div className="hidden bg-surface-card rounded-card shadow-sm border border-line overflow-x-auto md:block">
+                                <table className="min-w-full divide-y divide-line">
+                                    <thead className="bg-surface-sunken">
                                         <tr>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Darbuotojas</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Data ir laikas (kalendoriuje)</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Veiksmas / tipas</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Keitimo laikas</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Patvirtino / būsena</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-gray-500 uppercase tracking-wider">Priežastis</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Darbuotojas</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Data ir laikas (kalendoriuje)</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Veiksmas / tipas</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Keitimo laikas</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Patvirtino / būsena</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Priežastis</th>
                                         </tr>
                                     </thead>
-                                    <tbody className="bg-white divide-y divide-gray-100">
+                                    <tbody className="bg-surface-card divide-y divide-line">
                                         {calendarHistory.map((item) => {
                                             const e = deriveCalendarEntry(item);
                                             const { TypeIcon } = e;
                                             return (
-                                                <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                                                    <td className="px-4 py-3 whitespace-nowrap text-body font-medium text-gray-900">
+                                                <tr key={item.id} className="hover:bg-surface-sunken transition-colors">
+                                                    <td className="px-4 py-3 whitespace-nowrap text-body font-medium text-ink-strong">
                                                         {e.workerLabel}
                                                     </td>
-                                                    <td className="px-4 py-3 whitespace-nowrap text-caption text-gray-600 font-mono">
+                                                    <td className="px-4 py-3 whitespace-nowrap text-caption text-ink-muted font-mono">
                                                         {e.calendarTimeLabel}
                                                     </td>
                                                     <td className="px-4 py-3 whitespace-nowrap">
@@ -1240,7 +1240,7 @@ export default function Reports({ users }) {
                                                             </span>
                                                         </div>
                                                     </td>
-                                                    <td className="px-4 py-3 whitespace-nowrap text-caption text-gray-500 font-mono">
+                                                    <td className="px-4 py-3 whitespace-nowrap text-caption text-ink-muted font-mono">
                                                         {e.actionTimeLabel}
                                                     </td>
                                                     <td className="px-4 py-3 whitespace-nowrap">
@@ -1248,12 +1248,12 @@ export default function Reports({ users }) {
                                                             <span className={`px-2 py-0.5 rounded-full text-caption font-bold ${e.statusColor}`}>
                                                                 {e.statusLabel}
                                                             </span>
-                                                            <span className="text-caption text-gray-500 font-medium">
+                                                            <span className="text-caption text-ink-muted font-medium">
                                                                 {e.managerLabel}
                                                             </span>
                                                         </div>
                                                     </td>
-                                                    <td className="px-4 py-3 text-body text-gray-700 italic max-w-xs break-words">
+                                                    <td className="px-4 py-3 text-body text-ink italic max-w-xs break-words">
                                                         {e.reasonLabel}
                                                     </td>
                                                 </tr>
@@ -1271,31 +1271,31 @@ export default function Reports({ users }) {
             {/* --- TASKS TAB CONTENT --- */}
             {activeTab === 'tasks' && (
                 <div className="space-y-4">
-                    <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Nuo</label>
+                            <label className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
                             <input
                                 type="date"
                                 value={taskFilters.startDate}
                                 onChange={(e) => setTaskFilters(prev => ({ ...prev, startDate: e.target.value }))}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Iki</label>
+                            <label className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
                             <input
                                 type="date"
                                 value={taskFilters.endDate}
                                 onChange={(e) => setTaskFilters(prev => ({ ...prev, endDate: e.target.value }))}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Filtruoti pagal Žymą</label>
+                            <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Žymą</label>
                             <select
                                 value={taskFilters.tag}
                                 onChange={(e) => setTaskFilters(prev => ({ ...prev, tag: e.target.value }))}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
                             >
                                 <option value="all">Visos Žymos</option>
                                 {TASK_TAGS.map(tag => (
@@ -1305,11 +1305,11 @@ export default function Reports({ users }) {
                         </div>
                         {(isManagerRole(userRole)) && (
                             <div>
-                                <label className="block text-xs font-semibold text-gray-500 mb-1">Filtruoti pagal Darbuotoją</label>
+                                <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Darbuotoją</label>
                                 <select
                                     value={taskFilters.userId}
                                     onChange={(e) => setTaskFilters(prev => ({ ...prev, userId: e.target.value }))}
-                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm"
+                                    className="w-full border border-line rounded-control px-3 py-2 text-sm"
                                 >
                                     <option value="all">Visi Darbuotojai</option>
                                     {users?.map(u => (
@@ -1322,7 +1322,7 @@ export default function Reports({ users }) {
                             <select
                                 value={taskSort}
                                 onChange={(e) => setTaskSort(e.target.value)}
-                                className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-gray-50"
+                                className="border border-line rounded-control px-3 py-2 text-sm bg-surface-sunken"
                             >
                                 <option value="date_desc">Naujausi viršuje</option>
                                 <option value="date_asc">Seniausi viršuje</option>
@@ -1333,7 +1333,7 @@ export default function Reports({ users }) {
                     </div>
 
                     {loading ? (
-                        <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">Kraunami duomenys...</div>
+                        <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">Kraunami duomenys...</div>
                     ) : (
                         <>
                             {groupedTasks.length > 0 && groupedTasks.map(([date, tasks]) => (
@@ -1345,7 +1345,7 @@ export default function Reports({ users }) {
                             ))}
 
                             {groupedTasks.length === 0 && (
-                                <div className="bg-white p-8 rounded-xl shadow-sm text-center text-gray-500">
+                                <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                                     Nerasta užduočių pagal pasirinktus filtrus.
                                 </div>
                             )}

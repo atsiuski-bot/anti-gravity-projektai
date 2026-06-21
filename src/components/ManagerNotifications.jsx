@@ -335,7 +335,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                 <div
                     role="alert"
                     aria-live="assertive"
-                    className="max-w-xl rounded-control border border-red-200 bg-red-50 px-4 py-3 text-body text-feedback-danger"
+                    className="max-w-xl rounded-control border border-feedback-danger/30 bg-feedback-danger/10 px-4 py-3 text-body text-feedback-danger"
                 >
                     {actionError}
                 </div>
@@ -418,7 +418,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         {dayName}, {notif.type === 'edit' ? `nuo ${oldTimeRange} iki ${timeRange}` : timeRange}
                                     </p>
                                     
-                                    <div className="mt-3 bg-white/50 rounded-lg p-3 border border-blue-100">
+                                    <div className="mt-3 bg-surface-card/50 rounded-lg p-3 border border-blue-100">
                                         <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Priežastis:</p>
                                         <p className="text-sm text-blue-800 italic">&quot;{notif.reason}&quot;</p>
                                     </div>
