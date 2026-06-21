@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { Zap, Square, Check, ShieldAlert } from 'lucide-react';
-import { formatMinutesToTimeString, getLithuanianNow } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
@@ -136,7 +136,8 @@ export default function QuickWorkTimer({ compact = false }) {
         const now = getLithuanianNow();
         let sessionDuration = 0;
         if (startTime) {
-            sessionDuration = (now - startTime) / (1000 * 60);
+            // Clamp so a backward clock skew can't make a real session read as negative.
+            sessionDuration = clampSessionMinutes((now - startTime) / (1000 * 60));
         }
 
         // 10 second threshold
