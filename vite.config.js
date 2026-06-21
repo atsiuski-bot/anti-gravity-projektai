@@ -68,6 +68,19 @@ export default defineConfig({
           if (id.includes('node_modules/lucide-react/')) {
             return 'lucide-icons';
           }
+          // react-big-calendar is heavy (~115 KB gz) and only used by the calendar
+          // views. Give it its own chunk so it is no longer auto-merged into an
+          // unrelated lazy chunk (it was being attributed to TaskTimeLimitPopup) and so
+          // it is cached/loaded independently of the rest of the app.
+          if (id.includes('node_modules/react-big-calendar/')) {
+            return 'calendar-vendor';
+          }
+          // date-fns is used both by the calendar and by app-wide utils
+          // (calendarNotifications); keep it in its own chunk so the broad util users
+          // do NOT transitively pull in react-big-calendar.
+          if (id.includes('node_modules/date-fns/')) {
+            return 'date-vendor';
+          }
           // Other smaller vendor libs
           if (id.includes('node_modules/clsx/') ||
               id.includes('node_modules/tailwind-merge/') ||
