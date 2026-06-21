@@ -19,6 +19,10 @@ function GoogleIcon({ className }) {
 /** Map Firebase auth errors to friendly Lithuanian copy — never show raw err.message (§10). */
 function loginErrorMessage(err) {
     switch (err?.code) {
+        case 'app/pending-approval':
+            return 'Jūsų paskyra sukurta ir laukia administratoriaus patvirtinimo. Susisiekite su savo vadovu.';
+        case 'app/account-disabled':
+            return 'Jūsų paskyra užblokuota. Susisiekite su administratoriumi.';
         case 'auth/popup-blocked':
             return 'Naršyklė užblokavo prisijungimo langą. Leiskite iškylančius langus šiai svetainei ir bandykite dar kartą.';
         case 'auth/popup-closed-by-user':

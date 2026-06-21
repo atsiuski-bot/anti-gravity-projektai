@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
-import { UserCog, ShieldAlert, Check, Sliders, Trash2 } from 'lucide-react';
+import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -103,17 +103,36 @@ function ManagerControl({ user, managers, onChange }) {
     );
 }
 
+// A pending account is disabled AND flagged status:'pending' (newly self-signed-in, awaiting
+// approval), as opposed to a manually blocked one.
+function isPendingUser(user) {
+    return user.isDisabled && user.status === 'pending';
+}
+
+// Disabled-state pill: distinguishes "awaiting approval" from "blocked" so an admin can tell a
+// new sign-up apart from a deliberately disabled account.
+function DisabledPill({ user }) {
+    if (!user.isDisabled) return null;
+    return isPendingUser(user)
+        ? <StatusPill tone="pending" icon={Clock}>Laukia patvirtinimo</StatusPill>
+        : <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>;
+}
+
 function BlockButton({ user, isSelf, onRequest, fullWidth }) {
+    const pending = isPendingUser(user);
+    // The action only ever toggles isDisabled — nothing is deleted — so the enable side reads
+    // "Patvirtinti" (pending) / "Atblokuoti" (blocked) and the disable side reads "Blokuoti",
+    // not the misleading "Blokuoti / Ištrinti" with a trash icon.
     return (
         <Button
-            variant={user.isDisabled ? 'secondary' : 'danger'}
+            variant={user.isDisabled ? (pending ? 'primary' : 'secondary') : 'danger'}
             size="md"
-            icon={user.isDisabled ? Check : Trash2}
+            icon={user.isDisabled ? Check : Ban}
             disabled={isSelf}
             fullWidth={fullWidth}
             onClick={() => onRequest(user)}
         >
-            {user.isDisabled ? 'Atblokuoti' : 'Blokuoti / Ištrinti'}
+            {user.isDisabled ? (pending ? 'Patvirtinti' : 'Atblokuoti') : 'Blokuoti'}
         </Button>
     );
 }
@@ -349,7 +368,10 @@ export default function UserManagement() {
                 await closeActiveSessionForUser(user);
             }
             const userRef = doc(db, 'users', user.id);
-            await updateDoc(userRef, { isDisabled: !user.isDisabled });
+            const updates = { isDisabled: !user.isDisabled };
+            // Approving/unblocking clears the pending flag so the account is fully active.
+            if (user.isDisabled) updates.status = 'active';
+            await updateDoc(userRef, updates);
             setBlockTarget(null);
         } catch (err) {
             console.error("Error updating user status:", err);
@@ -394,7 +416,7 @@ export default function UserManagement() {
                                     <p className="truncate text-body font-semibold text-ink-strong">
                                         {formatDisplayName(user.displayName) || 'Be vardo'}
                                     </p>
-                                    {user.isDisabled && <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>}
+                                    <DisabledPill user={user} />
                                 </div>
                                 <p className="truncate text-body text-ink-muted">{user.email}</p>
                                 <div className="mt-2">
@@ -452,9 +474,7 @@ export default function UserManagement() {
                                         <div>
                                             <div className="flex items-center gap-2 text-body font-medium text-ink-strong">
                                                 {formatDisplayName(user.displayName) || 'Be vardo'}
-                                                {user.isDisabled && (
-                                                    <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>
-                                                )}
+                                                <DisabledPill user={user} />
                                             </div>
                                             <div className="text-body text-ink-muted">{user.email}</div>
                                         </div>
@@ -546,7 +566,11 @@ export default function UserManagement() {
             {blockTarget && (
                 <ConfirmDialog
                     open
-                    title={blockTarget.isDisabled ? 'Atblokuoti vartotoją?' : 'Blokuoti / ištrinti vartotoją?'}
+                    title={
+                        blockTarget.isDisabled
+                            ? (isPendingUser(blockTarget) ? 'Patvirtinti vartotoją?' : 'Atblokuoti vartotoją?')
+                            : 'Blokuoti vartotoją?'
+                    }
                     message={`Vartotojas: ${formatDisplayName(blockTarget.displayName) || blockTarget.email}.`}
                     warning={
                         blockTarget.isDisabled
@@ -555,7 +579,7 @@ export default function UserManagement() {
                                 ? 'Vartotojas neteks prieigos prie sistemos. Jis šiuo metu turi aktyvią sesiją — ji bus automatiškai užbaigta.'
                                 : 'Vartotojas neteks prieigos prie sistemos.'
                     }
-                    confirmLabel={blockTarget.isDisabled ? 'Atblokuoti' : 'Blokuoti'}
+                    confirmLabel={blockTarget.isDisabled ? (isPendingUser(blockTarget) ? 'Patvirtinti' : 'Atblokuoti') : 'Blokuoti'}
                     variant={blockTarget.isDisabled ? 'primary' : 'danger'}
                     loading={blocking}
                     onConfirm={confirmBlock}
