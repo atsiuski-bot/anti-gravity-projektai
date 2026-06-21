@@ -13,7 +13,7 @@ import { getPriorityRank } from '../utils/priority';
 import { Spinner } from '../components/ui/Loading';
 import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
 import { logError } from '../utils/errorLog';
-import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
+import { Filter, AlertCircle, ClipboardList, Search } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
 import Button from '../components/ui/Button';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -146,6 +146,13 @@ export default function WorkerView() {
     // Sorting and filtering state
     const [sortBy, setSortBy] = useState('none');
     const [filterTag, setFilterTag] = useState('');
+    // Free-text search, debounced so the list doesn't re-filter on every keystroke.
+    const [searchText, setSearchText] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    useEffect(() => {
+        const handle = setTimeout(() => setDebouncedSearch(searchText), 200);
+        return () => clearTimeout(handle);
+    }, [searchText]);
 
     // Scroll restoration logic
     useEffect(() => {
@@ -160,6 +167,13 @@ export default function WorkerView() {
 
         if (filterTag) {
             result = result.filter(t => t.tag === filterTag);
+        }
+
+        const query = debouncedSearch.trim().toLowerCase();
+        if (query) {
+            result = result.filter(t =>
+                [t.title, t.description, t.tag].some(field => field && String(field).toLowerCase().includes(query))
+            );
         }
 
         if (sortBy === 'status') {
@@ -191,7 +205,7 @@ export default function WorkerView() {
         }
 
         return result;
-    }, [tasks, sortBy, filterTag]);
+    }, [tasks, sortBy, filterTag, debouncedSearch]);
 
     return (
         <div className="pt-1">
@@ -216,6 +230,17 @@ export default function WorkerView() {
 
                     {/* Sort dropdown */}
                     <div className="relative w-full sm:w-auto flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
+                            <input
+                                type="search"
+                                value={searchText}
+                                onChange={(e) => setSearchText(e.target.value)}
+                                placeholder="Ieškoti užduočių…"
+                                aria-label="Ieškoti užduočių"
+                                className="w-full sm:w-auto min-h-touch pl-10 pr-4 py-2 border border-line rounded-input text-body-lg text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            />
+                        </div>
                         <div className="relative">
                             <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
                             <select

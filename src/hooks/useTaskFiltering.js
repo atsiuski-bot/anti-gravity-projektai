@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { getPriorityRank } from '../utils/priority';
 
 import { getLithuanianNow, getLithuanian3AMCutoff, getLithuanianDateString } from '../utils/timeUtils';
@@ -8,6 +8,15 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
     const [filterPriority, setFilterPriority] = useState('');
     const [filterTag, setFilterTag] = useState('');
     const [sortBy, setSortBy] = useState('none');
+
+    // Free-text search, debounced so the list doesn't re-filter on every keystroke. Matches
+    // client-side over the already-loaded array (title, description, worker name, tag).
+    const [searchText, setSearchText] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    useEffect(() => {
+        const handle = setTimeout(() => setDebouncedSearch(searchText), 200);
+        return () => clearTimeout(handle);
+    }, [searchText]);
 
     const sortedTasks = useMemo(() => {
         // Filter out completed, deleted, and unapproved tasks
@@ -60,6 +69,15 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         // Apply tag filter
         if (filterTag) {
             activeTasks = activeTasks.filter(t => t.tag === filterTag);
+        }
+
+        // Apply free-text search (case-insensitive) over the human-readable fields.
+        const query = debouncedSearch.trim().toLowerCase();
+        if (query) {
+            activeTasks = activeTasks.filter(t =>
+                [t.title, t.description, t.assignedUserName, t.tag]
+                    .some(field => field && String(field).toLowerCase().includes(query))
+            );
         }
 
         if (sortBy === 'none') return activeTasks;
@@ -159,7 +177,7 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         }
 
         return sorted;
-    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority, filterTag]);
+    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority, filterTag, debouncedSearch]);
 
     return {
         sortedTasks,
@@ -169,6 +187,8 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         setFilterPriority,
         filterTag,
         setFilterTag,
+        searchText,
+        setSearchText,
         sortBy,
         setSortBy
     };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Filter } from 'lucide-react';
+import { ArrowUpDown, Filter, Search } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -47,6 +47,7 @@ export default function ManagerView() {
         filterUser, setFilterUser,
         filterPriority, setFilterPriority,
         filterTag, setFilterTag,
+        searchText, setSearchText,
         sortBy, setSortBy
     } = useTaskFiltering(tasks, manualTaskOrder);
 
@@ -133,6 +134,17 @@ export default function ManagerView() {
                 <div className="flex flex-wrap gap-3 mb-4 items-center justify-between">
                     {/* Filters */}
                     <div className="flex flex-wrap gap-2 items-center">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
+                            <input
+                                type="search"
+                                value={searchText}
+                                onChange={(e) => setSearchText(e.target.value)}
+                                placeholder="Ieškoti užduočių…"
+                                aria-label="Ieškoti užduočių"
+                                className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            />
+                        </div>
                         <div className="relative">
                             <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
                             <select
