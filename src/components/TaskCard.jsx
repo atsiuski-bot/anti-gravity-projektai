@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2 } from 'lucide-react';
+import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, User, Pause } from 'lucide-react';
 import clsx from 'clsx';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
-import { useSwipeable } from 'react-swipeable';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirmationModal } from './TaskDetailsModals';
 import { InlineEditModal } from './InlineEditModal';
 import TaskTimerControls from './TaskTimerControls';
@@ -16,6 +15,7 @@ import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
+import StatusPill from './ui/StatusPill';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
 import { STATUS_LABELS, STATUS_STYLES } from '../utils/taskConstants';
@@ -26,7 +26,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const { currentUser, userRole } = useAuth();
     const [activeModal, setActiveModal] = useState(null);
     const [editingField, setEditingField] = useState(null);
-    const [lastTap, setLastTap] = useState(0);
     const [editingCommentIndex, setEditingCommentIndex] = useState(null);
     const [editCommentText, setEditCommentText] = useState('');
     const [commentError, setCommentError] = useState('');
@@ -36,6 +35,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const [revertError, setRevertError] = useState('');
     const [confirmApprove, setConfirmApprove] = useState(false);
     const [confirmDeleteCommentIdx, setConfirmDeleteCommentIdx] = useState(null);
+    const [actionError, setActionError] = useState('');
 
     const handleUpdateComment = async (index, newText) => {
         try {
@@ -86,7 +86,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     };
 
     const displayColor = task.assignedWorkerColor;
-    const isWorker = role === 'worker';
     const isManager = isManagerRole(role) || isManagerRole(userRole);
     const isAssignedToMe = currentUser?.uid === task.assignedUserId;
 
@@ -100,7 +99,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
             setSpentMinutes(calculateCurrentTotalMinutes(task));
         };
         updateSpentTime();
-        
+
         // Update more frequently for running tasks, but only if running
         const intervalTime = isRunning ? 1000 : 10000;
         const interval = setInterval(updateSpentTime, intervalTime);
@@ -110,9 +109,12 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
     const handleAddComment = async (text) => {
         try {
+            setActionError('');
             await addComment(task.id, text, currentUser, task.comments);
         } catch (err) {
-            alert("Nepavyko pridėti komentaro.");
+            // Inline accessible error instead of the banned window.alert; also log durably.
+            logError(err, { source: 'handler:addComment' });
+            setActionError('Nepavyko pridėti komentaro. Bandykite dar kartą.');
         }
     };
 
@@ -122,147 +124,165 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
     const confirmDelete = async ({ keepWorkHours }) => {
         try {
+            setActionError('');
             await deleteTask(task, currentUser.uid, { keepWorkHours });
             setShowDeleteModal(false);
         } catch (err) {
-            console.error("Error deleting task:", err);
-            alert("Nepavyko ištrinti užduoties. Bandykite dar kartą.");
+            // Inline accessible error instead of the banned window.alert; also log durably.
+            logError(err, { source: 'handler:deleteTask' });
+            setActionError('Nepavyko ištrinti užduoties. Bandykite dar kartą.');
         }
     };
 
-    // Double-tap handler for touch events
-    const handleDoubleTap = async (e) => {
-        // Only handle if it's a touch event or if we're on desktop
-        if (e.type !== 'touchend' && e.type !== 'click') return;
-
-        const now = Date.now();
-        const DOUBLE_TAP_DELAY = 300;
-
-        if (now - lastTap < DOUBLE_TAP_DELAY) {
-            const canInteract = (isAssignedToMe && taskStatus !== 'confirmed' && taskStatus !== 'unapproved') || (isManager && taskStatus === 'unapproved');
-
-            if (canInteract) {
-                // Double tap detected
-                e.preventDefault();
-                e.stopPropagation();
-
-                const isManagerOrAdmin = isManagerRole(userRole) || currentUser?.uid === task.managerId;
-
-                if (taskStatus === 'pending') {
-                    await updateDoc(doc(db, 'tasks', task.id), {
-                        status: 'in-progress',
-                        updatedAt: new Date().toISOString()
-                    });
-                } else if (taskStatus === 'in-progress') {
-                    await updateDoc(doc(db, 'tasks', task.id), {
-                        status: 'pending',
-                        updatedAt: new Date().toISOString()
-                    });
-                } else if (taskStatus === 'unapproved' && isManagerOrAdmin) {
-                    await updateDoc(doc(db, 'tasks', task.id), {
-                        status: 'pending',
-                        updatedAt: new Date().toISOString()
-                    });
-                }
-            }
-        }
-
-        setLastTap(now);
-    };
-
-    // Swipe handler for the (reversible) status toggle. The destructive finish-by-swipe was
-    // removed: finishing now happens only via the explicit, confirmed Užbaigti button, so a
-    // stray horizontal swipe during a vertical scroll can never irreversibly end a task.
-    const handleSwipeRight = async () => {
-        if (!isAssignedToMe || taskStatus === 'confirmed' || taskStatus === 'unapproved') return;
-
-        // Swipe right: Toggle between pending and in-progress
-        try {
-            if (taskStatus === 'pending') {
-                await updateDoc(doc(db, 'tasks', task.id), {
-                    status: 'in-progress',
-                    updatedAt: new Date().toISOString()
-                });
-            } else if (taskStatus === 'in-progress') {
-                await updateDoc(doc(db, 'tasks', task.id), {
-                    status: 'pending',
-                    updatedAt: new Date().toISOString()
-                });
-            }
-        } catch (error) {
-            console.error('Error updating task via swipe:', error);
-        }
-    };
-
-    const swipeHandlers = useSwipeable({
-        onSwipedRight: handleSwipeRight,
-        trackMouse: false,
-        trackTouch: true,
-        delta: 80,
-        swipeDuration: 500
-    });
-
-    // Compute dynamic limit state based on raw math instead of just the task.timeLimitReached flag.
-    // This allows manual time reduction to instantly un-red the card without needing a flag wipe.
+    // Estimated vs. spent — the card's primary glance signal ("time first"). The limit state
+    // is derived from raw math (not the task.timeLimitReached flag) so a manual time reduction
+    // instantly un-reds the card without needing a flag wipe.
     const estMinutes = parseTimeStringToMinutes(task.estimatedTime || '0');
     const isLimitExceeded = estMinutes > 0 && spentMinutes >= estMinutes;
+    const progressPct = estMinutes > 0 ? Math.min(100, Math.round((spentMinutes / estMinutes) * 100)) : 0;
+    const hasTimeInfo = Boolean(task.estimatedTime) || spentMinutes > 0;
+
+    const timeAccent = isLimitExceeded
+        ? 'text-feedback-danger'
+        : isRunning
+            ? 'text-session-task-accent'
+            : 'text-ink-strong';
+    const progressFill = isLimitExceeded
+        ? 'bg-feedback-danger'
+        : isRunning
+            ? 'bg-session-task-accent'
+            : 'bg-brand';
+    const timeCaption = spentMinutes > 0
+        ? (task.estimatedTime ? 'praleista / planas' : 'praleista')
+        : (task.estimatedTime ? 'planas' : '');
+
+    // The status pill follows the live timer (the manual pending<->in-progress toggle was
+    // removed): running -> "Vyksta", started-but-paused -> "Pristabdyta", otherwise
+    // "Nepradėtas". Completed / confirmed / unapproved keep their canonical labels.
+    let statusTone = 'neutral';
+    let statusLabel = STATUS_LABELS[taskStatus] || taskStatus;
+    let StatusIcon = null;
+    if (taskStatus === 'completed' || taskStatus === 'confirmed') {
+        statusTone = 'done';
+    } else if (taskStatus === 'unapproved') {
+        statusTone = 'pending';
+    } else if (isRunning) {
+        statusTone = 'running';
+        statusLabel = 'Vyksta';
+    } else if (taskStatus === 'in-progress' || task.timerStatus === 'paused') {
+        statusTone = 'neutral';
+        statusLabel = 'Pristabdyta';
+        StatusIcon = Pause;
+    } else {
+        statusTone = 'neutral';
+        statusLabel = 'Nepradėtas';
+    }
 
     return (
         <>
             <div
-                {...(isWorker ? swipeHandlers : {})}
-                onTouchEnd={isWorker ? handleDoubleTap : undefined}
                 className={clsx(
-                    "rounded-xl border-[3px] shadow-sm p-3 transition-all duration-200 mb-2", // Reduced padding (p-4->p-3) and margin (mb-4->mb-2)
-                    isRunning ? "bg-green-200 border-green-300"
+                    "rounded-card border-2 shadow-sm p-3 mb-2 transition-shadow duration-base",
+                    isRunning ? "bg-session-task-surface border-session-task-shell"
                         : task.inspectionStatus === 'inspecting' ? "bg-blue-100 border-blue-300"
                         : isLimitExceeded ? "bg-red-50 border-red-300"
-                        : (STATUS_STYLES[taskStatus] || "bg-white border-gray-200"),
-                    taskStatus !== 'confirmed' && taskStatus !== 'unapproved' && !task.completed && "cursor-pointer hover:shadow-md",
+                        : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
                     task.completed && "opacity-75"
                 )}
             >
-                <div className="flex items-start gap-2"> {/* Reduced gap (gap-3->gap-2) */}
-                    <div className="flex-1">
-                        {/* Header */}
-                        <div className="flex justify-between items-start mb-1.5 gap-2"> {/* Reduced margin (mb-3->mb-1.5) */}
-                            {showReorderControls && (
-                                <div className="flex flex-col gap-0.5 mr-1">
-                                    <IconButton
-                                        icon={ArrowUp}
-                                        label="Perkelti aukštyn"
-                                        variant="ghost"
-                                        onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
-                                    />
-                                    <IconButton
-                                        icon={ArrowDown}
-                                        label="Perkelti žemyn"
-                                        variant="ghost"
-                                        onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
-                                    />
-                                </div>
-                            )}
-                            <div
+                <div className="flex items-start gap-2">
+                    {showReorderControls && (
+                        <div className="flex flex-col gap-0.5 -ml-1">
+                            <IconButton
+                                icon={ArrowUp}
+                                label="Perkelti aukštyn"
+                                variant="ghost"
+                                onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
+                            />
+                            <IconButton
+                                icon={ArrowDown}
+                                label="Perkelti žemyn"
+                                variant="ghost"
+                                onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
+                            />
+                        </div>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                        {/* Title + live status — the two things a worker reads first */}
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                            <h3
                                 className={clsx(
-                                    "font-bold text-sm leading-tight text-left flex-1 px-2 py-1 rounded",
-                                    (task.completed || task.isDeleted) ? "line-through text-gray-500" : "text-gray-900",
-                                    taskStatus === 'unapproved' ? "bg-gray-200 text-gray-700" : ""
+                                    "flex-1 min-w-0 text-body font-bold leading-tight",
+                                    (task.completed || task.isDeleted) ? "line-through text-ink-muted" : "text-ink-strong",
+                                    taskStatus === 'unapproved' ? "rounded bg-surface-sunken px-2 py-1 text-ink" : ""
                                 )}
                             >
                                 {task.title}
                                 {task.isDeleted && (
-                                    <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-bold bg-red-100 text-red-600 rounded border border-red-200 align-middle" style={{ textDecoration: 'none' }}>
+                                    <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-bold bg-feedback-danger/10 text-feedback-danger rounded border border-feedback-danger/20 align-middle no-underline">
                                         Ištrintas
                                     </span>
                                 )}
-                            </div>
+                            </h3>
 
-                            <div className="flex items-center gap-1.5 flex-shrink-0"> {/* Reduced gap */}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                                <StatusPill tone={statusTone} icon={StatusIcon}>
+                                    {statusLabel}
+                                </StatusPill>
+                                {isManager && (
+                                    <IconButton
+                                        icon={Trash2}
+                                        label="Ištrinti užduotį"
+                                        variant="danger"
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteTask(); }}
+                                        className="-mr-1"
+                                    />
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Hero: time first. Spent is the prominent number; planned is muted; a
+                            thin progress bar gives the at-a-glance spent/planned ratio. */}
+                        {hasTimeInfo && (
+                            <div className="mb-2">
+                                <div className="flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
+                                    <Clock className={clsx("w-4 h-4 self-center shrink-0", timeAccent)} aria-hidden="true" />
+                                    <span className={clsx("text-h3 font-bold font-mono leading-none tabular-nums", timeAccent)}>
+                                        {formatMinutesToTimeString(spentMinutes)}
+                                    </span>
+                                    {task.estimatedTime && (
+                                        <span className="text-body font-mono text-ink-muted tabular-nums">/ {task.estimatedTime}</span>
+                                    )}
+                                    {timeCaption && (
+                                        <span className="ml-0.5 text-caption text-ink-muted">{timeCaption}</span>
+                                    )}
+                                </div>
+                                {estMinutes > 0 && (
+                                    <div
+                                        className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
+                                        role="progressbar"
+                                        aria-valuenow={progressPct}
+                                        aria-valuemin={0}
+                                        aria-valuemax={100}
+                                        aria-label="Sugaišto laiko dalis nuo suplanuoto"
+                                    >
+                                        <div
+                                            className={clsx("h-full rounded-full transition-all duration-base", progressFill)}
+                                            style={{ width: `${progressPct}%` }}
+                                        />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Secondary meta — one calm, muted line. Priority keeps its (WCAG-correct)
+                            color as the single meaningful accent; the rest stays quiet. */}
+                        {(task.priority || task.deadline || (task.assignedUserName && (isManager || !isAssignedToMe)) || task.tag || task.managerName || task.creatorName) && (
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1.5 text-caption text-ink-muted">
                                 {task.priority && (
                                     <span
-                                        className={clsx(
-                                            "px-1.5 py-0.5 text-caption font-bold rounded-full whitespace-nowrap shadow-sm border border-black/5"
-                                        )}
+                                        className="px-1.5 py-0.5 font-bold rounded-full whitespace-nowrap border border-black/5"
                                         style={{
                                             backgroundColor: getPriorityColor(task.priority),
                                             color: getPriorityTextColor(task.priority)
@@ -271,93 +291,60 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                         {getPriorityLabel(task.priority)}
                                     </span>
                                 )}
-                                <span className="px-1.5 py-0.5 text-caption font-medium rounded-full bg-gray-100 text-gray-600 border border-gray-200 whitespace-nowrap">
-                                    {STATUS_LABELS[taskStatus] || taskStatus}
-                                </span>
-                                {isManager && (
-                                    <IconButton
-                                        icon={Trash2}
-                                        label="Ištrinti užduotį"
-                                        variant="danger"
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteTask(); }}
-                                        className="flex-shrink-0 -mr-1"
-                                    />
+
+                                {task.deadline && (
+                                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                                        <Calendar className="w-3 h-3" aria-hidden="true" />
+                                        {task.deadline}
+                                    </span>
+                                )}
+
+                                {task.assignedUserName && (isManager || !isAssignedToMe) && (
+                                    <span
+                                        className="inline-flex items-center justify-center p-[2px] rounded-full"
+                                        style={{ backgroundColor: displayColor || WORKER_FALLBACK_COLOR }}
+                                    >
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-bold bg-surface-card text-ink">
+                                            <User className="w-3.5 h-3.5" aria-hidden="true" />
+                                            {formatDisplayName(task.assignedUserName)}
+                                        </span>
+                                    </span>
+                                )}
+
+                                {task.tag && (
+                                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                                        <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" aria-hidden="true"></span>
+                                        {task.tag}
+                                    </span>
+                                )}
+
+                                {(task.managerName || task.creatorName) && (
+                                    <span className="inline-flex items-center whitespace-nowrap">
+                                        Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
+                                    </span>
                                 )}
                             </div>
-                        </div>
-
-                        {/* Meta Row: Worker, Deadline, Time, Manager */}
-                        <div className="flex flex-wrap items-center gap-2 mb-1.5 min-h-[20px]"> {/* Reduced gap and margin */}
-                            {/* Worker Pill */}
-                            {task.assignedUserName && (isManager || !isAssignedToMe) && (
-                                <div
-                                    className="inline-flex items-center justify-center p-[2px] rounded-full"
-                                    style={{ backgroundColor: displayColor || WORKER_FALLBACK_COLOR }}
-                                >
-                                    <span className="px-1.5 py-0.5 rounded-full text-caption font-bold bg-white text-gray-800 border border-white/50">
-                                        👤 {formatDisplayName(task.assignedUserName)}
-                                    </span>
-                                </div>
-                            )}
-
-                            {/* Deadline */}
-                            {task.deadline && (
-                                <div className="flex items-center gap-1 text-caption text-orange-600 font-medium bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
-                                    <Calendar className="w-3 h-3" />
-                                    {task.deadline}
-                                </div>
-                            )}
-
-                            {/* Planned Time */}
-                            {task.estimatedTime && (
-                                <div className={clsx("inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-semibold bg-gray-100 border border-gray-200", task.completed ? "text-gray-400" : "text-gray-700")}>
-                                    <Clock className="w-3 h-3" />
-                                    {task.estimatedTime}
-                                </div>
-                            )}
-
-                            {/* Spent Time */}
-                            {(spentMinutes > 0 || (task.status && task.status !== 'pending')) && (
-                                <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-semibold bg-blue-50 text-blue-700 border border-blue-100">
-                                    <Clock className="w-3 h-3" />
-                                    {formatMinutesToTimeString(spentMinutes)}
-                                </div>
-                            )}
-
-                            {/* Tag */}
-                            {task.tag && (
-                                <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-caption font-semibold bg-purple-100 text-purple-800 border border-purple-200">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-purple-500"></span>
-                                    {task.tag}
-                                </div>
-                            )}
-
-                            {/* Manager Name */}
-                            {(task.managerName || task.creatorName) && (
-                                <div className="inline-flex items-center py-0.5 text-caption font-medium text-purple-600 opacity-80">
-                                    Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
-                                </div>
-                            )}
-                        </div>
+                        )}
 
                         {/* Description Section */}
                         {task.description && (
-                            <div className="mb-1.5"> {/* Reduced margin */}
+                            <div className="mb-1.5">
                                 <button
                                     onClick={(e) => {
                                         e.stopPropagation();
                                         setActiveModal('description');
                                     }}
                                     className={clsx(
-                                        "w-full text-left p-2 rounded-lg border border-gray-100 transition-all",
-                                        "bg-gray-50/50 hover:bg-gray-50 hover:border-gray-200 active:scale-[0.98]",
+                                        "w-full text-left p-2 rounded-control border border-line transition-all",
+                                        "bg-surface-sunken hover:bg-surface-sunken active:scale-[0.98]",
+                                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                                         task.completed ? "opacity-60" : "opacity-100"
                                     )}
                                 >
                                     <div className="flex items-start gap-1.5">
-                                        <FileText className="w-3.5 h-3.5 text-blue-500 mt-0.5 flex-shrink-0" />
+                                        <FileText className="w-3.5 h-3.5 text-ink-muted mt-0.5 flex-shrink-0" aria-hidden="true" />
                                         <div className="flex-1">
-                                            <p className="text-xs text-gray-700 line-clamp-2 leading-snug whitespace-pre-wrap"> {/* Reduced line clamp (5->2) and text size */}
+                                            <p className="text-caption text-ink line-clamp-2 leading-snug whitespace-pre-wrap">
                                                 {task.description}
                                             </p>
                                         </div>
@@ -374,13 +361,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                     const canEdit = isManager || comment.userId === currentUser.uid;
 
                                     return (
-                                        <div key={index} className="bg-indigo-50/50 p-2 rounded-lg border border-indigo-100 hover:bg-indigo-50 transition-colors">
+                                        <div key={index} className="bg-surface-sunken p-2 rounded-control border border-line">
                                             <div className="flex justify-between items-start mb-0.5">
                                                 <div className="flex items-center gap-1.5">
-                                                    <span className="text-caption font-bold text-indigo-700">
+                                                    <span className="text-caption font-bold text-ink">
                                                         {formatDisplayName(comment.user)}
                                                     </span>
-                                                    <span className="text-caption text-gray-400">
+                                                    <span className="text-caption text-ink-muted">
                                                         {new Date(comment.createdAt).toLocaleDateString()}
                                                     </span>
                                                 </div>
@@ -393,9 +380,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                                 setEditingCommentIndex(index);
                                                                 setEditCommentText(comment.text);
                                                             }}
-                                                            className="text-gray-400 hover:text-blue-600 p-2 -my-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                                                            className="text-ink-muted hover:text-brand p-2 -my-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
                                                         >
-                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                            <Edit className="w-4 h-4" aria-hidden="true" />
                                                         </button>
                                                         <button
                                                             aria-label="Ištrinti komentarą"
@@ -403,9 +390,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                                 e.stopPropagation();
                                                                 setConfirmDeleteCommentIdx(index);
                                                             }}
-                                                            className="text-gray-400 hover:text-red-600 p-2 -my-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                                                            className="text-ink-muted hover:text-feedback-danger p-2 -my-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
                                                         >
-                                                            <Trash2 className="w-4 h-4" />
+                                                            <Trash2 className="w-4 h-4" aria-hidden="true" />
                                                         </button>
                                                     </div>
                                                 )}
@@ -416,7 +403,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                     <textarea
                                                         value={editCommentText}
                                                         onChange={(e) => setEditCommentText(e.target.value)}
-                                                        className="w-full text-xs p-1.5 border rounded" // Reduced padding and text size
+                                                        className="w-full text-body-lg p-1.5 border border-line rounded-input"
                                                         rows={2}
                                                     />
                                                     {commentError && (
@@ -427,25 +414,20 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                     <div className="flex justify-end gap-2 mt-1">
                                                         <button
                                                             onClick={() => { setCommentError(''); setEditingCommentIndex(null); }}
-                                                            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
+                                                            className="text-caption text-ink-muted hover:text-ink px-2 py-1"
                                                         >
                                                             Atšaukti
                                                         </button>
                                                         <button
                                                             onClick={() => handleUpdateComment(index, editCommentText)}
-                                                            className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+                                                            className="text-caption bg-brand text-white px-2 py-1 rounded-control hover:bg-brand-hover"
                                                         >
                                                             Išsaugoti
                                                         </button>
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <p
-                                                    className="text-xs text-gray-700 leading-snug break-words cursor-pointer"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                    }}
-                                                >
+                                                <p className="text-caption text-ink leading-snug break-words whitespace-pre-wrap">
                                                     {comment.text}
                                                 </p>
                                             )}
@@ -455,8 +437,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             </div>
                         )}
 
-                        {/* Links and Comments */}
-                        <div className="flex items-center gap-3 text-xs mt-0.5">
+                        {/* Attachments, links, comments and edit */}
+                        <div className="flex items-center gap-3 mt-0.5">
                             {task.links && task.links.length > 0 && (
                                 <div className="flex items-center gap-1.5 overflow-x-auto py-1">
                                     {(() => {
@@ -467,12 +449,12 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                 href={link.trim().startsWith('http') ? link.trim() : `https://${link.trim()}`}
                                                 target="_blank"
                                                 rel="noopener noreferrer"
-                                                className="flex items-center justify-center text-blue-600 hover:text-blue-800 transition-transform active:scale-95 min-w-touch min-h-touch bg-blue-50 rounded-lg shadow-sm border border-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                className="flex items-center justify-center text-brand hover:text-brand-hover transition-transform active:scale-95 min-w-touch min-h-touch bg-brand-soft rounded-control shadow-sm border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                 title={link.trim()}
                                                 aria-label={`Atidaryti nuorodą: ${link.trim()}`}
                                                 onClick={(e) => e.stopPropagation()}
                                             >
-                                                <LinkIcon className="w-4 h-4" />
+                                                <LinkIcon className="w-4 h-4" aria-hidden="true" />
                                             </a>
                                         ));
                                     })()}
@@ -485,11 +467,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                         e.stopPropagation();
                                         setActiveModal('image');
                                     }}
-                                    className="flex items-center justify-center gap-1.5 text-pink-600 hover:text-pink-800 hover:bg-pink-50 rounded-lg transition-colors px-2 py-1.5 min-h-touch min-w-touch focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                    className="flex items-center justify-center gap-1.5 text-ink-muted hover:text-ink hover:bg-surface-sunken rounded-control transition-colors px-2 py-1.5 min-h-touch min-w-touch focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                     title="Peržiūrėti nuotrauką"
                                     aria-label="Peržiūrėti nuotrauką"
                                 >
-                                    <ImageIcon className="w-4 h-4" />
+                                    <ImageIcon className="w-4 h-4" aria-hidden="true" />
                                 </button>
                             )}
                             <button
@@ -497,11 +479,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                     e.stopPropagation();
                                     setActiveModal('comments');
                                 }}
-                                className="flex items-center justify-center gap-1.5 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors px-2 py-1.5 min-h-touch min-w-touch focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                className="flex items-center justify-center gap-1.5 text-ink-muted hover:text-ink-strong hover:bg-surface-sunken rounded-control transition-colors px-2 py-1.5 min-h-touch min-w-touch focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                 aria-label="Peržiūrėti komentarus"
                             >
-                                <MessageCircle className="w-4 h-4" />
-                                <span className="text-xs font-bold">{task.comments?.length || 0}</span>
+                                <MessageCircle className="w-4 h-4" aria-hidden="true" />
+                                <span className="text-caption font-bold">{task.comments?.length || 0}</span>
                             </button>
                             {onEdit && (
                                 <button
@@ -509,9 +491,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                         e.stopPropagation();
                                         onEdit(task);
                                     }}
-                                    className="flex items-center justify-center gap-1 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors ml-auto min-h-[36px]"
+                                    className="flex items-center justify-center gap-1 text-caption font-medium text-brand bg-brand-soft hover:bg-brand-soft/70 px-3 py-1.5 rounded-control transition-colors ml-auto min-h-touch focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                 >
-                                    <Edit className="w-3.5 h-3.5" />
+                                    <Edit className="w-3.5 h-3.5" aria-hidden="true" />
                                     Redaguoti
                                 </button>
                             )}
@@ -519,8 +501,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                     </div>
                 </div>
 
-                {/* Footer Actions: Timer & Edit */}
-                <div className="flex items-center justify-between mt-0.5">
+                {/* Footer: timer controls (the primary action) + manager actions */}
+                {actionError && (
+                    <p role="alert" className="mt-1 text-caption font-medium text-feedback-danger">
+                        {actionError}
+                    </p>
+                )}
+                <div className="flex items-center justify-between gap-2 mt-0.5">
                     <TaskTimerControls
                         task={task}
                         role={role}
@@ -532,7 +519,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 variant="secondary"
                                 icon={Undo2}
                                 onClick={(e) => { e.stopPropagation(); setRevertError(''); setConfirmRevert(true); }}
-                                className="text-amber-700"
                             >
                                 Grąžinti
                             </Button>
@@ -548,7 +534,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                         )}
                     </div>
                 </div>
-            </div >
+            </div>
 
 
             <LinksModal
