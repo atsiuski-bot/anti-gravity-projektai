@@ -473,7 +473,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     return createPortal(modalContent, document.body);
 }
 
-export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true }) {
+export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error }) {
     const dialogRef = useRef(null);
     const restoreFocusRef = useRef(null);
     const titleId = useId();
@@ -521,6 +521,11 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                                 <>Ar tikrai norite ištrinti įrašą <span className="font-semibold text-gray-900">&quot;{taskTitle}&quot;</span>? Šio veiksmo atšaukti nebus galima.</>
                             )}
                         </p>
+                        {error && (
+                            <p role="alert" aria-live="assertive" className="rounded-control border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                                {error}
+                            </p>
+                        )}
                     </div>
 
                     <div className="flex flex-col gap-3">

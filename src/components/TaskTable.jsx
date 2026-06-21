@@ -37,6 +37,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     const [completeTarget, setCompleteTarget] = useState(null);        // taskId (marking completed)
     const [revertTarget, setRevertTarget] = useState(null);            // task object
     const [reverting, setReverting] = useState(false);
+    // Single inline error banner (role=alert) — replaces the banned window.alert in every
+    // action handler below (DESIGN_SYSTEM §8). Mapped Lithuanian copy, never raw err.message.
+    const [actionError, setActionError] = useState('');
 
     // Auto-refresh timer for running tasks (every 60 seconds)
     useEffect(() => {
@@ -83,11 +86,11 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         } catch (err) {
             console.error('Error adding adjustment:', err);
             if (err.code === 'permission-denied') {
-                alert('Neturite leidimo pridėti korekciją.');
+                setActionError('Neturite leidimo pridėti korekciją.');
             } else if (err.code === 'not-found') {
-                alert('Užduotis nebeegzistuoja.');
+                setActionError('Užduotis nebeegzistuoja.');
             } else {
-                alert('Nepavyko pridėti laiko korekcijos. Bandykite vėliau.');
+                setActionError('Nepavyko pridėti laiko korekcijos. Bandykite vėliau.');
             }
         }
     };
@@ -117,7 +120,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             setAdjDeleteTarget(null);
         } catch (err) {
             console.error('Error deleting adjustment:', err);
-            alert('Nepavyko ištrinti korekcijos.');
+            setActionError('Nepavyko ištrinti korekcijos.');
             setAdjDeleteTarget(null);
         }
     };
@@ -129,7 +132,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             setEditingComment({ taskId: null, index: null });
             setEditCommentText('');
         } catch (err) {
-            alert("Nepavyko atnaujinti komentaro.");
+            console.error('Error updating comment:', err);
+            setActionError("Nepavyko atnaujinti komentaro.");
         }
     };
 
@@ -193,7 +197,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
         // Task-level managers (who are not system managers) cannot confirm.
         if (!isManagerRole(userRole)) {
-            alert("Tik vadovai gali patvirtinti užduotis.");
+            setActionError("Tik vadovai gali patvirtinti užduotis.");
             return;
         }
 
@@ -247,9 +251,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         } catch (err) {
             console.error("Error deleting task:", err);
             if (err.code === 'not-found') {
-                alert("Užduotis neegzistuoja.");
+                setActionError("Užduotis neegzistuoja.");
             } else {
-                alert("Nepavyko ištrinti užduoties. Bandykite vėliau.");
+                setActionError("Nepavyko ištrinti užduoties. Bandykite vėliau.");
             }
         }
     };
@@ -265,9 +269,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         } catch (err) {
             console.error("Error reverting task:", err);
             if (err.code === 'permission-denied') {
-                alert('Tik vadovai gali grąžinti užduotis.');
+                setActionError('Tik vadovai gali grąžinti užduotis.');
             } else {
-                alert('Nepavyko grąžinti užduoties. Bandykite vėliau.');
+                setActionError('Nepavyko grąžinti užduoties. Bandykite vėliau.');
             }
             setRevertTarget(null);
         } finally {
@@ -319,7 +323,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             // However, tasks prop usually has comments.
             await addComment(taskId, text, currentUser, task?.comments);
         } catch (err) {
-            alert("Nepavyko pridėti komentaro.");
+            console.error('Error adding comment:', err);
+            setActionError("Nepavyko pridėti komentaro.");
         }
     };
 
@@ -328,6 +333,23 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
     return (
         <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
+            {actionError && (
+                <div
+                    role="alert"
+                    aria-live="assertive"
+                    className="flex items-start justify-between gap-3 border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+                >
+                    <span>{actionError}</span>
+                    <button
+                        type="button"
+                        onClick={() => setActionError('')}
+                        aria-label="Uždaryti pranešimą"
+                        className="shrink-0 font-medium text-red-600 hover:text-red-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                    >
+                        Uždaryti
+                    </button>
+                </div>
+            )}
             {/* Mobile / touch: one card per task (never a horizontally-scrolling table — §9).
                 Actions are always-visible 44px controls (group-hover is invisible on touch). */}
             <ul className="divide-y divide-line md:hidden">

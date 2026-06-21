@@ -31,6 +31,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const [editCommentText, setEditCommentText] = useState('');
     const [commentError, setCommentError] = useState('');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [deleteError, setDeleteError] = useState('');
     const [spentMinutes, setSpentMinutes] = useState(0);
     const [confirmRevert, setConfirmRevert] = useState(false);
     const [revertError, setRevertError] = useState('');
@@ -112,21 +113,27 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         try {
             await addComment(task.id, text, currentUser, task.comments);
         } catch (err) {
-            alert("Nepavyko pridėti komentaro.");
+            // CommentsModal keeps the optimistic comment visible and a failed write is dropped
+            // on the next snapshot; record the failure durably instead of the banned
+            // window.alert (DESIGN_SYSTEM §8).
+            logError(err, { source: 'handler:addComment', taskId: task.id });
         }
     };
 
     const handleDeleteTask = () => {
+        setDeleteError('');
         setShowDeleteModal(true);
     };
 
     const confirmDelete = async ({ keepWorkHours }) => {
         try {
+            setDeleteError('');
             await deleteTask(task, currentUser.uid, { keepWorkHours });
             setShowDeleteModal(false);
         } catch (err) {
-            console.error("Error deleting task:", err);
-            alert("Nepavyko ištrinti užduoties. Bandykite dar kartą.");
+            // Keep the dialog open and surface the failure inline (never window.alert — §8).
+            logError(err, { source: 'handler:deleteTask', taskId: task.id });
+            setDeleteError('Nepavyko ištrinti užduoties. Bandykite dar kartą.');
         }
     };
 
@@ -596,9 +603,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
             <DeleteConfirmationModal
                 isOpen={showDeleteModal}
-                onClose={() => setShowDeleteModal(false)}
+                onClose={() => { setShowDeleteModal(false); setDeleteError(''); }}
                 onConfirm={confirmDelete}
                 taskTitle={task.title}
+                error={deleteError}
             />
 
             {confirmRevert && (
