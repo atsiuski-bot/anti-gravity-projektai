@@ -200,29 +200,34 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
     const totalWeekWorked = weekWorked + currentSessionHours;
 
     const renderProgressBar = (label, current, total, colorClass = "bg-brand") => {
-        // Prevent division by zero
-        const percent = total > 0 ? (current / total) * 100 : 0;
-        // Cap at 100% for the bar visual, but allow text to show real values? 
-        // User might want to see over-achievement.
-        // Let's just cap the visual bar at 100%.
+        // When no shift hours are planned (total === 0) there is no goal to measure against, so
+        // showing "X / 0h 0m" with an empty bar reads as a broken tracker. Show the worked figure
+        // alone plus a hint to plan hours, and distinguish "no plan set" from "plan, zero worked".
+        const hasPlan = total > 0;
+        const percent = hasPlan ? (current / total) * 100 : 0; // bar capped at 100% below
 
         return (
             <div className="relative">
                 <div className="flex justify-between text-xs font-medium text-gray-500 mb-1">
                     <span>{label}</span>
                     <span className="text-gray-900">
-                        {formatTime(current)} <span className="text-ink-muted">/ {formatTime(total)}</span>
+                        {formatTime(current)}
+                        {hasPlan && <span className="text-ink-muted"> / {formatTime(total)}</span>}
                         {currentSessionHours > 0 && label.includes('Dienos') && (
                             <span className="text-xs text-session-task-accent ml-1">(+vyksta)</span>
                         )}
                     </span>
                 </div>
-                <div className="h-4 w-full bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                        className={`h-full ${colorClass} rounded-full transition-all duration-500 ease-in-out`}
-                        style={{ width: `${Math.min(percent, 100)}%` }}
-                    ></div>
-                </div>
+                {hasPlan ? (
+                    <div className="h-4 w-full bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                            className={`h-full ${colorClass} rounded-full transition-all duration-500 ease-in-out`}
+                            style={{ width: `${Math.min(percent, 100)}%` }}
+                        ></div>
+                    </div>
+                ) : (
+                    <p className="text-xs text-ink-muted">Nesuplanuota darbo laiko. Susiplanuokite valandas kalendoriuje.</p>
+                )}
             </div>
         );
     };
