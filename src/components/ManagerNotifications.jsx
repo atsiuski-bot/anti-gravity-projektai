@@ -20,6 +20,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     const [taskNotifications, setTaskNotifications] = useState([]);
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
+    const [bulkConfirming, setBulkConfirming] = useState(false); // batch "approve all completions" in flight
     const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
 
 
@@ -266,6 +267,26 @@ export default function ManagerNotifications({ onEditAndApprove }) {
         await handleDismissTask(notificationId);
     };
 
+    // Batch-confirm every pending task completion in one action. Each completion is a simple,
+    // homogeneous, low-risk approval, so looping the existing per-item handler turns N taps into
+    // one. Reverts/edits/deletes stay per-card because they are the exception, not the rule.
+    const handleConfirmAllCompletions = async () => {
+        const completions = taskNotifications.filter(n => n.type === 'task_completion');
+        if (completions.length === 0) return;
+        setBulkConfirming(true);
+        setActionError(null);
+        try {
+            for (const n of completions) {
+                await handleConfirmCompletion(n.id, n.taskId);
+            }
+        } catch (err) {
+            console.error('Error confirming all completions:', err);
+            setActionError('Nepavyko patvirtinti visų užduočių. Bandykite dar kartą.');
+        } finally {
+            setBulkConfirming(false);
+        }
+    };
+
     // --- Task Completion Handlers ---
     const handleConfirmCompletion = async (notificationId, taskId) => {
         if (!taskId) return;
@@ -353,6 +374,19 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                     {actionError}
                 </div>
             )}
+
+            {/* Batch-approve bar — only when there are several completed tasks to confirm. */}
+            {taskNotifications.filter(n => n.type === 'task_completion').length >= 2 && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 max-w-xl">
+                    <span className="text-sm font-medium text-green-900">
+                        Užbaigtos užduotys: {taskNotifications.filter(n => n.type === 'task_completion').length}
+                    </span>
+                    <Button variant="success" size="md" icon={Check} loading={bulkConfirming} onClick={handleConfirmAllCompletions}>
+                        Patvirtinti visas
+                    </Button>
+                </div>
+            )}
+
             {sortedNotifications.map(notif => {
                 if (notif.source === 'calendar') {
                     return (
