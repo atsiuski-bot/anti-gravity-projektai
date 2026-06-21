@@ -584,9 +584,18 @@ export default function TaskHistory({ userId, users = [] }) {
     return (
         <div className="space-y-4">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <h2 className="text-h3 font-semibold text-ink-strong flex items-center gap-2">
-                    Užduočių istorija <span className="text-ink-muted text-body font-normal">({tasks.length})</span>
-                </h2>
+                <div>
+                    <h2 className="text-h3 font-semibold text-ink-strong flex items-center gap-2">
+                        Užduočių istorija <span className="text-ink-muted text-body font-normal">({tasks.length})</span>
+                    </h2>
+                    {/* Scope clarity (audit #3): this panel is the ARCHIVE only. Just-finished tasks
+                        stay in the daily report above until the nightly automation archives them, so
+                        an absence here is expected, not a bug — say so instead of duplicating them. */}
+                    <p className="text-caption text-ink-muted mt-1 max-w-prose">
+                        Rodomos tik suarchyvuotos užduotys (archyvuojama automatiškai naktį). Ką tik
+                        užbaigtos užduotys matomos dienos ataskaitoje viršuje, kol nebus suarchyvuotos.
+                    </p>
+                </div>
                 <div className="flex items-center gap-2">
                     <button
                         onClick={handleExportCSV}
