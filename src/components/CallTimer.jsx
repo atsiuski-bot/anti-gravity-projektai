@@ -221,7 +221,6 @@ export default function CallTimer({ compact = false }) {
                 {isCalling ? (
                     <span
                         className="text-body-lg font-bold text-session-call-accent font-mono mb-1 leading-6 animate-pulse"
-                        aria-live="polite"
                     >
                         {totalDisplay}
                     </span>

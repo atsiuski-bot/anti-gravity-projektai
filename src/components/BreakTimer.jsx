@@ -100,7 +100,6 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                 {isTakingBreak ? (
                     <span
                         className="text-body-lg font-bold text-session-break-accent font-mono mb-1 leading-6"
-                        aria-live="polite"
                     >
                         {totalDisplay}
                     </span>
@@ -145,7 +144,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
         <div className="flex items-center gap-3">
             {isTakingBreak && (
                 <div className="flex flex-col items-end mr-2">
-                    <span className="text-body-lg font-bold text-session-break-accent font-mono" aria-live="polite">
+                    <span className="text-body-lg font-bold text-session-break-accent font-mono">
                         {totalDisplay}
                     </span>
                 </div>

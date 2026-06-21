@@ -319,7 +319,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                             {/* Deadline */}
                             {task.deadline && (
-                                <div className="flex items-center gap-1 text-caption text-orange-600 font-medium bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
+                                <div className="flex items-center gap-1 text-caption text-orange-700 font-medium bg-orange-50 px-1.5 py-0.5 rounded border border-orange-100">
                                     <Calendar className="w-3 h-3" />
                                     {task.deadline}
                                 </div>
@@ -351,7 +351,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                             {/* Manager Name */}
                             {(task.managerName || task.creatorName) && (
-                                <div className="inline-flex items-center py-0.5 text-caption font-medium text-purple-600 opacity-80">
+                                <div className="inline-flex items-center py-0.5 text-caption font-medium text-purple-700">
                                     Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
                                 </div>
                             )}
@@ -397,8 +397,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                     <span className="text-caption font-bold text-indigo-700">
                                                         {formatDisplayName(comment.user)}
                                                     </span>
-                                                    <span className="text-caption text-gray-400">
-                                                        {new Date(comment.createdAt).toLocaleDateString()}
+                                                    <span className="text-caption text-ink-muted">
+                                                        {new Date(comment.createdAt).toLocaleDateString('lt-LT')}
                                                     </span>
                                                 </div>
                                                 {canEdit && !isEditing && (
@@ -433,7 +433,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                     <textarea
                                                         value={editCommentText}
                                                         onChange={(e) => setEditCommentText(e.target.value)}
-                                                        className="w-full text-xs p-1.5 border rounded" // Reduced padding and text size
+                                                        className="w-full text-sm p-2 border rounded"
                                                         rows={2}
                                                     />
                                                     {commentError && (
@@ -441,19 +441,20 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                             {commentError}
                                                         </p>
                                                     )}
+                                                    {/* Canonical Button: 44px target, brand-indigo accent, focus ring (§7/§8). */}
                                                     <div className="flex justify-end gap-2 mt-1">
-                                                        <button
+                                                        <Button
+                                                            variant="ghost"
                                                             onClick={() => { setCommentError(''); setEditingCommentIndex(null); }}
-                                                            className="text-xs text-gray-500 hover:text-gray-700 px-2 py-1"
                                                         >
                                                             Atšaukti
-                                                        </button>
-                                                        <button
+                                                        </Button>
+                                                        <Button
+                                                            variant="primary"
                                                             onClick={() => handleUpdateComment(index, editCommentText)}
-                                                            className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
                                                         >
                                                             Išsaugoti
-                                                        </button>
+                                                        </Button>
                                                     </div>
                                                 </div>
                                             ) : (

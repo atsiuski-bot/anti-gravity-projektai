@@ -202,7 +202,6 @@ export default function QuickWorkTimer({ compact = false }) {
                 {isQuickWorking ? (
                     <span
                         className="text-body-lg font-bold text-session-quickWork-accent font-mono mb-1 leading-6 animate-pulse"
-                        aria-live="polite"
                     >
                         {formatMinutesToTimeString(currentSessionMinutes)}
                     </span>
