@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import SessionTypeIcon from './SessionTypeIcon';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { useUsers } from '../context/UsersContext';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { getSessionColors } from '../utils/sessionColors';
@@ -135,9 +135,29 @@ export default function ActiveWorkSessions() {
 // Helper Component for Active Session Row to manage own timer
 const ActiveSessionRow = React.memo(({ session }) => {
     const [durationStr, setDurationStr] = useState('');
+    // A session whose wall-clock start is more than a full max-session ago is almost
+    // certainly stale (the worker's app was killed / phone died without ever ending it),
+    // not a genuinely live session. We flag it so the manager can tell a 9h "break" caused
+    // by a dead phone apart from a real one — the panel otherwise shows them identically.
+    const [isStale, setIsStale] = useState(false);
+
+    // Absolute start time ("nuo 08:14") so the manager can sanity-check plausibility instead
+    // of only seeing an ever-growing elapsed counter. Stable for the row (startTime is fixed).
+    const startLabel = session.startTime
+        ? new Date(session.startTime).toLocaleTimeString('lt-LT', {
+              hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Europe/Vilnius'
+          })
+        : '';
 
     useEffect(() => {
+        const updateStale = () => {
+            if (!session.startTime) { setIsStale(false); return; }
+            const ageMs = Date.now() - new Date(session.startTime).getTime();
+            setIsStale(Number.isFinite(ageMs) && ageMs > MAX_SESSION_MINUTES * 60 * 1000);
+        };
+
         const updateTime = () => {
+            updateStale();
             if (session.type === 'task' && session.task) {
                 // Use global task total time calculation for accurate cross-device time
                 const totalMinutes = calculateCurrentTotalMinutes(session.task);
@@ -178,18 +198,24 @@ const ActiveSessionRow = React.memo(({ session }) => {
     }, [session.startTime, session.task]);
 
     return (
-        <div className={`p-3 rounded-lg flex items-center justify-between shadow-sm transition-all ${session.colorClass}`}>
+        <div className={`p-3 rounded-lg flex items-center justify-between shadow-sm transition-all ${session.colorClass} ${isStale ? 'opacity-70 ring-1 ring-amber-300' : ''}`}>
             <div className="flex-shrink-0">
                 <SessionTypeIcon type={session.type} className="w-5 h-5" />
             </div>
-            <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 ml-3">
                 <div className="flex items-center gap-2">
                     <span className="font-semibold text-sm truncate">
                         {session.userName}
                     </span>
+                    {isStale && (
+                        <span className="inline-flex items-center whitespace-nowrap rounded-full border border-amber-200 bg-amber-100 px-1.5 py-0.5 text-caption font-semibold text-amber-800">
+                            galimai pasenusi
+                        </span>
+                    )}
                 </div>
                 <div className="text-xs truncate">
                     {session.label}
+                    {startLabel && <span className="opacity-70"> · nuo {startLabel}</span>}
                 </div>
             </div>
             <span className="font-mono font-bold text-base ml-4 whitespace-nowrap">
