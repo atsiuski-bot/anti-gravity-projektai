@@ -6,14 +6,12 @@ import TaskModal from '../components/TaskModal';
 import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
-import AllUsersCalendar from '../components/AllUsersCalendar';
-import WorkPlanner from '../components/WorkPlanner';
-import Reports from '../components/Reports';
 import DailyStatistics from '../components/DailyStatistics';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import ManagerNotifications from '../components/ManagerNotifications';
 import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
+import { Spinner } from '../components/ui/Loading';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -26,6 +24,14 @@ import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
+
+// Shared with WorkerView: the calendar/report views are the heavy part of the bundle
+// (react-big-calendar + date-fns + reports aggregation). Lazy-loading them in BOTH views
+// is what actually keeps the code out of the eager shared chunk — a static import in
+// either view would re-hoist it. Suspense streams each one in when its tab mounts.
+const AllUsersCalendar = React.lazy(() => import('../components/AllUsersCalendar'));
+const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
+const Reports = React.lazy(() => import('../components/Reports'));
 
 export default function ManagerView() {
     const { userRole, currentUser } = useAuth();
@@ -264,20 +270,26 @@ export default function ManagerView() {
             <div className={activeTab === 'my-calendar' ? 'block' : 'hidden'}>
                 <div className="w-full">
                     <ErrorBoundary boundaryName="manager:my-calendar" resetKeys={[activeTab]}>
-                        <WorkPlanner />
+                        <React.Suspense fallback={<Spinner />}>
+                            <WorkPlanner />
+                        </React.Suspense>
                     </ErrorBoundary>
                 </div>
             </div>
 
             <div className={activeTab === 'team-calendar' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="manager:team-calendar" resetKeys={[activeTab]}>
-                    <AllUsersCalendar />
+                    <React.Suspense fallback={<Spinner />}>
+                        <AllUsersCalendar />
+                    </React.Suspense>
                 </ErrorBoundary>
             </div>
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="manager:reports" resetKeys={[activeTab]}>
-                    <Reports users={allUsers || users} />
+                    <React.Suspense fallback={<Spinner />}>
+                        <Reports users={allUsers || users} />
+                    </React.Suspense>
                 </ErrorBoundary>
             </div>
 

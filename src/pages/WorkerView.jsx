@@ -7,12 +7,10 @@ import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 
-import WorkPlanner from '../components/WorkPlanner';
-import AllUsersCalendar from '../components/AllUsersCalendar';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
 import { getPriorityRank } from '../utils/priority';
-import Reports from '../components/Reports';
+import { Spinner } from '../components/ui/Loading';
 import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
 import { logError } from '../utils/errorLog';
 import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
@@ -26,6 +24,13 @@ import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBann
 
 import { useNavigation } from '../context/NavigationContext';
 
+// The calendar/report views pull in react-big-calendar + date-fns + the reports
+// aggregation — heavy code the worker's primary path (the tasks tab) never needs to
+// render. Splitting them into their own chunks keeps that code out of the eagerly
+// loaded view bundle; Suspense streams each one in when its tab mounts.
+const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
+const AllUsersCalendar = React.lazy(() => import('../components/AllUsersCalendar'));
+const Reports = React.lazy(() => import('../components/Reports'));
 
 export default function WorkerView() {
     const { currentUser, userRole } = useAuth();
@@ -281,7 +286,9 @@ export default function WorkerView() {
             <div className={activeTab === 'calendar' ? 'block' : 'hidden'}>
                 <div className="w-full">
                     <ErrorBoundary boundaryName="worker:calendar" resetKeys={[activeTab]}>
-                        <WorkPlanner />
+                        <React.Suspense fallback={<Spinner />}>
+                            <WorkPlanner />
+                        </React.Suspense>
                     </ErrorBoundary>
                 </div>
             </div>
@@ -289,13 +296,17 @@ export default function WorkerView() {
             {/* Team Calendar Tab */}
             <div className={activeTab === 'team-calendar' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="worker:team-calendar" resetKeys={[activeTab]}>
-                    <AllUsersCalendar />
+                    <React.Suspense fallback={<Spinner />}>
+                        <AllUsersCalendar />
+                    </React.Suspense>
                 </ErrorBoundary>
             </div>
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="worker:reports" resetKeys={[activeTab]}>
-                    <Reports users={[currentUser]} />
+                    <React.Suspense fallback={<Spinner />}>
+                        <Reports users={[currentUser]} />
+                    </React.Suspense>
                 </ErrorBoundary>
             </div>
 
