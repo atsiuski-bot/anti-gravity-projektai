@@ -148,12 +148,19 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                 const isManagerOrAdmin = isManagerRole(userRole) || currentUser?.uid === task.managerId;
 
-                if (taskStatus === 'pending') {
+                // Once a task's timer lifecycle has begun (running or paused), its
+                // pending<->in-progress state is owned by the explicit Pradėti/Pauzė/Užbaigti
+                // controls. Letting the gesture toggle status here desyncs the label from the
+                // timer — e.g. a green, still-ticking card labelled "Nepradėtas". So the
+                // gesture only moves a not-yet-timed task between pending and in-progress.
+                const timerLifecycleStarted = task.timerStatus === 'running' || task.timerStatus === 'paused';
+
+                if (taskStatus === 'pending' && !timerLifecycleStarted) {
                     await updateDoc(doc(db, 'tasks', task.id), {
                         status: 'in-progress',
                         updatedAt: new Date().toISOString()
                     });
-                } else if (taskStatus === 'in-progress') {
+                } else if (taskStatus === 'in-progress' && !timerLifecycleStarted) {
                     await updateDoc(doc(db, 'tasks', task.id), {
                         status: 'pending',
                         updatedAt: new Date().toISOString()
@@ -175,6 +182,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     // stray horizontal swipe during a vertical scroll can never irreversibly end a task.
     const handleSwipeRight = async () => {
         if (!isAssignedToMe || taskStatus === 'confirmed' || taskStatus === 'unapproved') return;
+        // Same guard as the double-tap path: don't let a stray swipe flip the status of a task
+        // whose timer is already running or paused (it would desync the label from the timer).
+        if (task.timerStatus === 'running' || task.timerStatus === 'paused') return;
 
         // Swipe right: Toggle between pending and in-progress
         try {
