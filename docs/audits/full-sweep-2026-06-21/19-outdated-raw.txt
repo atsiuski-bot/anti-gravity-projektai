@@ -1,0 +1,12 @@
+Package             Current   Wanted   Latest  Location  Depended by
+clsx                MISSING    2.1.1    2.1.1  -         frosty-blackburn-86376b
+date-fns            MISSING    4.4.0    4.4.0  -         frosty-blackburn-86376b
+firebase            MISSING  10.14.1  12.15.0  -         frosty-blackburn-86376b
+firebase-admin      MISSING  13.10.0   14.0.0  -         frosty-blackburn-86376b
+lucide-react        MISSING  0.344.0   1.21.0  -         frosty-blackburn-86376b
+react               MISSING   18.3.1   19.2.7  -         frosty-blackburn-86376b
+react-big-calendar  MISSING   1.20.0   1.20.0  -         frosty-blackburn-86376b
+react-dom           MISSING   18.3.1   19.2.7  -         frosty-blackburn-86376b
+react-router-dom    MISSING   6.30.4   7.18.0  -         frosty-blackburn-86376b
+react-swipeable     MISSING    7.0.2    7.0.2  -         frosty-blackburn-86376b
+tailwind-merge      MISSING    2.6.1    3.6.0  -         frosty-blackburn-86376b

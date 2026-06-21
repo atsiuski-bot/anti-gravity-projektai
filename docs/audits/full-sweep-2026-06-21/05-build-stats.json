@@ -1,0 +1,34 @@
+{
+  "note": "dist/.vite/manifest.json was NOT emitted (build.manifest not enabled in vite.config.js). Stats parsed from vite build stdout instead.",
+  "viteVersion": "5.4.21",
+  "builtInSeconds": 10.81,
+  "modulesTransformed": 2942,
+  "totalDistSize": "2.0M",
+  "pwa": {
+    "mode": "generateSW",
+    "precacheEntries": 21,
+    "precacheKiB": 1383.82,
+    "serviceWorker": "dist/sw.js",
+    "workbox": "dist/workbox-676600ea.js",
+    "webmanifest": "dist/manifest.webmanifest (407 bytes)"
+  },
+  "chunks": [
+    { "file": "assets/firebase-firestore-Ds-RHMUy.js", "rawKB": 426.17, "gzipKB": 106.19 },
+    { "file": "assets/TaskTimeLimitPopup-CgBmk8Z0.js", "rawKB": 412.77, "gzipKB": 114.77 },
+    { "file": "assets/react-vendor-wEg4T_uz.js", "rawKB": 161.14, "gzipKB": 52.51 },
+    { "file": "assets/firebase-auth-McotLhzD.js", "rawKB": 111.98, "gzipKB": 22.99 },
+    { "file": "assets/index-Gh7mVKyY.js", "rawKB": 83.08, "gzipKB": 23.23 },
+    { "file": "assets/ManagerView-Dt6-rVVI.js", "rawKB": 47.26, "gzipKB": 12.31 },
+    { "file": "assets/firebase-storage-m7GUYOw7.js", "rawKB": 44.32, "gzipKB": 10.90 },
+    { "file": "assets/utils-vendor-4it9zwQP.js", "rawKB": 24.93, "gzipKB": 8.49 },
+    { "file": "assets/lucide-icons-CRCJAPxp.js", "rawKB": 23.24, "gzipKB": 4.54 },
+    { "file": "assets/index-CPjA699U.css", "rawKB": 50.11, "gzipKB": 9.06 },
+    { "file": "assets/TaskTimeLimitPopup-DxzzN9QP.css", "rawKB": 10.93, "gzipKB": 2.50 }
+  ],
+  "thresholdCheck": {
+    "vendorChunkOver500KBgz": false,
+    "totalDistOver10MB": false,
+    "singleAssetOver500KBraw": false,
+    "notable": "TaskTimeLimitPopup JS chunk is 412.77 KB raw / 114.77 KB gz — large for a popup component; likely bundling react-big-calendar + date-fns. Within the rubric threshold (gz < 500 KB) but worth a code-split review."
+  }
+}

@@ -1,0 +1,424 @@
+{
+  "tokens": {
+    "find": 126576,
+    "verify": 410425,
+    "total": 537001
+  },
+  "counts": {
+    "raw": 104,
+    "deduped": 104,
+    "verified": 40,
+    "confirmed": 27
+  },
+  "logs": [
+    "Scope: 11 dimension(s) [discipline, timetracking, crashsafety, session-color, security, firebase-coupling, ux-a11y, i18n-brand, perf, docsdrift, deadcode] · maxFindings=40 · skeptics=3 · worst-case verify agents ~= 120. · no budget target (measuring only).",
+    "Find: 104 raw findings, 104 after dedup across 11 dimension(s).",
+    "Find spend: ~127k output tokens measured (~12k/finder).",
+    "Capped to 40 for verification (raise args.maxFindings to cover the rest).",
+    "Verify: 27 confirmed, 13 rejected as false positives. Verify spend ~410k tok · sweep total ~537k output tokens (11 finder(s) + 40×3 verifier(s))."
+  ],
+  "confirmed": [
+    {
+      "title": "DetailsModal (and its children LinksModal, CommentsModal, TimeAdjustmentsModal) are bespoke modal shells",
+      "file": "src/components/TaskDetailsModals.jsx",
+      "line": "7-57",
+      "severity": "high",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "DetailsModal is another hand-rolled dialog: it builds its own fixed overlay with z-50 and bg-black bg-opacity-50, its own focus-trap, its own Escape handler, and close-on-backdrop via onTouchEnd. This duplicates the canonical Modal component and uses a non-token z-index (z-50). LinksModal, CommentsModal, and TimeAdjustmentsModal all compose DetailsModal instead of the canonical Modal, so the violation cascades."
+    },
+    {
+      "title": "TaskModal is a bespoke full-screen dialog instead of the canonical Modal",
+      "file": "src/components/TaskModal.jsx",
+      "line": "534",
+      "severity": "high",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "TaskModal wraps its content in a hand-crafted div with fixed inset-0 z-[100] and bg-black bg-opacity-50, rather than using the canonical Modal component. The arbitrary z-[100] is not a design-system token (should be z-backdrop or z-modal). The canonical Modal already handles portaling, focus management, Escape, and size constraints."
+    },
+    {
+      "title": "ActiveWorkSessions duplicates session color palette instead of reading from SESSION_COLORS",
+      "file": "src/components/ActiveWorkSessions.jsx",
+      "line": "46-94",
+      "severity": "high",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The switch block hard-codes colorClass values per session type: bg-amber-100 text-amber-800 for break, bg-blue-100 text-blue-800 for call, bg-red-100 text-red-800 for quickWork, bg-green-100 text-green-800 for task. These are bespoke color literals for session states that must come from the SESSION_COLORS map (src/utils/sessionColors.js). The comment in sessionColors.js even notes that call is 'sky in some places' as the exact bug this map was created to fix. ActiveWorkSessions never imports SESSION_COLORS."
+    },
+    {
+      "title": "CombinedHoursSummary duplicates session color palette with divergent values",
+      "file": "src/components/CombinedHoursSummary.jsx",
+      "line": "201-243",
+      "severity": "high",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The same switch block in CombinedHoursSummary hard-codes session colors independently: bg-orange-100 text-orange-800 for break (orange, not amber as in ActiveWorkSessions), bg-sky-100 text-sky-800 for call (sky, not blue as in ActiveWorkSessions). These values diverge from each other and from SESSION_COLORS. sessionColors.js was created specifically to fix this drift. The file never imports SESSION_COLORS."
+    },
+    {
+      "title": "endSession: durationMinutes has no negative/skew guard",
+      "file": "src/utils/sessionActions.js",
+      "line": "209-211",
+      "severity": "high",
+      "dimension": "timetracking",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "durationMinutes = (now - start) / (1000 * 60) is written unconditionally. If the device clock is set backward after startTime was recorded (or Firestore delivers a stale cached startTime from the future), durationMinutes is negative. It then flows into: (a) the work_sessions log (line 283) — permanently corrupting the log row; (b) breakState.dailyAccumulatedMinutes accumulation (line 255) — subtracting from the running break total; (c) the sessions collection log (line 282). pauseTask has an identical computation but guards it with `elapsedMinutes >= 0` (taskActions.js line 95). endSession does not apply the same guard."
+    },
+    {
+      "title": "automationUtils archiveOldTasks: 03:00 cutoff uses browser-local getHours, not Vilnius time",
+      "file": "src/utils/automationUtils.js",
+      "line": "132-137",
+      "severity": "high",
+      "dimension": "timetracking",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "getLithuanianNow() returns a plain `new Date()` (timeUtils.js line 97). The `now.getHours() < 3` check on line 134 therefore reads the browser's local timezone hour, not Europe/Vilnius. A worker running the app in UTC or UTC+1 in winter sees getHours() return 1 when it is actually 03:00 Vilnius time (UTC+2), so the condition is true and cutOff is rolled back by one extra day — a confirmed task from yesterday is treated as belonging to two days ago and NOT archived. Conversely at UTC+3 getHours() returns 3 when Vilnius is at 05:00, and yesterday's tasks stay in the active collection for two extra hours. The correct pattern (already used in DailyStatistics.jsx via getLithuanian3AMCutoff) derives the offset from Intl.DateTimeFormat."
+    },
+    {
+      "title": "No crash/reload recovery for orphaned running task — ghost-time accumulation",
+      "file": "src/utils/timeUtils.js",
+      "line": "70-80",
+      "severity": "high",
+      "dimension": "crashsafety",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "calculateCurrentTotalMinutes() unconditionally adds (now - timerStartedAt) whenever timerStatus === 'running', with no upper cap and no stale-start detection. There is zero on-load code anywhere in the codebase (App.jsx, AuthContext.jsx, Dashboard.jsx were all checked) that detects a task left in timerStatus:'running' after a crash or forced reload and auto-pauses or caps the elapsed time. When the user next explicitly presses Pause, pauseTask() in taskActions.js line 88-95 computes rawElapsed = (now - timerStartedAt) / (1000*60) using the pre-crash timerStartedAt. Because rawElapsed is finite and non-negative it passes the guard at line 95 and the entire offline+crashed interval is credited as legitimate work time and written to work_sessions (line 139-150). A crash at 09:00 + a reload at 17:00 credits 8 hours of ghost time to the task."
+    },
+    {
+      "title": "pauseTask failure during startSession silently swallowed — task stays 'running' with stale timerStartedAt",
+      "file": "src/utils/sessionActions.js",
+      "line": "50-54",
+      "severity": "high",
+      "dimension": "crashsafety",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "When startSession() interrupts an active task session (e.g. user starts a break while task is running), it fires pauseTask via a promise chain at line 50-54. The .catch at line 54 only calls console.warn and returns undefined, making pausePromise resolve successfully. At line 169-172 Promise.all([updateDoc(userRef, updates), pausePromise]) therefore always succeeds from the user-doc perspective. If the task pauseTask write fails (offline, Firestore error), the task document retains timerStatus:'running' and the original timerStartedAt. When the break ends and the task timer is never explicitly restarted, calculateCurrentTotalMinutes will accumulate from the pre-break timerStartedAt through the entire break duration, and the next pauseTask call (e.g. when the user manually pauses hours later) will credit the full break interval plus real work time. This failure is also not sent to logError."
+    },
+    {
+      "title": "Lateral write across all tasks/sessions/logs — no per-document ownership scope",
+      "file": "firestore.rules",
+      "line": "59-61, 64-66, 69-71, 74-76, 79-81, 89-91, 94-96, 99-101, 104-106, 109-111, 114-116",
+      "severity": "high",
+      "dimension": "security",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "Every collection that stores per-user work data (tasks, shift_logs, work_sessions, break_sessions, daily_stats, work_hours, archived_tasks, deleted_tasks, calendar_notifications, calendar_requests, request_notifications, task_templates) is protected only by `isUserActive()`. Any active worker can read and write any other worker's documents in these collections — there is no check that `request.auth.uid == resource.data.userId` (or assignedUserId, managerId, etc.). A malicious or curious worker can delete a colleague's tasks, falsify timer minutes, forge shift logs, or overwrite work_hours entries for any other user. The only collections with ownership-scoped rules are users/{userId} and user_settings/{userId}."
+    },
+    {
+      "title": "Worker can approve their own calendar requests via client-side manager check",
+      "file": "firestore.rules",
+      "line": "84-86",
+      "severity": "high",
+      "dimension": "security",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The Firestore rule for work_hours is `allow read, write: if isUserActive()`. The approval workflow in WorkPlanner.jsx (lines 495-536) decides whether a request is auto-approved by checking `isManagerRole(userRole)` on the client. Because the rule is flat, any active worker who sends a crafted Firestore write directly (bypassing the React app) can add, update, or delete any `work_hours` document — including entries belonging to other users, and without manager approval. There is no server-side enforcement of the worker-vs-manager distinction for work_hours."
+    },
+    {
+      "title": "Any active worker can confirm/override other workers' tasks as manager",
+      "file": "firestore.rules",
+      "line": "59-61",
+      "severity": "high",
+      "dimension": "security",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "task completion/confirmation status fields (status: 'confirmed', confirmedBy, confirmedAt, isApproved) are written client-side in taskCompletionActions.js and ManagerNotifications.jsx based on the client-resolved `userRole`. Because the tasks rule is `allow write: if isUserActive()` with no field-level constraints, a worker can forge a direct SDK call setting status='confirmed' on any task, bypassing the manager-approval requirement entirely."
+    },
+    {
+      "title": "ImageLightbox uses unmanaged z-[9999] and z-[10000] instead of token z-values",
+      "file": "src/components/TaskDetailsModals.jsx",
+      "line": "391-473",
+      "severity": "medium",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The ImageLightbox component (the photo viewer) uses z-[9999] for its overlay and z-[10000] for its controls and nav buttons. These are raw arbitrary integers far outside any managed z-ladder, and they also use bg-black bg-opacity-95 instead of a design token for the scrim. The buttons inside are raw <button> elements, not IconButton."
+    },
+    {
+      "title": "ManagerNotifications renders bespoke button-styled call-to-actions instead of canonical Button",
+      "file": "src/components/ManagerNotifications.jsx",
+      "line": "428-435, 471, 510-518, 582, 612-630",
+      "severity": "medium",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "Throughout ManagerNotifications, action buttons (Patvirtinti, Atmesti, Supratau, Redaguoti uzduoti, Sugrąžinti i darbų saraša) are rendered as raw <button> elements with inline Tailwind class strings duplicating the visual contract of the Button component (rounded-control, min-h-touch, font-semibold, shadow-sm, transition-colors, focus-visible rings). The canonical Button component with variant=primary/secondary/danger should be used instead."
+    },
+    {
+      "title": "CallTimer summary card uses raw hex colors and raw border color in inline style",
+      "file": "src/components/CallTimer.jsx",
+      "line": "59-63",
+      "severity": "medium",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The textarea inside the call-end modal uses inline style with border: '2px solid #e5e7eb' and color: '#000'. These are raw hex literals. The border color is the Tailwind gray-200 value and should be expressed as a design token (border-line or border-gray-200 as a className); the text color should be text-ink-strong. Raw hex in inline styles bypasses the token system."
+    },
+    {
+      "title": "QuickWorkTimer textarea uses the same raw hex literals in inline style",
+      "file": "src/components/QuickWorkTimer.jsx",
+      "line": "61-65",
+      "severity": "medium",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "Identical to CallTimer: the quick-work end modal textarea uses inline style with border: '2px solid #e5e7eb' and color: '#000', bypassing the design token system. This is a copy of the same pattern and should use Tailwind token classes instead."
+    },
+    {
+      "title": "AllUsersCalendar uses raw hex color constant VACATION_COLOR in inline styles",
+      "file": "src/components/AllUsersCalendar.jsx",
+      "line": "19, 235",
+      "severity": "medium",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "VACATION_COLOR = '#A5B4FC' (indigo-300) is defined as a bare hex constant and applied via inline style to calendar event bars. The comment acknowledges it replaces a near-black #000000. Both the vacation color and the grid-line color (#e5e7eb at line 235) are raw hex values. They should be referenced through the design-token system (CSS variables or Tailwind tokens)."
+    },
+    {
+      "title": "DailyWorkProgress passes raw Tailwind color strings as function arguments instead of design tokens",
+      "file": "src/components/DailyWorkProgress.jsx",
+      "line": "195, 238, 246",
+      "severity": "medium",
+      "dimension": "discipline",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "renderProgressBar accepts a colorClass parameter defaulting to 'bg-blue-600'. It is called with 'bg-blue-500' for the day bar and 'bg-indigo-500' for the week bar. These are raw color utilities, not design tokens. The correct approach is to use session or brand tokens (e.g. bg-brand, bg-session-task-accent) so the values remain tied to the token system."
+    },
+    {
+      "title": "calculateCurrentTotalMinutes: live elapsed time added even when timerStartedAt is stale from a previous run (no cross-device skew cap)",
+      "file": "src/utils/timeUtils.js",
+      "line": "70-82",
+      "severity": "medium",
+      "dimension": "timetracking",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "If a task was left running on device A which went offline without pausing, then device B opens the app, the Firestore document still has timerStatus='running' and timerStartedAt set hours or days earlier. calculateCurrentTotalMinutes silently adds (now - timerStartedAt) without any cap, resulting in a wildly inflated displayed total. The guard on line 76 (`elapsedMinutes >= 0`) correctly rejects a future start, but does not cap an implausibly large positive value (e.g., 18+ hours if a forgotten session is never paused). useTaskTimeMonitor will fire the 100% limit alarm and auto-pause based on this inflated value."
+    },
+    {
+      "title": "DailyStatistics break_sessions query uses naive ISO string range on startTime, missing post-midnight breaks that belong to the Vilnius day",
+      "file": "src/components/DailyStatistics.jsx",
+      "line": "86-92",
+      "severity": "medium",
+      "dimension": "timetracking",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "startOfDay = `${selectedDate}T00:00:00` and endOfDay = `${selectedDate}T23:59:59` are naive (no timezone suffix), so Firestore compares them lexicographically against UTC ISO strings stored by the app (`now.toISOString()`). A break taken at 00:30 Vilnius time in winter (UTC+2) is stored as `...T22:30:00.000Z` (previous UTC date), so it falls outside the range string for the Vilnius day and is invisible in the timeline. Additionally, breaks taken between 00:00 and 03:00 Vilnius — which belong to the PREVIOUS Vilnius work-day under the 03:00 cutoff convention — are nevertheless included. The Reports.jsx hours tab correctly uses the `date` field for break_sessions (line 123-126), but DailyStatistics bypasses the date field and queries raw startTime."
+    },
+    {
+      "title": "automationUtils checkAndPromoteTasks: deadline comparison uses local-midnight Date objects, not Vilnius dates",
+      "file": "src/utils/automationUtils.js",
+      "line": "25-41",
+      "severity": "medium",
+      "dimension": "timetracking",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "todayStr is correctly obtained from getLithuanianDateString() (line 26). But then `today = new Date(todayStr)` on line 27 creates a local-midnight Date in the browser's timezone, not Vilnius time. `tomorrow`, `dayAfterTomorrow`, and `threeDaysFromNow` are derived from `today` via setDate(). The deadline is parsed as `new Date(task.deadline)` and then `deadlineDate = new Date(deadline.getFullYear(), deadline.getMonth(), deadline.getDate())` — another local-midnight Date. If the deadline string is an ISO UTC timestamp (e.g. `2025-12-01T22:00:00Z`), this is 2025-12-02 in Vilnius but the local Date extraction gives the UTC date 2025-12-01, so the task appears one day further from its real deadline and priority promotion fires one day late."
+    },
+    {
+      "title": "startSession catch block logs to console but never calls logError — crash not durable",
+      "file": "src/utils/sessionActions.js",
+      "line": "174-177",
+      "severity": "medium",
+      "dimension": "crashsafety",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The outer try/catch in startSession() calls console.error then re-throws. Every caller (BreakTimer line 87-92, CallTimer line 123-126, QuickWorkTimer line 131-134, TaskTimerControls line 107-113) catches the re-throw with its own handler that also only calls console.error, never logError. So a Firestore permission error, network timeout, or any other exception from startSession never reaches the localStorage ring buffer (workz_error_log) or the remote error_logs collection. The global unhandledrejection handler in errorLog.js only fires for unhandled rejections; here every rejection is caught and swallowed. The crash is invisible to remote diagnostics."
+    },
+    {
+      "title": "endSession catch block swallows failure without logError — session-end errors invisible",
+      "file": "src/utils/sessionActions.js",
+      "line": "365-367",
+      "severity": "medium",
+      "dimension": "crashsafety",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The outer catch in endSession() only calls console.error and does NOT re-throw. Unlike startSession, the caller (BreakTimer, CallTimer, QuickWorkTimer) never even sees the error. More critically, the failure is never forwarded to logError, so if the critical updateDoc(userRef, updates) at line 269 throws (offline, permission denied, etc.) the session state in Firestore is left in limbo (the old activeSession is still set, but the UI may show the session as ended due to the optimistic update), and there is no durable record of the failure in error_logs or the localStorage ring buffer."
+    },
+    {
+      "title": "Rule B drift: ActiveWorkSessions uses hardcoded color classes instead of SESSION_COLORS",
+      "file": "src/components/ActiveWorkSessions.jsx",
+      "line": "45-94",
+      "severity": "medium",
+      "dimension": "session-color",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The switch statement builds colorClass strings (bg-amber-100 text-amber-800 for break, bg-blue-100 text-blue-800 for call, bg-red-100 text-red-800 for quickWork, bg-green-100 text-green-800 for task) hardcoded inline rather than sourced from SESSION_COLORS. The 'call' row uses bg-blue-100 while the canonical call shell token is bg-session-call-shell (#DBEAFE = blue-100 happens to match, but it is not the token). The 'break' row uses bg-amber-100 which does not match the canonical break shell (#FEF3C7 = amber-100 in practice — but again not the token). SessionTypeIcon is imported and used for the glyph, but the background color swatch on each row bypasses getSessionColors entirely."
+    },
+    {
+      "title": "Rule B drift: CombinedHoursSummary duplicates colorClass mapping with different values from SESSION_COLORS",
+      "file": "src/components/CombinedHoursSummary.jsx",
+      "line": "200-244",
+      "severity": "medium",
+      "dimension": "session-color",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "A second independent switch statement maps session types to colorClass strings. The 'call' row uses bg-sky-100 text-sky-800 (sky palette) while SESSION_COLORS maps 'call' to bg-session-call-shell (#DBEAFE, which is blue-100 not sky-100). The 'break' row uses bg-orange-100 text-orange-800 while SESSION_COLORS uses the amber palette. Both components are supposed to reflect the same session-state taxonomy but they disagree with each other and with SESSION_COLORS — a direct Rule B violation. No call to getSessionColors is made in this file."
+    },
+    {
+      "title": "Disabled user can still read entire users collection",
+      "file": "firestore.rules",
+      "line": "41-43",
+      "severity": "medium",
+      "dimension": "security",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The read rule on /users/{userId} is `allow read: if isAuthenticated()`, not `isUserActive()`. A Firebase account that has been disabled in Firestore (isDisabled: true) retains a valid Firebase Auth token until it expires (up to 1 hour). During that window the blocked user can still read the full users collection — names, emails, roles, photoURLs, workStatus, activeSession, breakState — for every person in the company. The write rules correctly use the stronger isUserActive() check, but reads do not."
+    },
+    {
+      "title": "CallTimer active-state card uses raw blue-200 / blue-900 instead of SESSION_COLORS tokens",
+      "file": "src/components/CallTimer.jsx",
+      "line": "282",
+      "severity": "low",
+      "dimension": "discipline",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "When a call is active the button applies bg-session-call-surface (correct) but borders and text are border-blue-200 text-blue-900 ring-blue-200, raw Tailwind color literals rather than SESSION_COLORS.call tokens. Same split-sourcing issue as BreakTimer."
+    },
+    {
+      "title": "Fire-and-forget task pause during startSession not logged to logError on failure",
+      "file": "src/utils/sessionActions.js",
+      "line": "54",
+      "severity": "low",
+      "dimension": "crashsafety",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The .catch(e => console.warn('Task pause error:', e)) at line 54 is intentionally fire-and-forget, but unlike the analogous work_sessions write in pauseTask (taskActions.js line 149) which correctly calls logError, this failure is only printed to console and is never recorded to the durable error ring buffer or remote error_logs. If this fires in the field on a device with DevTools closed, the failure is completely invisible."
+    }
+  ],
+  "rejected": [
+    {
+      "title": "DeleteConfirmationModal duplicates canonical ConfirmDialog",
+      "file": "src/components/TaskDetailsModals.jsx",
+      "line": "476-558",
+      "severity": "high",
+      "dimension": "discipline",
+      "votesReal": 1,
+      "votesTotal": 3,
+      "detail": "DeleteConfirmationModal is a hand-rolled modal with its own focus-trap, Escape-key listener, and portal logic, exactly what the canonical Modal + ConfirmDialog pair already provides. It uses the unmanaged z-[100] (not the token z-ladder), raw bg-black bg-opacity-50 instead of bg-feedback-scrim, and raw <button> elements instead of the canonical Button component. The canonical ConfirmDialog supports multi-action flows via message/warning/confirmLabel props so there is no structural justification. This component is imported by TaskCard, TaskHistory, TaskTable, ManagerNotifications, and WorkPlanner."
+    },
+    {
+      "title": "TaskModal propagates raw error.message into a rejected Error thrown to the upload promise chain",
+      "file": "src/components/TaskModal.jsx",
+      "line": "366",
+      "severity": "medium",
+      "dimension": "discipline",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "The default branch of the upload error switch constructs reject(new Error(`Nepavyko ikelti ${file.name}: ${error.message}`)). The raw Firebase Storage SDK error.message is string-interpolated directly into the user-visible rejection message. This violates the convention that raw err.message is never embedded in user-facing strings (CLAUDE.md language policy, DESIGN_SYSTEM 10). The mapped Lithuanian-only messages used in the other switch cases should cover the default with a generic fallback instead."
+    },
+    {
+      "title": "BreakTimer active-state card uses raw amber-800 text color instead of SESSION_COLORS token",
+      "file": "src/components/BreakTimer.jsx",
+      "line": "164",
+      "severity": "low",
+      "dimension": "discipline",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "When the break is active the button applies bg-session-break-surface (correct, from SESSION_COLORS) but pairs it with text-amber-800 and hover:bg-amber-100 border-amber-200 as raw Tailwind colors rather than the onShell or accent tokens from SESSION_COLORS.break. This splits the color sourcing: shell token from the map, foreground color from a raw literal."
+    },
+    {
+      "title": "Partial quickWork/call work_session logged at full session duration when session ends normally (possible double-count)",
+      "file": "src/utils/sessionActions.js",
+      "line": "64-89 and 457-468 / 506-517",
+      "severity": "high",
+      "dimension": "timetracking",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "When a quickWork or call session is interrupted, startSession() logs a partial work_session covering [startTime → interruptNow] (line 70-83). When the interrupted session is later restored (endSession restores restoredSession.startTime = now, line 223) and then ended normally, handleLegacyLogging() (line 419+) logs a SECOND work_session for [restoredSession.startTime → now], which is correct. However the session object passed to handleLegacyLogging is the full original session (line 197: `const session = { ...userData?.activeSession, ...sessionOverrides }`), whose startTime was updated in endSession line 223 to the post-interruption resumption time only in `restoredSession`, not in `session` itself. The `session.startTime` in handleLegacyLogging still contains the ORIGINAL session start time (before interruption), so the second work_session covers [originalStart → endNow], which overlaps the partial segment and double-counts the pre-interruption period."
+    },
+    {
+      "title": "calendarNotifications weekId derived from date-fns startOfWeek on local clock, not Vilnius time",
+      "file": "src/utils/calendarNotifications.js",
+      "line": "11-12",
+      "severity": "medium",
+      "dimension": "timetracking",
+      "votesReal": 1,
+      "votesTotal": 3,
+      "detail": "getLithuanianNow() returns `new Date()` (a local-time object). date-fns startOfWeek() then computes week boundary in the JavaScript runtime's local timezone (UTC in Node/browser varies). If the code runs at, say, 01:00 on Monday Vilnius time in winter (23:00 UTC Sunday), startOfWeek returns the Sunday in UTC — which is still the previous week. The document key `userId_weekId` then lands on the wrong week bucket, causing the manager notification to appear under last week's batch and potentially being dismissed prematurely or never shown."
+    },
+    {
+      "title": "fetchCalendarHistory hardcodes day 31 as month-end, silently under-fetches data for months shorter than 31 days",
+      "file": "src/components/Reports.jsx",
+      "line": "385",
+      "severity": "low",
+      "dimension": "timetracking",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "endStr = `${historyMonth}-31T23:59:59.999Z` hard-codes day 31 as the last day of the month. For February, April, June, September, and November, days 29-31 (or 29-31 in February) do not exist as calendar dates, but the ISO comparison against a Firestore string still works because Firestore string ordering would include those dates if they existed. However, any calendar_requests created on the 28th-31st stored as local-midnight dates might fall outside this UTC upper bound, causing missing entries for those days in certain months/timezones. More critically: this month-end sentinel is computed in UTC, while all other date logic is Europe/Vilnius, so on the last day of a 30-day month in summer time (UTC+3), an event at 23:00 Vilnius = 20:00 UTC is included, but a legitimate record stored as `{month}-31T...` simply does not exist and the query silently returns less than expected — no error, just missing data."
+    },
+    {
+      "title": "pausedSession nesting is silently overwritten on a second interruption of the same secondary session type",
+      "file": "src/utils/sessionActions.js",
+      "line": "36-41",
+      "severity": "medium",
+      "dimension": "crashsafety",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "inheritedPausedSession (lines 36-41) is extracted from the current activeSession's pausedSession only when activeSession.type !== 'task'. At line 119 the new session gets: pausedSession: newPausedSession || inheritedPausedSession. When the active session is a non-task type with its own pausedSession (e.g. call pausing a quickWork), newPausedSession = the full call object including its nested pausedSession (line 57). This works for one additional level, but if both newPausedSession and inheritedPausedSession are set for different reasons, inheritedPausedSession is silently discarded (|| short-circuits). More critically: at line 37 the code checks only one level of nesting — if the existing pausedSession is itself not a task, any task buried deeper in the chain is not added to resumableTaskIds (line 39-41 only pushes if inheritedPausedSession.type === 'task'). A task buried two levels deep (task → quickWork → call → break) will be silently dropped from resumableTaskIds and will never be automatically resumed when all sessions unwind."
+    },
+    {
+      "title": "handleLegacyLogging addDoc calls inside endSession fire-and-forget wrapper have no logError for individual write failures",
+      "file": "src/utils/sessionActions.js",
+      "line": "272-295",
+      "severity": "low",
+      "dimension": "crashsafety",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "The doLogging() async function (line 272) wraps all legacy writes in a try/catch that catches at line 294 with a bare /* swallow */ comment. Although the two top-level pushes at lines 277 and 290-291 each have their own .catch(err => logError(...)) calls, if Promise.all itself throws for any other reason, or if handleLegacyLogging (line 290) throws synchronously before reaching the catch, the outer catch at line 294 silently discards it without calling logError. This is a narrow path but exists because handleLegacyLogging contains multiple bare await addDoc() calls (e.g. line 424, 457, 506) with no per-call error handling inside the function body — failures propagate up to the .catch at line 291 which does correctly call logError, so this is mostly covered. The actual gap is that if doLogging() throws before Promise.all (e.g. a sync error in constructing the log record), the catch at line 294 swallows it without any logging."
+    },
+    {
+      "title": "Rule C violation: TaskTimeLimitPopup header uses full-saturation red for a non-quickWork state",
+      "file": "src/components/TaskTimeLimitPopup.jsx",
+      "line": "36",
+      "severity": "high",
+      "dimension": "session-color",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "The modal header renders 'bg-gradient-to-r from-red-500 to-red-600' — a full-saturation red background — for the 'time limit exceeded' state, which is a task-state notification, not the quickWork session. DESIGN_SYSTEM Rule C reserves saturated red exclusively for the quickWork shell. Using it here for an unrelated semantic (task time hard-stop) collides with the quickWork color signal and violates Rule C. The confirm button at line 66 also uses bg-red-600 (a UI action, which is borderline acceptable as a danger action color, but the header gradient is clearly the shell-level violation)."
+    },
+    {
+      "title": "Rule A risk: compact QuickWorkTimer button shows session-quickWork-shell color with no persistent label while active",
+      "file": "src/components/QuickWorkTimer.jsx",
+      "line": "218-238",
+      "severity": "medium",
+      "dimension": "session-color",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "When isQuickWorking is true, the compact button applies bg-session-quickWork-shell (saturated red #EF4444) as its background. The button contains only a Square icon (aria-hidden) and the aria-label is accessible only to screen readers. The visible timer readout (line 204-210) above the button does supply a live elapsed time, but there is no always-visible text label (e.g. 'Greitas darbas') adjacent to this colored button in the compact layout. The Layout.jsx session label strip (line 138-146) does provide a persistent label, but only when rendered inside Layout — if BottomNavigation or the floating pill is ever rendered outside Layout that safeguard is absent. Within the normal app shell this is mitigated, but the compact button itself does not carry a text label co-located with the color cue, leaving color as the primary in-widget signal."
+    },
+    {
+      "title": "Rule B drift: BreakTimer compact button uses bg-session-break-accent (not the shell token) for the active state background",
+      "file": "src/components/BreakTimer.jsx",
+      "line": "122",
+      "severity": "low",
+      "dimension": "session-color",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "When isTakingBreak is true the compact button's background is bg-session-break-accent (#B45309, a dark amber). SESSION_COLORS defines shell as bg-session-break-shell (#FEF3C7, very light amber) and surface as bg-session-break-surface. Using the accent token as a button background is not a Rule B drift in the strict sense (accent is from SESSION_COLORS), but it applies the accent color to a surface role, inverting the intended hierarchy: shell=#FEF3C7, surface=#FFFBEB, accent=#B45309 (text/icon accent). A dark amber button with text-white on it is functionally different from the design intent and conflates the accent foreground token with a background role."
+    },
+    {
+      "title": "Firebase API key and project credentials hardcoded as fallback in committed source",
+      "file": "src/firebase.js",
+      "line": "7-13",
+      "severity": "medium",
+      "dimension": "security",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "The production Firebase API key (AIzaSyDXaHCrL8hKgaEedSXEIT-XSxhmIcCEuXU), appId, messagingSenderId, measurementId, and project identifiers are committed directly as `|| 'literal'` fallbacks in src/firebase.js. They appear in every git commit and in the compiled bundle regardless of whether VITE_FIREBASE_* env vars are set. A second script (fetch_task.mjs) contains the same credentials with no env-var escape at all. While Firebase web API keys are not secret in the same way as private keys, they are a necessary prerequisite for authenticated abuse and their presence in the repo history means rotating them requires a git rewrite."
+    },
+    {
+      "title": "Debug scripts with hardcoded production project ID committed to main history",
+      "file": "fetch_task.mjs",
+      "line": "4-11",
+      "severity": "medium",
+      "dimension": "security",
+      "votesReal": 0,
+      "votesTotal": 3,
+      "detail": "fetch_task.mjs and fetch_task.cjs are one-off debugging scripts that were committed in the 'Projekto failu atnaujinimas' commit. fetch_task.mjs embeds the full production Firebase config (apiKey, appId, etc.) with no env-var indirection. fetch_task.cjs initialises firebase-admin without explicit credentials against the production projectId 'darbo-planavimas'. Neither file is .gitignore-d. They are reachable in the public repo history and could be imported or run accidentally in CI or by contributors."
+    }
+  ]
+}

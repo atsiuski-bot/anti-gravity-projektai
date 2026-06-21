@@ -1,0 +1,38 @@
+
+> workz@0.0.0 build
+> vite build
+
+[36mvite v5.4.21 [32mbuilding for production...[36m[39m
+transforming...
+Browserslist: browsers data (caniuse-lite) is 6 months old. Please run:
+  npx update-browserslist-db@latest
+  Why you should do it regularly: https://github.com/browserslist/update-db#readme
+[32m✓[39m 2942 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mmanifest.webmanifest                        [39m[1m[2m  0.41 kB[22m[1m[22m
+[2mdist/[22m[32mindex.html                                  [39m[1m[2m  0.99 kB[22m[1m[22m[2m │ gzip:   0.44 kB[22m
+[2mdist/[22m[35massets/TaskTimeLimitPopup-DxzzN9QP.css      [39m[1m[2m 10.93 kB[22m[1m[22m[2m │ gzip:   2.50 kB[22m
+[2mdist/[22m[35massets/index-CPjA699U.css                   [39m[1m[2m 50.11 kB[22m[1m[22m[2m │ gzip:   9.06 kB[22m
+[2mdist/[22m[36massets/Card-BzFxwSR9.js                     [39m[1m[2m  0.30 kB[22m[1m[22m[2m │ gzip:   0.24 kB[22m
+[2mdist/[22m[36massets/Dashboard-DZg8SNsy.js                [39m[1m[2m  2.72 kB[22m[1m[22m[2m │ gzip:   1.25 kB[22m
+[2mdist/[22m[36massets/Login-Bk2CwCUL.js                    [39m[1m[2m  2.77 kB[22m[1m[22m[2m │ gzip:   1.44 kB[22m
+[2mdist/[22m[36massets/workbox-window.prod.es5-vqzQaGvo.js  [39m[1m[2m  5.72 kB[22m[1m[22m[2m │ gzip:   2.35 kB[22m
+[2mdist/[22m[36massets/WorkerView-D-kw91uI.js               [39m[1m[2m  6.07 kB[22m[1m[22m[2m │ gzip:   2.46 kB[22m
+[2mdist/[22m[36massets/lucide-icons-CRCJAPxp.js             [39m[1m[2m 23.24 kB[22m[1m[22m[2m │ gzip:   4.54 kB[22m
+[2mdist/[22m[36massets/utils-vendor-4it9zwQP.js             [39m[1m[2m 24.93 kB[22m[1m[22m[2m │ gzip:   8.49 kB[22m
+[2mdist/[22m[36massets/firebase-storage-m7GUYOw7.js         [39m[1m[2m 44.32 kB[22m[1m[22m[2m │ gzip:  10.90 kB[22m
+[2mdist/[22m[36massets/ManagerView-Dt6-rVVI.js              [39m[1m[2m 47.26 kB[22m[1m[22m[2m │ gzip:  12.31 kB[22m
+[2mdist/[22m[36massets/index-Gh7mVKyY.js                    [39m[1m[2m 83.08 kB[22m[1m[22m[2m │ gzip:  23.23 kB[22m
+[2mdist/[22m[36massets/firebase-auth-McotLhzD.js            [39m[1m[2m111.98 kB[22m[1m[22m[2m │ gzip:  22.99 kB[22m
+[2mdist/[22m[36massets/react-vendor-wEg4T_uz.js             [39m[1m[2m161.14 kB[22m[1m[22m[2m │ gzip:  52.51 kB[22m
+[2mdist/[22m[36massets/TaskTimeLimitPopup-CgBmk8Z0.js       [39m[1m[2m412.77 kB[22m[1m[22m[2m │ gzip: 114.77 kB[22m
+[2mdist/[22m[36massets/firebase-firestore-Ds-RHMUy.js       [39m[1m[2m426.17 kB[22m[1m[22m[2m │ gzip: 106.19 kB[22m
+[32m✓ built in 10.81s[39m
+
+PWA v1.2.0
+mode      generateSW
+precache  21 entries (1383.82 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-676600ea.js
