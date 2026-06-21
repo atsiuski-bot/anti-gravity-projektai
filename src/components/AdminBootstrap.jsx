@@ -4,11 +4,13 @@ import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/fire
 import { useAuth } from '../context/AuthContext';
 import { ShieldCheck } from 'lucide-react';
 import Button from './ui/Button';
+import { logError } from '../utils/errorLog';
 
 export default function AdminBootstrap() {
     const { currentUser, userRole } = useAuth();
     const [hasAdmins, setHasAdmins] = useState(true); // Default to true to avoid flashing
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
 
     useEffect(() => {
         const checkAdmins = async () => {
@@ -28,14 +30,19 @@ export default function AdminBootstrap() {
 
     const handleBecomeAdmin = async () => {
         if (!currentUser) return;
+        setError('');
         try {
             const userRef = doc(db, 'users', currentUser.uid);
             await updateDoc(userRef, {
                 role: 'admin'
             });
             window.location.reload();
-        } catch (error) {
-            console.error("Error becoming admin:", error);
+        } catch (err) {
+            // Self-promotion to admin is denied by the security rules (only an existing admin
+            // may change a role), so this write essentially always fails. Surface a clear
+            // recovery path instead of silently reloading into the same banner.
+            logError(err, { source: 'adminBootstrap:becomeAdmin' });
+            setError('Negalima pačiam tapti administratoriumi. Pirmąjį administratorių turi nustatyti sistemos savininkas „Firebase" konsolėje (vartotojo dokumente įrašyti role: "admin", isDisabled: false).');
         }
     };
 
@@ -60,6 +67,11 @@ export default function AdminBootstrap() {
                     Tapti administratoriumi
                 </Button>
             </div>
+            {error && (
+                <p role="alert" aria-live="assertive" className="mt-3 text-sm font-medium text-red-700">
+                    {error}
+                </p>
+            )}
         </div>
     );
 }
