@@ -6,6 +6,7 @@ import SessionTypeIcon from './SessionTypeIcon';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { useUsers } from '../context/UsersContext';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
+import { getSessionColors } from '../utils/sessionColors';
 
 export default function ActiveWorkSessions() {
     const { users: allUsers, loading: usersLoading } = useUsers();
@@ -47,7 +48,7 @@ export default function ActiveWorkSessions() {
                     displayProps = {
                         type: 'break',
                         label: 'Pertrauka',
-                        colorClass: 'bg-amber-100 text-amber-800',
+                        colorClass: `${getSessionColors('break').surface} ${getSessionColors('break').accent}`,
                         startTime: user.activeSession.startTime
                     };
                     break;
@@ -55,7 +56,7 @@ export default function ActiveWorkSessions() {
                     displayProps = {
                         type: 'call',
                         label: 'Skambutis',
-                        colorClass: 'bg-blue-100 text-blue-800',
+                        colorClass: `${getSessionColors('call').surface} ${getSessionColors('call').accent}`,
                         startTime: user.activeSession.startTime
                     };
                     break;
@@ -63,7 +64,7 @@ export default function ActiveWorkSessions() {
                     displayProps = {
                         type: 'quickWork',
                         label: 'Greitas darbas',
-                        colorClass: 'bg-red-100 text-red-800',
+                        colorClass: `${getSessionColors('quickWork').surface} ${getSessionColors('quickWork').accent}`,
                         startTime: user.activeSession.startTime
                     };
                     break;
@@ -78,7 +79,7 @@ export default function ActiveWorkSessions() {
                     displayProps = {
                         type: 'task',
                         label: title,
-                        colorClass: 'bg-green-100 text-green-800',
+                        colorClass: `${getSessionColors('task').surface} ${getSessionColors('task').accent}`,
                         startTime: user.activeSession.startTime,
                         task: foundTask || null
                     };

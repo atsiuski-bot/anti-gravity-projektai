@@ -192,7 +192,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
     const totalDayWorked = dayWorked + currentSessionHours + dayBreakHours;
     const totalWeekWorked = weekWorked + currentSessionHours + weekBreakHours;
 
-    const renderProgressBar = (label, current, total, colorClass = "bg-blue-600") => {
+    const renderProgressBar = (label, current, total, colorClass = "bg-brand") => {
         // Prevent division by zero
         const percent = total > 0 ? (current / total) * 100 : 0;
         // Cap at 100% for the bar visual, but allow text to show real values? 
@@ -235,7 +235,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                     "Dienos tikslas",
                     totalDayWorked,
                     dayPlanned,
-                    "bg-blue-500"
+                    "bg-brand"
                 )}
 
                 {/* Week Progress */}
@@ -243,7 +243,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                     "Savaitės tikslas",
                     totalWeekWorked,
                     weekPlanned,
-                    "bg-indigo-500" // Slightly different color for distinction
+                    "bg-session-task-accent" // Slightly different color for distinction
                 )}
             </div>
         </div>

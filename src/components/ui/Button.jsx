@@ -6,8 +6,9 @@ import { cn } from '../../utils/cn';
  * Button — the canonical action control (DESIGN_SYSTEM §8).
  *
  * Variants: `primary` (brand-filled, the dominant action), `secondary` (neutral outline),
- * `danger` (destructive), `ghost` (text-only). Sizes: `md` (default, >= 44px) and `lg`
- * (near-full-width mobile CTAs). Every button gets a visible focus ring and a >= 44px target.
+ * `success` (positive confirm/approve — green), `danger` (destructive), `ghost` (text-only).
+ * Sizes: `md` (default, >= 44px) and `lg` (near-full-width mobile CTAs). Every button gets a
+ * visible focus ring and a >= 44px target.
  *
  * Rule (§8): the primary action must always outweigh a destructive/secondary action beside
  * it — express that with `variant`/`size`, never by rendering two identical buttons.
@@ -15,6 +16,7 @@ import { cn } from '../../utils/cn';
 const VARIANTS = {
     primary: 'bg-brand text-white hover:bg-brand-hover shadow-sm',
     secondary: 'bg-surface-card text-ink border border-line hover:bg-surface-sunken',
+    success: 'bg-feedback-success text-white hover:bg-green-700 shadow-sm',
     danger: 'bg-feedback-danger text-white hover:bg-red-700 shadow-sm',
     ghost: 'text-ink-muted hover:text-ink hover:bg-surface-sunken',
 };

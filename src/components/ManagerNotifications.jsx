@@ -11,6 +11,7 @@ import { logCalendarChange } from '../utils/calendarNotifications';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import { SoundManager } from '../utils/soundUtils';
 import IconButton from './ui/IconButton';
+import Button from './ui/Button';
 
 export default function ManagerNotifications({ onEditAndApprove }) {
     const { currentUser } = useAuth();
@@ -423,20 +424,24 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     </div>
 
                                     <div className="mt-4 flex gap-3">
-                                        <button
+                                        <Button
+                                            variant="success"
+                                            size="md"
+                                            icon={Check}
+                                            className="flex-1"
                                             onClick={() => handleApproveCalendarRequest(notif)}
-                                            className="flex-1 inline-flex min-h-touch items-center justify-center gap-2 rounded-control bg-green-600 px-4 font-bold text-white shadow-sm transition-all hover:bg-green-700 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
                                         >
-                                            <Check className="w-4 h-4" aria-hidden="true" />
                                             Patvirtinti
-                                        </button>
-                                        <button
+                                        </Button>
+                                        <Button
+                                            variant="danger"
+                                            size="md"
+                                            icon={X}
+                                            className="flex-1"
                                             onClick={() => handleDeclineCalendarRequest(notif)}
-                                            className="flex-1 inline-flex min-h-touch items-center justify-center gap-2 rounded-control bg-red-50 px-4 font-bold text-red-600 transition-all hover:bg-red-100 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2"
                                         >
-                                            <X className="w-4 h-4" aria-hidden="true" />
                                             Atmesti
-                                        </button>
+                                        </Button>
                                     </div>
                                 </div>
                             </div>
@@ -466,13 +471,14 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         </div>
                                     </div>
                                     <div className="flex items-center justify-end mt-1 px-2 gap-2">
-                                        <button
+                                        <Button
+                                            variant="secondary"
+                                            size="md"
                                             onClick={() => handleDismissTask(notif.id)}
-                                            className="inline-flex min-h-touch items-center justify-center rounded-control bg-blue-100 px-4 text-sm font-semibold text-blue-700 transition-colors hover:bg-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                             title="Uždaryti"
                                         >
                                             Supratau
-                                        </button>
+                                        </Button>
                                     </div>
                                 </div>
                             </div>
@@ -505,22 +511,26 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         </div>
                                     </div>
                                     <div className="flex items-center justify-between mt-2 mb-1 px-2 gap-2">
-                                        <button
+                                        <Button
+                                            variant="success"
+                                            size="md"
+                                            icon={Check}
+                                            className="whitespace-nowrap"
                                             onClick={() => handleConfirmCompletion(notif.id, notif.taskId)}
-                                            className="inline-flex min-h-touch items-center justify-center gap-2 whitespace-nowrap rounded-control bg-green-100 px-5 text-sm font-semibold text-green-700 shadow-sm transition-colors hover:bg-green-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700 focus-visible:ring-offset-2"
                                             title="Patvirtinti užduoties atlikimą"
                                         >
-                                            <Check className="w-4 h-4" aria-hidden="true" />
                                             Patvirtinti
-                                        </button>
-                                        <button
+                                        </Button>
+                                        <Button
+                                            variant="secondary"
+                                            size="md"
+                                            icon={RotateCcw}
+                                            className="whitespace-nowrap"
                                             onClick={() => handleRevertTask(notif.id, notif.taskId, notif.userName)}
-                                            className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-amber-100 px-4 text-sm font-semibold text-amber-700 shadow-sm transition-colors hover:bg-amber-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-2"
                                             title="Grąžinti į darbų sąrašą"
                                         >
-                                            <RotateCcw className="w-4 h-4" aria-hidden="true" />
                                             Sugrąžinti į darbų sąrašą
-                                        </button>
+                                        </Button>
                                     </div>
                                 </div>
                             </div>
@@ -554,16 +564,22 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                 {/* Action Buttons */}
                                 <div className="flex items-center justify-end mt-4 mb-1 gap-3 flex-wrap">
                                     {/* Do Not Extend */}
-                                    <button
+                                    <Button
+                                        variant="secondary"
+                                        size="md"
+                                        icon={X}
+                                        className="whitespace-nowrap"
                                         onClick={() => handleDismissExtension(notif.id)}
-                                        className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-gray-100 px-4 text-sm font-semibold text-gray-700 shadow-sm transition-colors hover:bg-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-600 focus-visible:ring-offset-2"
                                     >
-                                        <X className="w-4 h-4" aria-hidden="true" />
                                         Nepratęsti
-                                    </button>
+                                    </Button>
 
                                     {/* Edit Task To Extend */}
-                                    <button
+                                    <Button
+                                        variant="primary"
+                                        size="md"
+                                        icon={Edit}
+                                        className="whitespace-nowrap"
                                         onClick={async () => {
                                             // Dismiss notification
                                             await handleDismissTask(notif.id);
@@ -579,11 +595,9 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                                 }
                                             }
                                         }}
-                                        className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-blue-100 px-4 text-sm font-semibold text-blue-700 shadow-sm transition-colors hover:bg-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                     >
-                                        <Edit className="w-4 h-4" aria-hidden="true" />
                                         Redaguoti užduotį
-                                    </button>
+                                    </Button>
                                 </div>
                             </div>
                         );
@@ -607,32 +621,38 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                             </div>
 
                             <div className="mt-3 mb-1 flex flex-wrap items-center gap-2">
-                                <button
+                                <Button
+                                    variant="success"
+                                    size="md"
+                                    icon={Check}
+                                    className="whitespace-nowrap"
                                     onClick={() => handleApproveTask(notif.id, notif.taskId)}
-                                    className="inline-flex min-h-touch items-center justify-center gap-2 whitespace-nowrap rounded-control bg-green-100 px-4 text-sm font-semibold text-green-800 shadow-sm transition-colors hover:bg-green-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-green-700"
                                     title="Patvirtinti užduotį"
                                 >
-                                    <Check className="w-4 h-4" aria-hidden="true" />
                                     Patvirtinti
-                                </button>
+                                </Button>
 
-                                <button
+                                <Button
+                                    variant="primary"
+                                    size="md"
+                                    icon={Edit}
+                                    className="whitespace-nowrap"
                                     onClick={() => handleEditAndApprove(notif.id, notif.taskId)}
-                                    className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-brand-soft px-4 text-sm font-semibold text-brand-hover shadow-sm transition-colors hover:bg-brand-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                     title="Patvirtinti ir redaguoti užduotį"
                                 >
-                                    <Edit className="w-4 h-4" aria-hidden="true" />
                                     Redaguoti
-                                </button>
+                                </Button>
 
-                                <button
+                                <Button
+                                    variant="danger"
+                                    size="md"
+                                    icon={Trash2}
+                                    className="whitespace-nowrap"
                                     onClick={() => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle)}
-                                    className="inline-flex min-h-touch items-center justify-center gap-1.5 whitespace-nowrap rounded-control bg-red-100 px-4 text-sm font-semibold text-red-700 shadow-sm transition-colors hover:bg-red-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-700"
                                     title="Ištrinti užduotį"
                                 >
-                                    <Trash2 className="w-4 h-4" aria-hidden="true" />
                                     Ištrinti
-                                </button>
+                                </Button>
                             </div>
                         </div>
                     </div>

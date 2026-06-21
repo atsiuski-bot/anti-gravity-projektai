@@ -28,7 +28,7 @@ export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
 
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
+            className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4"
             onClick={onClose}
             onTouchEnd={(e) => { e.stopPropagation(); onClose(); }}
         >
@@ -38,14 +38,14 @@ export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
                 aria-modal="true"
                 aria-labelledby={titleId}
                 tabIndex={-1}
-                className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto focus:outline-none"
+                className="bg-surface-card rounded-modal shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto focus:outline-none"
                 onClick={(e) => e.stopPropagation()}
                 onTouchEnd={(e) => e.stopPropagation()}
             >
-                <div className="flex justify-between items-center p-4 border-b border-gray-200 sticky top-0 bg-white z-10">
+                <div className="flex justify-between items-center p-4 border-b border-line sticky top-0 bg-surface-card z-10">
                     <div className="flex items-center gap-2">
-                        {Icon && <Icon className="w-5 h-5 text-blue-600" />}
-                        <h3 id={titleId} className="text-lg font-semibold text-gray-900">{title}</h3>
+                        {Icon && <Icon className="w-5 h-5 text-brand" />}
+                        <h3 id={titleId} className="text-lg font-semibold text-ink-strong">{title}</h3>
                     </div>
                     <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
                 </div>
@@ -388,7 +388,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
 
     const modalContent = (
         <div
-            className="fixed inset-0 z-[9999] flex items-center justify-center bg-black bg-opacity-95"
+            className="fixed inset-0 z-top flex items-center justify-center bg-black/95"
             onClick={onClose}
             role="dialog"
             aria-modal="true"
@@ -400,7 +400,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                     type="button"
                     onClick={onClose}
                     aria-label="Uždaryti"
-                    className="absolute top-4 right-4 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-[10000] bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    className="absolute top-4 right-4 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                 >
                     <X className="w-8 h-8" aria-hidden="true" />
                 </button>
@@ -411,7 +411,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                             type="button"
                             onClick={handlePrev}
                             aria-label="Ankstesnė nuotrauka"
-                            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-[10000] bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-top bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <ChevronLeft className="w-8 h-8" aria-hidden="true" />
                         </button>
@@ -419,7 +419,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                             type="button"
                             onClick={handleNext}
                             aria-label="Kita nuotrauka"
-                            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-[10000] bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-top bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <ChevronRight className="w-8 h-8" aria-hidden="true" />
                         </button>
@@ -462,7 +462,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                 </div>
 
                 {imageUrls.length > 1 && (
-                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white bg-black/50 px-3 py-1 rounded-full text-sm z-[10000]">
+                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white bg-black/50 px-3 py-1 rounded-full text-sm z-top">
                         {validIndex + 1} / {imageUrls.length}
                     </div>
                 )}

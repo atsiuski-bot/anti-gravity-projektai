@@ -14,9 +14,13 @@ import EmptyState from './ui/EmptyState';
 
 // Calm indigo "free" state for vacation events — replaces a near-black (#000000) block so
 // vacation reads as time off, not a heavy bar. Paired everywhere with a Palmtree + "Atostogos"
-// label so colour is never the sole signal (DESIGN_SYSTEM §4/§16). Inline because the calendar
-// positions/fills bars with computed styles, not Tailwind classes.
-const VACATION_COLOR = '#A5B4FC'; // indigo-300
+// label so colour is never the sole signal (DESIGN_SYSTEM §4/§16).
+//
+// This is the design-system indigo-300 token value, expressed as a literal hex on purpose:
+// the calendar positions/fills bars with computed inline styles (backgroundColor / borderLeft),
+// which react-big-calendar / inline-style props require to be a concrete color string, not a
+// Tailwind class or CSS var. Keep this in sync with the indigo-300 token if it ever moves.
+const VACATION_COLOR = '#A5B4FC'; // design token: indigo-300 (vacation "free" state)
 
 // Constants
 const START_HOUR = 7;
@@ -229,10 +233,12 @@ export default function AllUsersCalendar() {
                             {hours.map((hour, i) => (
                                 <div
                                     key={`grid-${hour}`}
-                                    className="absolute top-0 bottom-0 border-l border-gray-300"
+                                    className="absolute top-0 bottom-0 border-l border-line"
                                     style={{
                                         left: `${(i / TOTAL_HOURS) * 100}%`,
-                                        borderColor: i === 0 || i === TOTAL_HOURS ? 'transparent' : '#e5e7eb'
+                                        // First/last edges stay invisible; interior lines use the
+                                        // border-line token (no inline hex).
+                                        ...(i === 0 || i === TOTAL_HOURS ? { borderColor: 'transparent' } : {})
                                     }}
                                 />
                             ))}

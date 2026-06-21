@@ -531,18 +531,18 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // This excludes other 'regular' workers.
 
     return createPortal(
-        <div className="fixed inset-0 z-[100] flex items-start justify-center bg-black bg-opacity-50 p-4 pt-10 pb-20 overflow-y-auto">
+        <div className="fixed inset-0 z-modal flex items-start justify-center bg-feedback-scrim p-4 pt-10 pb-20 overflow-y-auto">
             <div
                 ref={panelRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="task-modal-title"
                 tabIndex={-1}
-                className="bg-white rounded-xl shadow-xl w-full max-w-2xl flex flex-col my-auto relative focus:outline-none"
+                className="bg-surface-card rounded-modal shadow-xl w-full max-w-2xl flex flex-col my-auto relative focus:outline-none"
             >
                 {/* Header - Fixed */}
-                <div className="flex justify-between items-center p-6 border-b border-gray-200 flex-shrink-0">
-                    <h2 id="task-modal-title" className="text-xl font-bold text-gray-900">
+                <div className="flex justify-between items-center p-6 border-b border-line flex-shrink-0">
+                    <h2 id="task-modal-title" className="text-xl font-bold text-ink-strong">
                         {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Sukurti užduotį')}
                     </h2>
                     <div className="flex items-center gap-2">

@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import { getSessionColors } from '../utils/sessionColors';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 
@@ -52,15 +53,12 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                         lang="en"
                         dir="ltr"
                         rows={4}
+                        className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
                         style={{
                             width: '100%',
                             padding: '12px',
                             fontSize: '16px',
-                            border: '2px solid #e5e7eb',
-                            borderRadius: '12px',
                             resize: 'none',
-                            background: 'white',
-                            color: '#000',
                             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                             direction: 'ltr',
                             textAlign: 'left'
@@ -279,7 +277,7 @@ export default function CallTimer({ compact = false }) {
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isCalling
-                            ? 'bg-session-call-surface border-blue-200 text-blue-900 ring-1 ring-blue-200'
+                            ? clsx('bg-session-call-surface border-line ring-1 ring-line', getSessionColors('call').accent)
                             : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-gray-300'
                 )}
                 title={isDisabled ? "Kitas veiksmas jau aktyvus" : ""}

@@ -54,15 +54,12 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                         lang="en"
                         dir="ltr"
                         rows={4}
+                        className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
                         style={{
                             width: '100%',
                             padding: '12px',
                             fontSize: '16px',
-                            border: '2px solid #e5e7eb',
-                            borderRadius: '12px',
                             resize: 'none',
-                            background: 'white',
-                            color: '#000',
                             fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
                             direction: 'ltr',
                             textAlign: 'left'

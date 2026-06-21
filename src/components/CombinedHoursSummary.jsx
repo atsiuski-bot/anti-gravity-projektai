@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
+import { getSessionColors } from '../utils/sessionColors';
 
 export default function CombinedHoursSummary() {
     const { currentUser } = useAuth();
@@ -202,21 +203,21 @@ export default function CombinedHoursSummary() {
                 case 'break':
                     displayProps = {
                         label: 'Pertrauka',
-                        colorClass: 'bg-orange-100 text-orange-800',
+                        colorClass: `${getSessionColors('break').surface} ${getSessionColors('break').accent}`,
                         startTime: user.activeSession.startTime
                     };
                     break;
                 case 'call':
                     displayProps = {
                         label: 'Skambutis',
-                        colorClass: 'bg-sky-100 text-sky-800',
+                        colorClass: `${getSessionColors('call').surface} ${getSessionColors('call').accent}`,
                         startTime: user.activeSession.startTime
                     };
                     break;
                 case 'quickWork':
                     displayProps = {
                         label: 'Greitas darbas',
-                        colorClass: 'bg-red-100 text-red-800',
+                        colorClass: `${getSessionColors('quickWork').surface} ${getSessionColors('quickWork').accent}`,
                         startTime: user.activeSession.startTime
                     };
                     break;
@@ -230,7 +231,7 @@ export default function CombinedHoursSummary() {
                     }
                     displayProps = {
                         label: title,
-                        colorClass: 'bg-green-100 text-green-800', // You can customize generic task color here
+                        colorClass: `${getSessionColors('task').surface} ${getSessionColors('task').accent}`,
                         startTime: user.activeSession.startTime
                     };
                     break;
