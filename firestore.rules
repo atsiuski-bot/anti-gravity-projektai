@@ -1,35 +1,36 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // Helper function to check if user is authenticated
+
+    // ---- Identity / role helpers -------------------------------------------
+
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Helper to get user data - with safety check
     function getUserData() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    // Helper to check if user is not disabled - safe version
-    // Uses `!= true` which passes for both `false` and missing/null fields,
-    // so legacy user documents without an `isDisabled` field still work.
+    // Active = authenticated, the user doc exists, and isDisabled is not true.
+    // `!= true` passes for both `false` and a missing/null field, so legacy user
+    // documents without the field still work. (Repeated get()/exists() on the same
+    // user doc are cached within one rule evaluation, so the role helpers below add
+    // no extra document-read cost beyond this single lookup.)
     function isUserActive() {
-      return isAuthenticated() && 
+      return isAuthenticated() &&
              exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
              get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isDisabled != true;
     }
 
-    // Helper to check user role
     function isAdmin() {
-      return isUserActive() && 
+      return isUserActive() &&
              (getUserData().role == 'admin' ||
               getUserData().role == 'Administratorius');
     }
 
     function isManager() {
-      return isUserActive() && 
+      return isUserActive() &&
              getUserData().role == 'manager';
     }
 
@@ -37,90 +38,214 @@ service cloud.firestore {
       return isAdmin() || isManager();
     }
 
-    // USERS - Allow authenticated users to read user documents (needed for AuthContext and viewing coworkers)
+    // ---- Per-document ownership helpers -------------------------------------
+    // A worker "owns" a record when its owner field equals their uid. The owner
+    // field per collection was audited from the client write sites: `userId` for
+    // sessions/hours/calendar/notifications, `assignedUserId` for tasks,
+    // `recipientId` for request_notifications, `createdBy` for templates.
+    // Read/update/delete use resource.data (the stored doc); create uses
+    // request.resource.data (the incoming doc).
+    //
+    // READ vs WRITE asymmetry (important — Firestore rules are NOT row filters):
+    // several worker-facing features (the Reports tab, the team calendar) issue
+    // collection-WIDE queries and filter client-side, so they intentionally read
+    // other users' rows. A per-owner READ rule would make those whole queries fail
+    // with permission-denied (one unreadable row rejects the entire query). This
+    // app's design is team-wide VISIBILITY, so READ on the shared collections stays
+    // broad (`isUserActive()`). The real threat C1 identified is TAMPERING, so
+    // WRITE (create/update/delete) is scoped to the owner with a manager/admin
+    // escape — a worker can see a colleague's hours but cannot mutate them. If
+    // per-user read isolation is ever wanted, it requires changing those client
+    // queries to filter by uid for workers (a product change), not just the rule.
+
+    function ownsUserId() {
+      return resource.data.userId == request.auth.uid;
+    }
+    function createOwnsUserId() {
+      return request.resource.data.userId == request.auth.uid;
+    }
+    function ownsAssignedUser() {
+      return resource.data.assignedUserId == request.auth.uid;
+    }
+
+    // Manager-only approval/confirmation fields on a task. A worker may edit their
+    // own task but must never FLIP these on an existing task (no client-forged
+    // self-confirmation of a manager-assigned task). Note: this guards UPDATE only.
+    // CREATE is intentionally not guarded this way, because the legitimate call/
+    // quick-work auto-logging path creates a worker's own task already 'confirmed'
+    // (a call is auto-confirmed by design) — blocking self-confirmed CREATE would
+    // break that flow, while the actual escalation risk is flipping an EXISTING task.
+    function changesApprovalFields() {
+      return (request.resource.data.get('status', '') != resource.data.get('status', '') &&
+              request.resource.data.get('status', '') in ['confirmed', 'approved']) ||
+             request.resource.data.get('isApproved', false) != resource.data.get('isApproved', false) ||
+             request.resource.data.get('confirmedBy', null) != resource.data.get('confirmedBy', null) ||
+             request.resource.data.get('approvedBy', null) != resource.data.get('approvedBy', null);
+    }
+
+    // ---- USERS --------------------------------------------------------------
     match /users/{userId} {
-      // Allow authenticated users to read user data (needed for viewing coworker info, calendars, etc.)
-      allow read: if isAuthenticated();
-      // Users can create their own document on first login
-      allow create: if isAuthenticated() && request.auth.uid == userId; 
-      // Update: users can update their own doc (but not change role or isDisabled).
-      // Managers/admins can update any user. Only admins can change roles.
-      // The isDisabled guard uses `get()` with a fallback so legacy documents
-      // that lack the field entirely don't block normal profile updates.
+      // Read OWN doc unconditionally (first-login bootstrap before the doc has an
+      // isDisabled value, and a disabled user must still be able to load its own
+      // record). Read OTHER users only while ACTIVE — a disabled account keeps a
+      // valid token for up to ~1h but can no longer enumerate the whole company.
+      allow read: if isAuthenticated() &&
+                  (request.auth.uid == userId || isUserActive());
+      // Users create their own document on first login.
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      // Update: own doc or a manager/admin acting on anyone. Only admins change
+      // roles; only managers/admins toggle isDisabled (the `get` fallback keeps
+      // legacy docs without the field editable).
       allow update: if isAuthenticated()
                     && (request.auth.uid == userId || isManagerOrAdmin())
                     && (isAdmin() || request.resource.data.role == resource.data.role)
-                    && (isManagerOrAdmin() || 
+                    && (isManagerOrAdmin() ||
                         request.resource.data.isDisabled == resource.data.get('isDisabled', false));
       allow delete: if isAdmin();
     }
 
-    // TASKS
+    // ---- TASKS --------------------------------------------------------------
     match /tasks/{taskId} {
-      allow read, write: if isUserActive();
+      // Team-wide read (Reports tab queries all tasks and filters client-side).
+      allow read: if isUserActive();
+      // Create a task you author (createdBy is always the caller); managers may
+      // author/recreate for anyone — the latter covers task RESTORE, which
+      // setDoc-recreates an archived task preserving its ORIGINAL createdBy. The
+      // self-confirmation guard lives on UPDATE, not CREATE (the legitimate call/
+      // quick-work auto-logging creates a worker's OWN task already confirmed).
+      allow create: if isUserActive()
+                    && (request.resource.data.createdBy == request.auth.uid || isManagerOrAdmin());
+      // The assignee edits their own task; managers edit any. A worker may NOT flip
+      // the manager-only approval/confirmation fields on their own task.
+      allow update: if isUserActive()
+                    && (isManagerOrAdmin() ||
+                        (ownsAssignedUser() && !changesApprovalFields()));
+      allow delete: if isUserActive() && (ownsAssignedUser() || isManagerOrAdmin());
     }
 
-    // SHIFT LOGS (New)
+    // ---- SHIFT LOGS (unused collection — locked) ----------------------------
     match /shift_logs/{logId} {
-      allow read, write: if isUserActive();
+      allow read, write: if false;
     }
 
-    // WORK SESSIONS
+    // ---- WORK SESSIONS ------------------------------------------------------
     match /work_sessions/{sessionId} {
-      allow read, write: if isUserActive();
+      // Team-wide read (Reports queries all sessions by date and filters client-side).
+      allow read:          if isUserActive();
+      // Workers log their own; managers create time corrections for any worker.
+      allow create:        if isUserActive() && (createOwnsUserId() || isManagerOrAdmin());
+      allow update, delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
     }
 
-    // BREAK SESSIONS
+    // ---- BREAK SESSIONS -----------------------------------------------------
     match /break_sessions/{sessionId} {
-      allow read, write: if isUserActive();
+      // Team-wide read (Reports / DailyStatistics query all breaks by date).
+      allow read:          if isUserActive();
+      allow create:        if isUserActive() && createOwnsUserId();
+      allow update, delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
     }
 
-    // DAILY STATS
+    // ---- DAILY STATS (unused collection — locked) ---------------------------
     match /daily_stats/{statId} {
-      allow read, write: if isUserActive();
+      allow read, write: if false;
     }
 
-    // WORK HOURS (Planner)
+    // ---- WORK HOURS (Planner) ----------------------------------------------
     match /work_hours/{docId} {
-      allow read, write: if isUserActive();
+      // Team-wide read (the team calendar / AllUsersCalendar listens to all hours by
+      // date and maps every userId into a whole-team view).
+      allow read:          if isUserActive();
+      // Workers plan their own hours; managers write approved entries for workers.
+      allow create:        if isUserActive() && (createOwnsUserId() || isManagerOrAdmin());
+      allow update, delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
     }
 
-    // ARCHIVED TASKS
+    // ---- ARCHIVED TASKS -----------------------------------------------------
     match /archived_tasks/{taskId} {
-      allow read, write: if isUserActive();
+      // Team-wide read (Reports / DailyStatistics query all archived tasks by date).
+      allow read:   if isUserActive();
+      allow create: if isUserActive()
+                    && (request.resource.data.assignedUserId == request.auth.uid || isManagerOrAdmin());
+      allow update: if isUserActive()
+                    && (isManagerOrAdmin() ||
+                        (ownsAssignedUser() && !changesApprovalFields()));
+      allow delete: if isUserActive() && (ownsAssignedUser() || isManagerOrAdmin());
     }
 
-    // DELETED TASKS
+    // ---- DELETED TASKS (read-only legacy) -----------------------------------
+    // DailyStatistics still opens a collection-wide onSnapshot on this collection,
+    // so READ must be allowed (a locked read makes that listener throw permission-
+    // denied on every mount). Nothing in the client WRITES it (the delete workflow
+    // uses archived_tasks), so writes stay locked.
     match /deleted_tasks/{taskId} {
-      allow read, write: if isUserActive();
+      allow read:  if isUserActive();
+      allow write: if false;
     }
 
-    // NOTIFICATIONS
+    // ---- SESSIONS (legacy audit log: write-own, manager/admin read) ---------
+    // Previously had NO rule, so every write was silently default-denied (the log
+    // doc was lost). Allow the owner to append and managers/admins to read it.
+    match /sessions/{sessionId} {
+      allow create:        if isUserActive() && createOwnsUserId();
+      allow read:          if isManagerOrAdmin();
+      allow update, delete: if false;
+    }
+
+    // ---- CALENDAR NOTIFICATIONS --------------------------------------------
+    // Managers monitor every worker's weekly calendar changes; a worker only its
+    // own. The worker appends changes (owner update); a manager dismisses.
     match /calendar_notifications/{notifId} {
-      allow read, write: if isUserActive();
+      allow read:   if isUserActive() &&
+                    (resource.data.get('userId', '') == request.auth.uid || isManagerOrAdmin());
+      // Worker creates its own; a manager also creates the FIRST notification of a
+      // worker's week when approving a calendar change (the audit log carries the
+      // worker's userId, not the manager's), so a manager escape is required.
+      allow create: if isUserActive() && (createOwnsUserId() || isManagerOrAdmin());
+      allow update: if isUserActive() &&
+                    (resource.data.get('userId', '') == request.auth.uid || isManagerOrAdmin());
+      allow delete: if isManagerOrAdmin();
     }
 
-    // CALENDAR REQUESTS (Approval workflow)
+    // ---- CALENDAR REQUESTS (approval workflow) ------------------------------
     match /calendar_requests/{requestId} {
-      allow read, write: if isUserActive();
+      // Team-wide read: the Reports "calendar change history" tab (worker-rendered)
+      // queries all requests by date and filters client-side, and managers query by
+      // managerId — both are collection-wide. Write stays owner/manager-scoped.
+      allow read:   if isUserActive();
+      allow create: if isUserActive() && createOwnsUserId();
+      // Worker edits its own request; managers approve/decline.
+      allow update: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
+      allow delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
     }
 
-    // REQUEST NOTIFICATIONS (Task approval requests)
+    // ---- REQUEST NOTIFICATIONS (recipient = owner) --------------------------
+    // Created BY a worker/system FOR a manager (recipientId). The recipient reads
+    // and updates (mark read); any active user may create one to notify a manager.
     match /request_notifications/{notifId} {
-      allow read, write: if isUserActive();
+      allow read:   if isUserActive() && resource.data.recipientId == request.auth.uid;
+      allow create: if isUserActive();
+      allow update: if isUserActive() && resource.data.recipientId == request.auth.uid;
+      allow delete: if isUserActive() &&
+                    (resource.data.recipientId == request.auth.uid || isManagerOrAdmin());
     }
 
-    // TASK TEMPLATES
+    // ---- TASK TEMPLATES (shared team resource) ------------------------------
     match /task_templates/{templateId} {
-      allow read, write: if isUserActive();
+      // Templates are intentionally shared — any active user reads all of them.
+      allow read:   if isUserActive();
+      allow create: if isUserActive() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isUserActive() &&
+                    (resource.data.createdBy == request.auth.uid || isManagerOrAdmin());
+      allow delete: if isUserActive() &&
+                    (resource.data.createdBy == request.auth.uid || isManagerOrAdmin());
     }
 
-    // USER SETTINGS
+    // ---- USER SETTINGS (doc id == owner uid) --------------------------------
     match /user_settings/{userId} {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
     }
 
-    // ERROR LOGS (durable crash log)
+    // ---- ERROR LOGS (durable crash log) -------------------------------------
     // Any authenticated user may APPEND a crash report (kept permissive so a broken
     // session can still record its failure); only managers/admins may read them.
     // Entries are immutable; only admins may clear them.
