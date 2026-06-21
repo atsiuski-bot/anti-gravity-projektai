@@ -343,7 +343,14 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
                                     const latestUserDoc = await getDoc(doc(db, 'users', userId));
                                     if (latestUserDoc.exists()) {
                                         const uData = latestUserDoc.data();
-                                        if (uData?.activeSession?.taskId && uData.activeSession.taskId !== taskId) {
+                                        if (uData?.activeSession && uData.activeSession.type !== 'task') {
+                                            // A NEW secondary session (quick-work/call/break) was started after
+                                            // this break/call ended. It carries no taskId, so the task-id checks
+                                            // below miss it — resuming the queued task here would silently wipe
+                                            // the live secondary session (resumeTask overwrites activeSession).
+                                            // Treat any live non-task session as a supersede.
+                                            userStartedAnotherTask = true;
+                                        } else if (uData?.activeSession?.taskId && uData.activeSession.taskId !== taskId) {
                                             userStartedAnotherTask = true;
                                         } else if (uData?.workStatus?.activeTaskId && uData.workStatus.activeTaskId !== taskId) {
                                             userStartedAnotherTask = true;
