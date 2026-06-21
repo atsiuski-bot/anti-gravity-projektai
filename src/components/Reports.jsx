@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { addComment } from '../utils/commentActions';
 import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, Coffee, Info, AlertTriangle, Download } from 'lucide-react';
@@ -22,7 +22,12 @@ export default function Reports({ users }) {
     const [loading, setLoading] = useState(false);
 
     // --- HOURS REPORT STATE ---
-    const [selectedMonth, setSelectedMonth] = useState(getLithuanianDateString().slice(0, 7)); // YYYY-MM
+    // Free from/to range (YYYY-MM-DD) instead of a single month, so a manager can pull an
+    // arbitrary span for payroll. Defaults to the current month so far (1st → today).
+    const [dateRange, setDateRange] = useState(() => {
+        const today = getLithuanianDateString();
+        return { start: `${today.slice(0, 7)}-01`, end: today };
+    });
     const [workData, setWorkData] = useState([]); // Array of { userId, name, totalMinutes, days: { date: minutes } }
     const [expandedUser, setExpandedUser] = useState(null);
 
@@ -55,8 +60,8 @@ export default function Reports({ users }) {
         if (activeTab === 'hours') {
             fetchWorkHours();
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchWorkHours is recreated each render; intentionally refetch only on tab/month change
-    }, [activeTab, selectedMonth]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchWorkHours is recreated each render; intentionally refetch only on tab/range change
+    }, [activeTab, dateRange.start, dateRange.end]);
 
     // Auto-expand when there's only one user (worker viewing own data)
     useEffect(() => {
@@ -97,15 +102,11 @@ export default function Reports({ users }) {
     const fetchWorkHours = async () => {
         setLoading(true);
         try {
-            let startStr = `${selectedMonth}-01`;
-            // Special exception for January 2026: Start from 19th
-            if (selectedMonth === '2026-01') {
-                startStr = '2026-01-19';
-            }
-            // Real last day of the month (28/29/30/31), not a hardcoded "-31".
-            const [yr, mo] = selectedMonth.split('-').map(Number);
-            const lastDay = new Date(yr, mo, 0).getDate();
-            const endStr = `${selectedMonth}-${String(lastDay).padStart(2, '0')}`;
+            // The manager picks the span directly now; the aggregation below is span-agnostic.
+            // (The old hardcoded "Jan 2026 starts on the 19th" clamp is gone — with explicit
+            // from/to dates the manager sets the start, and no sessions exist before go-live.)
+            const startStr = dateRange.start;
+            const endStr = dateRange.end;
 
             // NOTE: We are fetching ALL data for the date range and filtering client-side
             // because adding 'where(userId == ...)' with 'where(date >= ...)' requires a composite index
@@ -538,6 +539,50 @@ export default function Reports({ users }) {
         return Math.round(totalMins / workDaysCount);
     };
 
+    // Quick date-range presets for the hours tab. All math is pure date-string arithmetic
+    // (addDaysToDateString is DST-safe), and weeks are Monday-started per Lithuanian convention.
+    const applyPreset = (preset) => {
+        const today = getLithuanianDateString();
+        const dayOfWeek = (dateStr) => {
+            const [y, m, d] = dateStr.split('-').map(Number);
+            return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun … 6=Sat
+        };
+        const firstOfMonth = (dateStr) => `${dateStr.slice(0, 7)}-01`;
+        const lastOfMonth = (dateStr) => {
+            const [y, m] = dateStr.split('-').map(Number);
+            const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+            return `${dateStr.slice(0, 7)}-${String(last).padStart(2, '0')}`;
+        };
+        const mondayOffset = (dayOfWeek(today) + 6) % 7; // days since this week's Monday
+
+        let start, end;
+        switch (preset) {
+            case 'thisWeek':
+                start = addDaysToDateString(today, -mondayOffset);
+                end = today;
+                break;
+            case 'lastWeek': {
+                const thisMonday = addDaysToDateString(today, -mondayOffset);
+                start = addDaysToDateString(thisMonday, -7);
+                end = addDaysToDateString(thisMonday, -1);
+                break;
+            }
+            case 'thisMonth':
+                start = firstOfMonth(today);
+                end = today;
+                break;
+            case 'lastMonth': {
+                const prev = addDaysToDateString(firstOfMonth(today), -1);
+                start = firstOfMonth(prev);
+                end = lastOfMonth(prev);
+                break;
+            }
+            default:
+                return;
+        }
+        setDateRange({ start, end });
+    };
+
     // Export the already-computed hours summary to a CSV the manager can hand to payroll.
     // One row per worker-day (work + break, HH:MM), then a per-worker "Viso" total row.
     // Mirrors TaskHistory.handleExportCSV: same escapeCSV rules + UTF-8 BOM so Excel reads
@@ -588,7 +633,7 @@ export default function Reports({ users }) {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `darbo_valandos_${selectedMonth}.csv`;
+        link.download = `darbo_valandos_${dateRange.start}_${dateRange.end}.csv`;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -975,32 +1020,53 @@ export default function Reports({ users }) {
                 <div className="space-y-4">
                     {/* (MonthlyHours removed from here to separate tab) */}
 
-                    <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line flex flex-wrap gap-4 items-center">
-                        <div>
-                            <label className="block text-caption font-semibold text-ink-muted mb-1">Pasirinkite mėnesį</label>
-                            <input
-                                type="month"
-                                value={selectedMonth}
-                                onChange={(e) => setSelectedMonth(e.target.value)}
-                                className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                            />
+                    <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line space-y-3">
+                        <div className="flex flex-wrap items-end gap-4">
+                            <div>
+                                <label htmlFor="hours-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
+                                <input
+                                    id="hours-from"
+                                    type="date"
+                                    value={dateRange.start}
+                                    max={dateRange.end}
+                                    onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
+                                    className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="hours-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
+                                <input
+                                    id="hours-to"
+                                    type="date"
+                                    value={dateRange.end}
+                                    min={dateRange.start}
+                                    onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
+                                    className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                />
+                            </div>
+                            <Button
+                                variant="success"
+                                icon={Download}
+                                onClick={handleExportHoursCSV}
+                                disabled={loading || workData.length === 0}
+                                className="ml-auto self-end"
+                            >
+                                Eksportuoti CSV
+                            </Button>
                         </div>
-                        <Button
-                            variant="success"
-                            icon={Download}
-                            onClick={handleExportHoursCSV}
-                            disabled={loading || workData.length === 0}
-                            className="ml-auto self-end"
-                        >
-                            Eksportuoti CSV
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                            <Button variant="secondary" onClick={() => applyPreset('thisWeek')}>Ši savaitė</Button>
+                            <Button variant="secondary" onClick={() => applyPreset('lastWeek')}>Praėjusi savaitė</Button>
+                            <Button variant="secondary" onClick={() => applyPreset('thisMonth')}>Šis mėnuo</Button>
+                            <Button variant="secondary" onClick={() => applyPreset('lastMonth')}>Praėjęs mėnuo</Button>
+                        </div>
                     </div>
 
                     {loading && (
                         <div className="bg-surface-card p-8 rounded-card shadow-sm border border-line text-center text-ink-muted">Kraunami duomenys...</div>
                     )}
                     {!loading && workData.length === 0 && (
-                        <div className="bg-surface-card p-8 rounded-card shadow-sm border border-line text-center text-ink-muted">Nėra duomenų šiam mėnesiui.</div>
+                        <div className="bg-surface-card p-8 rounded-card shadow-sm border border-line text-center text-ink-muted">Nėra duomenų pasirinktam laikotarpiui.</div>
                     )}
 
                     {/* Single-user simplified view (worker viewing own data) */}
