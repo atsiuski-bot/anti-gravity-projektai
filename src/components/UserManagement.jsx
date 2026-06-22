@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe } from 'lucide-react';
+import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -20,6 +20,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 // is never the sole signal (§5).
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
+    seniorManager: { label: 'Vyr. vadovas', tone: 'neutral' },
     manager: { label: 'Vadovas', tone: 'neutral' },
     worker: { label: 'Vykdytojas', tone: 'running' },
 };
@@ -76,6 +77,7 @@ function RoleSelect({ user, onChange }) {
         >
             <option value="worker">Vykdytojas</option>
             <option value="manager">Vadovas</option>
+            <option value="seniorManager">Vyr. vadovas</option>
             <option value="admin">Administratorius</option>
         </select>
     );
@@ -90,7 +92,8 @@ function effectiveTeamIds(user) {
 }
 
 // Visibility control. Branches by role:
-//  • admin   — always global; shows a static "Mato visus" label.
+//  • admin / senior manager — always global; shows a static "Mato visus" label (a senior
+//    manager (Vyr. vadovas) sees the whole company by rank and has no scope toggle).
 //  • manager — a per-manager scope toggle ("Tik sava komanda" vs "Visa įmonė"). Default
 //    (scopedManager absent/false) keeps today's behaviour: the manager sees the whole company.
 //    Only when an admin turns it on does the manager become restricted to their assigned people.
@@ -98,7 +101,7 @@ function effectiveTeamIds(user) {
 // teamManagerIds is the visibility key the security rules read; it always contains the primary.
 function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped }) {
     const name = formatDisplayName(user.displayName) || user.email || '';
-    if (user.role === 'admin') {
+    if (user.role === 'admin' || user.role === 'seniorManager') {
         return <span className="text-body italic text-ink-muted">Mato visus</span>;
     }
     if (user.role === 'manager') {
@@ -341,7 +344,7 @@ export default function UserManagement() {
     }, []);
 
     const managers = users.filter(
-        (u) => (u.role === 'manager' || u.role === 'admin') && !u.isDisabled
+        (u) => (u.role === 'manager' || u.role === 'admin' || u.role === 'seniorManager') && !u.isDisabled
     );
 
     const countAdmins = () => {
@@ -614,16 +617,6 @@ export default function UserManagement() {
 
     return (
         <Card as="section" className="mb-8 overflow-hidden">
-            <div className="border-b border-line bg-surface-sunken p-6">
-                <div className="flex items-center gap-2">
-                    <UserCog className="h-6 w-6 text-brand" aria-hidden="true" />
-                    <h2 className="text-h2 text-ink-strong">Vartotojų valdymas</h2>
-                </div>
-                <p className="mt-1 text-body text-ink-muted">
-                    Valdykite vartotojų roles ir spalvas.
-                </p>
-            </div>
-
             {error && (
                 <div className="m-4 flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4">
                     <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />

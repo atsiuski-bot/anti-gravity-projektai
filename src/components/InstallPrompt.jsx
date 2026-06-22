@@ -4,6 +4,7 @@ import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import InstallInstructions from './InstallInstructions';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 // We remember dismissal as a *snooze deadline* (epoch ms), not a permanent flag: one stray tap
 // must not silence the single most valuable nudge forever — installing is what unlocks push
@@ -27,9 +28,16 @@ let sessionSnoozed = false;
  * index.html so the banner reliably appears even when `beforeinstallprompt` fires before mount.
  * Dismissal is a time-boxed snooze, never a permanent kill: declining the banner (or the OS dialog)
  * only quiets it for `SNOOZE_DAYS`; an actual install marks it done for good.
+ *
+ * Desktop (lg+) is deliberately excluded: the install nudge targets phone users (the worker loop
+ * lives on mobile, where install unlocks push). On a desktop workspace the banner is noise, so it
+ * is suppressed there — managers who still want to install can do it from the browser's own UI.
  */
 export default function InstallPrompt() {
     const { canPromptNative, isIOS, isStandalone, promptInstall } = useInstallPrompt();
+    // Mirror the app-wide desktop breakpoint (Layout's SideRail gate) so "desktop view" means the
+    // same thing everywhere.
+    const isDesktop = useMediaQuery('(min-width: 1024px)');
     const [showInstructions, setShowInstructions] = useState(false);
     const [snoozed, setSnoozed] = useState(() => {
         if (sessionSnoozed) return true;
@@ -81,8 +89,9 @@ export default function InstallPrompt() {
         }
     };
 
-    // Show only when installing is actually possible and the user hasn't snoozed it.
-    const canShow = !isStandalone && !snoozed && (canPromptNative || isIOS);
+    // Show only when installing is actually possible, the user hasn't snoozed it, and we're not on
+    // a desktop viewport (the nudge is mobile-only).
+    const canShow = !isDesktop && !isStandalone && !snoozed && (canPromptNative || isIOS);
 
     return (
         <>

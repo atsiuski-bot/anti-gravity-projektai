@@ -388,7 +388,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // denormalized teamManagerIds (the same field the scoped-manager reads use, kept in sync by a
     // Cloud Function), falling back to the worker's user doc so it still resolves for any legacy
     // row written before that denormalization.
-    const applyApprovalFilter = view === 'approval' && userRole === 'manager';
+    const applyApprovalFilter = view === 'approval' && (userRole === 'manager' || userRole === 'seniorManager');
     const isApprovalRelevant = (task) => {
         const uid = currentUser?.uid;
         if (!uid) return false;

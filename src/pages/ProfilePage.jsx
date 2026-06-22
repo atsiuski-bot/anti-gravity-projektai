@@ -23,6 +23,7 @@ import InstallInstructions from '../components/InstallInstructions';
 // Role presentation — pair color with text so role is never color-only (DESIGN_SYSTEM §5).
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
+    seniorManager: { label: 'Vyr. vadovas', tone: 'info' },
     manager: { label: 'Vadovas', tone: 'info' },
     worker: { label: 'Vykdytojas', tone: 'neutral' },
 };

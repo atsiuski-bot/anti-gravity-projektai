@@ -164,7 +164,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         });
     }, [templates, workers]);
 
-    const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.id === currentUser.uid);
+    const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.role === 'seniorManager' || w.id === currentUser.uid);
 
     // The assignee picker is narrowed to a scoped manager's own team (plus themselves), so they
     // can only assign work to their people — mirrored by the server-side write rule. Admins and

@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
+import { isManagerRole } from './formatters';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
@@ -508,7 +509,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
         const autoStopped = !session.customTitle;
         const title = session.customTitle || AUTO_STOPPED_QUICK_WORK_TITLE;
-        const isManager = userData.role === 'manager' || userData.role === 'admin';
+        const isManager = isManagerRole(userData.role);
 
         // Route the finished quick work to one accountable manager for confirmation. The live,
         // described path carries the worker's explicit pick (session.auditorManagerId); an
