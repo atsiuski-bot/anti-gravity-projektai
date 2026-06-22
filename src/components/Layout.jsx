@@ -124,7 +124,8 @@ export default function Layout({ children }) {
                     )}
 
                     {/* PWA install — a slim, dismissible banner shown only when the browser offers
-                        an install (or on iOS, manual steps). On desktop it heads the workspace. */}
+                        an install (or on iOS, manual steps). Mobile-only: it self-suppresses on
+                        desktop (lg+), where the nudge is noise. */}
                     <InstallPrompt />
 
                     {/* Persistent session-state label: color is never the sole signal (DESIGN_SYSTEM
