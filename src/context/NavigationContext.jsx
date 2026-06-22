@@ -18,6 +18,8 @@ export function NavigationProvider({ children }) {
     const [activeTab, setActiveTabState] = useState(() => searchParams.get('tab') || 'tasks');
     const scrollPositions = React.useRef({});
     const prevRoleRef = React.useRef(undefined);
+    // Remember the tab we left, so the profile page's "back" returns there instead of guessing.
+    const previousTabRef = React.useRef(null);
 
     // Reset the tab on a genuine role change (account switch / re-login). On the FIRST role
     // resolution (undefined → a role) we honor a tab carried in the URL, so a deep link or a
@@ -54,12 +56,22 @@ export function NavigationProvider({ children }) {
     const setActiveTab = (newTab) => {
         // Save current scroll position before switching
         scrollPositions.current[activeTab] = window.scrollY;
+        if (newTab !== activeTab) previousTabRef.current = activeTab;
         setActiveTabState(newTab);
+    };
+
+    // Return to wherever we came from (used by the profile page's back arrow). Falls back to
+    // the role's home tab, and never returns to 'profile' itself.
+    const goToPreviousTab = () => {
+        const fallback = isManagerRole(userRole) ? 'my-tasks' : 'tasks';
+        const prev = previousTabRef.current;
+        setActiveTab(prev && prev !== 'profile' ? prev : fallback);
     };
 
     const value = {
         activeTab,
         setActiveTab,
+        goToPreviousTab,
         scrollPositions // Expose for restoration
     };
 

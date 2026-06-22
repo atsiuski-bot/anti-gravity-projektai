@@ -10,12 +10,22 @@ import { showLocalNotification, clearLocalNotification } from '../utils/localNot
  * installed PWA) — the previous direct-constructor version threw and was silently swallowed on
  * exactly the worker's primary device. A single stable `tag` ('work-session') means each new
  * state replaces the prior one.
+ *
+ * `enabled` is the per-user profile toggle: when off, no session notification is shown and any
+ * live one is cleared.
  */
-export function useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning }) {
+export function useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning, enabled = true }) {
     const previousStateRef = useRef(null);
 
     useEffect(() => {
         if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return undefined;
+        }
+
+        // Respect the per-user profile toggle: clear any live notification and show none.
+        if (!enabled) {
+            clearLocalNotification('work-session');
+            previousStateRef.current = null;
             return undefined;
         }
 
@@ -60,7 +70,7 @@ export function useSessionNotification({ isQuickWorking, isCalling, isTakingBrea
         }
 
         return undefined;
-    }, [isQuickWorking, isCalling, isTakingBreak, isRunning]);
+    }, [isQuickWorking, isCalling, isTakingBreak, isRunning, enabled]);
 
     // Clear the session notification on unmount.
     useEffect(() => {

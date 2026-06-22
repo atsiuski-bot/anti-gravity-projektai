@@ -1,24 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, User, WifiOff } from 'lucide-react';
+import { useNavigation } from '../context/NavigationContext';
+import { WifiOff } from 'lucide-react';
 import BottomNavigation from './BottomNavigation';
 import InstallPrompt from './InstallPrompt';
-import IconButton from './ui/IconButton';
+import Avatar from './ui/Avatar';
 import { runDailyAutomation } from '../utils/automationUtils';
-import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { isManagerRole } from '../utils/formatters';
 import { useSessionNotification } from '../hooks/useSessionNotification';
 import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
 import { cn } from '../utils/cn';
 import QuickWorkDescribePrompt from './QuickWorkDescribePrompt';
 
 export default function Layout({ children }) {
-    const { currentUser, userData, userRole, logout, isTakingBreak, workStatus } = useAuth();
-
-    const roleNames = {
-        manager: 'Vadovas',
-        worker: 'Darbuotojas',
-        admin: 'Administratorius'
-    };
+    const { currentUser, userData, userRole, isTakingBreak, workStatus } = useAuth();
+    const { setActiveTab } = useNavigation();
 
     // Run the full daily automation (promote + archive) once per day for managers/admins.
     // Both this and Dashboard call the same gated entry point, so neither can consume the
@@ -71,8 +67,15 @@ export default function Layout({ children }) {
     const session = getSessionColors(effectiveSessionType);
     const bgColor = session?.shell || IDLE_SHELL;
 
-    // Use system notification hook to show notification in phone's status bar
-    useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning });
+    // Use system notification hook to show notification in phone's status bar.
+    // Honor the per-user toggle from the profile page (missing field => enabled).
+    useSessionNotification({
+        isQuickWorking,
+        isCalling,
+        isTakingBreak,
+        isRunning,
+        enabled: userData?.notificationsEnabled !== false,
+    });
 
     return (
         <div className={cn('min-h-screen transition-colors duration-slow pb-navclear sm:pb-navclear-lg', bgColor)}>
@@ -85,56 +88,32 @@ export default function Layout({ children }) {
                 </div>
             )}
 
+            {/* Top bar — a single entry point to the profile. Role, name, install and logout
+                all moved INTO the profile page; the header is just the avatar (per product
+                decision 2026-06-22). */}
             <nav className="bg-surface-card shadow-sm border-b border-line">
                 <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
-                    {/* Mobile Layout - User Info & Logout */}
-                    <div className="flex flex-col sm:hidden py-2 gap-2">
-                        <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <span className="px-2 py-0.5 rounded-full text-caption font-medium bg-brand-soft text-brand-hover">
-                                    {roleNames[userRole] || userRole}
-                                </span>
-                                <InstallPrompt />
-                            </div>
-                            <div className="flex items-center gap-1">
-                                <span className="text-caption font-medium text-ink">
-                                    {formatDisplayName(currentUser?.displayName)}
-                                </span>
-                                <IconButton icon={LogOut} label="Atsijungti" onClick={() => logout()} />
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Desktop Layout - Single Row */}
-                    <div className="hidden sm:flex justify-between h-16">
-                        <div className="flex items-center gap-3">
-                            <span className="px-3 py-1 rounded-full text-xs font-medium bg-brand-soft text-brand-hover capitalize">
-                                {roleNames[userRole] || userRole}
-                            </span>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            <div className="flex items-center gap-2">
-                                {currentUser?.photoURL ? (
-                                    <img
-                                        src={currentUser.photoURL}
-                                        alt={currentUser.displayName}
-                                        className="h-8 w-8 rounded-full"
-                                    />
-                                ) : (
-                                    <div className="h-8 w-8 rounded-full bg-surface-sunken flex items-center justify-center">
-                                        <User className="h-5 w-5 text-ink-muted" />
-                                    </div>
-                                )}
-                                <span className="text-sm font-medium text-ink">
-                                    {formatDisplayName(currentUser?.displayName)}
-                                </span>
-                                <InstallPrompt />
-                            </div>
-                            <IconButton icon={LogOut} label="Atsijungti" onClick={() => logout()} />
-                        </div>
+                    <div className="flex h-14 sm:h-16 items-center justify-end">
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('profile')}
+                            aria-label="Atidaryti profilį"
+                            className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        >
+                            <Avatar
+                                src={userData?.photoURL || currentUser?.photoURL}
+                                name={currentUser?.displayName}
+                                email={currentUser?.email}
+                                size="sm"
+                            />
+                        </button>
                     </div>
                 </div>
             </nav>
+
+            {/* PWA install — a slim, dismissible banner shown only when the browser offers an
+                install (or on iOS, manual steps). Replaces the old header button. */}
+            <InstallPrompt />
 
             {/* Persistent session-state label: color is never the sole signal (DESIGN_SYSTEM §4-A,
                 WCAG 1.4.1). Always visible while a session is active, regardless of the shell color. */}
