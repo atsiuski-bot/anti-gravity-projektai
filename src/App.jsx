@@ -6,6 +6,7 @@ import { UsersProvider } from './context/UsersContext';
 import { ToastProvider } from './context/ToastContext';
 import { NotificationsProvider } from './context/NotificationsContext';
 import Layout from './components/Layout';
+import AchievementCelebrator from './components/AchievementCelebrator';
 
 // Lazy load pages
 const Login = React.lazy(() => import('./pages/Login'));
@@ -72,9 +73,14 @@ function App() {
                                         <Route path="/login" element={<Login />} />
                                         <Route path="/" element={
                                             <ProtectedRoute>
-                                                <Layout>
-                                                    <Dashboard />
-                                                </Layout>
+                                                <>
+                                                    {/* Foreground badge celebration — app-wide, so it fires
+                                                        no matter which tab earned the badge (C2). */}
+                                                    <AchievementCelebrator />
+                                                    <Layout>
+                                                        <Dashboard />
+                                                    </Layout>
+                                                </>
                                             </ProtectedRoute>
                                         } />
                                     </Routes>
