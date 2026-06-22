@@ -695,12 +695,12 @@ export default function TaskHistory({ userId, users = [] }) {
 
                 {/* Sort By */}
                 <div className="flex flex-col gap-1 min-w-[120px]">
-                    <label className={FILTER_LABEL_CLASS}>Rikiuoti</label>
+                    <label className={FILTER_LABEL_CLASS}>Rūšiuoti</label>
                     <div className="relative">
                         <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value)}
-                            aria-label="Rikiuoti"
+                            aria-label="Rūšiuoti"
                             className={clsx(SELECT_CLASS, 'pl-8')}
                         >
                             <option value="date">Pagal datą</option>
@@ -853,16 +853,15 @@ export default function TaskHistory({ userId, users = [] }) {
                         <tbody className="bg-surface-card divide-y divide-line">
                             {tasks.map((task) => (
                                 <tr key={task.id} className="hover:bg-surface-sunken transition-colors border-b border-line last:border-0">
-                                    <td
-                                        className="px-2 py-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
-                                        onClick={() => toggleExpand(task.id)}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
-                                        role="button"
-                                        tabIndex={0}
-                                        aria-expanded={expandedTasks.has(task.id)}
-                                    >
-                                        <div className={clsx(
-                                            "text-body font-bold text-ink-strong whitespace-normal break-words",
+                                    <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
+                                        <div
+                                            role="button"
+                                            tabIndex={0}
+                                            aria-expanded={expandedTasks.has(task.id)}
+                                            onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
+                                            className={clsx(
+                                            "text-body font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
                                             (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
                                         )}>
                                             {task.title}

@@ -5,10 +5,15 @@ import { useEffect } from 'react';
  * (DESIGN_SYSTEM §7/§8). Centralises what hand-rolled dialogs kept getting wrong:
  *
  *  - moves focus into the dialog (or `initialFocusRef`) when it opens,
- *  - restores focus to the previously-focused element on close,
+ *  - restores focus to the previously-focused element on close (only if it still exists —
+ *    a destructive confirm can unmount the trigger),
  *  - closes on `Escape` when `dismissible`,
  *  - traps `Tab`/`Shift+Tab` inside the dialog so focus can never leak to the obscured
  *    page behind the scrim (WCAG 2.4.3).
+ *
+ * Stacked dialogs are handled: a module-level stack tracks the open dialogs and only the
+ * topmost one reacts to keys, so a globally-mounted timer alarm appearing over an open
+ * details modal doesn't fight it for focus or close both on a single Escape.
  *
  * The dialog container must be a real element with `tabIndex={-1}` so it can hold focus
  * when it has no focusable children.
@@ -29,14 +34,21 @@ const FOCUSABLE_SELECTOR = [
     '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
+// Open dialog nodes, deepest last. Only the topmost handles Escape/Tab.
+const dialogStack = [];
+
 export function useModalA11y(dialogRef, { open = true, onClose, dismissible = true, initialFocusRef } = {}) {
     useEffect(() => {
         if (!open) return undefined;
 
-        const previouslyFocused = document.activeElement;
         const dialog = dialogRef.current;
+        const previouslyFocused = document.activeElement;
+        if (dialog) dialogStack.push(dialog);
+
         const initialTarget = initialFocusRef?.current || dialog;
         initialTarget?.focus?.();
+
+        const isTopmost = () => dialogStack[dialogStack.length - 1] === dialog;
 
         const getFocusable = () => {
             if (!dialog) return [];
@@ -49,11 +61,17 @@ export function useModalA11y(dialogRef, { open = true, onClose, dismissible = tr
         };
 
         const onKeyDown = (e) => {
-            if (e.key === 'Escape' && dismissible) {
-                onClose?.();
+            // Only the topmost dialog reacts — lower dialogs stay inert behind the scrim.
+            if (!dialog || !isTopmost()) return;
+
+            if (e.key === 'Escape') {
+                if (dismissible) {
+                    e.stopPropagation();
+                    onClose?.();
+                }
                 return;
             }
-            if (e.key !== 'Tab' || !dialog) return;
+            if (e.key !== 'Tab') return;
 
             const focusable = getFocusable();
             if (focusable.length === 0) {
@@ -81,7 +99,13 @@ export function useModalA11y(dialogRef, { open = true, onClose, dismissible = tr
         document.addEventListener('keydown', onKeyDown);
         return () => {
             document.removeEventListener('keydown', onKeyDown);
-            previouslyFocused?.focus?.();
+            if (dialog) {
+                const idx = dialogStack.lastIndexOf(dialog);
+                if (idx !== -1) dialogStack.splice(idx, 1);
+            }
+            // Only restore if the trigger still exists — a destructive confirm may have
+            // unmounted it, and focusing a detached node silently drops focus to <body>.
+            if (previouslyFocused && previouslyFocused.isConnected) previouslyFocused.focus?.();
         };
     }, [open, dismissible, onClose, dialogRef, initialFocusRef]);
 }

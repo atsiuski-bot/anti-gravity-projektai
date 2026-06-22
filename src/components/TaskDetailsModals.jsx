@@ -405,7 +405,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                 {/* Keyboard-operable zoom toggle (the image itself only zooms on click/touch). */}
                 <button
                     type="button"
-                    onClick={() => setZoom((z) => (z > 1 ? 1 : 3.5))}
+                    onClick={(e) => { e.stopPropagation(); setZoom((z) => (z > 1 ? 1 : 3.5)); }}
                     aria-label={zoom > 1 ? 'Sumažinti nuotrauką' : 'Padidinti nuotrauką'}
                     aria-pressed={zoom > 1}
                     className="absolute top-4 left-4 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"

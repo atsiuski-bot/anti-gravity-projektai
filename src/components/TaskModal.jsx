@@ -15,6 +15,7 @@ import { TASK_TAGS } from '../utils/taskUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 // Persistent field label — fields previously had only placeholders, which vanish on input
 // and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
@@ -166,37 +167,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }
     }, [role, isOpen]);
 
-    // Dialog semantics: close on Escape, move focus into the dialog on open,
-    // and restore focus to the previously-focused element on close (WCAG 2.1.1 / 2.4.3).
+    // Focus-in, focus restore, Escape, and a Tab focus-trap — all shared (WCAG 2.4.3).
+    useModalA11y(panelRef, { open: isOpen, onClose, dismissible: true });
+
+    // Clear any stale error / pending confirmations from a previous open.
     useEffect(() => {
         if (!isOpen) return;
-        // Clear any stale error / pending confirmations from a previous open.
         setFormError('');
         setTemplateToDelete(null);
         setOverwriteTemplate(null);
-        const previouslyFocused = document.activeElement;
-
-        const handleKeyDown = (e) => {
-            if (e.key === 'Escape') {
-                e.stopPropagation();
-                onClose();
-            }
-        };
-        document.addEventListener('keydown', handleKeyDown);
-
-        // Move focus into the dialog after it mounts.
-        const focusTimer = window.setTimeout(() => {
-            panelRef.current?.focus();
-        }, 0);
-
-        return () => {
-            document.removeEventListener('keydown', handleKeyDown);
-            window.clearTimeout(focusTimer);
-            if (previouslyFocused instanceof HTMLElement) {
-                previouslyFocused.focus();
-            }
-        };
-    }, [isOpen, onClose]);
+    }, [isOpen]);
 
     const fetchTemplates = async () => {
         try {

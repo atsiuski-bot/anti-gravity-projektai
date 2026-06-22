@@ -1547,16 +1547,15 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                     />
                                                 </td>
                                             )}
-                                            <td
-                                                className="px-2 py-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
-                                                onClick={() => toggleExpand(task.id)}
-                                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
-                                                role="button"
-                                                tabIndex={0}
-                                                aria-expanded={expandedTasks.has(task.id)}
-                                            >
-                                                <div className={clsx(
-                                                    "text-sm font-bold text-ink-strong whitespace-normal break-words",
+                                            <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
+                                                <div
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    aria-expanded={expandedTasks.has(task.id)}
+                                                    onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
+                                                    className={clsx(
+                                                    "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
                                                     (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
                                                 )}>
                                                     {task.title}
