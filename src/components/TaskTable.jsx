@@ -528,7 +528,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             }
                                         }}
                                         disabled={checkboxDisabled}
-                                        className="w-5 h-5 rounded border-line text-brand focus:ring-brand"
+                                        className="w-5 h-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                     />
                                     <span className="text-caption text-ink">Atlikta</span>
                                 </label>
@@ -650,7 +650,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     disabled={!isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved'}
                                                     aria-label="Pažymėti atlikta"
                                                     className={clsx(
-                                                        "w-4 h-4 rounded border-line text-brand focus:ring-brand",
+                                                        "w-4 h-4 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1",
                                                         isAssignedToMe && task.status !== 'confirmed' && task.status !== 'unapproved' ? "cursor-pointer" : "cursor-not-allowed opacity-50"
                                                     )}
                                                 />
@@ -912,7 +912,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                             type="checkbox"
                                                             checked={false}
                                                             onChange={() => handleConfirmTask(task.id)}
-                                                            className="w-4 h-4 rounded border-line text-green-600 focus:ring-green-500 cursor-pointer"
+                                                            className="w-4 h-4 rounded border-line text-green-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1 cursor-pointer"
                                                             title="Patvirtinti atlikimą"
                                                             aria-label="Patvirtinti atlikimą"
                                                         />
@@ -921,7 +921,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 {task.status === 'unapproved' && (
                                                     <button
                                                         onClick={() => handleApproveTask(task.id)}
-                                                        className="text-caption bg-green-100 text-green-700 px-2 py-1 rounded border border-green-200 hover:bg-green-200 transition-colors"
+                                                        className="min-h-touch text-caption bg-green-100 text-green-700 px-3 py-1 rounded border border-green-200 hover:bg-green-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1"
                                                         title="Patvirtinti užduotį (leisti vykdyti)"
                                                     >
                                                         Patvirtinti
