@@ -21,7 +21,7 @@ import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
@@ -29,9 +29,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const scopeUid = currentUser?.uid;
     // Managers see the whole team here; workers see only themselves. The per-member picker was
     // removed (individual drill-down moves to the team calendar), so this is fixed at mount and
-    // never changes — no setter.
-    const [selectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
-    const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
+    // never changes — no setter. `forceUserId` overrides it: the team calendar opens this view
+    // embedded in a modal, scoped to one clicked worker. Narrowing is client-side only — the
+    // Firestore listeners still scope by role via privateScopeConstraints, so this never widens
+    // what the viewer may read.
+    const [selectedUserId] = useState(forceUserId ?? (isManagerRole(userRole) ? 'all' : currentUser?.uid));
+    const [selectedDate, setSelectedDate] = useState(initialDate ?? getLithuanianDateString());
     const [, setLoading] = useState(false);
 
     // When a date range is supplied (the period report), the component aggregates the whole span
@@ -1322,10 +1325,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 />
             )}
 
-            {/* Replaced legacy archived table with full TaskHistory component */}
-            <div className="mt-8">
-                <TaskHistory userId={selectedUserId} users={users} canExport={canExport} />
-            </div>
+            {/* Full task-history browser — omitted in the embedded calendar drill-down, which is a
+                focused single-day report, not the archive browser. */}
+            {!embedded && (
+                <div className="mt-8">
+                    <TaskHistory userId={selectedUserId} users={users} canExport={canExport} />
+                </div>
+            )}
 
             {todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0 && (
                 <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
