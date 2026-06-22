@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, User, Pause, ListChecks } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, User, Pause, ListChecks, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -37,6 +37,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const [confirmApprove, setConfirmApprove] = useState(false);
     const [confirmDeleteCommentIdx, setConfirmDeleteCommentIdx] = useState(null);
     const [actionError, setActionError] = useState('');
+    // One-shot completion celebration: fires only on a live not-done -> done transition while
+    // the card is mounted, so already-finished cards (history) never replay it.
+    const [justCompleted, setJustCompleted] = useState(false);
+    const prevCompletedRef = useRef(task.completed);
 
     const handleUpdateComment = async (index, newText) => {
         try {
@@ -106,6 +110,17 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         const interval = setInterval(updateSpentTime, intervalTime);
         return () => clearInterval(interval);
     }, [task, isRunning]);
+
+    useEffect(() => {
+        const wasCompleted = prevCompletedRef.current;
+        prevCompletedRef.current = task.completed;
+        if (!wasCompleted && task.completed) {
+            setJustCompleted(true);
+            const t = setTimeout(() => setJustCompleted(false), 1500);
+            return () => clearTimeout(t);
+        }
+        return undefined;
+    }, [task.completed]);
 
 
     const handleAddComment = async (text) => {
@@ -222,7 +237,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                         : task.inspectionStatus === 'inspecting' ? "bg-blue-100 border-blue-300"
                         : isLimitExceeded ? "bg-red-50 border-red-300"
                         : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
-                    task.completed && "opacity-75"
+                    task.completed && "opacity-75",
+                    justCompleted && "wz-flash-success"
                 )}
             >
                 <div className="flex items-start gap-2">
@@ -262,7 +278,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             </h3>
 
                             <div className="flex items-center gap-1.5 shrink-0">
-                                <StatusPill tone={statusTone} icon={StatusIcon}>
+                                <StatusPill
+                                    tone={justCompleted ? 'success' : statusTone}
+                                    icon={justCompleted ? CheckCircle2 : StatusIcon}
+                                    className={justCompleted ? 'wz-pop' : undefined}
+                                >
                                     {statusLabel}
                                 </StatusPill>
                                 {isManager && (

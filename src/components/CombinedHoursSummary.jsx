@@ -217,7 +217,7 @@ export default function CombinedHoursSummary() {
             </button>
 
             {!isCollapsed && (
-                <div className="p-4 space-y-6">
+                <div className="p-4 space-y-6 animate-in fade-in slide-in-from-top-2">
                     {/* Weekly Hours Bars */}
                     <div>
                         {combinedStats.data.length > 0 && (

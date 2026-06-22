@@ -12,6 +12,7 @@ const TONES = {
     pending: 'bg-amber-100 text-amber-800',
     running: 'bg-green-100 text-green-800',
     done: 'bg-surface-sunken text-ink-muted',
+    success: 'bg-green-100 text-green-800',
     info: 'bg-brand-soft text-brand-hover',
     danger: 'bg-red-50 text-red-700',
 };
@@ -21,6 +22,9 @@ export default function StatusPill({ tone = 'neutral', icon: Icon, children, cla
         <span
             className={cn(
                 'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-caption font-medium',
+                // Tween the tone color so a status change (pending -> running -> done) eases
+                // rather than snapping.
+                'transition-colors duration-base',
                 TONES[tone] || TONES.neutral,
                 className
             )}

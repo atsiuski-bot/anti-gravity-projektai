@@ -122,7 +122,7 @@ export default function ActiveWorkSessions() {
             </button>
 
             {!isCollapsed && (
-                <div id="active-work-sessions-panel" className="p-4 space-y-2">
+                <div id="active-work-sessions-panel" className="p-4 space-y-2 animate-in fade-in slide-in-from-top-2">
                     {activeSessions.map(session => (
                         <ActiveSessionRow key={session.userId} session={session} />
                     ))}

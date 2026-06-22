@@ -173,19 +173,66 @@ markup keeps working during migration).
 
 ## 7. Motion
 
-| Token | Value |
-|---|---|
-| `duration.fast` | 150 ms |
-| `duration.base` | 200 ms |
-| `duration.slow` | 300 ms (shell color transition) |
+> Full rationale + where each effect is applied: [`DESIGN_SYSTEM.md`](./DESIGN_SYSTEM.md) §12.
+> This table is the machine-facing catalog. The whole system lives in `src/index.css`
+> (hand-rolled, **no animation dependency**) and is wired in `tailwind.config.js`
+> (`transitionDuration: { fast, base, slow }`).
 
-`index.css` must add:
+### Duration & easing
+
+| Token / value | Use |
+|---|---|
+| `duration.fast` = 150 ms | quick feedback (press, toggle, hover color) |
+| `duration.base` = 200 ms | default — entrances, state changes, most transitions |
+| `duration.slow` = 300 ms | the whole-screen **shell color** crossfade |
+| ease-out-expo `cubic-bezier(0.16, 1, 0.3, 1)` | all entrances + the completion pop (decelerate, no overshoot) |
+
+**Banned curves:** bounce / elastic (`cubic-bezier` overshoots), and any `transition: all` /
+`transition-*` on a **layout** property (width, height, top, left, margin). Animate only
+`transform`, `opacity`, and (sparingly, one-shot) `box-shadow`. Use Tailwind's bare
+`transition` utility (curated GPU-safe set) — not `transition-all`.
+
+### Composable ENTER utilities (`src/index.css`)
+
+`.animate-in` is the base (runs the `wz-enter` keyframe, 200 ms, ease-out-expo, `fill: both`).
+Each modifier only sets one CSS variable, so they compose:
+
+| Class | Effect |
+|---|---|
+| `animate-in` | required base; everything below is a no-op without it |
+| `fade-in` | opacity 0 → 1 |
+| `zoom-in-95` / `zoom-in` | scale 0.95 → 1 (both kept subtle; never a 0-scale pop) |
+| `slide-in-from-top-2` / `-top-4` | translateY −0.5rem / −1rem → 0 |
+| `slide-in-from-bottom-2` / `-bottom-4` | translateY +0.5rem / +1rem → 0 |
+| `duration-150/200/300/500` | bridges Tailwind's `duration-*` onto the entrance duration |
+
+> These class names mirror the `tailwindcss-animate` vocabulary the codebase already
+> referenced (the plugin was never installed, so they were dead until defined locally).
+> `duration-*` alone sets only `transition-duration`; the bridge classes also set
+> `--wz-enter-duration` so `animate-in … duration-300` actually runs at 300 ms.
+
+### Purpose-built effects (`src/index.css`)
+
+| Class | Motion | Lifetime | Applied to |
+|---|---|---|---|
+| `wz-pulse-soft` | opacity 1 → 0.6 → 1 (2.4 s) | **infinite** | the "alive" session indicator while a timer runs |
+| `wz-pop` | scale 0.85 → 1 + fade (320 ms) | one-shot | the StatusPill at the moment a task completes |
+| `wz-flash-success` | green `box-shadow` halo blooms + fades (1.1 s) | one-shot | the task card the moment it completes |
+| `wz-shake` | translateX ≤ 4 px (400 ms) | one-shot | a validation-error alert when it appears |
+| `wz-float` | translateY −5 px (4 s) | **infinite** | the EmptyState icon (idle breathing) |
+
+**At most one infinite loop per visible region**, and it must stay barely-there.
+
+### Reduced motion (mandatory gate — already in `src/index.css`)
 
 ```css
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
 ```
+
+Because this guard neutralises **every** animation above (each one's resting state is its
+natural state), no call site needs a `motion-safe:` prefix — just use the class.
 
 ---
 

@@ -41,7 +41,7 @@ export default function Modal({
     // (e.g. a swipeable TaskCard applies translateX, which would otherwise contain `fixed`).
     return createPortal(
         <div
-            className="fixed inset-0 z-backdrop flex items-center justify-center p-4 bg-feedback-scrim"
+            className="fixed inset-0 z-backdrop flex items-center justify-center p-4 bg-feedback-scrim animate-in fade-in"
             onMouseDown={(e) => {
                 if (dismissible && e.target === e.currentTarget) onClose?.();
             }}
@@ -56,6 +56,8 @@ export default function Modal({
                 className={cn(
                     'relative z-modal w-full bg-surface-card rounded-modal shadow-xl',
                     'max-h-[90vh] overflow-y-auto focus:outline-none',
+                    // Card settles in (fade + slight zoom) as the scrim fades behind it.
+                    'animate-in fade-in zoom-in-95',
                     SIZES[size] || SIZES.md,
                     className
                 )}

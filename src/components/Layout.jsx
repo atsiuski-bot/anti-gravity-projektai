@@ -130,10 +130,13 @@ export default function Layout({ children }) {
                         §4-A, WCAG 1.4.1). Always visible while a session is active. */}
                     {session && (
                         <div
+                            // Re-key on session type so the label re-plays its entrance each time
+                            // the session changes, riding in with the shell's color crossfade.
+                            key={effectiveSessionType}
                             role="status"
-                            className="flex items-center justify-center gap-2 border-b border-line bg-surface-card px-4 py-1.5 text-caption font-semibold text-ink-strong"
+                            className="flex items-center justify-center gap-2 border-b border-line bg-surface-card px-4 py-1.5 text-caption font-semibold text-ink-strong animate-in fade-in slide-in-from-top-2"
                         >
-                            <session.Icon className={cn('h-4 w-4', session.accent)} aria-hidden="true" />
+                            <session.Icon className={cn('h-4 w-4 wz-pulse-soft', session.accent)} aria-hidden="true" />
                             <span>{session.label}</span>
                         </div>
                     )}

@@ -91,6 +91,23 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
   and an SR live-region announcement, so a CSS-hidden duplicate would double both — exactly one nav
   is mounted at a time. The whole-screen session signature is preserved; on desktop the workspace
   area carries the tint while the rail stays a calm neutral panel.
+- **2026-06-22** — **Subtle motion system** — a calm, state-conveying animation layer across the
+  app, hand-rolled in `src/index.css` with **no animation dependency** (chosen over installing
+  `tailwindcss-animate`, whose vocabulary the code already referenced but which was never
+  installed, so `animate-in`/`fade-in`/`zoom-in-95`/`slide-in-*` were dead classes — defining
+  them locally revived all of it: toasts, manager notifications, banners, time-limit popups,
+  WorkPlanner, the login success message). Adds composable enter utilities + five purpose-built
+  effects (`wz-pulse-soft` "alive" breath, `wz-pop` completion pill, `wz-flash-success` card halo,
+  `wz-shake` error nudge, `wz-float` empty-state idle). Applied in four layers — signature
+  (session change, task completion), feedback (press, modal entry, toast, validation), reveal
+  (lists, accordions, status tone), ambient (one low-amplitude loop per region). All
+  `transform`/`opacity`/`box-shadow` only (never layout), ease-out-expo (no bounce), 150–300 ms,
+  and fully neutralised by the existing `prefers-reduced-motion` guard, so no `motion-safe:`
+  prefixes. A Tailwind `duration-*` → `--wz-enter-duration` bridge keeps `animate-in … duration-300`
+  honest. Reviewed adversarially (4 lenses × 3 skeptics): one confirmed intent-fidelity issue
+  fixed (the bridge), three findings dismissed. Documented in
+  [`DESIGN_SYSTEM.md`](./design/DESIGN_SYSTEM.md) §12 + [`tokens.md`](./design/tokens.md) §7.
+  No backend/rules impact.
 - **2026-06-22** — **Functions migrated to Node 22 + `firebase-functions` 7 (code done; re-deploy pending).**
   Node 20 is decommissioned for Cloud Functions **after 2026-10-30**, so ahead of that
   `functions/package.json` was moved to `engines.node: "22"` and `firebase-functions ^6.1.0 → ^7.2.5`.

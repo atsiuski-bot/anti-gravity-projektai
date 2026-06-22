@@ -92,10 +92,11 @@ export default function ActiveSessionReadout() {
                 <div
                     className={cn(
                         'flex items-center gap-2 rounded-full border px-3 py-1 shadow-md backdrop-blur-sm',
+                        'animate-in fade-in slide-in-from-bottom-2',
                         cfg.tone
                     )}
                 >
-                    <Icon className="h-4 w-4" aria-hidden="true" />
+                    <Icon className="h-4 w-4 wz-pulse-soft" aria-hidden="true" />
                     <span className="text-caption font-medium">{cfg.label}</span>
                     <span className="font-mono text-body-lg font-bold leading-none tabular-nums">
                         {formatMinutesToTimeString(minutes)}

@@ -113,7 +113,7 @@ export default function MonthlyHours({ users }) {
             </button>
 
             {!isCollapsed && (
-                <div className="border-t border-line">
+                <div className="border-t border-line animate-in fade-in slide-in-from-top-2">
                     {monthlyStats.length === 0 ? (
                         <EmptyState
                             icon={Calendar}
@@ -148,7 +148,7 @@ export default function MonthlyHours({ users }) {
                                         </button>
 
                                         {isOpen && (
-                                            <div className="px-4 pb-4">
+                                            <div className="px-4 pb-4 animate-in fade-in slide-in-from-top-2">
                                                 {/* Mobile / touch: one card per worker — hours are the prominent figure (§9, never a scrolling table) */}
                                                 <ul className="space-y-2 md:hidden">
                                                     {sortedUsers(stat).map((user) => (
