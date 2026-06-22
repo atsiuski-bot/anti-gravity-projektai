@@ -283,6 +283,7 @@ const BADGES = {
     steady_rhythm: { name: 'Pastovus ritmas', stat: 'workDays', thresholds: [5, 25, 75, 200] },             // R2 (high-water days)
     on_estimate: { name: 'Telpa į planą', stat: 'onEstimate', thresholds: [5, 20, 60, 150] },               // R3
     plans_ahead: { name: 'Planuoja iš anksto', stat: 'planAheadWeeks', thresholds: [2, 8, 20, 40] },        // R4 (high-water weeks)
+    on_time_start: { name: 'Punktualus startas', stat: 'punctualDays', thresholds: [5, 20, 50, 120] },      // R6 (planned vs actual start)
     // Quality
     approved_craft: { name: 'Priimtas darbas', stat: 'confirmedTasks', thresholds: [3, 15, 50, 120] },      // Q1
     thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [3, 15, 40, 100] },                        // Q2
@@ -436,8 +437,70 @@ exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
     }
 });
 
+// On-time grace: starting within this many minutes of (or before) the planned shift start still
+// counts as punctual. Early arrival is never a violation. Tunable.
+const GRACE_MINUTES = 10;
+
+// Vilnius-local calendar day (YYYY-MM-DD), matching the client's getLithuanianDateString — so the
+// planned shift and the actual first work bucket into the SAME day across the Vilnius offset.
+function lithuanianDay(date) {
+    // en-CA renders as YYYY-MM-DD; the timeZone makes it the Vilnius calendar day.
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Vilnius', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(date);
+}
+
+// R6 — "Punktualus startas": did the worker begin REAL work near their planned shift start?
+//   plannedStart = MIN(work_hours.start) for this user/day, excluding vacation entries.
+//   actualStart  = this session's startTime — it is the day's FIRST real work, because the per-day
+//                  gate (lastPunctualDate high-water) only lets the first session of a day through.
+//   onTime       = (actualStart - plannedStart) <= GRACE_MINUTES (early counts as on-time).
+// No planned shift that day => not counted (W1: only positive accomplishment). Breaks are
+// irrelevant — they can't precede the first work. Each day is judged exactly once.
+async function evaluatePunctuality(uid, session) {
+    if (!session.startTime) return;
+    const startDate = new Date(session.startTime);
+    if (Number.isNaN(startDate.getTime())) return;
+    const day = lithuanianDay(startDate);
+
+    // Gate: judge a given day's punctuality exactly once (the day's first real session passes).
+    const ref = statsRef(uid);
+    const firstOfDay = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const last = snap.exists ? snap.data().lastPunctualDate : null;
+        if (last && day <= last) return false;
+        tx.set(ref, { lastPunctualDate: day }, { merge: true });
+        return true;
+    });
+    if (!firstOfDay) return;
+
+    // Earliest planned (non-vacation) shift start that buckets to this Vilnius day.
+    const planned = await db.collection('work_hours').where('userId', '==', uid).get();
+    let plannedStartMs = null;
+    planned.forEach((d) => {
+        const wh = d.data();
+        if (!wh || wh.isVacation === true || !wh.start) return;
+        const ws = new Date(wh.start);
+        if (Number.isNaN(ws.getTime()) || lithuanianDay(ws) !== day) return;
+        if (plannedStartMs === null || ws.getTime() < plannedStartMs) plannedStartMs = ws.getTime();
+    });
+    if (plannedStartMs === null) return; // no planned shift that day → not a punctuality day
+
+    const lateMinutes = (startDate.getTime() - plannedStartMs) / 60000;
+    if (lateMinutes > GRACE_MINUTES) return; // late → not counted (no negative badge, W1)
+
+    const count = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const next = ((snap.exists && snap.data().punctualDays) || 0) + 1;
+        tx.set(ref, { punctualDays: next }, { merge: true });
+        return next;
+    });
+    const reached = await grantTier(uid, 'on_time_start', tierForCount(count, BADGES.on_time_start.thresholds));
+    if (reached) await announceBadge(uid, 'on_time_start', reached);
+}
+
 // R2 — "Pastovus ritmas": cumulative distinct work-DAYS. Quick-work/call sessions still count as
-// a worked day; deletions and manual time corrections do not.
+// a worked day; deletions and manual time corrections do not. R6 (punctuality) also evaluates here.
 exports.onWorkSessionBadge = onDocumentCreated('work_sessions/{id}', async (event) => {
     const s = event.data && event.data.data();
     if (!s) return;
@@ -449,6 +512,7 @@ exports.onWorkSessionBadge = onDocumentCreated('work_sessions/{id}', async (even
 
     try {
         await highWaterGrant(uid, 'workDays', 'lastWorkDate', date, 'steady_rhythm');
+        await evaluatePunctuality(uid, s); // R6 — on-time start (planned shift vs first real work)
     } catch (err) {
         logger.error('onWorkSessionBadge failed', { uid, err: err.message });
     }
