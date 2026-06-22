@@ -153,7 +153,7 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
 exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', async (event) => {
     const r = event.data && event.data.data();
     if (!r || !r.managerId || r.status !== 'pending') return;
-    const who = r.userName || 'Darbuotojas';
+    const who = r.userName || 'Vykdytojas';
     try {
         await sendToUser(r.managerId, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
             type: 'calendar_request',

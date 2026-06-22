@@ -18,7 +18,7 @@ import Avatar from '../components/ui/Avatar';
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
     manager: { label: 'Vadovas', tone: 'info' },
-    worker: { label: 'Darbuotojas', tone: 'neutral' },
+    worker: { label: 'Vykdytojas', tone: 'neutral' },
 };
 
 // A user photo stays small; cap the long edge and re-encode so the upload is light on a

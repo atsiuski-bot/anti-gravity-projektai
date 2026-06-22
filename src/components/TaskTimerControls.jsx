@@ -313,7 +313,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                             taskTitle: task.title || 'Užduotis',
                             actualTime: formattedTime,
                             actualMinutes: totalMinutes,
-                            userName: currentUser.displayName || currentUser.email || 'Darbuotojas',
+                            userName: currentUser.displayName || currentUser.email || 'Vykdytojas',
                             userId: currentUser.uid,
                             completedAt: now.toISOString(),
                             isRead: false,
