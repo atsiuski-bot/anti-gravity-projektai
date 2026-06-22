@@ -32,7 +32,7 @@ const SELECT_CLASS =
 // `canExport` gates the CSV / AI-JSON download buttons. It is OFF by default so personal
 // report views (a worker's own "Ataskaitos", and a manager's personal "Ataskaitos") never
 // expose a self-export. Only the manager team report ("Kom. ataskaitos") opts in.
-export default function TaskHistory({ userId, users = [], canExport = false }) {
+export default function TaskHistory({ userId, users = [], canExport = false, approvalManagerUid = null }) {
     const { userRole, currentUser, userData } = useAuth();
     const isManagerOrAdmin = isManagerRole(userRole);
     // Scoped managers only ever read their team's archived tasks (array-contains); this surface
@@ -160,6 +160,19 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
             const filteredTasks = tasksData.filter(task => {
                 if (targetUserId !== 'all' && task.assignedUserId !== targetUserId) return false;
                 if (filterTag !== 'all' && task.tag !== filterTag) return false;
+                // Approval surface: restrict the archive to this manager's tasks — ones they own
+                // as vadovas (managerId), or whose worker they manage. "Managers of the doer" comes
+                // from the task's denormalized teamManagerIds, with the worker's user doc as a
+                // fallback for any legacy row written before that denormalization.
+                if (approvalManagerUid) {
+                    const ownsAsManager = task.managerId === approvalManagerUid;
+                    let managesDoer = Array.isArray(task.teamManagerIds) && task.teamManagerIds.includes(approvalManagerUid);
+                    if (!managesDoer) {
+                        const doer = users.find(u => u.id === task.assignedUserId);
+                        managesDoer = !!doer && Array.isArray(doer.teamManagerIds) && doer.teamManagerIds.includes(approvalManagerUid);
+                    }
+                    if (!ownsAsManager && !managesDoer) return false;
+                }
                 return true;
             });
 
@@ -198,7 +211,7 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
 
         return () => unsubscribe();
         // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag; depending on the whole object would re-subscribe on each live-session user-doc update
-    }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy, scoped, currentUser]);
+    }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy, scoped, currentUser, approvalManagerUid]);
 
     const handleExport = async () => {
         try {

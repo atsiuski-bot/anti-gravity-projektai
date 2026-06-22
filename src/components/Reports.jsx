@@ -1009,6 +1009,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         Darbo ataskaita
                     </button>
                     <button
+                        onClick={() => setActiveTab('approval')}
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                            }`}
+                    >
+                        Patvirtinimas
+                    </button>
+                    <button
                         onClick={() => setActiveTab('calendar-history')}
                         className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
@@ -1126,13 +1133,18 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     </div>
 
                     {/* Day mode → the live daily timeline. Any multi-day range → the same view
-                        aggregated over [start, end] (summary cards, sort filters, finished tasks). */}
+                        aggregated over [start, end] (summary cards, sort filters).
+                        On the manager team view the task-confirmation lists and history move to the
+                        dedicated "Patvirtinimas" tab, so this tab shows only the work-hours surface
+                        (view='hours'). A personal report (worker, or a manager viewing their own
+                        data via viewRole='worker') has no such tab, so it keeps the full surface. */}
                     {reportPeriod === 'day' ? (
                         <DailyStatistics
                             currentUser={currentUser}
                             userRole={userRole}
                             users={users}
                             canExport={canExport}
+                            view={isManagerRole(userRole) ? 'hours' : 'full'}
                         />
                     ) : (
                         <DailyStatistics
@@ -1141,9 +1153,22 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             users={users}
                             canExport={canExport}
                             dateRange={dateRange}
+                            view={isManagerRole(userRole) ? 'hours' : 'full'}
                         />
                     )}
                 </div>
+            )}
+
+            {/* --- APPROVAL TAB: today's finished + awaiting-confirmation tasks and the task-history
+                archive, scoped to the tasks this manager is responsible for. --- */}
+            {activeTab === 'approval' && (
+                <DailyStatistics
+                    currentUser={currentUser}
+                    userRole={userRole}
+                    users={users}
+                    canExport={canExport}
+                    view="approval"
+                />
             )}
 
             {/* --- CALENDAR HISTORY TAB CONTENT --- */}
