@@ -15,6 +15,16 @@
   display: none;
 }
 
+/* Compress the time grid so the full working day fits the viewport on desktop without an
+   internal scrollbar. react-big-calendar grows each hour row (.rbc-timeslot-group is flex:1)
+   to fill the calendar's height but won't shrink it below a 40px floor; on a constrained
+   desktop (e.g. 1366×768) seventeen rows at 40px overflow and force a scrollbar. Lowering the
+   floor lets those rows collapse to fit instead. On taller screens flex grows them straight
+   back, so nothing looks cramped — the floor only bites when vertical space is genuinely tight. */
+.rbc-time-view .rbc-timeslot-group {
+  min-height: 30px;
+}
+
 /* =====================================================================
    Motion system — subtle, purposeful animation (DESIGN_SYSTEM §7).
    Implemented locally (no animation dependency) so the timings track the
