@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, MAX_MANUAL_TASK_MINUTES } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
@@ -23,7 +23,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
 import TaskModal from './TaskModal';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full' }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full', showTestUsers = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
@@ -414,9 +414,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const shownTodayTasks = view === 'approval' ? approvalTodayTasks : todayTasks;
     const shownEarlierTasks = view === 'approval' ? approvalEarlierTasks : earlierTasks;
 
+    // Test/founder accounts are kept out of the report unless the manager opted in (showTestUsers),
+    // resolved against each user's isTest flag — applied to every session/timeline source below.
+    const testUserIds = useMemo(() => new Set((users || []).filter(u => u.isTest).map(u => u.id)), [users]);
+
     // ALL sessions go into the timeline — Quick Work and Calls are regular work sessions,
     // they were previously excluded to avoid double-count with manualTasks but that caused them to vanish.
-    const validSessions = sessions;
+    const validSessions = useMemo(
+        () => sessions.filter(s => showTestUsers || !testUserIds.has(resolveUserId(s))),
+        [sessions, showTestUsers, testUserIds]
+    );
 
     // Active Sessions Integration
     const activeTaskSessionsForToday = useMemo(() => {
@@ -425,10 +432,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // sessions in range mode. In day mode, only the current day shows live progress.
         if (isRange || selectedDate !== getLithuanianDateString()) return active;
 
-        users.forEach(u => {
+        users.filter(u => showTestUsers || !testUserIds.has(u.id)).forEach(u => {
             if (u.activeSession && u.activeSession.type === 'task') {
                 const start = new Date(u.activeSession.startTime);
-                const durationMinutes = (currentTime - start) / (1000 * 60);
+                // Clamp the live (now - start) delta so an orphaned active session can never
+                // momentarily render an impossible duration on the manager's live dashboard.
+                const durationMinutes = clampSessionMinutes((currentTime - start) / (1000 * 60));
                 if (durationMinutes > 0) {
                     active.push({
                         id: `active_${u.id}`,
@@ -450,17 +459,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return active.filter(s => s.userId === selectedUserId);
         }
         return active;
-    }, [users, isRange, selectedDate, selectedUserId, currentTime]);
+    }, [users, isRange, selectedDate, selectedUserId, currentTime, showTestUsers, testUserIds]);
 
     const activeBreaksForToday = useMemo(() => {
         const active = [];
         if (isRange || selectedDate !== getLithuanianDateString()) return active;
 
 
-        users.forEach(u => {
+        users.filter(u => showTestUsers || !testUserIds.has(u.id)).forEach(u => {
             if (u.activeSession && u.activeSession.type === 'break') {
                 const start = new Date(u.activeSession.startTime);
-                const durationMinutes = (currentTime - start) / (1000 * 60);
+                // Clamp the live (now - start) delta (see active-task note above).
+                const durationMinutes = clampSessionMinutes((currentTime - start) / (1000 * 60));
                 if (durationMinutes > 0) {
                     active.push({
                         id: `active_break_${u.id}`,
@@ -480,14 +490,23 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return active.filter(s => s.userId === selectedUserId);
         }
         return active;
-    }, [users, isRange, selectedDate, selectedUserId, currentTime]);
+    }, [users, isRange, selectedDate, selectedUserId, currentTime, showTestUsers, testUserIds]);
 
     const allValidSessions = useMemo(() => [...validSessions, ...activeTaskSessionsForToday], [validSessions, activeTaskSessionsForToday]);
-    const allBreakSessions = useMemo(() => [...breakSessions, ...activeBreaksForToday], [breakSessions, activeBreaksForToday]);
+    const allBreakSessions = useMemo(() => [...breakSessions.filter(s => showTestUsers || !testUserIds.has(resolveUserId(s))), ...activeBreaksForToday], [breakSessions, activeBreaksForToday, showTestUsers, testUserIds]);
+
+    // Flagged when any session was clamped by the read-side guard — surfaces a "⚠ patikrinti"
+    // banner so a manager can spot a corrupt row instead of trusting a quiet (capped) sum.
+    const hasAnomaly = useMemo(
+        () =>
+            allValidSessions.some(s => isImplausibleSessionMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment })) ||
+            allBreakSessions.some(s => isImplausibleSessionMinutes(s.durationMinutes)),
+        [allValidSessions, allBreakSessions]
+    );
 
     // Aggregations
-    const totalTimerMinutes = allValidSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
-    const totalBreakMinutes = allBreakSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
+    const totalTimerMinutes = allValidSessions.reduce((acc, s) => acc + sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment }), 0);
+    const totalBreakMinutes = allBreakSessions.reduce((acc, s) => acc + sanitizeReportMinutes(s.durationMinutes), 0);
 
     // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
     // AND belong to the selected date's work day (3AM - 3AM)
@@ -507,6 +526,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         );
 
         return finishedTasks.filter(t => {
+            if (!(showTestUsers || !testUserIds.has(resolveUserId(t)))) return false;
             if (!t.manualMinutes) return false;
 
             // Call tasks (isSystemTask) and Quick Work tasks (isQuickWork) always have
@@ -531,9 +551,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return finishedDate >= cutoff && finishedDate < nextDayCutoff;
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
-    }, [finishedTasks, sessions, rangeStart, rangeEnd]);
+    }, [finishedTasks, sessions, rangeStart, rangeEnd, showTestUsers, testUserIds]);
 
-    const totalManualMinutes = manualTasks.reduce((acc, t) => acc + (t.manualMinutes || 0), 0);
+    const totalManualMinutes = manualTasks.reduce((acc, t) => acc + sanitizeReportMinutes(t.manualMinutes, { allowLarge: true }), 0);
 
     // Sum from actualTime in tasks (including manual entries)
     // We strictly use calculated values now to ensure consistency
@@ -561,7 +581,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 // groups rows by this so a multi-day period report breaks into day sections.
                 date: s.date || getLithuanianDateString(s.startTime),
                 title: title,
-                duration: s.durationMinutes,
+                duration: sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment }),
                 userId: resolveUserId(s),
                 userName: resolveUserName(s) || 'Nežinomas',
                 isActive: !!s.isActive,
@@ -587,7 +607,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 endTime: end.toISOString(),
                 date: getLithuanianDateString(end),
                 title: title,
-                duration: t.manualMinutes,
+                duration: sanitizeReportMinutes(t.manualMinutes, { allowLarge: true }),
                 userId: resolveUserId(t),
                 userName: resolveUserName(t),
                 isSystemTask: t.isSystemTask,
@@ -606,7 +626,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 endTime: brk.endTime,
                 date: brk.date || getLithuanianDateString(brk.startTime),
                 title: 'Pertrauka',
-                duration: brk.durationMinutes,
+                duration: sanitizeReportMinutes(brk.durationMinutes),
                 userId: userId,
                 userName: userName
             });
@@ -669,13 +689,20 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 latestEnd: s.endTime,
                 taskTimeMinutes: 0,
                 breakMinutes: 0,
-                // We'll sum breaks later
+                workDays: new Set(),
+                breakDays: new Set(),
             };
         }
+        // Track distinct work/break DAYS per worker so the table can show a break-logging rate
+        // (days-with-break / worked-days) — a coaching signal that turns invisible non-loggers
+        // into a visible number, independent of how much time was logged.
+        const dayKey = s.startTime ? getLithuanianDateString(s.startTime) : null;
         if (s.type === 'break') {
             acc[s.userId].breakMinutes += (s.duration || 0);
+            if (dayKey) acc[s.userId].breakDays.add(dayKey);
         } else {
             acc[s.userId].taskTimeMinutes += (s.duration || 0);
+            if (dayKey && (s.duration || 0) > 0) acc[s.userId].workDays.add(dayKey);
         }
         if (s.startTime && (!acc[s.userId].earliestStart || s.startTime < acc[s.userId].earliestStart)) acc[s.userId].earliestStart = s.startTime;
         if (s.endTime && (!acc[s.userId].latestEnd || s.endTime > acc[s.userId].latestEnd)) acc[s.userId].latestEnd = s.endTime;
@@ -831,6 +858,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         const trimmedReason = (reason || '').trim();
         if (!trimmedReason) {
             setActionError("Nurodykite laiko keitimo priežastį.");
+            return;
+        }
+        // Fat-finger guard: a manual time edit writes straight into the payable total, so reject
+        // a non-finite / negative / absurd value (a mistyped hours field) before it persists,
+        // rather than silently capping it — the editor sees the message and re-enters.
+        if (!Number.isFinite(newTotalMinutes) || newTotalMinutes < 0 || newTotalMinutes > MAX_MANUAL_TASK_MINUTES) {
+            setActionError(`Įvesta per didelė arba neteisinga laiko reikšmė. Įveskite ne daugiau nei ${MAX_MANUAL_TASK_MINUTES / 60} val.`);
             return;
         }
         try {
@@ -1052,6 +1086,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             </div>
 
+            {hasAnomaly && (
+                <div role="alert" className="mb-3 flex items-start gap-2 rounded-card border border-amber-300 bg-amber-50 p-3 text-caption text-amber-800">
+                    <span aria-hidden="true">⚠</span>
+                    <span>Kai kurios šio laikotarpio reikšmės atrodo neįprastos ir buvo apribotos iki 16 val. vienai sesijai. Patikrinkite šiuos įrašus rankiniu būdu.</span>
+                </div>
+            )}
+
             {/* Summary Cards */}
             {/* Mobile: one compact card — the three durations as hero numbers in a single row,
                 with the day span as a slim header. Replaces the four full-width stacked cards so
@@ -1179,6 +1220,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Pertraukos</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Užduotims</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted" title="Dienų su pažymėta pertrauka dalis nuo darbo dienų — kaip nuosekliai vykdytojas žymi pertraukas.">Pertraukų žym.</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
@@ -1213,6 +1255,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         <td className="px-4 py-3 text-right text-ink-strong font-mono font-bold bg-blue-50/10">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes + summary.breakMinutes)}
                                         </td>
+                                        <td className="px-4 py-3 text-right text-ink-muted font-mono">
+                                            {summary.workDays.size > 0 ? `${Math.round(100 * summary.breakDays.size / summary.workDays.size)}%` : '—'}
+                                        </td>
                                     </tr>
                                 ))}
                                 <tr className="bg-surface-sunken font-bold">
@@ -1228,6 +1273,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <td className="px-4 py-3 text-right text-ink-strong font-bold bg-blue-50/30">
                                         {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
                                     </td>
+                                    <td className="px-4 py-3 text-right text-ink-muted">—</td>
                                 </tr>
                             </tbody>
                         </table>
