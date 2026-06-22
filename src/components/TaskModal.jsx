@@ -541,16 +541,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 className="bg-surface-card rounded-modal shadow-xl w-full max-w-2xl flex flex-col my-auto relative focus:outline-none"
             >
                 {/* Header - Fixed */}
-                <div className="flex justify-between items-center p-6 border-b border-line flex-shrink-0">
-                    <h2 id="task-modal-title" className="text-xl font-bold text-ink-strong">
+                <div className="flex justify-between items-center gap-3 p-6 border-b border-line flex-shrink-0">
+                    <h2 id="task-modal-title" className="text-xl font-bold text-ink-strong truncate min-w-0">
                         {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Sukurti užduotį')}
                     </h2>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
                         {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
                             <select
                                 onChange={(e) => handleLoadTemplate(e.target.value)}
                                 aria-label="Užkrauti šabloną"
-                                className="mr-2 px-3 py-1 border border-line rounded-lg text-sm"
+                                className="min-w-0 max-w-[10rem] truncate px-3 py-1 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand"
                                 value=""
                             >
                                 <option value="">Užkrauti šabloną...</option>
