@@ -48,7 +48,7 @@ function copyFor(n) {
 }
 
 export function NotificationsProvider({ children }) {
-    const { currentUser, userRole } = useAuth();
+    const { currentUser, userRole, userData } = useAuth();
     const { showToast } = useToast();
     const [requestCount, setRequestCount] = useState(0);
     const [calendarCount, setCalendarCount] = useState(0);
@@ -56,6 +56,14 @@ export function NotificationsProvider({ children }) {
     const seenRef = useRef(null);
 
     const isManager = isManagerRole(userRole);
+
+    // Per-user profile toggle (missing field => enabled), mirrored from useSessionNotification.
+    // A ref lets the live Firestore listeners read the latest value without re-subscribing on
+    // every toggle. This is the SAME flag the OS status-bar notifications already honor, so the
+    // profile switch now governs the FCM/in-app stack too.
+    const notificationsEnabled = userData?.notificationsEnabled !== false;
+    const notificationsEnabledRef = useRef(notificationsEnabled);
+    useEffect(() => { notificationsEnabledRef.current = notificationsEnabled; }, [notificationsEnabled]);
 
     // Unread request notifications (task approvals/completions/comments/time-extensions).
     useEffect(() => {
@@ -82,10 +90,14 @@ export function NotificationsProvider({ children }) {
             if (seenRef.current === null) {
                 seenRef.current = ids; // seed; no toast for pre-existing unread
             } else {
-                fresh.forEach((n) => {
-                    const { title, body } = copyFor(n);
-                    showToast(body, { title, tone: 'notification' });
-                });
+                // Suppress foreground toasts when the user has notifications off — but still mark
+                // these ids seen, so re-enabling does not retroactively toast the backlog.
+                if (notificationsEnabledRef.current) {
+                    fresh.forEach((n) => {
+                        const { title, body } = copyFor(n);
+                        showToast(body, { title, tone: 'notification' });
+                    });
+                }
                 seenRef.current = ids;
             }
         }, (err) => console.error('NotificationsProvider: request listener', err));
@@ -110,22 +122,26 @@ export function NotificationsProvider({ children }) {
 
     const unreadCount = requestCount + calendarCount;
 
-    // Mirror the unread count onto the OS app-icon badge.
+    // Mirror the unread count onto the OS app-icon badge — but only while notifications are on;
+    // when the user turns them off, clear the badge (setAppBadge(0) routes to clearAppBadge).
     useEffect(() => {
-        setAppBadge(unreadCount);
-    }, [unreadCount]);
+        setAppBadge(notificationsEnabled ? unreadCount : 0);
+    }, [unreadCount, notificationsEnabled]);
 
     // Register this device's FCM token once permission is granted (now or when the user grants
-    // it via the first-interaction prompt, which dispatches 'notifications-granted').
+    // it via the first-interaction prompt, which dispatches 'notifications-granted'). Skip when
+    // the user has notifications off — no token means this device is not targeted for new push.
+    // (Already-registered tokens are also gated server-side in sendToUser, so push stops there
+    // too even if a token lingers from before the toggle was turned off.)
     useEffect(() => {
-        if (!currentUser) return undefined;
+        if (!currentUser || !notificationsEnabled) return undefined;
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
             registerFcmToken(currentUser);
         }
         const onGranted = () => registerFcmToken(currentUser);
         window.addEventListener('notifications-granted', onGranted);
         return () => window.removeEventListener('notifications-granted', onGranted);
-    }, [currentUser]);
+    }, [currentUser, notificationsEnabled]);
 
     return (
         <NotificationsContext.Provider value={{ unreadCount, requestCount, calendarCount }}>
