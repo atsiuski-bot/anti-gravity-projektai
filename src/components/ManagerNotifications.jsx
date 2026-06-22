@@ -504,12 +504,12 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     label="Uždaryti pranešimą"
                                     variant="ghost"
                                     onClick={() => handleDismissTask(notif.id)}
-                                    className="absolute top-2 right-2 text-blue-400 hover:text-blue-600"
+                                    className="absolute top-2 right-2 text-blue-400 hover:text-blue-600 sm:hidden"
                                 />
-                                <div className="flex flex-col gap-3">
-                                    <div className="flex items-start gap-3 pr-6">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                                    <div className="flex items-start gap-3 pr-6 sm:pr-0 min-w-0">
                                         <MessageCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-                                        <div>
+                                        <div className="min-w-0">
                                             <div className="text-sm text-blue-800">
                                                 <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> pakomentavo užduotį:</p>
                                                 <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
@@ -517,7 +517,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                             </div>
                                         </div>
                                     </div>
-                                    <div className="flex items-center justify-end mt-1 px-2 gap-2">
+                                    <div className="flex items-center justify-end mt-1 px-2 gap-2 sm:mt-0 sm:px-0 sm:shrink-0">
                                         <Button
                                             variant="secondary"
                                             size="md"
