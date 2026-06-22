@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Zap, Phone, Coffee } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
@@ -61,23 +61,47 @@ export default function ActiveSessionReadout() {
         return () => clearInterval(interval);
     }, [startISO]);
 
-    if (!cfg || !startISO) return null;
+    // Announce ONLY the start/stop transition — never the per-second tick. Wrapping the elapsed
+    // time in a live region makes a screen reader re-read the whole pill every second (an SR
+    // anti-pattern). Instead, a persistent visually-hidden live region speaks one message when a
+    // button-triggered session begins or ends; the visible pill stays purely visual but remains
+    // readable on demand. (WCAG 4.1.3 Status Messages.)
+    const active = Boolean(cfg && startISO);
+    const label = cfg?.label;
+    const lastLabelRef = useRef('');
+    const [announcement, setAnnouncement] = useState('');
+    useEffect(() => {
+        if (active && label) {
+            lastLabelRef.current = label;
+            setAnnouncement(`Pradėta: ${label}`);
+        } else if (lastLabelRef.current) {
+            setAnnouncement(`Baigta: ${lastLabelRef.current}`);
+            lastLabelRef.current = '';
+        }
+    }, [active, label]);
 
-    const Icon = cfg.icon;
+    const Icon = cfg?.icon;
     return (
-        <div
-            role="status"
-            aria-live="polite"
-            className={cn(
-                'flex items-center gap-2 rounded-full border px-3 py-1 shadow-md backdrop-blur-sm',
-                cfg.tone
+        <>
+            {/* Out-of-flow live region: speaks the session start/stop event, not the ticking time. */}
+            <div role="status" aria-live="polite" className="sr-only">
+                {announcement}
+            </div>
+
+            {active && (
+                <div
+                    className={cn(
+                        'flex items-center gap-2 rounded-full border px-3 py-1 shadow-md backdrop-blur-sm',
+                        cfg.tone
+                    )}
+                >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                    <span className="text-caption font-medium">{cfg.label}</span>
+                    <span className="font-mono text-body-lg font-bold leading-none tabular-nums">
+                        {formatMinutesToTimeString(minutes)}
+                    </span>
+                </div>
             )}
-        >
-            <Icon className="h-4 w-4" aria-hidden="true" />
-            <span className="text-caption font-medium">{cfg.label}</span>
-            <span className="font-mono text-body-lg font-bold leading-none tabular-nums">
-                {formatMinutesToTimeString(minutes)}
-            </span>
-        </div>
+        </>
     );
 }
