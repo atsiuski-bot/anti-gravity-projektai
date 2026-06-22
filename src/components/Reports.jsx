@@ -809,7 +809,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 <PriorityBadge priority={task.priority} />
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
-                                <AssigneeChip name={userName} firstNameOnly showIcon={false} />
+                                <AssigneeChip userId={task.assignedUserId} name={userName} firstNameOnly showIcon={false} />
                                 {deleted ? <DeletedBadge /> : <TaskStatusPill task={task} />}
                                 {dateStr && (
                                     <span className="text-caption text-ink-muted">{new Date(dateStr).toLocaleString()}</span>

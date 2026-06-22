@@ -323,7 +323,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 )}
 
                                 {task.assignedUserName && (isManager || !isAssignedToMe) && (
-                                    <AssigneeChip name={task.assignedUserName} color={displayColor} ring />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={displayColor} ring />
                                 )}
 
                                 {task.tag && (
