@@ -97,17 +97,8 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
     if (compact) {
         return (
             <div className="flex flex-col items-center">
-                {isTakingBreak ? (
-                    <span
-                        className="text-body-lg font-bold text-session-break-accent font-mono mb-1 leading-6"
-                    >
-                        {totalDisplay}
-                    </span>
-                ) : (
-                    <span className="text-body-lg font-bold text-transparent font-mono mb-1 leading-6 select-none" aria-hidden="true">
-                        00:00
-                    </span>
-                )}
+                {/* Live time is surfaced by ActiveSessionReadout above the bar, so the column
+                    itself stays as short as button + label (no reserved readout row). */}
                 <button
                     onClick={handleToggleBreak}
                     disabled={isDisabled}

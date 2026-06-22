@@ -15,6 +15,7 @@ import {
 import BreakTimer from './BreakTimer';
 import CallTimer from './CallTimer';
 import QuickWorkTimer from './QuickWorkTimer';
+import ActiveSessionReadout from './ActiveSessionReadout';
 import Modal from './ui/Modal';
 import { cn } from '../utils/cn';
 
@@ -85,22 +86,22 @@ const BottomNavigation = () => {
             {/* Work-controls floating pill (visible on all screens). Sits a fixed gap above the
                 main bar and clears the safe-area inset so both move together (DESIGN_SYSTEM §9). */}
             <div
-                className="fixed left-0 right-0 z-nav flex w-full justify-center px-2 pb-2 pointer-events-none"
+                className="fixed left-0 right-0 z-nav flex w-full flex-col items-center gap-2 px-3 pb-2 pointer-events-none"
                 style={{ bottom: 'calc(64px + env(safe-area-inset-bottom))' }}
             >
-                <div className="pointer-events-auto mx-2 flex max-w-full items-center gap-3 overflow-x-auto rounded-card border border-line bg-surface-card/95 p-2 shadow-lg backdrop-blur-sm">
+                <ActiveSessionReadout />
+
+                <div className="pointer-events-auto flex w-full max-w-md items-center justify-between gap-2 rounded-card border border-line bg-surface-card/95 px-3 py-1.5 shadow-lg backdrop-blur-sm">
                     {showCreateButton && (
-                        <div className="flex-shrink-0">
+                        <div className="flex flex-shrink-0 items-center gap-2">
                             <CreateButton />
+                            <div className="h-8 w-px bg-surface-sunken" />
                         </div>
                     )}
-                    {showCreateButton && <div className="h-8 w-px flex-shrink-0 bg-surface-sunken" />}
 
-                    <div className="flex items-center gap-2">
-                        <QuickWorkTimer compact={true} />
-                        <CallTimer compact={true} />
-                        <BreakTimer currentUser={currentUser} compact={true} />
-                    </div>
+                    <QuickWorkTimer compact={true} />
+                    <CallTimer compact={true} />
+                    <BreakTimer currentUser={currentUser} compact={true} />
                 </div>
             </div>
 
