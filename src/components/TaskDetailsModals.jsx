@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square } from 'lucide-react';
+import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
@@ -73,15 +73,36 @@ export function LinksModal({ isOpen, onClose, links }) {
     );
 }
 
-export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
+export function CommentsModal({ isOpen, onClose, comments, onAddComment, currentUserId, canManage = false, onUpdateComment, onDeleteComment }) {
     const [newComment, setNewComment] = React.useState('');
     const [optimisticComments, setOptimisticComments] = React.useState([]);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+    // Inline edit state — a comment's author (or a manager) edits in place, the same affordance
+    // the desktop row used to carry before comments consolidated into this one modal.
+    const [editingIndex, setEditingIndex] = React.useState(null);
+    const [editText, setEditText] = React.useState('');
+    const canEditComments = !!(onUpdateComment || onDeleteComment);
 
     // When the real comments update from Firestore, clear our optimistic ones
     React.useEffect(() => {
         setOptimisticComments([]);
     }, [comments]);
+
+    const startEdit = (index, text) => {
+        setEditingIndex(index);
+        setEditText(text);
+    };
+    const cancelEdit = () => {
+        setEditingIndex(null);
+        setEditText('');
+    };
+    const saveEdit = async (index) => {
+        const text = editText.trim();
+        if (!text) return;
+        await onUpdateComment?.(index, text);
+        cancelEdit();
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -119,19 +140,53 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
             <div className="flex flex-col h-full max-h-[60vh]">
                 <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {displayComments.length > 0 ? (
-                        displayComments.map((comment, idx) => (
-                            <div key={idx} className={`bg-surface-sunken p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
-                                <div className="flex justify-between items-start mb-2">
-                                    <span className="font-medium text-ink-strong">
-                                        {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : <UserChip userId={comment.userId} name={comment.user} />}
-                                    </span>
-                                    <span className="text-xs text-ink-muted">
-                                        {new Date(comment.createdAt).toLocaleString()}
-                                    </span>
+                        displayComments.map((comment, idx) => {
+                            const isEditing = editingIndex === idx;
+                            const mayEdit = canEditComments && !comment.isOptimistic
+                                && (canManage || (comment.userId && comment.userId === currentUserId));
+                            return (
+                                <div key={idx} className={`bg-surface-sunken p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
+                                    <div className="flex justify-between items-start mb-2 gap-2">
+                                        <span className="font-medium text-ink-strong">
+                                            {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : <UserChip userId={comment.userId} name={comment.user} />}
+                                        </span>
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                            <span className="text-xs text-ink-muted">
+                                                {new Date(comment.createdAt).toLocaleString()}
+                                            </span>
+                                            {mayEdit && !isEditing && (
+                                                <>
+                                                    {onUpdateComment && (
+                                                        <IconButton icon={Pencil} label="Redaguoti komentarą" variant="ghost" onClick={() => startEdit(idx, comment.text)} />
+                                                    )}
+                                                    {onDeleteComment && (
+                                                        <IconButton icon={Trash2} label="Ištrinti komentarą" variant="danger" onClick={() => onDeleteComment(idx)} />
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {isEditing ? (
+                                        <div>
+                                            <textarea
+                                                value={editText}
+                                                onChange={(e) => setEditText(e.target.value)}
+                                                rows={2}
+                                                aria-label="Redaguoti komentarą"
+                                                className="w-full px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm resize-y"
+                                                autoFocus
+                                            />
+                                            <div className="mt-2 flex justify-end gap-2">
+                                                <IconButton icon={X} label="Atšaukti" variant="ghost" onClick={cancelEdit} />
+                                                <IconButton icon={Check} label="Išsaugoti" variant="primary" onClick={() => saveEdit(idx)} disabled={!editText.trim()} />
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="text-ink whitespace-pre-wrap">{comment.text}</p>
+                                    )}
                                 </div>
-                                <p className="text-ink whitespace-pre-wrap">{comment.text}</p>
-                            </div>
-                        ))
+                            );
+                        })
                     ) : (
                         <p className="text-ink-muted text-center py-4">Nėra komentarų</p>
                     )}

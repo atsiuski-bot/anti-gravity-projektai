@@ -40,8 +40,9 @@ service cloud.firestore {
              getUserData().get('role', '') == 'manager';
     }
 
-    // Vyr. vadovas (senior manager): a manager-shaped rank that ALWAYS sees the whole company
-    // and never gets a team scope. Account management (role changes, membership) stays admin-only.
+    // Vyr. vadovas (senior manager): a manager-shaped rank SCOPED to its transitive subtree — its
+    // assigned managers plus those managers' workers (ADR 0007), NOT the whole company. Account
+    // management (role changes, membership) stays admin-only.
     // Four-level hierarchy: admin > seniorManager > manager > worker.
     function isSeniorManager() {
       return isUserActive() &&
@@ -52,26 +53,32 @@ service cloud.firestore {
       return isAdmin() || isManager() || isSeniorManager();
     }
 
-    // ---- Scoped-manager hierarchy (ADR 0005) -------------------------------
-    // A manager is "scoped" when an admin set scopedManager=true on their user doc: they may
-    // only SEE and ACT on their assigned people. Everyone else with manager reach — admins,
-    // senior managers (Vyr. vadovas, always whole-company by rank), and managers left unscoped
-    // (the default) — keeps whole-company access exactly as before. A senior manager is never
-    // scoped (isScopedManager only matches role 'manager').
+    // ---- Scoped overseer hierarchy (ADR 0005 + ADR 0007) -------------------
+    // A manager is "scoped" when an admin set scopedManager=true on their user doc: they may only
+    // SEE and ACT on their assigned people. A SENIOR manager (Vyr. vadovas) is ALWAYS scoped — to
+    // its transitive subtree (its managers + those managers' workers), denormalized into each row's
+    // teamManagerIds closure by a Cloud Function (ADR 0007). Admins and managers left unscoped (the
+    // default) keep whole-company access.
     function isScopedManager() {
       return isManager() && getUserData().get('scopedManager', false) == true;
     }
-    function canSeeWholeTeam() {
-      return isAdmin() || isSeniorManager() ||
-             (isManager() && getUserData().get('scopedManager', false) != true);
+    // A caller whose visibility is limited to their subtree's denormalized stamp (the row's
+    // teamManagerIds closure): a scoped manager OR any senior manager. Both rely on inCallerTeam().
+    function isScopedOverseer() {
+      return isScopedManager() || isSeniorManager();
     }
-    // The caller manages the given user (that user's team includes the caller). One get() on the
-    // target user doc — used on WRITES only (low volume), so the extra read is acceptable. Used at
-    // create/reassign time, before the row's denormalized teamManagerIds has been stamped.
-    function managesUser(uid) {
+    function canSeeWholeTeam() {
+      return isAdmin() || (isManager() && getUserData().get('scopedManager', false) != true);
+    }
+    // The caller is in the target user's OVERSEER CLOSURE (managers + their seniors), maintained on
+    // the user doc (overseerIds) by the re-stamp Cloud Function (ADR 0007). One get() on the target
+    // doc — used on WRITES only (low volume), so the extra read is acceptable. Used at create/
+    // reassign time, before the row's denormalized teamManagerIds has been stamped. Covers BOTH a
+    // scoped manager (always in their own workers' closure) and a senior manager.
+    function overseesUser(uid) {
       return uid is string &&
              exists(/databases/$(database)/documents/users/$(uid)) &&
-             request.auth.uid in get(/databases/$(database)/documents/users/$(uid)).data.get('teamManagerIds', []);
+             request.auth.uid in get(/databases/$(database)/documents/users/$(uid)).data.get('overseerIds', []);
     }
     // The EXISTING row is within the caller's team (denormalized teamManagerIds copied from the
     // owner). Pure field compare — no extra read — so it is cheap on the hot read path.
@@ -156,7 +163,17 @@ service cloud.firestore {
                     && (isAdmin() ||
                         request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []))
                     && (isAdmin() ||
-                        request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false));
+                        request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false))
+                    // Senior-manager membership (which seniors a manager answers to) is admin-only,
+                    // exactly like teamManagerIds/scopedManager. (ADR 0007)
+                    && (isAdmin() ||
+                        request.resource.data.get('seniorManagerIds', []) == resource.data.get('seniorManagerIds', []))
+                    && (isAdmin() ||
+                        request.resource.data.get('defaultSeniorManager', '') == resource.data.get('defaultSeniorManager', ''))
+                    // The overseer closure is written ONLY by the admin-SDK Cloud Function (which
+                    // bypasses rules). No client — not even an admin — may hand-edit it, or the
+                    // confidentiality boundary could be silently desynced. (ADR 0007)
+                    && request.resource.data.get('overseerIds', []) == resource.data.get('overseerIds', []);
       allow delete: if isAdmin();
 
       // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------
@@ -178,27 +195,27 @@ service cloud.firestore {
       // denormalized teamManagerIds) or tasks they audit; the assignee sees their own. (ADR 0005)
       allow read: if isUserActive() && canReadOwnedTask();
       // Create: a worker self-assigns (covers normal create + call/quick-work auto-logs);
-      // whole-team viewers may assign to anyone; a scoped manager may assign ONLY to their people
-      // (managesUser checks the assignee's team — also covers manager RESTORE of a team task).
+      // whole-team viewers may assign to anyone; a scoped overseer may assign ONLY within their
+      // subtree (overseesUser checks the assignee's closure — also covers RESTORE of a team task).
       allow create: if isUserActive() && (
                       request.resource.data.assignedUserId == request.auth.uid ||
                       canSeeWholeTeam() ||
-                      (isScopedManager() && managesUser(request.resource.data.assignedUserId))
+                      (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
                     );
       // Update: whole-team viewers edit any; a scoped manager edits their team's tasks and may
       // only reassign within their team; the assignee edits their own but may NOT flip the
       // manager-only approval fields.
       allow update: if isUserActive() && (
                       canSeeWholeTeam() ||
-                      (isScopedManager() && inCallerTeam() &&
+                      (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
-                         managesUser(request.resource.data.assignedUserId))) ||
+                         overseesUser(request.resource.data.assignedUserId))) ||
                       (ownsAssignedUser() && !changesApprovalFields())
                     );
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
-                      (isScopedManager() && inCallerTeam())
+                      (isScopedOverseer() && inCallerTeam())
                     );
     }
 
@@ -216,12 +233,12 @@ service cloud.firestore {
       allow create:        if isUserActive() && (
                               createOwnsUserId() ||
                               canSeeWholeTeam() ||
-                              (isScopedManager() && managesUser(request.resource.data.userId))
+                              (isScopedOverseer() && overseesUser(request.resource.data.userId))
                             );
       allow update, delete: if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
-                              (isScopedManager() && inCallerTeam())
+                              (isScopedOverseer() && inCallerTeam())
                             );
     }
 
@@ -234,7 +251,7 @@ service cloud.firestore {
       allow update, delete: if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
-                              (isScopedManager() && inCallerTeam())
+                              (isScopedOverseer() && inCallerTeam())
                             );
     }
 
@@ -261,19 +278,19 @@ service cloud.firestore {
       allow create: if isUserActive() && (
                       request.resource.data.assignedUserId == request.auth.uid ||
                       canSeeWholeTeam() ||
-                      (isScopedManager() && managesUser(request.resource.data.assignedUserId))
+                      (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
                     );
       allow update: if isUserActive() && (
                       canSeeWholeTeam() ||
-                      (isScopedManager() && inCallerTeam() &&
+                      (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
-                         managesUser(request.resource.data.assignedUserId))) ||
+                         overseesUser(request.resource.data.assignedUserId))) ||
                       (ownsAssignedUser() && !changesApprovalFields())
                     );
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
-                      (isScopedManager() && inCallerTeam())
+                      (isScopedOverseer() && inCallerTeam())
                     );
     }
 

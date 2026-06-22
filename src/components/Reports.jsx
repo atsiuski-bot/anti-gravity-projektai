@@ -14,6 +14,7 @@ import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import TaskRow from './task/TaskRow';
 
@@ -808,7 +809,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     return (
                         <li key={task.id} className="bg-surface-card rounded-card shadow-sm border border-line p-4 space-y-3">
                             <div className="flex items-start justify-between gap-2">
-                                <div className={`min-w-0 flex-1 text-body-lg font-bold break-words ${deleted ? 'line-through text-ink-muted' : 'text-ink-strong'}`}>
+                                <div className={`min-w-0 flex-1 text-body-lg font-bold break-words ${deleted ? 'line-through text-ink-muted' : task.completed ? 'text-ink' : 'text-ink-strong'}`}>
+                                    {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
                                     {task.title}
                                 </div>
                                 <PriorityBadge priority={task.priority} />
@@ -921,7 +923,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 titleCell={
                                     <>
                                         <div className="flex items-center gap-2">
-                                            <div className={`text-sm font-bold text-ink-strong whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-ink-muted' : ''}`}>
+                                            <div className={`text-sm font-bold whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-ink-muted' : task.completed ? 'text-ink' : 'text-ink-strong'}`}>
+                                                {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                                 {task.title}
                                             </div>
                                             {(task.isDeleted || task.status === 'deleted') && <DeletedBadge />}

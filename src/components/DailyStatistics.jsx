@@ -3,10 +3,11 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, MAX_MANUAL_TASK_MINUTES } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
-import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
+import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import TaskStatusPill from './task/TaskStatusPill';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
@@ -28,7 +29,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const scopeUid = currentUser?.uid;
     // Managers see the whole team here; workers see only themselves. The per-member picker was
     // removed (individual drill-down moves to the team calendar), so this is fixed at mount and
@@ -1087,11 +1088,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
                 </div>
 
-                {/* Sort filter — a horizontal two-option segmented control (Pagal laiką |
-                    Pagal būseną) so both choices stay on one row and the toolbar keeps to a
-                    single line. */}
+                {/* Sort filter — a two-option segmented control (Pagal laiką | Pagal būseną).
+                    On md+ it sits horizontally inline in the toolbar. On a phone it stacks
+                    VERTICALLY and sits to the RIGHT of the date stepper on the same row:
+                    `self-stretch` matches its height to the date stepper (no magic numbers),
+                    `flex-1` splits that height between the two options — trading a wasted
+                    second toolbar row for a tighter header. */}
                 <div
-                    className="flex bg-surface-sunken rounded-control overflow-hidden border border-line"
+                    className="flex flex-col md:flex-row self-stretch md:self-auto bg-surface-sunken rounded-control overflow-hidden border border-line"
                     role="group"
                     aria-label="Rūšiuoti"
                 >
@@ -1100,7 +1104,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         onClick={() => setSortBy('time')}
                         aria-pressed={sortBy === 'time'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
+                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -1108,13 +1112,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         Pagal laiką
                     </button>
-                    <div className="w-px bg-line" aria-hidden="true" />
+                    <div className="w-full h-px md:w-px md:h-auto bg-line" aria-hidden="true" />
                     <button
                         type="button"
                         onClick={() => setSortBy('status')}
                         aria-pressed={sortBy === 'status'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
+                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -1765,8 +1769,9 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                 <div className="flex-1">
                     <div className={clsx(
                         "font-bold text-body",
-                        task.isDeleted && "line-through text-ink-muted"
+                        task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : ""
                     )}>
+                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                         {task.title}
                     </div>
                     {task.isDeleted && <DeletedBadge />}
@@ -2036,9 +2041,10 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
                                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                                         className={clsx(
-                                                        "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                                        (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                                        "text-sm font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                        (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                                     )}>
+                                                        {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                                         {task.title}
                                                     </div>
                                                     {task.deadline && (

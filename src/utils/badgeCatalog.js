@@ -1,4 +1,4 @@
-import { CheckCircle2, CalendarCheck, Target, CalendarClock, ShieldCheck, ListChecks, Flame } from 'lucide-react';
+import { CheckCircle2, CalendarCheck, Target, CalendarClock, ShieldCheck, ListChecks, Flame, AlarmClock } from 'lucide-react';
 
 /**
  * Client-side badge presentation. The awarded doc (users/{uid}/achievements/{key}) carries the
@@ -10,6 +10,7 @@ export const BADGE_ICONS = {
     steady_rhythm: CalendarCheck, // R2 — shows up across days
     on_estimate: Target,          // R3 — lands within the estimate
     plans_ahead: CalendarClock,   // R4 — plans the week ahead
+    on_time_start: AlarmClock,    // R6 — starts near the planned shift
     approved_craft: ShieldCheck,  // Q1 — work a manager accepted
     thorough: ListChecks,         // Q2 — completes the full checklist
     hard_tasks: Flame,            // Q4 — takes the high-priority work
@@ -60,6 +61,13 @@ export const BADGE_CATALOG = [
         unit: 'suplanuotos savaitės',
         description: 'Skiriamas už savaites, kurias suplanuojate iš anksto kalendoriuje.',
         thresholds: [2, 8, 20, 40],
+    },
+    {
+        key: 'on_time_start',
+        name: 'Punktualus startas',
+        unit: 'punktualios dienos',
+        description: 'Skiriamas už dienas, kai darbą pradedate netoli suplanuotos pamainos pradžios.',
+        thresholds: [5, 20, 50, 120],
     },
     // Quality
     {

@@ -145,9 +145,10 @@ const CustomToolbar = (toolbar) => {
             {/* Phone / tablet (<lg): two compact rows — view + create on top, then the
                 navigation cluster — so nothing gets squeezed on a ~360px viewport. */}
             <div className="flex flex-col gap-2 lg:hidden">
-                {/* pr-12 keeps the create action clear of the fixed profile-avatar bubble
-                    pinned to the top-right corner (Layout) — without it they overlap on phones. */}
-                <div className="flex items-center justify-between gap-2 pr-12">
+                {/* The create action sits flush at the right edge: the profile avatar now lives
+                    in the sticky AppHeader bar above the content (Layout), not a floating bubble
+                    overlapping it, so no right-side clearance is needed. */}
+                <div className="flex items-center justify-between gap-2">
                     {viewToggle}
                     {addButton}
                 </div>
