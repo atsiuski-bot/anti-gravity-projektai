@@ -1,7 +1,7 @@
 import { doc, getDoc, updateDoc, collection, addDoc, setDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
-import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from './timeUtils';
+import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
@@ -510,6 +510,16 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         const title = session.customTitle || AUTO_STOPPED_QUICK_WORK_TITLE;
         const isManager = userData.role === 'manager' || userData.role === 'admin';
 
+        // Route the finished quick work to one accountable manager for confirmation. The live,
+        // described path carries the worker's explicit pick (session.auditorManagerId); an
+        // auto-stopped session (ended on another device, worker absent) falls back to the
+        // worker's primary manager. Managers/admins self-confirm, so they need no auditor.
+        // `managerId` also grants that manager an immediate read of the row (firestore.rules
+        // canReadOwnedTask) before the teamManagerIds stamp lands.
+        const routedManagerId = isManager
+            ? null
+            : (session.auditorManagerId || userData.defaultManager || null);
+
         // Pre-generate the task and work_session refs so they can cross-reference by ID. The
         // session keeps its synthetic `quick_` taskId (other views infer quick-work from that
         // prefix), but the durable link lives in `workSessionId` on the task: an auto-stopped
@@ -536,6 +546,8 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 completed: true,
                 confirmedBy: isManager ? userId : null,
                 confirmedAt: isManager ? now.toISOString() : null,
+                taskAuditor: routedManagerId,
+                managerId: routedManagerId,
                 manualMinutes: durationMinutes,
                 isQuickWork: true,
                 autoStopped: autoStopped,
@@ -554,6 +566,29 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 isQuickWork: true
             })
         ];
+
+        // Notify the routed manager that quick work was completed and awaits their confirmation,
+        // mirroring the regular task-finish notification (TaskTimerControls). Only on the live,
+        // described path — an auto-stopped, still-unnamed entry would be noise; it can be notified
+        // later if the worker describes it. Provenance is the worker's own uid (userId), which
+        // firestore.rules requires for a request_notifications create.
+        if (routedManagerId && routedManagerId !== userId && !autoStopped) {
+            logPromises.push(
+                addDoc(collection(db, 'request_notifications'), {
+                    recipientId: routedManagerId,
+                    type: 'task_completion',
+                    taskId: taskRef.id,
+                    taskTitle: title,
+                    actualTime: formatMinutesToTimeString(durationMinutes),
+                    actualMinutes: durationMinutes,
+                    userName: userData.displayName || 'Vykdytojas',
+                    userId,
+                    completedAt: now.toISOString(),
+                    isRead: false,
+                    createdAt: new Date().toISOString()
+                }).catch(e => logError(e, { source: 'writeFail:endSession.quickWorkNotify' }))
+            );
+        }
 
         // Retroactively rename the partial work_session that was logged when this session was interrupted
         if (session.partialDocId && session.customTitle) {
