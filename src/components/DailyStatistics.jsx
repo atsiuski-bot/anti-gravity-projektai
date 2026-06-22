@@ -804,7 +804,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
     };
 
     // View mode state for responsive design
-    const [viewMode, setViewMode] = useState('desktop');
+    // Initialise from the current width so a phone never shows the desktop table on the first
+    // paint (the resize listener below keeps it in sync afterwards). WCAG 1.4.10 / §9.
+    const [viewMode, setViewMode] = useState(() =>
+        (typeof window !== 'undefined' && window.innerWidth < 768) ? 'mobile' : 'desktop'
+    );
 
     useEffect(() => {
         const handleResize = () => {
@@ -863,6 +867,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                         <select
                             value={selectedUserId}
                             onChange={(e) => setSelectedUserId(e.target.value)}
+                            aria-label="Darbuotojas"
                             className="pl-9 pr-4 py-2 border border-line rounded-control focus:ring-2 focus:ring-brand text-body bg-surface-card min-w-[200px]"
                         >
                             <option value="all">Už visą komandą</option>
@@ -880,6 +885,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
                     <select
                         value={sortBy}
                         onChange={(e) => setSortBy(e.target.value)}
+                        aria-label="Rūšiuoti"
                         className="pl-9 pr-4 py-2 border border-line rounded-control focus:ring-2 focus:ring-brand text-body bg-surface-card"
                     >
                         <option value="time">Pagal laiką</option>
@@ -1317,8 +1323,8 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                     {editingTime ? (
                         <div className="flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center gap-1">
-                                <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />h
-                                <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                                <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-12 min-h-touch px-2 border rounded text-center text-caption" />h
+                                <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-12 min-h-touch px-2 border rounded text-center text-caption" />m
                             </div>
                             <input
                                 type="text"
@@ -1326,7 +1332,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                                 onChange={(e) => setEditReason(e.target.value)}
                                 aria-label="Laiko keitimo priežastis"
                                 placeholder="Keitimo priežastis (privaloma)"
-                                className="w-40 px-1.5 py-0.5 border border-line rounded text-caption font-sans"
+                                className="w-40 min-h-touch px-2 border border-line rounded text-caption font-sans"
                             />
                             <div className="flex items-center gap-1">
                                 <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={saveTimeEdit} />
@@ -1497,15 +1503,15 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                     <table className="w-full md:w-auto divide-y divide-line text-sm md:table-auto table-fixed">
                         <thead className="bg-surface-sunken">
                             <tr>
-                                {(isManagerRole(userRole)) && <th className="px-2 py-2 text-center w-8 text-caption font-bold text-ink-muted uppercase tracking-wider">OK</th>}
-                                <th className="px-2 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">DARB.</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">PRIO</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-caption font-bold text-ink-muted uppercase tracking-wider w-10 md:w-auto">KOM.</th>
-                                <th className="px-1 py-2 md:px-2 md:py-1 text-center text-caption font-bold text-ink-muted uppercase tracking-wider w-10 md:w-auto"></th>
+                                {(isManagerRole(userRole)) && <th scope="col" className="px-2 py-2 text-center w-8 text-caption font-bold text-ink-muted uppercase tracking-wider">OK</th>}
+                                <th scope="col" className="px-2 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">DARB.</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">PRIO</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-center text-caption font-bold text-ink-muted uppercase tracking-wider w-10 md:w-auto">KOM.</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-center text-caption font-bold text-ink-muted uppercase tracking-wider w-10 md:w-auto"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-line">
@@ -1536,11 +1542,19 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         checked={isConfirmed}
                                                         onChange={() => onToggleConfirm(task)}
                                                         disabled={task.archivedAt}
-                                                        className="w-3.5 h-3.5 rounded border-line text-feedback-success focus:ring-feedback-success cursor-pointer"
+                                                        aria-label="Patvirtinti atlikimą"
+                                                        className="w-4 h-4 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1 cursor-pointer"
                                                     />
                                                 </td>
                                             )}
-                                            <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
+                                            <td
+                                                className="px-2 py-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+                                                onClick={() => toggleExpand(task.id)}
+                                                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
+                                                role="button"
+                                                tabIndex={0}
+                                                aria-expanded={expandedTasks.has(task.id)}
+                                            >
                                                 <div className={clsx(
                                                     "text-sm font-bold text-ink-strong whitespace-normal break-words",
                                                     (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
