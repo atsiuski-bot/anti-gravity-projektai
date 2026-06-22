@@ -24,7 +24,7 @@ export default function PriorityBadge({ priority, size = 'sm', pill = false, cla
     return (
         <span
             className={cn(
-                'inline-flex items-center font-bold uppercase whitespace-nowrap border border-black/5',
+                'inline-flex items-center font-bold uppercase whitespace-nowrap border',
                 pill ? 'rounded-full' : 'rounded-md',
                 size === 'md' ? 'px-2 py-0.5 text-caption' : 'px-1.5 py-0.5 text-caption leading-4',
                 className
@@ -32,6 +32,7 @@ export default function PriorityBadge({ priority, size = 'sm', pill = false, cla
             style={{
                 backgroundColor: getPriorityColor(priority),
                 color: getPriorityTextColor(priority),
+                borderColor: 'var(--priority-hairline)',
             }}
         >
             {getPriorityLabel(priority)}

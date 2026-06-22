@@ -269,7 +269,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                                     onClick={() => canEdit && onToggle?.(item.id)}
                                     disabled={!canEdit}
                                     aria-pressed={!!item.done}
-                                    className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-gray-200 disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                    className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-surface-sunken disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                 >
                                     {item.done
                                         ? <CheckSquare className="mt-0.5 h-5 w-5 flex-shrink-0 text-brand" aria-hidden="true" />
@@ -369,7 +369,7 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                                 <div>
                                     <div className="flex items-center gap-2 mb-1">
                                         <span className="font-semibold text-ink-strong">{adj.date}</span>
-                                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-feedback-danger-soft text-feedback-danger-text' : 'bg-feedback-success-soft text-feedback-success-text'}`}>
                                             {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
                                         </span>
                                     </div>
@@ -662,7 +662,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
             >
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-4 text-feedback-danger">
-                        <div className="p-2 bg-red-50 rounded-full">
+                        <div className="p-2 bg-feedback-danger-soft rounded-full">
                             <AlertTriangle className="w-6 h-6" />
                         </div>
                         <h3 id={titleId} className="text-xl font-bold">{isTask ? 'Ištrinti užduotį' : 'Ištrinti įrašą'}</h3>
@@ -677,7 +677,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                             )}
                         </p>
                         {error && (
-                            <p role="alert" aria-live="assertive" className="rounded-control border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                            <p role="alert" aria-live="assertive" className="rounded-control border border-feedback-danger-border bg-feedback-danger-soft px-3 py-2 text-sm font-medium text-feedback-danger-text">
                                 {error}
                             </p>
                         )}
@@ -686,7 +686,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                     <div className="flex flex-col gap-3">
                         <button
                             onClick={onClose}
-                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-gray-200 rounded-lg transition-colors text-left text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-surface-sunken rounded-lg transition-colors text-left text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             Atšaukti{isTask ? ' trynimą' : ''}
                         </button>
@@ -696,7 +696,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                                 onClick={() => {
                                     onConfirm({ keepWorkHours: true });
                                 }}
-                                className="w-full px-4 py-3 bg-yellow-50 text-yellow-800 border border-yellow-200 text-sm font-medium rounded-lg hover:bg-yellow-100 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                className="w-full px-4 py-3 bg-feedback-warning-soft text-feedback-warning-text border border-feedback-warning-border text-sm font-medium rounded-lg hover:bg-feedback-warning-soft transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 Palikti darbo valandas, perbraukti užduotį ir ją užbaigti
                             </button>
@@ -706,7 +706,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                             onClick={() => {
                                 onConfirm({ keepWorkHours: false });
                             }}
-                            className={`w-full px-4 py-3 bg-red-50 text-red-700 border border-red-200 text-sm font-bold rounded-lg hover:bg-red-100 transition-colors flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-danger focus-visible:ring-offset-2 ${isTask ? 'text-left' : 'justify-center'} leading-tight`}
+                            className={`w-full px-4 py-3 bg-feedback-danger-soft text-feedback-danger-text border border-feedback-danger-border text-sm font-bold rounded-lg hover:bg-feedback-danger-soft transition-colors flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-danger focus-visible:ring-offset-2 ${isTask ? 'text-left' : 'justify-center'} leading-tight`}
                         >
                             <Trash2 className="w-5 h-5 flex-shrink-0" />
                             <span>{isTask ? 'IŠTRINTI DARBO VALANDAS ir visą užduotį' : 'IŠTRINTI'}</span>

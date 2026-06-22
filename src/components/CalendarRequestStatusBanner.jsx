@@ -58,9 +58,9 @@ export default function CalendarRequestStatusBanner() {
                     <div 
                         key={notif.id}
                         className={`max-w-xl w-full p-4 rounded-card shadow-sm border flex items-start gap-4 animate-in fade-in slide-in-from-top-2 relative ${
-                            isApproved 
-                                ? 'bg-green-50 border-green-200 text-green-900' 
-                                : 'bg-red-50 border-red-200 text-red-900'
+                            isApproved
+                                ? 'bg-feedback-success-soft border-feedback-success-border text-feedback-success-text'
+                                : 'bg-feedback-danger-soft border-feedback-danger-border text-feedback-danger-text'
                         }`}
                     >
                         <IconButton
@@ -72,9 +72,9 @@ export default function CalendarRequestStatusBanner() {
                         
                         <div className="w-10 h-10 flex items-center justify-center shrink-0 rounded-full bg-white/50">
                             {isApproved ? (
-                                <CheckCircle2 className="w-6 h-6 text-green-600" />
+                                <CheckCircle2 className="w-6 h-6 text-feedback-success" />
                             ) : (
-                                <XCircle className="w-6 h-6 text-red-600" />
+                                <XCircle className="w-6 h-6 text-feedback-danger" />
                             )}
                         </div>
                         

@@ -217,7 +217,7 @@ export default function WorkerView() {
         <div className="pt-1">
             <div className="mb-2 sm:mb-6">
                 {error && (
-                    <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-red-50 p-4 wz-shake" role="alert">
+                    <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-feedback-danger-soft p-4 wz-shake" role="alert">
                         <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
                         <p className="text-body text-feedback-danger">{error}</p>
                     </div>
@@ -228,7 +228,7 @@ export default function WorkerView() {
             {/* Tasks Tab */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 sm:mb-6">
-                    <h2 className="text-h2 font-bold text-ink-strong">Mano užduotys</h2>
+                    <h2 className="text-h2 font-bold text-ink-strong wz-on-shell">Mano užduotys</h2>
 
                     {/* Sort dropdown */}
                     <div className="relative w-full sm:w-auto flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">

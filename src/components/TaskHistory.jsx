@@ -676,14 +676,14 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleExportCSV}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <FileText className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti (CSV)
                         </button>
                         <button
                             onClick={handleExport}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <Download className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti AI analizei (JSON)
