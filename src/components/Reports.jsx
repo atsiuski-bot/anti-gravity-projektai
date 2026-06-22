@@ -10,6 +10,7 @@ import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTrian
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
+import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
@@ -1154,25 +1155,21 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
                                     <div className="flex-1">
                                         <label htmlFor="report-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                                        <input
+                                        <DatePicker
                                             id="report-from"
-                                            type="date"
                                             value={dateRange.start}
                                             max={dateRange.end}
-                                            onChange={(e) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, start: e.target.value })); }}
-                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            onChange={(v) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, start: v })); }}
                                         />
                                     </div>
                                     <div className="flex-1">
                                         <label htmlFor="report-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                                        <input
+                                        <DatePicker
                                             id="report-to"
-                                            type="date"
                                             value={dateRange.end}
                                             min={dateRange.start}
                                             max={getLithuanianDateString()}
-                                            onChange={(e) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, end: e.target.value })); }}
-                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            onChange={(v) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, end: v })); }}
                                         />
                                     </div>
                                 </div>
@@ -1301,25 +1298,21 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
                                     <div className="flex-1">
                                         <label htmlFor="history-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                                        <input
+                                        <DatePicker
                                             id="history-from"
-                                            type="date"
                                             value={historyRange.start}
                                             max={historyRange.end}
-                                            onChange={(e) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, start: e.target.value })); }}
-                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, start: v })); }}
                                         />
                                     </div>
                                     <div className="flex-1">
                                         <label htmlFor="history-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                                        <input
+                                        <DatePicker
                                             id="history-to"
-                                            type="date"
                                             value={historyRange.end}
                                             min={historyRange.start}
                                             max={getLithuanianDateString()}
-                                            onChange={(e) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, end: e.target.value })); }}
-                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, end: v })); }}
                                         />
                                     </div>
                                 </div>
@@ -1455,21 +1448,19 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 <div className="space-y-4">
                     <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div>
-                            <label className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                            <input
-                                type="date"
+                            <label htmlFor="task-filter-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
+                            <DatePicker
+                                id="task-filter-from"
                                 value={taskFilters.startDate}
-                                onChange={(e) => setTaskFilters(prev => ({ ...prev, startDate: e.target.value }))}
-                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
+                                onChange={(v) => setTaskFilters(prev => ({ ...prev, startDate: v }))}
                             />
                         </div>
                         <div>
-                            <label className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                            <input
-                                type="date"
+                            <label htmlFor="task-filter-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
+                            <DatePicker
+                                id="task-filter-to"
                                 value={taskFilters.endDate}
-                                onChange={(e) => setTaskFilters(prev => ({ ...prev, endDate: e.target.value }))}
-                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
+                                onChange={(v) => setTaskFilters(prev => ({ ...prev, endDate: v }))}
                             />
                         </div>
                         <div>
