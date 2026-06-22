@@ -4,6 +4,7 @@ import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'fire
 import { formatMinutesToTimeString, formatMinutesToHHMM, formatSignedMinutesToHHMM, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints } from '../utils/teamScope';
+import { absenceLabel } from '../utils/absence';
 import { addComment } from '../utils/commentActions';
 import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar } from 'lucide-react';
 
@@ -33,6 +34,12 @@ const PERIOD_PRESETS = [
     { id: '3months', label: '3 mėnesiai' },
     { id: 'year', label: 'Šie metai' },
 ];
+
+// Skirtumas (worked − planned) is meaningful only when the plan plausibly covers the worked span;
+// a token plan against a full month produces a fake "+164:00 surplus". A worker counts as "planned"
+// only when their plan is at least this fraction of worked time. Shared by the CSV Skirtumas gate
+// and the on-screen coverage indicator so the two surfaces never disagree on who has a usable plan.
+const PLAN_COVERAGE_FLOOR = 0.25;
 
 export default function Reports({ users, canExport = false, viewRole }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
@@ -715,11 +722,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
         const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
         const rows = [];
-        // Skirtumas (worked − planned) is meaningful only when the calendar plan plausibly
-        // covers the worked span. A token plan (one stray slot) against a full month of work
-        // produces a fake "+164:00 surplus"; require the plan to be at least this fraction of
-        // worked time before emitting a signed delta, otherwise label it "Nepakanka plano".
-        const PLAN_COVERAGE_FLOOR = 0.25;
 
         // Exclude test/founder accounts from the payroll export unless the manager opted in, so
         // team totals and the per-worker list aren't skewed by non-production rows.
@@ -1021,7 +1023,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
         let typeColor = "text-ink-muted";
         if (evt.isVacation) {
             TypeIcon = null;
-            typeLabel = "Atostogos";
+            typeLabel = absenceLabel(evt) || "Atostogos";
             typeColor = "text-amber-500";
         } else if (evt.isWorkFromHome) {
             TypeIcon = null;
@@ -1207,7 +1209,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         const testIds = new Set((users || []).filter((u) => u.isTest).map((u) => u.id));
                         const rows = showTestUsers ? workData : workData.filter((u) => !testIds.has(u.userId));
                         if (rows.length === 0) return null;
-                        const withPlan = rows.filter((u) => u.plannedMinutes > 0).length;
+                        // Count only workers whose plan actually covers the span — the same predicate
+                        // the CSV's Skirtumas gate uses — so the indicator and the export agree on
+                        // who has a usable plan (a thin real plan that the CSV blanks is NOT counted).
+                        const withPlan = rows.filter((u) =>
+                            u.plannedMinutes > 0 &&
+                            (u.totalMinutes <= 0 || u.plannedMinutes >= PLAN_COVERAGE_FLOOR * u.totalMinutes)
+                        ).length;
                         return (
                             <p className="mb-3 px-1 text-caption text-ink-muted">
                                 Planą turi {withPlan} iš {rows.length} darbuotojų
