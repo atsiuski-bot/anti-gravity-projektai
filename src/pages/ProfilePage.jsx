@@ -171,7 +171,6 @@ export default function ProfilePage() {
                 </button>
 
                 {fullName && <p className="text-h3 font-semibold text-ink-strong">{fullName}</p>}
-                {email && <p className="mt-0.5 text-body text-ink-muted">{email}</p>}
                 <div className="mt-3 flex justify-center">
                     <StatusPill tone={role.tone}>{role.label}</StatusPill>
                 </div>
