@@ -4,7 +4,7 @@ import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDo
 import { useAuth } from '../context/AuthContext';
 import { startOfWeek, format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
@@ -500,15 +500,18 @@ export default function ManagerNotifications({ onClose }) {
 
                                             const isAdd = change.type === 'add';
                                             const isEdit = change.type === 'edit';
+                                            // Shape carries the change type, not just color (the old
+                                            // +/~/- punctuation was a color-only signal — WCAG 1.4.1):
+                                            // add = Plus, edit = pencil, cancel = X.
+                                            const DeltaIcon = isAdd ? Plus : isEdit ? Edit : X;
+                                            const deltaColor = isAdd ? 'text-green-600' : isEdit ? 'text-amber-600' : 'text-red-600';
+                                            const deltaLabel = isAdd ? 'Pridėta:' : isEdit ? 'Pakeista:' : 'Atšaukta:';
 
                                             return (
                                                 <div key={index} className="flex gap-2">
-                                                    <span className={
-                                                        isAdd ? 'text-green-600 font-medium min-w-[70px]' :
-                                                            isEdit ? 'text-amber-600 font-medium min-w-[70px]' :
-                                                                'text-red-600 font-medium min-w-[70px]'
-                                                    }>
-                                                        {isAdd ? '+ Pridėta:' : isEdit ? '~ Pakeista:' : '- Atšaukta:'}
+                                                    <span className={`inline-flex items-center gap-1 font-medium min-w-[84px] ${deltaColor}`}>
+                                                        <DeltaIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                                        {deltaLabel}
                                                     </span>
                                                     <span>{dayNameCap}, {timeRange}</span>
                                                 </div>
