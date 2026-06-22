@@ -1,8 +1,13 @@
-import { doc, getDoc, updateDoc, collection, addDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, addDoc, setDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from './timeUtils';
 import { logError } from './errorLog';
+
+// Placeholder title given to a quick-work session that ends without the worker naming it
+// (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
+// Shared by the auto-log path and the retroactive-description fallback so the two never drift.
+export const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greitas darbas (Automatiškai išsaugotas)';
 
 /**
  * Starts a new session for the user.
@@ -501,12 +506,23 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         await Promise.all(callPromises);
     } else if (session.type === 'quickWork') {
         const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
-        const title = session.customTitle || "Greitas darbas (Automatiškai išsaugotas)";
+        const autoStopped = !session.customTitle;
+        const title = session.customTitle || AUTO_STOPPED_QUICK_WORK_TITLE;
         const isManager = userData.role === 'manager' || userData.role === 'admin';
+
+        // Pre-generate the task and work_session refs so they can cross-reference by ID. The
+        // session keeps its synthetic `quick_` taskId (other views infer quick-work from that
+        // prefix), but the durable link lives in `workSessionId` on the task: an auto-stopped
+        // session the worker never got to name can later be described retroactively, and that
+        // rename must reach BOTH records — the task (shown in history once archived) and the
+        // session (shown in today's timeline). See addQuickWorkDescription. (Without a stored
+        // link the two are unjoined: their IDs differ and the session's taskId is synthetic.)
+        const taskRef = doc(collection(db, 'tasks'));
+        const sessionRef = doc(collection(db, 'work_sessions'));
 
         // Log task + work session in PARALLEL
         const logPromises = [
-            addDoc(collection(db, 'tasks'), {
+            setDoc(taskRef, {
                 title: title,
                 description: session.customTitle ? timeString : `${timeString} (Automatiškai sukurtas)`,
                 status: isManager ? "confirmed" : "completed",
@@ -522,9 +538,10 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 confirmedAt: isManager ? now.toISOString() : null,
                 manualMinutes: durationMinutes,
                 isQuickWork: true,
-                autoStopped: !session.customTitle
+                autoStopped: autoStopped,
+                workSessionId: sessionRef.id
             }),
-            addDoc(collection(db, 'work_sessions'), {
+            setDoc(sessionRef, {
                 taskId: "quick_" + now.getTime(),
                 taskTitle: title,
                 userId: userId,
@@ -549,8 +566,86 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
 
         await Promise.all(logPromises);
     }
-    // Note: 'task' type logging is usually handled by pauseTask inside taskActions. 
+    // Note: 'task' type logging is usually handled by pauseTask inside taskActions.
     // If we use startSession('task'), we must ensure taskActions.startTask was called or logic matches.
     // Integrating task logging here might duplicate valid logic in pauseTask.
     // For now, we assume taskActions handles the specific Task Doc updates and Work Session logging.
+};
+
+/**
+ * Retroactively name an auto-stopped quick-work record.
+ *
+ * When a quick-work session ends remotely — e.g. a stale `isQuickWorking` flag is cleaned up
+ * on another device with no live `activeSession` — it is logged with a generic placeholder
+ * title and `autoStopped: true`, because the worker never saw the "what did you do?" prompt
+ * (QuickWorkTimer deliberately skips it cross-device). This lets the worker fill that in
+ * afterwards: the entered text becomes the title (mirroring the live flow, where the textarea
+ * IS the title), renaming BOTH the task (shown in history once archived) and its linked
+ * work_session (shown in today's timeline). Clearing `autoStopped` drops the entry out of the
+ * "needs description" surface.
+ *
+ * Permission-safe under firestore.rules: the worker owns the task (assignedUserId) and the
+ * session (userId), and the update leaves status/confirmedBy untouched, so it never trips the
+ * manager-only approval guard (changesApprovalFields).
+ *
+ * @param {Object} task - the auto-stopped task doc (needs id, assignedUserId; workSessionId if linked)
+ * @param {string} text - worker-entered description; trimmed, becomes the new title
+ */
+export const addQuickWorkDescription = async (task, text) => {
+    const title = (text || '').trim();
+    if (!task?.id || !title) return;
+    try {
+        // Keep the originally recorded time in the description, only strip the "(auto)" suffix.
+        const cleanedDescription = (task.description || '')
+            .replace(/\s*\(Automatiškai sukurtas\)\s*$/, '')
+            .trim();
+
+        // Rename the durable task record and clear the flag (the value the report reads).
+        await updateDoc(doc(db, 'tasks', task.id), {
+            title,
+            description: cleanedDescription,
+            autoStopped: false,
+            updatedAt: new Date().toISOString()
+        });
+
+        // Rename the linked work_session so today's timeline reflects the description too.
+        if (task.workSessionId) {
+            await updateDoc(doc(db, 'work_sessions', task.workSessionId), {
+                taskTitle: title
+            }).catch(e => logError(e, { source: 'writeFail:addQuickWorkDescription.session', taskId: task.id }));
+        } else {
+            // Legacy records logged before the workSessionId link existed carry no pointer —
+            // fall back to a bounded best-effort lookup. A miss only leaves the timeline label
+            // generic; the durable task record (which is what archives) is already corrected.
+            await renameLegacyQuickWorkSession(task, title);
+        }
+    } catch (err) {
+        logError(err, { source: 'addQuickWorkDescription', taskId: task?.id });
+        throw err;
+    }
+};
+
+// Best-effort rename of a pre-link auto-stopped quick-work session (the task has no
+// workSessionId). Scoped to the owner's own sessions and the generic placeholder title, then
+// narrowed by duration so two same-day auto-stops cannot cross-rename. Never throws — this is
+// a cosmetic backfill for legacy data; the task record was already corrected by the caller.
+const renameLegacyQuickWorkSession = async (task, title) => {
+    try {
+        const ownerId = task.assignedUserId;
+        if (!ownerId) return;
+        const q = query(
+            collection(db, 'work_sessions'),
+            where('userId', '==', ownerId),
+            where('taskTitle', '==', AUTO_STOPPED_QUICK_WORK_TITLE)
+        );
+        const snap = await getDocs(q);
+        if (snap.empty) return;
+        const target = snap.docs.find(d => {
+            const dur = d.data().durationMinutes;
+            return typeof dur === 'number' && Math.abs(dur - (task.manualMinutes || 0)) < 0.5;
+        }) || snap.docs[0];
+        await updateDoc(doc(db, 'work_sessions', target.id), { taskTitle: title });
+    } catch (e) {
+        logError(e, { source: 'writeFail:renameLegacyQuickWorkSession', taskId: task?.id });
+    }
 };

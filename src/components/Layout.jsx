@@ -9,6 +9,7 @@ import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { useSessionNotification } from '../hooks/useSessionNotification';
 import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
 import { cn } from '../utils/cn';
+import QuickWorkDescribePrompt from './QuickWorkDescribePrompt';
 
 export default function Layout({ children }) {
     const { currentUser, userData, userRole, logout, isTakingBreak, workStatus } = useAuth();
@@ -149,6 +150,9 @@ export default function Layout({ children }) {
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 relative">
                 <div className="relative z-10">
+                    {/* Retroactive description for quick-work sessions ended on another device —
+                        a calm prompt that never collides with the active-session shell above. */}
+                    <QuickWorkDescribePrompt />
                     {children}
                 </div>
             </main>
