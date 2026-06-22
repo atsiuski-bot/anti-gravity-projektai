@@ -10,6 +10,11 @@ import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTrian
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
+import TaskStatusPill from './task/TaskStatusPill';
+import PriorityBadge from './task/PriorityBadge';
+import DeletedBadge from './task/DeletedBadge';
+import AssigneeChip from './task/AssigneeChip';
+import TaskRow from './task/TaskRow';
 
 import DailyStatistics from './DailyStatistics';
 import { CommentsModal } from './TaskDetailsModals';
@@ -743,7 +748,94 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
     // Helper to render table
     const TaskListTable = ({ tasks, title }) => (
-        <div className="hidden md:block bg-surface-card rounded-card shadow-sm border border-line overflow-hidden mb-6">
+        <div className="mb-6">
+            {/* Mobile / touch: one card per task — never a horizontally-scrolling table (§9).
+                Mirrors the desktop columns (confirm, status, priority, time, revert) as a card. */}
+            <ul className="space-y-3 md:hidden">
+                <li className="px-1 pb-1">
+                    <h3 className="text-body font-bold text-ink">{title} ({tasks.length})</h3>
+                </li>
+                {tasks.map((task) => {
+                    const dateStr = task.completedAt || task.archivedAt || task.updatedAt;
+                    const worker = users?.find(u => u.id === task.assignedUserId);
+                    const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '-');
+                    const isConfirmed = task.status === 'confirmed';
+                    const deleted = task.isDeleted || task.status === 'deleted';
+                    const isManager = isManagerRole(userRole);
+                    const isCompleter = task.completedBy === currentUser?.uid;
+                    const canRevert = (isManager || isCompleter) && !task.isArchived;
+                    return (
+                        <li key={task.id} className="bg-surface-card rounded-card shadow-sm border border-line p-4 space-y-3">
+                            <div className="flex items-start justify-between gap-2">
+                                <div className={`min-w-0 flex-1 text-body-lg font-bold break-words ${deleted ? 'line-through text-ink-muted' : 'text-ink-strong'}`}>
+                                    {task.title}
+                                </div>
+                                <PriorityBadge priority={task.priority} />
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <AssigneeChip name={userName} firstNameOnly showIcon={false} />
+                                {deleted ? <DeletedBadge /> : <TaskStatusPill task={task} />}
+                                {dateStr && (
+                                    <span className="text-caption text-ink-muted">{new Date(dateStr).toLocaleString()}</span>
+                                )}
+                            </div>
+                            {task.description && (
+                                <div className="text-caption text-ink-muted flex items-start gap-1 break-words">
+                                    <Briefcase className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" aria-hidden="true" />
+                                    <span className="whitespace-pre-wrap">{task.description}</span>
+                                </div>
+                            )}
+                            <div className="flex items-center gap-2">
+                                <span className="text-caption text-ink-muted">Plan. / Tikras:</span>
+                                <span className="text-body-lg font-mono font-semibold text-ink-strong">
+                                    <span className="text-brand">{task.estimatedTime || '-'}</span>
+                                    <span className="text-ink-muted mx-1">/</span>
+                                    <span>{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
+                                </span>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
+                                <label className={`flex items-center gap-2 min-h-touch ${task.isArchived ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
+                                    <input
+                                        type="checkbox"
+                                        checked={isConfirmed}
+                                        onChange={() => handleToggleConfirm(task)}
+                                        disabled={task.isArchived}
+                                        aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
+                                        className="w-5 h-5 rounded border-line text-green-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                    />
+                                    <span className="text-caption text-ink">{isConfirmed ? 'Patvirtinta' : 'Nepatvirtinta'}</span>
+                                </label>
+                                <div className="flex items-center gap-1">
+                                    <IconButton
+                                        label="Peržiūrėti komentarus"
+                                        onClick={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
+                                    >
+                                        <MessageSquare className="w-4 h-4" aria-hidden="true" />
+                                        {task.comments?.length > 0 && (
+                                            <span className="ml-0.5 text-caption font-bold">{task.comments.length}</span>
+                                        )}
+                                    </IconButton>
+                                    {canRevert && (
+                                        <IconButton
+                                            icon={RotateCcw}
+                                            label="Grąžinti užduotį"
+                                            onClick={() => handleRevert(task)}
+                                        />
+                                    )}
+                                </div>
+                            </div>
+                        </li>
+                    );
+                })}
+                {tasks.length === 0 && (
+                    <li className="bg-surface-card rounded-card border border-line px-6 py-8 text-center text-body text-ink-muted">
+                        Nėra užduočių.
+                    </li>
+                )}
+            </ul>
+
+            {/* Desktop / wide: denser table is allowed (§9) */}
+            <div className="hidden md:block bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
             <div className="px-4 py-3 bg-surface-sunken border-b border-line">
                 <h3 className="text-body font-bold text-ink">{title} ({tasks.length})</h3>
             </div>
@@ -773,85 +865,46 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         const canRevert = (isManager || isCompleter) && !task.isArchived;
 
                         return (
-                            <tr
+                            <TaskRow
                                 key={task.id}
-                                className={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-blue-50'}`}
-                            >
-                                <td className="px-2 py-2 text-center">
-                                    <input
-                                        type="checkbox"
-                                        checked={isConfirmed}
-                                        onChange={() => handleToggleConfirm(task)}
-                                        disabled={task.isArchived}
-                                        aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
-                                        className="w-5 h-5 rounded border-line text-green-600 focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 cursor-pointer"
-                                    />
-                                </td>
-                                <td className="px-2 py-2">
-                                    <div className="flex items-center gap-2">
-                                        <div className={`text-sm font-bold text-ink-strong whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-ink-muted' : ''}`}>
-                                            {task.title}
+                                task={task}
+                                rowClassName={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-blue-50'}`}
+                                showConfirm
+                                confirmChecked={isConfirmed}
+                                confirmDisabled={task.isArchived}
+                                onToggleConfirm={handleToggleConfirm}
+                                confirmAriaLabel={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
+                                assigneeName={userName}
+                                commentCount={task.comments?.length || 0}
+                                onOpenComments={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
+                                titleCell={
+                                    <>
+                                        <div className="flex items-center gap-2">
+                                            <div className={`text-sm font-bold text-ink-strong whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-ink-muted' : ''}`}>
+                                                {task.title}
+                                            </div>
+                                            {(task.isDeleted || task.status === 'deleted') && <DeletedBadge />}
                                         </div>
-                                        {(task.isDeleted || task.status === 'deleted') && (
-                                            <span className="px-1.5 py-0.5 rounded text-caption font-semibold bg-red-100 text-red-800 border border-red-200 uppercase whitespace-nowrap">
-                                                Ištrinta
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1">
-                                        <Briefcase className="w-3 h-3 text-ink-muted flex-shrink-0 mt-0.5" />
-                                        <span className="whitespace-normal break-words">{task.description || (task.tag ? `${task.tag}` : 'Užduotis')}</span>
-                                    </div>
-                                    {dateStr && (
-                                        <div className="text-caption text-ink-muted mt-1">
-                                            {new Date(dateStr).toLocaleString()}
+                                        <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1">
+                                            <Briefcase className="w-3 h-3 text-ink-muted flex-shrink-0 mt-0.5" />
+                                            <span className="whitespace-normal break-words">{task.description || (task.tag ? `${task.tag}` : 'Užduotis')}</span>
                                         </div>
-                                    )}
-                                </td>
-                                <td className="px-1 py-2 whitespace-nowrap">
-                                    <span className="px-2 py-1 rounded-full text-caption font-medium bg-surface-sunken text-ink border border-line">
-                                        {formatDisplayName(userName).split(' ')[0]}
-                                    </span>
-                                </td>
-                                <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium font-mono">
-                                    <span className="text-blue-600">{task.estimatedTime || '-'}</span>
-                                    <span className="text-ink-muted mx-1">/</span>
-                                    <span className="text-ink-strong">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
-                                </td>
-                                <td className="px-1 py-2 whitespace-nowrap">
-                                    <span className="px-1.5 py-0.5 rounded text-caption bg-surface-sunken text-ink-muted font-medium border border-line uppercase">
-                                        {task.priority || 'Vidut.'}
-                                    </span>
-                                </td>
-                                <td className="px-1 py-2 whitespace-nowrap">
-                                    {(task.isDeleted || task.status === 'deleted') ? (
-                                        <span className="px-2 py-0.5 rounded text-caption font-semibold bg-red-100 text-red-800 border border-red-200">
-                                            Ištrinta
-                                        </span>
-                                    ) : isConfirmed ? (
-                                        <span className="px-2 py-0.5 rounded text-caption font-semibold bg-green-100 text-green-800 border border-green-200">
-                                            Patvirt.
-                                        </span>
-                                    ) : (
-                                        <span className="px-2 py-0.5 rounded text-caption font-medium bg-surface-card text-ink border border-line shadow-sm">
-                                            Nepatv.
-                                        </span>
-                                    )}
-                                </td>
-                                <td className="px-1 py-2 text-center">
-                                    <IconButton
-                                        label="Peržiūrėti komentarus"
-                                        onClick={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
-                                        className="relative mx-auto"
-                                    >
-                                        <MessageSquare className="w-4 h-4" aria-hidden="true" />
-                                        {task.comments?.length > 0 && (
-                                            <span className="ml-0.5 text-caption font-bold">{task.comments.length}</span>
+                                        {dateStr && (
+                                            <div className="text-caption text-ink-muted mt-1">
+                                                {new Date(dateStr).toLocaleString()}
+                                            </div>
                                         )}
-                                    </IconButton>
-                                </td>
-                                <td className="px-1 py-2 text-right">
-                                    {canRevert && (
+                                    </>
+                                }
+                                timeCell={
+                                    <>
+                                        <span className="text-blue-600">{task.estimatedTime || '-'}</span>
+                                        <span className="text-ink-muted mx-1">/</span>
+                                        <span className="text-ink-strong">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
+                                    </>
+                                }
+                                actions={
+                                    canRevert && (
                                         <IconButton
                                             label="Grąžinti užduotį"
                                             variant="primary"
@@ -860,13 +913,14 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                         >
                                             <RotateCcw className="w-4 h-4" aria-hidden="true" />
                                         </IconButton>
-                                    )}
-                                </td>
-                            </tr>
+                                    )
+                                }
+                            />
                         );
                     })}
                 </tbody>
             </table>
+            </div>
         </div>
     );
 
@@ -989,10 +1043,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
             {/* --- WORK REPORT TAB (merged daily view + detailed range summary) --- */}
             {activeTab === 'report' && (
                 <div className="space-y-4">
-                    {/* Period selector — base view is a single day; the button reveals the range
-                        ladder (week → month → 3 months → year) and a custom date picker. 'day'
-                        renders the daily timeline; any range renders the detailed work summary. */}
-                    <div className="bg-surface-card rounded-card shadow-sm border border-line">
+                    {/* Period selector + CSV export share one row: the collapsible period card
+                        flexes to fill; the export button sits beside it (icon-only on mobile,
+                        icon+label on desktop) and appears only for a multi-day range (day mode
+                        has no export). The button reveals the range ladder (week → month →
+                        3 months → year) and a custom date picker. */}
+                    <div className="flex items-start gap-2">
+                        <div className="flex-1 bg-surface-card rounded-card shadow-sm border border-line">
                         <button
                             type="button"
                             onClick={() => setPeriodOpen((o) => !o)}
@@ -1052,8 +1109,24 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 </div>
                             </div>
                         )}
+                        </div>
+
+                        {reportPeriod !== 'day' && (
+                            <Button
+                                variant="success"
+                                icon={Download}
+                                onClick={handleExportHoursCSV}
+                                disabled={loading || workData.length === 0}
+                                aria-label="Eksportuoti CSV"
+                                className="shrink-0 px-3 sm:px-4"
+                            >
+                                <span className="hidden sm:inline">Eksportuoti CSV</span>
+                            </Button>
+                        )}
                     </div>
 
+                    {/* Day mode → the live daily timeline. Any multi-day range → the same view
+                        aggregated over [start, end] (summary cards, sort filters, finished tasks). */}
                     {reportPeriod === 'day' ? (
                         <DailyStatistics
                             currentUser={currentUser}
@@ -1062,30 +1135,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             canExport={canExport}
                         />
                     ) : (
-                        <>
-                            <div className="flex justify-end">
-                                <Button
-                                    variant="success"
-                                    icon={Download}
-                                    onClick={handleExportHoursCSV}
-                                    disabled={loading || workData.length === 0}
-                                >
-                                    Eksportuoti CSV
-                                </Button>
-                            </div>
-
-                            {/* The detailed period view reuses the day view, aggregated over the
-                                whole span: same summary cards, the Pagal laiką/Pagal būseną sort
-                                filters, and the finished-task list — computed for [start, end]. */}
-                            <DailyStatistics
-                                currentUser={currentUser}
-                                userRole={userRole}
-                                users={users}
-                                canExport={canExport}
-                                dateRange={dateRange}
-                            />
-
-                        </>
+                        <DailyStatistics
+                            currentUser={currentUser}
+                            userRole={userRole}
+                            users={users}
+                            canExport={canExport}
+                            dateRange={dateRange}
+                        />
                     )}
                 </div>
             )}

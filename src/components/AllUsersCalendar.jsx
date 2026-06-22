@@ -208,28 +208,31 @@ export default function AllUsersCalendar() {
 
             {/* Timeline Area — desktop only (md+). On phones, data is cards, never an h-scroll timeline (§9). */}
             <div className="hidden md:flex flex-1 overflow-auto relative flex-col">
-                <div className="relative flex flex-col min-w-full px-4">
-                    {/* Time Scale Header */}
-                    <div className="flex border-b border-line bg-surface-card sticky top-0 z-20 h-10">
-                        <div className="w-full relative">
-                            {hours.map((hour, i) => (
-                                <div
+                {/* flex-1 makes the track fill the full card height so the hour grid lines reach
+                    the bottom of the box even when only a few shifts are scheduled. */}
+                <div className="relative flex flex-col min-w-full px-4 flex-1">
+                    {/* Time Scale Header — hour labels only, aligned to the body grid lines below.
+                        First/last labels are edge-anchored so 7:00 / 22:00 never clip at the card
+                        edges; the rest are centered on their grid line. */}
+                    <div className="relative h-8 border-b border-line bg-surface-card sticky top-0 z-20">
+                        {hours.map((hour, i) => {
+                            const left = (i / TOTAL_HOURS) * 100;
+                            const shiftX = i === 0 ? '0' : i === TOTAL_HOURS ? '-100%' : '-50%';
+                            return (
+                                <span
                                     key={hour}
-                                    className="absolute top-0 bottom-0 border-l border-line"
-                                    style={{
-                                        left: `${(i / TOTAL_HOURS) * 100}%`
-                                    }}
+                                    className="absolute top-1/2 text-caption text-ink-muted font-medium tabular-nums whitespace-nowrap"
+                                    style={{ left: `${left}%`, transform: `translate(${shiftX}, -50%)` }}
                                 >
-                                    <span className="absolute -top-1 left-0 -translate-x-1/2 text-caption text-ink-muted font-medium">
-                                        {hour}:00
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                                    {hour}:00
+                                </span>
+                            );
+                        })}
                     </div>
 
-                    {/* Grid Body */}
-                    <div className="flex-1 relative mt-2">
+                    {/* Grid Body — fills the remaining height; grid lines run from just under the
+                        header to the bottom of the card. */}
+                    <div className="flex-1 relative">
                         {/* Vertical Grid Lines Background */}
                         <div className="absolute inset-0 z-0">
                             {hours.map((hour, i) => (

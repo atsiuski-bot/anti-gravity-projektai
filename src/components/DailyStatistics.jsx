@@ -5,7 +5,11 @@ import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekda
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
-import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
+import PriorityBadge from './task/PriorityBadge';
+import DeletedBadge from './task/DeletedBadge';
+import TaskStatusPill from './task/TaskStatusPill';
+import TimeChangedWarning from './task/TimeChangedWarning';
+import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
 import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, Zap, MessageSquare, Check, Filter, RotateCcw, X, Pencil } from 'lucide-react';
@@ -15,6 +19,7 @@ import TaskHistory from './TaskHistory';
 import SessionTypeIcon from './SessionTypeIcon';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
+import Modal from './ui/Modal';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
@@ -22,8 +27,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const { userData } = useAuth();
     const scoped = isScopedManager(userData);
     const scopeUid = currentUser?.uid;
-    // Managers can see everyone, Workers only themselves
-    const [selectedUserId, setSelectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
+    // Managers see the whole team here; workers see only themselves. The per-member picker was
+    // removed (individual drill-down moves to the team calendar), so this is fixed at mount and
+    // never changes — no setter.
+    const [selectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
     const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
     const [, setLoading] = useState(false);
 
@@ -63,6 +70,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // Restore confirmation (replaces window.confirm — §8)
     const [restoreTarget, setRestoreTarget] = useState(null);
     const [restoring, setRestoring] = useState(false);
+
+    // Per-worker drill-down: clicking a row in the team "Darbo valandos" summary opens a
+    // modal listing everything that worker touched that day — both finished work and the
+    // session still running — without forcing the manager to switch the user filter.
+    const [workerDetail, setWorkerDetail] = useState(null); // { userId, name } | null
 
     // Calculate previous/next day
     const handleDateChange = (offset) => {
@@ -499,6 +511,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
             return {
                 id: s.id,
+                taskId: s.taskId,
                 type: 'session',
                 startTime: s.startTime,
                 endTime: s.endTime,
@@ -506,6 +519,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 duration: s.durationMinutes,
                 userId: resolveUserId(s),
                 userName: resolveUserName(s) || 'Nežinomas',
+                isActive: !!s.isActive,
                 isSystemTask: s.isSystemTask || (s.taskId && String(s.taskId).startsWith('call_')),
                 isQuickWork: s.isQuickWork || (s.taskId && String(s.taskId).startsWith('quick_'))
             };
@@ -868,7 +882,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const weekday = getLithuanianWeekday(selectedDate);
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {actionError && (
                 <div
                     role="alert"
@@ -887,6 +901,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {/* Header Controls — kept to a single compact row on every viewport (no column
                 stacking on mobile) so the date stepper + filters take minimal vertical space. */}
             <div className="bg-surface-card p-2 rounded-card shadow-sm border border-line flex flex-row flex-wrap gap-2 items-center justify-between">
+
+                {/* Left group — date control plus, on desktop, the day's totals inline, so on
+                    md+ the whole summary collapses into this single toolbar row. */}
+                <div className="flex flex-wrap items-center gap-2 md:gap-4">
 
                 {/* Day mode: a day stepper. Range mode: a static span label — the period is
                     chosen by the picker in the parent (Reports), so there is nothing to step. */}
@@ -914,29 +932,41 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     </div>
                 )}
 
-                {(isManagerRole(userRole)) && users.length > 0 && (
-                    <div className="relative">
-                        <select
-                            value={selectedUserId}
-                            onChange={(e) => setSelectedUserId(e.target.value)}
-                            aria-label="Vykdytojas"
-                            className="pl-8 pr-3 py-1.5 border border-line rounded-control focus:ring-2 focus:ring-brand text-caption bg-surface-card"
-                        >
-                            <option value="all">Už visą komandą</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>
-                                    {formatDisplayName(u.displayName || u.email)}
-                                </option>
-                            ))}
-                        </select>
-                        <User className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" />
-                    </div>
-                )}
+                {/* Desktop only: the day's totals inline in the toolbar row (mobile keeps the
+                    dedicated summary card below). Merges the former four-card grid into one line. */}
+                <div className="hidden md:flex items-center gap-4 flex-wrap">
+                    {selectedUserId !== 'all' && !isRange && (
+                        <span className="flex items-center gap-1.5 whitespace-nowrap">
+                            <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                            <span className="text-caption text-ink-muted">Pradžia/Pabaiga</span>
+                            <span className="text-body font-bold text-ink-strong tabular-nums">
+                                {firstActivity ? formatTime(firstActivity) : '--:--'}–{lastActivity ? formatTime(lastActivity) : '--:--'}
+                            </span>
+                        </span>
+                    )}
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-ink-muted">Darbas</span>
+                        <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Coffee className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-ink-muted">Pertraukos</span>
+                        <span className="text-body font-bold text-amber-600 tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Zap className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-brand">Viso</span>
+                        <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
+                    </span>
+                </div>
+                </div>
 
-                {/* Sort filter — a vertical two-option segmented control (Pagal laiką above
-                    Pagal būseną) rather than a dropdown, so both choices are visible at once. */}
+                {/* Sort filter — a horizontal two-option segmented control (Pagal laiką |
+                    Pagal būseną) so both choices stay on one row and the toolbar keeps to a
+                    single line. */}
                 <div
-                    className="flex flex-col bg-surface-sunken rounded-control overflow-hidden border border-line"
+                    className="flex bg-surface-sunken rounded-control overflow-hidden border border-line"
                     role="group"
                     aria-label="Rūšiuoti"
                 >
@@ -945,7 +975,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         onClick={() => setSortBy('time')}
                         aria-pressed={sortBy === 'time'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -953,13 +983,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         Pagal laiką
                     </button>
-                    <div className="h-px bg-line" aria-hidden="true" />
+                    <div className="w-px bg-line" aria-hidden="true" />
                     <button
                         type="button"
                         onClick={() => setSortBy('status')}
                         aria-pressed={sortBy === 'status'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -1018,64 +1048,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             </div>
 
-            {/* Desktop: the spacious four-card grid (unchanged). */}
-            <div className="hidden md:grid grid-cols-4 gap-4">
-                {selectedUserId !== 'all' && !isRange && (
-                    <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                        <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                            <Clock className="w-4 h-4" />
-                            Dienos Pradžia/Pabaiga
-                        </div>
-                        <div className="text-body-lg font-semibold text-ink-strong">
-                            {firstActivity ? formatTime(firstActivity) : '--:--'} - {lastActivity ? formatTime(lastActivity) : '--:--'}
-                        </div>
-                        <div className="text-caption text-ink-muted mt-1">
-                            Pagal pirmą/paskutinį įrašą
-                        </div>
-                    </div>
-                )}
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                        <Clock className="w-4 h-4" />
-                        Darbo laikas
-                    </div>
-                    <div className="text-h2 font-bold text-ink-strong">
-                        {formatMinutesToTimeString(totalWorkedMinutes)}
-                    </div>
-                </div>
-
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                        <Coffee className="w-4 h-4" />
-                        Pertraukos
-                    </div>
-                    <div className="text-h2 font-bold text-amber-600">
-                        {formatMinutesToTimeString(totalBreakMinutes)}
-                    </div>
-                    <div className="text-caption text-ink-muted mt-1">
-                        Viso pertraukų laikas
-                    </div>
-                </div>
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-brand text-body font-medium">
-                        <Zap className="w-4 h-4" />
-                        Viso (D+P)
-                    </div>
-                    <div className="text-h2 font-bold text-brand">
-                        {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
-                    </div>
-                    <div className="text-caption text-ink-muted mt-1">
-                        Darbas + Pertraukos
-                    </div>
-                </div>
-
-
-
-            </div>
-
             {/* Timeline Table or Worker Summary */}
             <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
                 <div className="px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
@@ -1091,8 +1063,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         {/* Mobile: one card per worker — never a horizontal table on a phone (§9) */}
                         <ul className="divide-y divide-line md:hidden">
                             {workerList.map(([userId, summary]) => (
-                                <li key={userId} className="p-4">
-                                    <p className="text-body font-semibold text-ink-strong">{summary.name}</p>
+                                <li
+                                    key={userId}
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label={`Peržiūrėti ${summary.name} dienos užduotis`}
+                                    onClick={() => setWorkerDetail({ userId, name: summary.name })}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setWorkerDetail({ userId, name: summary.name }); } }}
+                                    className="p-4 cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                >
+                                    <p className="flex items-center gap-1.5 text-body font-semibold text-ink-strong">
+                                        {summary.name}
+                                        <ChevronRight className="w-4 h-4 text-ink-muted" aria-hidden="true" />
+                                    </p>
                                     <p className="mt-0.5 font-mono text-caption text-ink-muted">
                                         {formatTime(summary.earliestStart)} – {formatTime(summary.latestEnd)}
                                     </p>
@@ -1131,24 +1114,37 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                             </li>
                         </ul>
 
-                        {/* Desktop: dense team summary table */}
+                        {/* Desktop: dense team summary table. Every cell uses the same px-4 py-3
+                            padding (header included) so the columns line up — a leftover md:px-2
+                            override on the header only made it drift out of alignment. */}
                         <div className="hidden overflow-x-auto md:block">
-                        <table className="w-full md:w-auto divide-y divide-line text-sm">
+                        <table className="w-full divide-y divide-line text-sm">
                             <thead className="bg-surface-sunken">
                                 <tr>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-ink-muted">Vykdytojas</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-ink-muted">Pradžia</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-ink-muted">Pabaiga</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-muted">Pertraukos</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-muted">Užduotims</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
+                                    <th scope="col" className="px-4 py-3 text-left font-medium text-ink-muted">Vykdytojas</th>
+                                    <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pradžia</th>
+                                    <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pabaiga</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Pertraukos</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Užduotims</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
                                 {workerList.map(([userId, summary]) => (
-                                    <tr key={userId} className="hover:bg-surface-sunken">
+                                    <tr
+                                        key={userId}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={`Peržiūrėti ${summary.name} dienos užduotis`}
+                                        onClick={() => setWorkerDetail({ userId, name: summary.name })}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setWorkerDetail({ userId, name: summary.name }); } }}
+                                        className="cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                    >
                                         <td className="px-4 py-3 text-ink-strong font-medium">
-                                            {summary.name}
+                                            <span className="inline-flex items-center gap-1.5">
+                                                {summary.name}
+                                                <ChevronRight className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
+                                            </span>
                                         </td>
                                         <td className="px-4 py-3 text-center text-ink-muted font-mono text-sm">
                                             {formatTime(summary.earliestStart)}
@@ -1162,7 +1158,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         <td className="px-4 py-3 text-right text-indigo-600 font-mono font-semibold">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes)}
                                         </td>
-                                        <td className="px-4 py-3 md:px-2 md:py-2 text-right text-ink-strong font-mono font-bold bg-blue-50/10">
+                                        <td className="px-4 py-3 text-right text-ink-strong font-mono font-bold bg-blue-50/10">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes + summary.breakMinutes)}
                                         </td>
                                     </tr>
@@ -1171,13 +1167,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <td colSpan="3" className="px-4 py-3 text-right text-ink-strong">
                                         Viso komanda:
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-amber-700">
+                                    <td className="px-4 py-3 text-right text-amber-700">
                                         {formatMinutesToTimeString(totalBreakMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-indigo-700">
+                                    <td className="px-4 py-3 text-right text-indigo-700">
                                         {formatMinutesToTimeString(totalWorkedMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-ink-strong font-bold bg-blue-50/30">
+                                    <td className="px-4 py-3 text-right text-ink-strong font-bold bg-blue-50/30">
                                         {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
                                     </td>
                                 </tr>
@@ -1363,7 +1359,118 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     onCancel={() => setRestoreTarget(null)}
                 />
             )}
+
+            {/* Per-worker drill-down: every work segment that worker logged on the selected day,
+                finished or still running. Sourced from the same timeline that feeds the summary
+                row, so the numbers always reconcile. */}
+            {workerDetail && (
+                <WorkerDayDetailModal
+                    worker={workerDetail}
+                    date={selectedDate}
+                    items={combinedTimelineItems.filter(i => i.userId === workerDetail.userId)}
+                    tasks={finishedTasks}
+                    onClose={() => setWorkerDetail(null)}
+                />
+            )}
         </div>
+    );
+}
+
+// Worker day drill-down — chronological list of everything one worker did on the selected
+// day: tasks and quick-work/calls (finished or still running) plus breaks. Opened from a row
+// in the team "Darbo valandos" summary so a manager never has to switch the user filter just
+// to inspect one person.
+function WorkerDayDetailModal({ worker, date, items, tasks = [], onClose }) {
+    const workItems = items.filter(i => i.type !== 'break' && i.type !== 'inactive');
+    const breakItems = items.filter(i => i.type === 'break');
+
+    // Map a timeline item back to its task so each row can show the same confirmation status
+    // (Patvirtinta / Nepatvirtinta / Ištrinta) the task carries everywhere else. Sessions key
+    // by taskId; manual-task items key by their own id (which IS the task id).
+    const taskById = new Map(tasks.map(t => [t.id, t]));
+    const taskForItem = (item) => taskById.get(item.taskId) || taskById.get(item.id) || null;
+
+    return (
+        <Modal
+            open
+            onClose={onClose}
+            size="lg"
+            title={worker.name}
+        >
+            <p className="-mt-2 mb-4 text-caption text-ink-muted">
+                {date} · {workItems.length} {workItems.length === 1 ? 'įrašas' : 'įrašai'}
+            </p>
+
+            {items.length === 0 ? (
+                <p className="py-6 text-center text-ink-muted">Šią dieną įrašų nefiksuota.</p>
+            ) : (
+                <div className="space-y-4">
+                    <ul className="divide-y divide-line rounded-control border border-line overflow-hidden">
+                        {workItems.map((item, idx) => {
+                            const task = taskForItem(item);
+                            const isDeleted = task && (task.isDeleted || task.status === 'deleted');
+                            return (
+                                <li key={item.id || idx} className="flex items-start justify-between gap-3 p-3">
+                                    <div className="min-w-0">
+                                        <div className="flex items-center gap-1.5 text-body text-ink-strong">
+                                            <SessionTypeIcon
+                                                type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')}
+                                                className="w-3.5 h-3.5 flex-shrink-0"
+                                                aria-hidden="true"
+                                            />
+                                            <span className="break-words font-medium">{item.title || 'Darbas'}</span>
+                                        </div>
+                                        <p className="mt-0.5 font-mono text-caption text-ink-muted">
+                                            {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                                        </p>
+                                        {/* Status: running work reads "Vykdoma"; finished work shows the same
+                                            Patvirtinta / Nepatvirtinta / Ištrinta the task carries elsewhere. */}
+                                        <div className="mt-1">
+                                            {item.isActive ? (
+                                                <span className="inline-block rounded bg-feedback-success/10 px-1.5 py-0.5 text-caption font-semibold text-feedback-success">
+                                                    Vykdoma
+                                                </span>
+                                            ) : isDeleted ? (
+                                                <DeletedBadge />
+                                            ) : task ? (
+                                                <TaskStatusPill task={task} />
+                                            ) : null}
+                                        </div>
+                                    </div>
+                                    <span className="font-mono text-body font-bold text-brand whitespace-nowrap">
+                                        {formatMinutesToTimeString(item.duration)}
+                                    </span>
+                                </li>
+                            );
+                        })}
+                        {workItems.length === 0 && (
+                            <li className="p-3 text-center text-caption text-ink-muted">Užduočių nefiksuota.</li>
+                        )}
+                    </ul>
+
+                    {breakItems.length > 0 && (
+                        <div>
+                            <h3 className="mb-1.5 flex items-center gap-1.5 text-caption font-semibold text-ink-muted">
+                                <Coffee className="w-3.5 h-3.5" aria-hidden="true" />
+                                Pertraukos
+                            </h3>
+                            <ul className="divide-y divide-line rounded-control border border-line overflow-hidden">
+                                {breakItems.map((item, idx) => (
+                                    <li key={item.id || idx} className="flex items-center justify-between gap-3 p-3 text-amber-700">
+                                        <span className="font-mono text-caption">
+                                            {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                                        </span>
+                                        <span className="font-mono text-body font-bold whitespace-nowrap">
+                                            {formatMinutesToTimeString(item.duration)}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            )}
+        </Modal>
     );
 }
 
@@ -1406,22 +1513,10 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                     )}>
                         {task.title}
                     </div>
-                    {task.isDeleted && (
-                        <span className="text-caption font-bold text-feedback-danger uppercase bg-feedback-danger/10 px-1 py-0.5 rounded">Ištrinta</span>
-                    )}
+                    {task.isDeleted && <DeletedBadge />}
                 </div>
 
-                <span
-                    className={clsx(
-                        "px-1.5 py-0.5 text-caption font-bold rounded-md border border-black/5 uppercase whitespace-nowrap ml-2"
-                    )}
-                    style={{
-                        backgroundColor: getPriorityColor(task.priority),
-                        color: getPriorityTextColor(task.priority)
-                    }}
-                >
-                    {getPriorityLabel(task.priority)}
-                </span>
+                <PriorityBadge priority={task.priority} className="ml-2" />
             </div>
 
             {task.description && (
@@ -1475,21 +1570,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                             )}
                         </span>
                     )}
-                    {task.timeChanged && (
-                        <span className="block mt-0.5">
-                            <span className="block text-feedback-danger font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</span>
-                            {Number.isFinite(task.timeChangedFrom) && Number.isFinite(task.timeChangedTo) && (
-                                <span className="block text-caption text-ink-muted font-sans normal-case font-normal">
-                                    {formatMinutesToTimeString(task.timeChangedFrom)} → {formatMinutesToTimeString(task.timeChangedTo)}
-                                </span>
-                            )}
-                            {task.timeChangedReason && (
-                                <span className="block text-caption text-ink-muted font-sans normal-case font-normal italic break-words">
-                                    „{task.timeChangedReason}“{task.timeChangedByName ? ` — ${formatDisplayName(task.timeChangedByName)}` : ''}
-                                </span>
-                            )}
-                        </span>
-                    )}
+                    <TimeChangedWarning task={task} />
                 </div>
                 {task.deadline && (
                     <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
@@ -1651,177 +1732,112 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                     const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '—');
 
                                     return (
-                                        <tr
+                                        <TaskRow
                                             key={task.id}
-                                            className={clsx(
+                                            task={task}
+                                            rowClassName={clsx(
                                                 "group transition-colors",
                                                 isConfirmed ? "bg-surface-sunken" : "bg-surface-card hover:bg-surface-sunken"
                                             )}
-                                        >
-                                            {(isManagerRole(userRole)) && (
-                                                <td className="px-2 py-2 text-center">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={isConfirmed}
-                                                        onChange={() => onToggleConfirm(task)}
-                                                        disabled={task.archivedAt}
-                                                        aria-label="Patvirtinti atlikimą"
-                                                        className="w-4 h-4 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1 cursor-pointer"
-                                                    />
-                                                </td>
-                                            )}
-                                            <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
-                                                <div
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    aria-expanded={expandedTasks.has(task.id)}
-                                                    onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
-                                                    className={clsx(
-                                                    "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                                    (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
-                                                )}>
-                                                    {task.title}
-                                                </div>
-                                                {task.deadline && (
-                                                    <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                                                        <Calendar className="w-2.5 h-2.5" />
-                                                        {task.deadline}
+                                            showConfirm={isManagerRole(userRole)}
+                                            confirmChecked={isConfirmed}
+                                            confirmDisabled={!!task.archivedAt}
+                                            onToggleConfirm={onToggleConfirm}
+                                            confirmAriaLabel="Patvirtinti atlikimą"
+                                            assigneeName={userName}
+                                            showCompletedAt
+                                            completedAtCell={task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                                            commentCount={task.comments?.length || 0}
+                                            onOpenComments={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
+                                            titleCell={
+                                                <>
+                                                    <div
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        aria-expanded={expandedTasks.has(task.id)}
+                                                        onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
+                                                        className={clsx(
+                                                        "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                        (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                                    )}>
+                                                        {task.title}
                                                     </div>
-                                                )}
-                                                <div className={clsx(
-                                                    "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
-                                                    expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                                )}>
-                                                    <SessionTypeIcon
-                                                        type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
-                                                        className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
-                                                    />
-                                                    {task.description}
-                                                </div>
-                                                {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                                    <div className="mt-2 pl-4 border-l-2 border-line">
-                                                        <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
-                                                        {task.comments.map((comment, idx) => (
-                                                            <div key={idx} className="text-caption text-ink-muted mb-1">
-                                                                <span className="font-medium">{comment.user}:</span> {comment.text}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                                {(task.managerName || task.creatorName) && (
-                                                    <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
-                                                        <User className="w-2.5 h-2.5" />
-                                                        <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                <span className="px-2 py-1 rounded-full text-caption font-medium bg-surface-sunken text-ink border border-line">
-                                                    {formatDisplayName(userName).split(' ')[0]}
-                                                </span>
-                                            </td>
-                                            <td className="px-1 py-2 text-right text-ink-strong font-mono text-sm whitespace-nowrap">
-                                                {editingTimeTaskId === task.id ? (
-                                                    <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
-                                                        <div className="flex items-center gap-1">
-                                                            <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h
-                                                            <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                                                    {task.deadline && (
+                                                        <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                            <Calendar className="w-2.5 h-2.5" />
+                                                            {task.deadline}
                                                         </div>
-                                                        <input
-                                                            type="text"
-                                                            value={editReason}
-                                                            onChange={(e) => setEditReason(e.target.value)}
-                                                            aria-label="Laiko keitimo priežastis"
-                                                            placeholder="Keitimo priežastis (privaloma)"
-                                                            className="w-44 px-1.5 py-0.5 border border-line rounded text-caption font-sans text-left"
-                                                        />
-                                                        <div className="flex items-center gap-1">
-                                                            <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={() => saveTimeEdit(task)} />
-                                                            <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => { setEditingTimeTaskId(null); setEditReason(''); }} />
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <>
-                                                        <span className="text-brand">{task.estimatedTime || '-'}</span>
-                                                        <span className="text-ink-muted mx-1">/</span>
-                                                        <span>{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
-                                                        {canEditTime && (
-                                                            <IconButton
-                                                                icon={Pencil}
-                                                                label="Keisti darbo laiką"
-                                                                title="Keisti laiką"
-                                                                className="ml-1 align-middle"
-                                                                onClick={(e) => { e.stopPropagation(); startTimeEdit(task); }}
-                                                            />
-                                                        )}
-                                                    </>
-                                                )}
-                                                {task.timeChanged && (
-                                                    <div className="mt-0.5">
-                                                        <div className="text-feedback-danger font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</div>
-                                                        {Number.isFinite(task.timeChangedFrom) && Number.isFinite(task.timeChangedTo) && (
-                                                            <div className="text-caption text-ink-muted font-sans normal-case font-normal">
-                                                                {formatMinutesToTimeString(task.timeChangedFrom)} → {formatMinutesToTimeString(task.timeChangedTo)}
-                                                            </div>
-                                                        )}
-                                                        {task.timeChangedReason && (
-                                                            <div className="text-caption text-ink-muted font-sans normal-case font-normal italic break-words max-w-[12rem] ml-auto">
-                                                                „{task.timeChangedReason}“{task.timeChangedByName ? ` — ${formatDisplayName(task.timeChangedByName)}` : ''}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap text-caption text-ink-muted">
-                                                {task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                <span
-                                                    className={clsx(
-                                                        "px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md border border-black/5 uppercase"
                                                     )}
-                                                    style={{
-                                                        backgroundColor: getPriorityColor(task.priority),
-                                                        color: getPriorityTextColor(task.priority)
-                                                    }}
-                                                >
-                                                    {getPriorityLabel(task.priority)}
-                                                </span>
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                {(task.isDeleted || task.status === 'deleted') ? (
-                                                    <span className="px-2 py-0.5 rounded text-caption font-semibold bg-feedback-danger/10 text-feedback-danger border border-feedback-danger">
-                                                        Ištrinta
-                                                    </span>
-                                                ) : isConfirmed ? (
-                                                    <span className="px-2 py-0.5 rounded text-caption font-semibold bg-feedback-success/10 text-feedback-success border border-feedback-success">
-                                                        Patvirt.
-                                                    </span>
-                                                ) : (
-                                                    <span className="px-2 py-0.5 rounded text-caption font-medium bg-surface-sunken text-ink">
-                                                        Nepatv.
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className="px-1 py-2 text-center whitespace-nowrap">
-                                                <IconButton
-                                                    label={`Komentarai (${task.comments?.length || 0})`}
-                                                    title="Komentarai"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setActiveModal({ type: 'comments', taskId: task.id, task: task });
-                                                    }}
-                                                >
-                                                    <span className="inline-flex items-center">
-                                                        <MessageSquare className="w-4 h-4" aria-hidden="true" />
-                                                        {task.comments?.length > 0 && (
-                                                            <span className="ml-0.5 text-caption font-bold">{task.comments.length}</span>
-                                                        )}
-                                                    </span>
-                                                </IconButton>
-                                            </td>
-                                            <td className="px-1 py-2 text-center whitespace-nowrap">
+                                                    <div className={clsx(
+                                                        "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
+                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
+                                                    )}>
+                                                        <SessionTypeIcon
+                                                            type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
+                                                            className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+                                                        />
+                                                        {task.description}
+                                                    </div>
+                                                    {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
+                                                        <div className="mt-2 pl-4 border-l-2 border-line">
+                                                            <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
+                                                            {task.comments.map((comment, idx) => (
+                                                                <div key={idx} className="text-caption text-ink-muted mb-1">
+                                                                    <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {(task.managerName || task.creatorName) && (
+                                                        <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
+                                                            <User className="w-2.5 h-2.5" />
+                                                            <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            }
+                                            timeCell={
+                                                <>
+                                                    {editingTimeTaskId === task.id ? (
+                                                        <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
+                                                            <div className="flex items-center gap-1">
+                                                                <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h
+                                                                <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                                                            </div>
+                                                            <input
+                                                                type="text"
+                                                                value={editReason}
+                                                                onChange={(e) => setEditReason(e.target.value)}
+                                                                aria-label="Laiko keitimo priežastis"
+                                                                placeholder="Keitimo priežastis (privaloma)"
+                                                                className="w-44 px-1.5 py-0.5 border border-line rounded text-caption font-sans text-left"
+                                                            />
+                                                            <div className="flex items-center gap-1">
+                                                                <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={() => saveTimeEdit(task)} />
+                                                                <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => { setEditingTimeTaskId(null); setEditReason(''); }} />
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <span className="text-brand">{task.estimatedTime || '-'}</span>
+                                                            <span className="text-ink-muted mx-1">/</span>
+                                                            <span>{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
+                                                            {canEditTime && (
+                                                                <IconButton
+                                                                    icon={Pencil}
+                                                                    label="Keisti darbo laiką"
+                                                                    title="Keisti laiką"
+                                                                    className="ml-1 align-middle"
+                                                                    onClick={(e) => { e.stopPropagation(); startTimeEdit(task); }}
+                                                                />
+                                                            )}
+                                                        </>
+                                                    )}
+                                                    <TimeChangedWarning task={task} alignEnd />
+                                                </>
+                                            }
+                                            actions={
                                                 <IconButton
                                                     icon={RotateCcw}
                                                     label="Grąžinti užduotį"
@@ -1832,8 +1848,8 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         onRestore(task);
                                                     }}
                                                 />
-                                            </td>
-                                        </tr>
+                                            }
+                                        />
                                     );
                                 })
                             )}
