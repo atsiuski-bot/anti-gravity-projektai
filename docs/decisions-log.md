@@ -14,6 +14,18 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-06-22** — **Unified pop-up presentation on one shell.** Every informational pop-up /
+  dialog renders through the canonical `Modal`: the scrim dims the whole viewport and the
+  dialog is a content-sized card **centred over it**, including on phones, where a pop-up must
+  appear centred over the full screen rather than anchored to a trigger or corner (it is *not*
+  stretched edge-to-edge). The two worker time pop-ups (`TaskTimeWarningPopup`,
+  `TaskTimeLimitPopup`) — previously hand-rolled `fixed inset-0` overlays with their own scrim
+  opacities (`bg-black/40` vs `/50`), focus-traps and z-values — were folded onto `Modal` via
+  two new escape hatches: `bare` (caller-owned full-bleed chrome) and `level="top"` (alarm
+  above any open modal). `InfoPopover` keeps its compact anchored bubble on `≥sm` but opens as
+  a centred `Modal` over the dimmed screen on phones (so it is no longer a bubble that can clip
+  off the edge). Toast stays a transient top notification (already on the shared tokens).
+  Rationale + the design rule live in `DESIGN_SYSTEM.md` §8.
 - **2026-06-20** — Retired the legacy **"Viduramžiai.LT"** brand. The product name is now
   **WORKZ** only; the old name was removed from `index.html`, `vite.config.js`, and
   `README.md`, and must not be reintroduced anywhere in code or copy.
