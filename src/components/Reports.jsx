@@ -316,6 +316,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
             plannedSnap.docs.forEach(d => {
                 const wh = d.data();
                 if (!wh.start || !wh.end) return;
+                // Approved leave is time OFF, not planned work: counting an "Atostogos" slot
+                // toward plannedMinutes makes a holiday week read as a planned shortfall against
+                // a denominator the worker was never expected to fill. Exclude it from the plan.
+                if (wh.isVacation) return;
                 const uid = wh.userId;
                 if (!uid) return;
                 if (!isManager && uid !== currentUser.uid) return;
@@ -323,9 +327,11 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 if (dayStr < startStr || dayStr > endStr) return;
                 const mins = (new Date(wh.end).getTime() - new Date(wh.start).getTime()) / (1000 * 60);
                 if (!Number.isFinite(mins) || mins <= 0) return;
-                if (userMap[uid]) {
-                    userMap[uid].plannedMinutes += mins;
-                }
+                // Seed the row from the plan too: a worker who was scheduled but logged no
+                // session in the span must still surface (worked 00:00, a real plan, a visible
+                // negative Skirtumas) instead of vanishing — the mirror of the surplus case.
+                initUser(uid);
+                userMap[uid].plannedMinutes += mins;
             });
             Object.values(userMap).forEach(u => { u.plannedMinutes = Math.round(u.plannedMinutes); });
 
