@@ -4,6 +4,7 @@ import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight
 import { formatDisplayName } from '../utils/formatters';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
+import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -135,14 +136,14 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
                     )}
                 </div>
 
-                <form onSubmit={handleSubmit} className="mt-auto pt-4 border-t border-line flex gap-2">
-                    <input
-                        type="text"
+                <form onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="mt-auto pt-4 border-t border-line flex items-end gap-2">
+                    <textarea
                         value={newComment}
                         onChange={(e) => setNewComment(e.target.value)}
                         placeholder="Rašyti komentarą..."
                         aria-label="Rašyti komentarą"
-                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
+                        rows={2}
+                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm resize-y"
                         disabled={isSubmitting}
                     />
                     <button
@@ -245,7 +246,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                 </ul>
 
                 {canEdit && (
-                    <form onSubmit={handleAdd} className="mt-auto flex gap-2 border-t border-line pt-4">
+                    <form onSubmit={handleAdd} onKeyDown={preventEnterSubmit} className="mt-auto flex gap-2 border-t border-line pt-4">
                         <input
                             type="text"
                             value={newItem}
@@ -331,7 +332,7 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                     )}
                 </div>
 
-                <form onSubmit={handleSubmit} className="mt-auto pt-4 border-t border-line flex flex-col gap-3">
+                <form onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="mt-auto pt-4 border-t border-line flex flex-col gap-3">
                     <h4 className="text-sm font-semibold text-ink">Pridėti naują įrašą</h4>
                     <div className="flex flex-wrap gap-2">
                         <input

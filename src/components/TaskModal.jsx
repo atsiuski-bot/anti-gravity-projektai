@@ -13,6 +13,7 @@ import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { TASK_TAGS } from '../utils/taskUtils';
+import { preventEnterSubmit } from '../utils/formUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
@@ -768,7 +769,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             </div>
                         </div>
                     ) : (
-                        <form id="task-form" onSubmit={handleSubmit} className="space-y-5">
+                        <form id="task-form" onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="space-y-5">
                             {/* ─────────────── Spine: the few fields set on every task ─────────────── */}
                             {/* Title — label removed; the word "Pavadinimas" now lives in the
                                 placeholder to save vertical space. aria-label keeps it accessible. */}
@@ -1009,7 +1010,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                     onChange={(e) => setNewChecklistItem(e.target.value)}
                                                     placeholder="Pridėti punktą..."
                                                     className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
-                                                    onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addChecklistItemLocal())}
                                                 />
                                                 <IconButton icon={Plus} label="Pridėti punktą" variant="primary" onClick={addChecklistItemLocal} />
                                             </div>
@@ -1077,7 +1077,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 aria-label="Nuoroda"
                                                 inputMode="url"
                                                 className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
-                                                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addLink())}
                                             />
                                             <IconButton
                                                 icon={Plus}
@@ -1122,14 +1121,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
                                     {/* Comment */}
                                     <AdvancedSection icon={MessageSquare} label="Komentaras" count={formData.comments?.length || 0} open={expanded.comment} onToggle={() => toggleSection('comment')}>
-                                        <div className="flex gap-2">
-                                            <input
-                                                type="text"
+                                        <div className="flex items-end gap-2">
+                                            <textarea
                                                 value={newComment}
                                                 onChange={(e) => setNewComment(e.target.value)}
                                                 placeholder="Rašyti komentarą..."
                                                 aria-label="Rašyti komentarą"
-                                                className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
+                                                rows={2}
+                                                className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base resize-y"
                                             />
                                             <button type="button" onClick={addComment} className="min-h-touch bg-blue-50 text-blue-600 px-4 rounded-lg hover:bg-blue-100 font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
                                                 Skelbti
