@@ -18,6 +18,7 @@ import { TASK_TAGS } from '../utils/taskUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import DeletedBadge from './task/DeletedBadge';
@@ -716,18 +717,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     </div>
                     <div className="flex items-center gap-1 min-w-0">
                         {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
-                            <select
-                                onChange={(e) => handleLoadTemplate(e.target.value)}
-                                aria-label="Užkrauti šabloną"
-                                className="min-w-0 max-w-[10rem] truncate px-3 py-1 border border-line rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand"
+                            <Select
                                 value=""
-                            >
-                                <option value="">Užkrauti šabloną...</option>
-                                <option value="" disabled>Šablonai</option>
-                                {sortedTemplates.map(t => (
-                                    <option key={t.id} value={t.id}>{t.templateName}</option>
-                                ))}
-                            </select>
+                                onChange={handleLoadTemplate}
+                                options={sortedTemplates.map((t) => ({ value: t.id, label: t.templateName }))}
+                                label="Šablonai"
+                                placeholder="Užkrauti šabloną..."
+                                ariaLabel="Užkrauti šabloną"
+                                alwaysSheet
+                                className="min-w-0 max-w-[10rem]"
+                            />
                         )}
                         <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-1.5" />
                     </div>
@@ -891,38 +890,33 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     })()}
                                 </div>
                                 {(showTimeOther || (!!formData.estimatedTime && !COMMON_TIMES.includes(formData.estimatedTime))) && (
-                                    <select
+                                    <Select
                                         value={formData.estimatedTime}
-                                        onChange={(e) => setFormData({ ...formData, estimatedTime: e.target.value })}
+                                        onChange={(val) => setFormData({ ...formData, estimatedTime: val })}
                                         disabled={fieldsLocked}
-                                        aria-label="Planuojamas laikas (visi)"
-                                        className="mt-2 w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
-                                    >
-                                        <option value="" disabled>Planuojamas laikas...</option>
-                                        {ALL_TIMES.map((t) => (
-                                            <option key={t} value={t}>{t}</option>
-                                        ))}
-                                    </select>
+                                        options={ALL_TIMES.map((t) => ({ value: t, label: t }))}
+                                        label="Planuojamas laikas"
+                                        placeholder="Planuojamas laikas..."
+                                        ariaLabel="Planuojamas laikas (visi)"
+                                        alwaysSheet
+                                        className="mt-2"
+                                    />
                                 )}
                             </div>
 
                             {/* Worker (assignee) — managers choose; a worker sees themselves, locked. */}
                             <div>
                                 <span className="mb-1 block text-body font-medium text-ink">Vykdytojas</span>
-                                <select
+                                <Select
                                     value={formData.assignedUserId}
-                                    onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
+                                    onChange={(val) => setFormData({ ...formData, assignedUserId: val })}
                                     disabled={!isManager}
-                                    aria-label="Vykdytojas"
-                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
-                                >
-                                    <option value="">Priskirti vykdytoją...</option>
-                                    {assignableWorkers.map(worker => (
-                                        <option key={worker.id} value={worker.id}>
-                                            {formatDisplayName(worker.displayName || worker.email)}
-                                        </option>
-                                    ))}
-                                </select>
+                                    options={assignableWorkers.map((worker) => ({ value: worker.id, label: formatDisplayName(worker.displayName || worker.email) }))}
+                                    label="Vykdytojas"
+                                    placeholder="Priskirti vykdytoją..."
+                                    ariaLabel="Vykdytojas"
+                                    alwaysSheet
+                                />
                             </div>
 
                             {/* ─────────────── "Daugiau" — optional, collapsed by default ─────────────── */}
@@ -1090,20 +1084,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         />
 
                                         <span className={fieldLabel}>Vadovas</span>
-                                        <select
+                                        <Select
                                             value={formData.managerId}
-                                            onChange={(e) => setFormData({ ...formData, managerId: e.target.value })}
+                                            onChange={(val) => setFormData({ ...formData, managerId: val })}
                                             disabled={fieldsLocked}
-                                            aria-label="Vadovas"
-                                            className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
-                                        >
-                                            <option value="">Priskirti vadovą...</option>
-                                            {managers.map(manager => (
-                                                <option key={manager.id} value={manager.id}>
-                                                    {formatDisplayName(manager.displayName || manager.email)}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            options={managers.map((manager) => ({ value: manager.id, label: formatDisplayName(manager.displayName || manager.email) }))}
+                                            label="Vadovas"
+                                            placeholder="Priskirti vadovą..."
+                                            ariaLabel="Vadovas"
+                                            alwaysSheet
+                                        />
                                     </AdvancedSection>
 
                                     {/* Links + tag */}
@@ -1145,18 +1135,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         )}
 
                                         <span className={fieldLabel}>Žyma</span>
-                                        <select
+                                        <Select
                                             value={formData.tag || ''}
-                                            onChange={(e) => setFormData({ ...formData, tag: e.target.value })}
+                                            onChange={(val) => setFormData({ ...formData, tag: val })}
                                             disabled={fieldsLocked}
-                                            aria-label="Žyma"
-                                            className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
-                                        >
-                                            <option value="">Pasirinkti žymą...</option>
-                                            {TASK_TAGS.map(tag => (
-                                                <option key={tag} value={tag}>{tag}</option>
-                                            ))}
-                                        </select>
+                                            options={TASK_TAGS.map((tag) => ({ value: tag, label: tag }))}
+                                            label="Žyma"
+                                            placeholder="Pasirinkti žymą..."
+                                            ariaLabel="Žyma"
+                                            alwaysSheet
+                                        />
                                     </AdvancedSection>
 
                                     {/* Comment */}

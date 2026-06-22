@@ -16,6 +16,7 @@ import SessionTypeIcon from './SessionTypeIcon';
 import { addComment } from '../utils/commentActions';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
+import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
@@ -780,36 +781,32 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 {(isManagerOrAdmin && userId === 'all') && (
                     <div className="flex flex-col gap-1 min-w-[150px]">
                         <label className={FILTER_LABEL_CLASS}>Vykdytojas</label>
-                        <select
+                        <Select
                             value={filterUser}
-                            onChange={(e) => setFilterUser(e.target.value)}
-                            aria-label="Vykdytojas"
-                            className={SELECT_CLASS}
-                        >
-                            <option value="all">Visi</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>
-                                    {formatDisplayName(u.displayName || u.email)}
-                                </option>
-                            ))}
-                        </select>
+                            onChange={setFilterUser}
+                            options={[
+                                { value: 'all', label: 'Visi' },
+                                ...users.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) })),
+                            ]}
+                            label="Vykdytojas"
+                            ariaLabel="Filtruoti pagal vykdytoją"
+                        />
                     </div>
                 )}
 
                 {/* Tag Filter */}
                 <div className="flex flex-col gap-1 min-w-[120px]">
                     <label className={FILTER_LABEL_CLASS}>Žyma</label>
-                    <select
+                    <Select
                         value={filterTag}
-                        onChange={(e) => setFilterTag(e.target.value)}
-                        aria-label="Žyma"
-                        className={SELECT_CLASS}
-                    >
-                        <option value="all">Visos</option>
-                        {TASK_TAGS.map(tag => (
-                            <option key={tag} value={tag}>{tag}</option>
-                        ))}
-                    </select>
+                        onChange={setFilterTag}
+                        options={[
+                            { value: 'all', label: 'Visos' },
+                            ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+                        ]}
+                        label="Žyma"
+                        ariaLabel="Filtruoti pagal žymą"
+                    />
                 </div>
 
                 {/* Sort — a segmented switch (Pagal datą / Pagal būseną) rather than a dropdown,

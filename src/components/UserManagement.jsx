@@ -15,6 +15,7 @@ import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import StatusPill from './ui/StatusPill';
 import Modal from './ui/Modal';
+import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 
 // Role display metadata. Tone avoids the reserved session blue (call) — admin reads as the
@@ -26,10 +27,6 @@ const ROLE_META = {
     manager: { label: 'Vadovas', tone: 'neutral' },
     worker: { label: 'Vykdytojas', tone: 'running' },
 };
-
-const SELECT_CLASS =
-    'block w-full rounded-input border border-line bg-surface-card py-2.5 pl-3 pr-10 text-body-lg text-ink ' +
-    'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
 
 function RoleBadge({ role }) {
     const meta = ROLE_META[role] || ROLE_META.worker;
@@ -59,17 +56,19 @@ function ColorSwatch({ user, onEdit }) {
 function RoleSelect({ user, onChange }) {
     const name = formatDisplayName(user.displayName) || user.email || '';
     return (
-        <select
+        <Select
             value={user.role}
-            onChange={(e) => onChange(user.id, e.target.value)}
-            aria-label={`${name} rolė`}
-            className={SELECT_CLASS}
-        >
-            <option value="worker">Vykdytojas</option>
-            <option value="manager">Vadovas</option>
-            <option value="seniorManager">Vyr. vadovas</option>
-            <option value="admin">Administratorius</option>
-        </select>
+            onChange={(val) => onChange(user.id, val)}
+            options={[
+                { value: 'worker', label: 'Vykdytojas' },
+                { value: 'manager', label: 'Vadovas' },
+                { value: 'seniorManager', label: 'Vyr. vadovas' },
+                { value: 'admin', label: 'Administratorius' },
+            ]}
+            label="Rolė"
+            ariaLabel={`${name} rolė`}
+            alwaysSheet
+        />
     );
 }
 

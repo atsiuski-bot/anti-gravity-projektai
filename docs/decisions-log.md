@@ -16,6 +16,22 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-06-23** — **Canonical `Select` dropdown — every native `<select>` migrated.** A new
+  `src/components/ui/Select.jsx` is the one single-choice control, replacing all 20 native
+  `<select>` across the filters (`ManagerView`, `WorkerView`, `TaskHistory`, `Reports`), the task
+  form (`TaskModal`), the role editor (`UserManagement`), and the inline-edit / shift-time pickers
+  (`InlineEditModal`, `WorkPlanner`). A native select cannot honour the app's pop-up rules — the
+  browser fixes its panel width/position and its first row echoes the field label — so the module
+  gives **two presentations on one behaviour**, mirroring the 2026-06-22 unified pop-up decision and
+  `InfoPopover`: an **anchored panel the exact width of the trigger** on a normal page, and a
+  **centred full-screen sheet** (canonical `Modal`, `level="top"`) when the trigger sits inside a
+  scrollable modal/table (`alwaysSheet`) or on a phone (`<640px`). The **category name is now the
+  panel heading, never the first option** — the disabled `Šablonai` / `Planuojamas laikas…` echo
+  rows are gone and the trigger carries a `placeholder` instead. Accessible listbox (keyboard,
+  `aria-activedescendant`, 44px targets, focus restored to the trigger). On a phone the filter
+  classifiers pack two-per-row (Komandos darbai: `[Vykdytojas | Rūšiavimas]` over
+  `[Prioritetas | Žyma]`). Documented in DESIGN_SYSTEM §8 + the §11 checklist. **Pure client/UI —
+  no data, rules or schema change.**
 - **2026-06-22** — **Four-level manager hierarchy — added the `seniorManager` (Vyr. vadovas)
   rank.** A fourth role was inserted between `admin` and `manager` so the org chain reads
   `Administratorius → Vyr. vadovas → Vadovas → Vykdytojas`. Per the founder's scoping choices it

@@ -226,6 +226,31 @@ Each replaces a cluster of today's copy-pasted variants (see
   `window.alert` are banned** in UI flows. Mirrors today's good `DeleteConfirmationModal`:
   full-width stacked buttons, color-coded intent, explicit irreversibility warning.
 
+### `Select` / `Dropdown`
+- The **one** single-choice control — replaces every native `<select>`. A native select is
+  drawn by the browser at a width and position we cannot control, and its first row cannot be
+  kept from echoing the field label, so it fails all three of our pop-up rules. Import
+  [`Select`](../../src/components/ui/Select.jsx); **never** ship a raw `<select>` or hand-roll
+  an anchored options menu.
+- **Two presentations, one behaviour** (the same rule as `Modal` / `InfoPopover`):
+  - **Anchored panel** — on a normal page the options open in a panel **exactly the width of
+    the trigger**, directly beneath it. This is the default and the preferred form.
+  - **Centred full-screen sheet** — when the trigger lives inside a scrollable modal or table
+    where an anchored panel would clip (pass `alwaysSheet`), or on a phone (`<640px`,
+    automatic), the options open as a centred sheet through the canonical `Modal` (with
+    `level="top"` so it stacks correctly above a parent dialog). This is the *"if anchoring is
+    impossible, show it full-screen"* fallback — never a cramped box clipped by its container.
+- **The category name is a heading, never an option.** The field label rides on the trigger and
+  the panel header (`label`); the trigger shows the current choice or a `placeholder` prompt.
+  The list holds **real choices only** — a "Visi…" reset is a real choice, but a disabled row
+  that merely repeats the field name (`<option disabled>Šablonai</option>`) is banned.
+- **Accessible listbox** (§7): `aria-haspopup="listbox"`, `aria-activedescendant`, full keyboard
+  (↑/↓/Home/End/Enter/Esc), ≥44px option targets, a visible focus ring, and focus restored to
+  the trigger on close.
+- **Filter rows** lay their triggers out in a responsive grid: on a phone the classifiers pack
+  two-per-row (e.g. Komandos darbai — `[Vykdytojas | Rūšiavimas]` over `[Prioritetas | Žyma]`),
+  collapsing to one inline row from `lg+`.
+
 ### `StatusPill` / `Badge`
 - One pill: `radius.full`, `caption` text, consistent padding. **Color-coded by state**
   (pending / running / done / waiting), not a single neutral gray for everything. Status
@@ -291,6 +316,8 @@ Each replaces a cluster of today's copy-pasted variants (see
 - [ ] On a phone, data is cards — not a horizontally-scrolling table.
 - [ ] Copy is Lithuanian, formal "Jūs", no raw error text, no English leakage.
 - [ ] Reused the canonical component (§8) instead of a new bespoke shell.
+- [ ] Single-choice controls use `Select` (§8), never a raw `<select>` or a hand-rolled menu;
+  the field/category label is the panel heading, not the first option.
 - [ ] Motion (if any) uses a §12 utility, animates only `transform`/`opacity`, and is covered by
   the reduced-motion guard. No bounce/elastic, no animated layout properties, no new ambient loop
   where one already exists in that region.
