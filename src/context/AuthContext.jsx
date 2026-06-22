@@ -339,7 +339,7 @@ export function AuthProvider({ children }) {
                         </div>
 
                         {showForceButton && (
-                            <div className="mt-6 animate-in fade-in duration-500">
+                            <div className="mt-6 animate-in fade-in">
                                 <p className="text-feedback-danger text-body mb-3">Jungimasis užtrunka ilgiau nei įprastai.</p>
                                 <button
                                     onClick={() => window.location.reload()}

@@ -596,14 +596,14 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in">
             <div
                 ref={dialogRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby={titleId}
                 tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 duration-200 focus:outline-none"
+                className="bg-surface-card rounded-modal shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 focus:outline-none"
             >
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-4 text-feedback-danger">
