@@ -14,14 +14,18 @@ import { deriveTaskStatus } from '../../utils/taskStatus';
  * @param {Object} props.task
  * @param {boolean} [props.isRunning] - live timer truth; overrides stored status to "Vyksta"
  * @param {boolean} [props.justCompleted] - one-shot completion celebration (green + check)
+ * @param {boolean} [props.doneIcon] - persist a completion check on finished work
+ *   (Nepatvirtinta / Patvirtinta), so a "done" row carries the same visual mark a worker's
+ *   own finished card shows. Off by default — surfaces opt in.
  * @param {string} [props.className]
  */
-export default function TaskStatusPill({ task, isRunning = false, justCompleted = false, className }) {
-    const { tone, label, Icon } = deriveTaskStatus(task, { isRunning });
+export default function TaskStatusPill({ task, isRunning = false, justCompleted = false, doneIcon = false, className }) {
+    const { key, tone, label, Icon } = deriveTaskStatus(task, { isRunning });
+    const isDone = key === 'completed' || key === 'confirmed';
     return (
         <StatusPill
             tone={justCompleted ? 'success' : tone}
-            icon={justCompleted ? CheckCircle2 : Icon}
+            icon={justCompleted || (doneIcon && isDone) ? CheckCircle2 : Icon}
             className={className}
         >
             {label}

@@ -13,6 +13,7 @@ import ActiveSessionReadout from './ActiveSessionReadout';
 import { cn } from '../utils/cn';
 
 const ROLE_NAMES = {
+    seniorManager: 'Vyr. vadovas',
     manager: 'Vadovas',
     worker: 'Vykdytojas',
     admin: 'Administratorius',

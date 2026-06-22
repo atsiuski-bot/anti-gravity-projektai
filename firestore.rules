@@ -40,19 +40,30 @@ service cloud.firestore {
              getUserData().get('role', '') == 'manager';
     }
 
+    // Vyr. vadovas (senior manager): a manager-shaped rank that ALWAYS sees the whole company
+    // and never gets a team scope. Account management (role changes, membership) stays admin-only.
+    // Four-level hierarchy: admin > seniorManager > manager > worker.
+    function isSeniorManager() {
+      return isUserActive() &&
+             getUserData().get('role', '') == 'seniorManager';
+    }
+
     function isManagerOrAdmin() {
-      return isAdmin() || isManager();
+      return isAdmin() || isManager() || isSeniorManager();
     }
 
     // ---- Scoped-manager hierarchy (ADR 0005) -------------------------------
     // A manager is "scoped" when an admin set scopedManager=true on their user doc: they may
-    // only SEE and ACT on their assigned people. Everyone else with manager reach — admins and
-    // managers left unscoped (the default) — keeps whole-company access exactly as before.
+    // only SEE and ACT on their assigned people. Everyone else with manager reach — admins,
+    // senior managers (Vyr. vadovas, always whole-company by rank), and managers left unscoped
+    // (the default) — keeps whole-company access exactly as before. A senior manager is never
+    // scoped (isScopedManager only matches role 'manager').
     function isScopedManager() {
       return isManager() && getUserData().get('scopedManager', false) == true;
     }
     function canSeeWholeTeam() {
-      return isAdmin() || (isManager() && getUserData().get('scopedManager', false) != true);
+      return isAdmin() || isSeniorManager() ||
+             (isManager() && getUserData().get('scopedManager', false) != true);
     }
     // The caller manages the given user (that user's team includes the caller). One get() on the
     // target user doc — used on WRITES only (low volume), so the extra read is acceptable. Used at
@@ -147,6 +158,18 @@ service cloud.firestore {
                     && (isAdmin() ||
                         request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false));
       allow delete: if isAdmin();
+
+      // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------
+      // Earned badges live HERE, not on the user doc — a worker can freely write
+      // its OWN /users/{uid} doc (see the update rule above), so storing badges
+      // on it would let anyone forge their own. Read is team-wide so peer trophy
+      // shelves render for any active member (same broad-read pattern as tasks/
+      // sessions). Write is denied to ALL clients incl. the owner: only the Admin
+      // SDK (a Cloud Function), which bypasses rules, grants/upgrades a tier.
+      match /achievements/{achievementId} {
+        allow read: if isUserActive();
+        allow write: if false;
+      }
     }
 
     // ---- TASKS --------------------------------------------------------------

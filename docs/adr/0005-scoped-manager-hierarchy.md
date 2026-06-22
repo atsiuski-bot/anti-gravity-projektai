@@ -106,6 +106,11 @@ assigned to them**, while other managers/admins keep full reach.
 
 ## Follow-ups
 
+- **Done (2026-06-22):** added a fourth `seniorManager` (Vyr. vadovas) rank that, by
+  visibility/security, equals an *unscoped* manager (whole-company) with a distinct UI label;
+  account management stays admin-only and a senior is never scoped. No denormalization/re-stamp was
+  needed because the senior is whole-company, not a transitive subtree. See the decisions-log entry
+  of the same date.
 - Build membership UI (multi-manager) in `UserManagement` (admin-only).
 - Re-stamp Cloud Function on `users/{uid}.teamManagerIds` change (europe-west1, admin SDK).
 - Decide later whether to promote to a first-class `teams` entity if departments/sites emerge.

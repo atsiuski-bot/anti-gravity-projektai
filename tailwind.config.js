@@ -20,6 +20,14 @@ export default {
                     break: { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309' },
                     task: { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D' },
                 },
+                // Achievement tiers (closed set) — calm surface + AA-passing accent text + a
+                // metallic ring. Reserved for badges; never a full-screen session shell. See tokens.md §1.
+                tier: {
+                    bronze: { surface: '#F3E4D3', accent: '#7A4A21', ring: '#C28E5A' },
+                    silver: { surface: '#E8EAED', accent: '#4B5563', ring: '#B6BCC4' },
+                    gold: { surface: '#FBEFC6', accent: '#8A6500', ring: '#DCBB4A' },
+                    platinum: { surface: '#E6ECF2', accent: '#334155', ring: '#9FB2C6' },
+                },
                 feedback: {
                     success: '#16A34A',
                     warning: '#F59E0B',
