@@ -5,7 +5,6 @@ import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
-import DatePicker from './ui/DatePicker';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -331,113 +330,39 @@ export function DescriptionModal({ isOpen, onClose, description }) {
     );
 }
 
-export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, onDeleteAdjustment }) {
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [hours, setHours] = useState(0);
-    const [mins, setMins] = useState(0);
-    const [reason, setReason] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
+// Read-only history of legacy manual time corrections (deltas). Adding/removing corrections was
+// retired in favour of the per-session start/end editor on the day timeline; the existing records
+// are kept and stay viewable here so past adjustments remain auditable.
+export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
     if (!isOpen || !task) return null;
 
     const adjustments = task.timeAdjustments || [];
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        const h = parseInt(hours) || 0;
-        const m = parseInt(mins) || 0;
-        if (h === 0 && m === 0) return;
-
-        setIsSubmitting(true);
-        try {
-            await onAddAdjustment(task.id, date, h, m, reason);
-            setHours(0);
-            setMins(0);
-            setReason('');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
     return (
         <DetailsModal isOpen={isOpen} onClose={onClose} title="Papildomi laiko įrašai" icon={Clock}>
             <div className="flex flex-col h-full max-h-[60vh]">
-                <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2">
                     {adjustments.length > 0 ? (
                         adjustments.map((adj, idx) => (
-                            <div key={idx} className="bg-surface-sunken p-4 rounded-lg flex justify-between items-center">
-                                <div>
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <span className="font-semibold text-ink-strong">{adj.date}</span>
-                                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                                            {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
-                                        </span>
-                                    </div>
-                                    <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
+                            <div key={idx} className="bg-surface-sunken p-4 rounded-lg">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-semibold text-ink-strong">{adj.date}</span>
+                                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                                        {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
+                                    </span>
                                 </div>
-                                <IconButton
-                                    icon={Trash2}
-                                    label="Ištrinti šį įrašą"
-                                    variant="danger"
-                                    onClick={() => onDeleteAdjustment(task.id, adj)}
-                                />
+                                <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
                             </div>
                         ))
                     ) : (
                         <p className="text-ink-muted text-center py-4">Nėra papildomų laiko įrašų</p>
                     )}
                 </div>
-
-                <form onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="mt-auto pt-4 border-t border-line flex flex-col gap-3">
-                    <h4 className="text-sm font-semibold text-ink">Pridėti naują įrašą</h4>
-                    <div className="flex flex-wrap gap-2">
-                        <DatePicker
-                            value={date}
-                            onChange={setDate}
-                            max={new Date().toISOString().split('T')[0]}
-                            aria-label="Data"
-                            className="flex-1 min-w-[140px]"
-                        />
-                        <div className="flex items-center gap-1">
-                            <input
-                                type="number"
-                                value={hours}
-                                onChange={(e) => setHours(e.target.value)}
-                                placeholder="Valandos"
-                                aria-label="Valandos"
-                                className="w-20 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
-                            />
-                            <span className="text-sm text-ink-muted font-medium">h</span>
-                            <input
-                                type="number"
-                                value={mins}
-                                onChange={(e) => setMins(e.target.value)}
-                                placeholder="Minutės"
-                                aria-label="Minutės"
-                                className="w-20 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
-                            />
-                            <span className="text-sm text-ink-muted font-medium">m</span>
-                        </div>
-                    </div>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={reason}
-                            onChange={(e) => setReason(e.target.value)}
-                            placeholder="Priežastis (pvz. 'Pamiršo įjungti taimerį')"
-                            aria-label="Pakeitimo priežastis"
-                            className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
-                        />
-                        <button
-                            type="submit"
-                            disabled={isSubmitting || (parseInt(hours) === 0 && parseInt(mins) === 0)}
-                            className="min-h-touch bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                        >
-                            {isSubmitting ? 'Saugoma...' : 'Pridėti'}
-                        </button>
-                    </div>
-                    <p className="text-xs text-ink-muted">Patarimas: norėdami atimti laiką, naudokite minuso ženklą (pvz. -1 valanda).</p>
-                </form>
+                {/* Read-only: new corrections are made on the day timeline by editing the specific
+                    session's start/end, not as a task-total delta. */}
+                <p className="mt-4 pt-4 border-t border-line text-xs text-ink-muted">
+                    Šie įrašai – istorija (tik peržiūrai). Laiką koreguokite dienos laiko juostoje, redaguodami konkrečią sesiją.
+                </p>
             </div>
         </DetailsModal>
     );

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { db } from '../firebase';
-import { doc, updateDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -39,7 +39,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
     // Confirmation dialog targets (replace window.confirm — §8). Each destructive action gates
     // its own state so rapid clicks on different tasks can't race a single shared dialog.
-    const [adjDeleteTarget, setAdjDeleteTarget] = useState(null);       // { taskId, adj }
     const [commentDeleteTarget, setCommentDeleteTarget] = useState(null); // { taskId, index }
     const [completeTarget, setCompleteTarget] = useState(null);        // taskId (marking completed)
     const [revertTarget, setRevertTarget] = useState(null);            // task object
@@ -59,79 +58,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
 
 
-    const handleAddAdjustment = async (taskId, date, h, m, reason) => {
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-            const durationMinutes = (parseInt(h) || 0) * 60 + (parseInt(m) || 0);
-
-            const now = getLithuanianNow();
-            const newSessionRef = await addDoc(collection(db, 'work_sessions'), {
-                taskId: task.id,
-                taskTitle: `🕒 Korekcija: ${task.title}${reason ? ` - ${reason}` : ''}`,
-                userId: task.assignedUserId || task.creatorId || 'unknown',
-                userName: task.assignedUserName || task.creatorName || 'Nežinomas',
-                startTime: new Date(date + 'T12:00:00').toISOString(),
-                endTime: new Date(date + 'T12:00:00').toISOString(),
-                durationMinutes: durationMinutes,
-                date: date,
-                createdAt: now.toISOString(),
-                isManualAdjustment: true
-            });
-
-            const newAdj = {
-                id: newSessionRef.id,
-                date: date,
-                durationMinutes: durationMinutes,
-                reason: reason,
-                createdAt: now.toISOString()
-            };
-
-            await updateDoc(doc(db, 'tasks', task.id), {
-                timeAdjustments: [...(task.timeAdjustments || []), newAdj],
-                updatedAt: new Date().toISOString()
-            });
-        } catch (err) {
-            logError(err, { source: 'TaskTable.handleAddAdjustment' });
-            if (err.code === 'permission-denied') {
-                setError('Neturite leidimo pridėti korekciją.');
-            } else if (err.code === 'not-found') {
-                setError('Užduotis nebeegzistuoja.');
-            } else {
-                setError('Nepavyko pridėti laiko korekcijos. Bandykite vėliau.');
-            }
-        }
-    };
-
-    // Invoked from the TimeAdjustmentsModal row; opens a ConfirmDialog instead of window.confirm.
-    const handleDeleteAdjustment = (taskId, adj) => {
-        setAdjDeleteTarget({ taskId, adj });
-    };
-
-    const confirmDeleteAdjustment = async () => {
-        if (!adjDeleteTarget) return;
-        const { taskId, adj } = adjDeleteTarget;
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) {
-                setAdjDeleteTarget(null);
-                return;
-            }
-
-            await deleteDoc(doc(db, 'work_sessions', adj.id));
-
-            const newAdjustments = (task.timeAdjustments || []).filter(a => a.id !== adj.id);
-            await updateDoc(doc(db, 'tasks', task.id), {
-                timeAdjustments: newAdjustments,
-                updatedAt: new Date().toISOString()
-            });
-            setAdjDeleteTarget(null);
-        } catch (err) {
-            logError(err, { source: 'TaskTable.confirmDeleteAdjustment' });
-            setError('Nepavyko ištrinti korekcijos.');
-            setAdjDeleteTarget(null);
-        }
-    };
 
     const handleUpdateComment = async (taskId, index, newText) => {
         try {
@@ -481,24 +407,17 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     <span className="text-body-lg text-blue-600 font-bold whitespace-nowrap">
                                         {formatMinutesToTimeString(totalMinutes)}
                                     </span>
-                                    {canManage && (
+                                    {/* Read-only history of legacy time corrections (deltas), shown
+                                        only when the task has any. New corrections are made on the
+                                        day timeline by editing the specific session. */}
+                                    {canManage && task.timeAdjustments?.length > 0 && (
                                         <IconButton
                                             icon={Clock}
-                                            label="Koreguoti laiko įrašą"
+                                            label="Peržiūrėti laiko korekcijas"
                                             variant="ghost"
                                             onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'timeAdjustments', taskId: task.id }); }}
                                         />
                                     )}
-                                </div>
-                            )}
-                            {!showTime && canManage && task.status === 'pending' && (
-                                <div className="mt-2">
-                                    <IconButton
-                                        icon={Clock}
-                                        label="Pridėti laiko korekciją"
-                                        variant="ghost"
-                                        onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'timeAdjustments', taskId: task.id }); }}
-                                    />
                                 </div>
                             )}
                             <TimeChangedWarning task={task} className="mt-1" />
@@ -869,8 +788,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 isOpen={activeModal.type === 'timeAdjustments'}
                                 onClose={() => setActiveModal({ type: null, taskId: null })}
                                 task={task}
-                                onAddAdjustment={handleAddAdjustment}
-                                onDeleteAdjustment={handleDeleteAdjustment}
                             />
                         </>
                     );
@@ -946,19 +863,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                 />
             )}
 
-            {/* Confirm: delete a time adjustment (destructive) */}
-            {adjDeleteTarget && (
-                <ConfirmDialog
-                    open
-                    title="Ištrinti korekciją?"
-                    message="Šią korekciją negrąžinsite."
-                    warning="Šio veiksmo atšaukti negalėsite."
-                    confirmLabel="Ištrinti"
-                    variant="danger"
-                    onConfirm={confirmDeleteAdjustment}
-                    onCancel={() => setAdjDeleteTarget(null)}
-                />
-            )}
         </div >
     );
 };
