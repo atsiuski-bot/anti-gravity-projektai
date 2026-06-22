@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { NavigationProvider } from './context/NavigationContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { UsersProvider } from './context/UsersContext';
+import { ToastProvider } from './context/ToastContext';
+import { NotificationsProvider } from './context/NotificationsContext';
 import Layout from './components/Layout';
 
 // Lazy load pages
@@ -43,7 +45,12 @@ function App() {
         async function requestOnce() {
             events.forEach((ev) => window.removeEventListener(ev, requestOnce));
             try {
-                await Notification.requestPermission();
+                const result = await Notification.requestPermission();
+                // Tell NotificationsProvider to register this device's FCM token now that the
+                // user has granted permission (it owns currentUser + token persistence).
+                if (result === "granted") {
+                    window.dispatchEvent(new CustomEvent("notifications-granted"));
+                }
             } catch (e) {
                 console.error("Notification request failed", e);
             }
@@ -57,20 +64,24 @@ function App() {
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AuthProvider>
                 <UsersProvider>
-                    <NavigationProvider>
-                        <React.Suspense fallback={<LoadingFallback />}>
-                            <Routes>
-                                <Route path="/login" element={<Login />} />
-                                <Route path="/" element={
-                                    <ProtectedRoute>
-                                        <Layout>
-                                            <Dashboard />
-                                        </Layout>
-                                    </ProtectedRoute>
-                                } />
-                            </Routes>
-                        </React.Suspense>
-                    </NavigationProvider>
+                    <ToastProvider>
+                        <NotificationsProvider>
+                            <NavigationProvider>
+                                <React.Suspense fallback={<LoadingFallback />}>
+                                    <Routes>
+                                        <Route path="/login" element={<Login />} />
+                                        <Route path="/" element={
+                                            <ProtectedRoute>
+                                                <Layout>
+                                                    <Dashboard />
+                                                </Layout>
+                                            </ProtectedRoute>
+                                        } />
+                                    </Routes>
+                                </React.Suspense>
+                            </NavigationProvider>
+                        </NotificationsProvider>
+                    </ToastProvider>
                 </UsersProvider>
             </AuthProvider>
         </BrowserRouter>

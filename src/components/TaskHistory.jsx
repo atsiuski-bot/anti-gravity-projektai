@@ -50,7 +50,10 @@ function PriorityBadge({ priority }) {
     );
 }
 
-export default function TaskHistory({ userId, users = [] }) {
+// `canExport` gates the CSV / AI-JSON download buttons. It is OFF by default so personal
+// report views (a worker's own "Ataskaitos", and a manager's personal "Ataskaitos") never
+// expose a self-export. Only the manager team report ("Kom. ataskaitos") opts in.
+export default function TaskHistory({ userId, users = [], canExport = false }) {
     const { userRole, currentUser } = useAuth();
     const isManagerOrAdmin = isManagerRole(userRole);
     const [tasks, setTasks] = useState([]);
@@ -596,22 +599,26 @@ export default function TaskHistory({ userId, users = [] }) {
                         užbaigtos užduotys matomos dienos ataskaitoje viršuje, kol nebus suarchyvuotos.
                     </p>
                 </div>
-                <div className="flex items-center gap-2">
-                    <button
-                        onClick={handleExportCSV}
-                        className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                    >
-                        <FileText className="w-4 h-4" aria-hidden="true" />
-                        Atsisiųsti (CSV)
-                    </button>
-                    <button
-                        onClick={handleExport}
-                        className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                    >
-                        <Download className="w-4 h-4" aria-hidden="true" />
-                        Atsisiųsti AI analizei (JSON)
-                    </button>
-                </div>
+                {/* Export is manager-only (team report). Workers — and managers viewing their
+                    own personal report — never get a self-export button (canExport=false). */}
+                {canExport && (
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={handleExportCSV}
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        >
+                            <FileText className="w-4 h-4" aria-hidden="true" />
+                            Atsisiųsti (CSV)
+                        </button>
+                        <button
+                            onClick={handleExport}
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        >
+                            <Download className="w-4 h-4" aria-hidden="true" />
+                            Atsisiųsti AI analizei (JSON)
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Friendly error banner — replaces the banned alert() with mapped LT copy (§10) */}
