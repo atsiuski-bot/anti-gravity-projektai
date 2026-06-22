@@ -91,13 +91,15 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
   and an SR live-region announcement, so a CSS-hidden duplicate would double both — exactly one nav
   is mounted at a time. The whole-screen session signature is preserved; on desktop the workspace
   area carries the tint while the rail stays a calm neutral panel.
-- **2026-06-22** — **Functions runtime + dep bumps deferred (Node 20 → 22 before 2026-10-30).**
-  With Blaze now enabled, all five Cloud Functions are deployed on **Node 20** (see
-  [ADR 0004](./adr/0004-notification-infrastructure.md) and the
-  [FCM runbook](./runbooks/fcm-notifications-deploy.md)). `functions/package.json` still declares
-  `engines.node: "20"` and `firebase-functions ^6.1.0`; both are deliberately left as-is for now —
-  the runtime bump is a founder-run re-deploy, best done as its own focused step rather than bundled
-  into unrelated work, and Node 20 keeps running fine until the deadline. **Hard deadline:** Google
-  decommissions Node 20 for Cloud Functions **after 2026-10-30**. Before then, set `engines.node` to
-  `"22"` and bump `firebase-functions` (+ `firebase-admin`) to current — they are deploy-coupled, so
-  both ride one re-deploy. Wired into the runbook's deploy step so it cannot be missed.
+- **2026-06-22** — **Functions migrated to Node 22 + `firebase-functions` 7 (code done; re-deploy pending).**
+  Node 20 is decommissioned for Cloud Functions **after 2026-10-30**, so ahead of that
+  `functions/package.json` was moved to `engines.node: "22"` and `firebase-functions ^6.1.0 → ^7.2.5`.
+  `firebase-admin` is **held at `^13`**: `firebase-functions@7` declares its peer as
+  `firebase-admin ^11.10 || ^12 || ^13`, so admin 14 (which itself requires Node ≥22) must wait for a
+  later `firebase-functions` peer bump — minor follow-up. Verified locally on Node 22: `npm install`
+  resolves cleanly (no `--legacy-peer-deps`) and every `index.js` import target (v2 firestore
+  triggers, `setGlobalOptions`, `logger`, and the admin `getFirestore`/`getMessaging`/`getStorage`
+  modular entry points) resolves on the new majors; functions `eslint` is clean. **The running
+  functions stay on Node 20 until the founder re-deploys** (`firebase deploy --only functions`) — the
+  runtime only changes at deploy time. See [ADR 0004](./adr/0004-notification-infrastructure.md) and
+  the [FCM runbook](./runbooks/fcm-notifications-deploy.md).
