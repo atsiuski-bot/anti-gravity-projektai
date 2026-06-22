@@ -1,12 +1,15 @@
 /**
  * WORKZ Cloud Functions (2nd gen).
  *
- * Two responsibilities, both reacting to Firestore writes:
+ * Three responsibilities, all reacting to Firestore writes:
  *   1. FCM PUSH — when a manager-facing notification doc is created, push to the
  *      recipient's registered devices so they are alerted even with the app/tab closed.
  *   2. STORAGE CLEANUP — when task attachments are removed (in-modal edit) or a task is
  *      truly deleted, delete the orphaned Storage objects the client cannot (the client
  *      can only delete its OWN uploads; the admin SDK here can delete any).
+ *   3. ACHIEVEMENT BADGES — award server-only recognition tiers (a worker can write its own
+ *      user doc, so badges must be granted here, not client-side) and push the "new badge"
+ *      alert. Counts are kept O(1) in a per-user _stats doc; tiers only ever move upward.
  *
  * Region pinned to europe-west1 (closest to the Vilnius user base). Requires the Blaze
  * plan (2nd-gen functions run on Cloud Run). Deploy: `firebase deploy --only functions`.
@@ -225,4 +228,144 @@ exports.cleanupAttachmentsOnArchivedDelete = onDocumentDeleted('archived_tasks/{
     const sibling = await db.collection('tasks').doc(event.params.id).get();
     if (sibling.exists) return;
     await deleteObjects(urlsOf(event.data && event.data.data()));
+});
+
+// ---------------------------------------------------------------------------
+// Achievement badges (recognition system — Fazė 3 engine)
+// ---------------------------------------------------------------------------
+//
+// SERVER-AWARDED only: a worker can write its own /users/{uid} doc, so earned tiers live in
+// users/{uid}/achievements/{key} (rules: read team-wide, write:false — the admin SDK here
+// bypasses rules). Running counts are kept O(1) in a sibling users/{uid}/achievements/_stats
+// doc and advanced inside a transaction, so a badge can't be self-forged and a re-fired event
+// can't double-grant a tier.
+//
+// Guardrails: only POSITIVE accomplishment is counted (there is no abandonment/rework badge);
+// an earned tier is PERMANENT (grantTier moves only upward); R2's "streak" is cumulative and
+// forgiving (a missed day never demotes). The public label is the metal name; the thresholds
+// are the internal, tunable counts.
+
+const TIER_NAMES = { 1: 'Bronza', 2: 'Sidabras', 3: 'Auksas', 4: 'Platina' };
+
+const BADGES = {
+    // R1 — finishes what they start.
+    follow_through: { name: 'Pabaigiu, ką pradedu', thresholds: [1, 10, 40, 120] },
+    // R2 — shows up across days.
+    steady_rhythm: { name: 'Pastovus ritmas', thresholds: [5, 25, 75, 200] }
+};
+
+function tierForCount(count, thresholds) {
+    let tier = 0;
+    for (let i = 0; i < thresholds.length; i += 1) {
+        if (count >= thresholds[i]) tier = i + 1;
+    }
+    return tier;
+}
+
+function statsRef(uid) {
+    return db.collection('users').doc(uid).collection('achievements').doc('_stats');
+}
+
+// Award upward only — a tier, once earned, is permanent (W2). Returns the newly-reached tier
+// (1-4) if this call raised it, else 0. Idempotent: a re-fired event recomputes the same tier
+// and the `tier <= prev` guard makes the write a no-op.
+async function grantTier(uid, key, tier) {
+    if (tier < 1) return 0;
+    const badge = BADGES[key];
+    const ref = db.collection('users').doc(uid).collection('achievements').doc(key);
+    const nowIso = new Date().toISOString();
+    return db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const prev = snap.exists ? (snap.data().tier || 0) : 0;
+        if (tier <= prev) return 0;
+        const history = (snap.exists && Array.isArray(snap.data().tierHistory))
+            ? snap.data().tierHistory.slice()
+            : [];
+        history.push({ tier, at: nowIso });
+        tx.set(ref, {
+            key,
+            name: badge.name,
+            tier,
+            tierName: TIER_NAMES[tier],
+            earnedAt: nowIso,
+            firstEarnedAt: snap.exists ? (snap.data().firstEarnedAt || nowIso) : nowIso,
+            tierHistory: history
+        }, { merge: true });
+        return tier;
+    });
+}
+
+// Background push for a newly-reached tier. The FOREGROUND in-app toast is a client listener on
+// the same subcollection (added with the profile phase); this is the closed-app case. Reuses the
+// existing FCM sender, which honours the recipient's notification toggle.
+async function announceBadge(uid, key, tier) {
+    const badge = BADGES[key];
+    try {
+        await sendToUser(uid, { title: 'Naujas ženkliukas', body: `${badge.name}: ${TIER_NAMES[tier]}` }, {
+            type: 'achievement',
+            badgeId: key,
+            tier: String(tier),
+            notifId: `${key}:${tier}`,
+            link: '/?tab=profile'
+        });
+    } catch (err) {
+        logger.error('announceBadge failed', { uid, key, tier, err: err.message });
+    }
+}
+
+// R1 — "Pabaigiu, ką pradedu": +1 per task that CROSSES into completed (false → true). The
+// completion edge is the trigger; archiving later DELETES the task doc, so the count is taken
+// once, at finish, and never lost. (A rare uncomplete→recomplete recounts — only ever positive.)
+exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
+    const before = event.data && event.data.before && event.data.before.data();
+    const after = event.data && event.data.after && event.data.after.data();
+    if (!before || !after) return;
+    if (before.completed === true || after.completed !== true) return; // only the false→true edge
+    const uid = after.assignedUserId;
+    if (!uid) return;
+
+    try {
+        const ref = statsRef(uid);
+        const count = await db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            const next = ((snap.exists && snap.data().completedTasks) || 0) + 1;
+            tx.set(ref, { completedTasks: next }, { merge: true });
+            return next;
+        });
+        const reached = await grantTier(uid, 'follow_through', tierForCount(count, BADGES.follow_through.thresholds));
+        if (reached) await announceBadge(uid, 'follow_through', reached);
+    } catch (err) {
+        logger.error('onTaskFinishedBadge failed', { uid, err: err.message });
+    }
+});
+
+// R2 — "Pastovus ritmas": cumulative distinct work-DAYS, counted O(1) by advancing a high-water
+// `lastWorkDate`. Forgiving (W3): only a strictly-later calendar day advances the count, so a
+// second session the same day — or a back-dated correction — can't double-count, and a missed
+// day never demotes. Quick-work/call sessions still count as a worked day; deletions and manual
+// time corrections do not.
+exports.onWorkSessionBadge = onDocumentCreated('work_sessions/{id}', async (event) => {
+    const s = event.data && event.data.data();
+    if (!s) return;
+    if (s.isDeleted === true || s.isManualAdjustment === true) return;
+    if (!(s.durationMinutes > 0)) return;
+    const uid = s.userId || s.assignedUserId;
+    const date = s.date; // Vilnius-local 'YYYY-MM-DD' (lexicographically comparable)
+    if (!uid || !date) return;
+
+    try {
+        const ref = statsRef(uid);
+        const days = await db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            const data = snap.exists ? snap.data() : {};
+            if (data.lastWorkDate && date <= data.lastWorkDate) return data.workDays || 0;
+            const next = (data.workDays || 0) + 1;
+            tx.set(ref, { workDays: next, lastWorkDate: date }, { merge: true });
+            return next;
+        });
+        const reached = await grantTier(uid, 'steady_rhythm', tierForCount(days, BADGES.steady_rhythm.thresholds));
+        if (reached) await announceBadge(uid, 'steady_rhythm', reached);
+    } catch (err) {
+        logger.error('onWorkSessionBadge failed', { uid, err: err.message });
+    }
 });
