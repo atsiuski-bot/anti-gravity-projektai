@@ -55,3 +55,16 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
   (admin SDK deletes objects on attachment removal / true task deletion, with an archive-vs-delete
   sibling guard) plus a tightened `storage.rules` (`image/*`, < 20 MB). **Activation is founder-run**
   (Blaze plan, VAPID key, `firebase deploy --only functions` + rules) — `docs/runbooks/fcm-notifications-deploy.md`.
+- **2026-06-22** — **Desktop app shell → a single left rail.** On `lg+` (≥1024 px) the bottom
+  tab bar and the floating work pill are replaced by one docked left rail (`SideRail`), read
+  top→bottom: brand → primary `Sukurti` → grouped destinations (Mano / Komanda /
+  Administravimas) → session work-controls → account. This merges the two stacked bottom
+  surfaces into one (DESIGN_SYSTEM §9 "prefer merging into one docked surface") and follows the
+  desktop convention of an edge rail over a thumb-reach bottom bar. **Phones and tablets keep the
+  bottom bar unchanged.** Tab definitions were extracted to a shared `src/config/navTabs.js` so
+  the rail and the bottom bar can never drift (§3 "one way to do a thing"). The rail-vs-bottom-bar
+  choice is gated by a **JS media query** (`src/hooks/useMediaQuery.js`), *not* CSS, on purpose:
+  both navs mount the session timers, whose `useTimerState` starts a `SoundManager` singleton beep
+  and an SR live-region announcement, so a CSS-hidden duplicate would double both — exactly one nav
+  is mounted at a time. The whole-screen session signature is preserved; on desktop the workspace
+  area carries the tint while the rail stays a calm neutral panel.
