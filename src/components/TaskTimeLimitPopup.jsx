@@ -46,7 +46,6 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
             role="alertdialog"
             ariaLabelledby="time-limit-title"
             initialFocusRef={ackButtonRef}
-            className="motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95"
         >
             {/* Header — darkened so the white title clears WCAG 1.4.3 (red-500 was ~3.99:1). */}
             <div className="flex flex-shrink-0 items-center gap-3 bg-gradient-to-r from-red-600 to-red-700 px-6 py-4">
