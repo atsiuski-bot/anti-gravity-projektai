@@ -882,17 +882,40 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     </div>
                 )}
 
-                <div className="relative">
-                    <select
-                        value={sortBy}
-                        onChange={(e) => setSortBy(e.target.value)}
-                        aria-label="Rūšiuoti"
-                        className="pl-8 pr-3 py-1.5 border border-line rounded-control focus:ring-2 focus:ring-brand text-caption bg-surface-card"
+                {/* Sort filter — a vertical two-option segmented control (Pagal laiką above
+                    Pagal būseną) rather than a dropdown, so both choices are visible at once. */}
+                <div
+                    className="flex flex-col bg-surface-sunken rounded-control overflow-hidden border border-line"
+                    role="group"
+                    aria-label="Rūšiuoti"
+                >
+                    <button
+                        type="button"
+                        onClick={() => setSortBy('time')}
+                        aria-pressed={sortBy === 'time'}
+                        className={clsx(
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                            sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
+                        )}
                     >
-                        <option value="time">Pagal laiką</option>
-                        <option value="status">Pagal būseną</option>
-                    </select>
-                    <Filter className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" />
+                        <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        Pagal laiką
+                    </button>
+                    <div className="h-px bg-line" aria-hidden="true" />
+                    <button
+                        type="button"
+                        onClick={() => setSortBy('status')}
+                        aria-pressed={sortBy === 'status'}
+                        className={clsx(
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                            sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
+                        )}
+                    >
+                        <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                        Pagal būseną
+                    </button>
                 </div>
             </div>
 

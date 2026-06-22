@@ -8,6 +8,13 @@
   }
 }
 
+/* Calendar: we never use all-day events, but react-big-calendar always renders an
+   empty all-day row under the day headers in week/day views — there is no prop to
+   disable it. Hiding it removes the dead gap between the day names and the time grid. */
+.rbc-time-view .rbc-allday-cell {
+  display: none;
+}
+
 /* Accessibility: honor the user's reduced-motion preference (DESIGN_SYSTEM §7). */
 @media (prefers-reduced-motion: reduce) {
   *,

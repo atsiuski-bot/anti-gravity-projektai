@@ -51,81 +51,104 @@ const CustomToolbar = (toolbar) => {
     // two compact rows.
     const showCopy = Boolean(toolbar.onCopyLastWeek) && !toolbar.copyDisabled;
 
+    // Each control is defined once and reused by both layouts below, so the two
+    // arrangements (stacked on phones, single row on desktop) never drift apart.
+    const todayButton = (
+        <Button
+            variant="secondary"
+            size="md"
+            onClick={goToToday}
+            className="shrink-0"
+        >
+            Šiandien
+        </Button>
+    );
+
+    const viewToggle = (
+        <div className="flex items-center bg-surface-sunken rounded-control overflow-hidden border border-line shadow-sm shrink-0" role="group" aria-label="Rodinio pasirinkimas">
+            <button
+                onClick={() => toggleView('week')}
+                aria-pressed={toolbar.view === 'week'}
+                className={clsx(
+                    "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                    toolbar.view === 'week' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                )}
+            >
+                Savaitė
+            </button>
+            <div className="w-[1px] self-stretch bg-line"></div>
+            <button
+                onClick={() => toggleView('day')}
+                aria-pressed={toolbar.view === 'day'}
+                className={clsx(
+                    "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                    toolbar.view === 'day' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                )}
+            >
+                Diena
+            </button>
+        </div>
+    );
+
+    const periodNav = (
+        <div className="flex flex-1 items-center justify-center gap-1 sm:gap-2 min-w-0">
+            <IconButton
+                icon={ChevronLeft}
+                label="Ankstesnis laikotarpis"
+                onClick={() => toolbar.onNavigate('PREV')}
+                className="shrink-0"
+            />
+            <span className="min-w-0 truncate text-center text-body-lg sm:text-h3 font-bold text-ink-strong capitalize select-none">
+                {toolbar.label}
+            </span>
+            <IconButton
+                icon={ChevronRight}
+                label="Kitas laikotarpis"
+                onClick={() => toolbar.onNavigate('NEXT')}
+                className="shrink-0"
+            />
+        </div>
+    );
+
+    const addButton = (
+        <Button
+            variant="primary"
+            size="md"
+            icon={Plus}
+            onClick={toolbar.onManualClick}
+            className="shrink-0"
+        >
+            <span className="sm:hidden">Pridėti</span>
+            <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
+        </Button>
+    );
+
     return (
         <div className="flex flex-col gap-2 mb-2">
-            {/* Row 1 — global controls: view mode (left) + the single dominant create action
-                (right). The right side previously stacked Today + Add + Copy vertically, eating
-                ~150px of height before the grid appeared on a phone. */}
-            <div className="flex items-center justify-between gap-2">
-                {/* View: Week / Day */}
-                <div className="flex items-center bg-surface-sunken rounded-control overflow-hidden border border-line shadow-sm" role="group" aria-label="Rodinio pasirinkimas">
-                    <button
-                        onClick={() => toggleView('week')}
-                        aria-pressed={toolbar.view === 'week'}
-                        className={clsx(
-                            "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                            toolbar.view === 'week' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
-                        )}
-                    >
-                        Savaitė
-                    </button>
-                    <div className="w-[1px] self-stretch bg-line"></div>
-                    <button
-                        onClick={() => toggleView('day')}
-                        aria-pressed={toolbar.view === 'day'}
-                        className={clsx(
-                            "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                            toolbar.view === 'day' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
-                        )}
-                    >
-                        Diena
-                    </button>
+            {/* Phone / tablet (<lg): two compact rows — view + create on top, then the
+                navigation cluster — so nothing gets squeezed on a ~360px viewport. */}
+            <div className="flex flex-col gap-2 lg:hidden">
+                {/* pr-12 keeps the create action clear of the fixed profile-avatar bubble
+                    pinned to the top-right corner (Layout) — without it they overlap on phones. */}
+                <div className="flex items-center justify-between gap-2 pr-12">
+                    {viewToggle}
+                    {addButton}
                 </div>
-
-                {/* Primary create action — short label on phones, full label once there's room. */}
-                <Button
-                    variant="primary"
-                    size="md"
-                    icon={Plus}
-                    onClick={toolbar.onManualClick}
-                    className="shrink-0"
-                >
-                    <span className="sm:hidden">Pridėti</span>
-                    <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
-                </Button>
+                <div className="flex items-center gap-2">
+                    {todayButton}
+                    {periodNav}
+                </div>
             </div>
 
-            {/* Row 2 — one navigation cluster: jump-to-today + the period readout with step
-                arrows. Today is a navigation action, so it sits with the arrows, not stacked. */}
-            <div className="flex items-center gap-2">
-                <Button
-                    variant="secondary"
-                    size="md"
-                    onClick={goToToday}
-                    className="shrink-0"
-                >
-                    Šiandien
-                </Button>
-
-                <div className="flex flex-1 items-center justify-center gap-1 sm:gap-2 min-w-0">
-                    <IconButton
-                        icon={ChevronLeft}
-                        label="Ankstesnis laikotarpis"
-                        onClick={() => toolbar.onNavigate('PREV')}
-                        className="shrink-0"
-                    />
-                    <span className="min-w-0 truncate text-center text-body-lg sm:text-h3 font-bold text-ink-strong capitalize select-none">
-                        {toolbar.label}
-                    </span>
-                    <IconButton
-                        icon={ChevronRight}
-                        label="Kitas laikotarpis"
-                        onClick={() => toolbar.onNavigate('NEXT')}
-                        className="shrink-0"
-                    />
-                </div>
+            {/* Desktop (lg+): everything fits one row — Today, the Week/Day toggle, the
+                period readout with arrows (centered, flex-1), then the create action far right. */}
+            <div className="hidden lg:flex lg:items-center lg:gap-3">
+                {todayButton}
+                {viewToggle}
+                {periodNav}
+                {addButton}
             </div>
 
             {/* Copy last week's plan — only rendered while it can actually run (planning window),
