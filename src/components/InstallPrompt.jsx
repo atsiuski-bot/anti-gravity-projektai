@@ -1,7 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Download, Share } from 'lucide-react';
+import { Download, Share, X } from 'lucide-react';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
+import IconButton from './ui/IconButton';
+
+// Once the user dismisses the banner we remember it so it never nags again. A reinstall
+// signal (a fresh beforeinstallprompt after clearing storage) re-enables it naturally.
+const DISMISS_KEY = 'workz.installBannerDismissed';
+
+// In-memory fallback so dismissal also sticks within a session when localStorage is
+// unavailable (private browsing), instead of re-nagging on every reload.
+let sessionDismissed = false;
 
 function StepNumber({ children }) {
     return (
@@ -11,11 +20,25 @@ function StepNumber({ children }) {
     );
 }
 
+/**
+ * InstallPrompt — a slim, dismissible install banner (DESIGN_SYSTEM: calm canvas). It surfaces
+ * only when installation is actually possible: a captured `beforeinstallprompt` (Android/
+ * desktop Chrome), or iOS Safari where install is manual. Hidden when already installed or
+ * once dismissed. Rendered once near the top of the app shell, not in the header.
+ */
 export default function InstallPrompt() {
     const [deferredPrompt, setDeferredPrompt] = useState(null);
     const [isIOS, setIsIOS] = useState(false);
     const [isStandalone, setIsStandalone] = useState(false);
     const [showInstructions, setShowInstructions] = useState(false);
+    const [dismissed, setDismissed] = useState(() => {
+        if (sessionDismissed) return true;
+        try {
+            return localStorage.getItem(DISMISS_KEY) === '1';
+        } catch {
+            return false;
+        }
+    });
 
     useEffect(() => {
         const handleBeforeInstallPrompt = (e) => {
@@ -39,29 +62,53 @@ export default function InstallPrompt() {
         };
     }, []);
 
+    const dismiss = () => {
+        sessionDismissed = true;
+        setDismissed(true);
+        try {
+            localStorage.setItem(DISMISS_KEY, '1');
+        } catch {
+            // localStorage unavailable (private mode) — the in-memory flag covers this session.
+        }
+    };
+
     const handleInstallClick = async () => {
         if (deferredPrompt) {
             deferredPrompt.prompt();
             await deferredPrompt.userChoice;
             setDeferredPrompt(null);
+            dismiss();
         } else {
-            // No native prompt available (iOS, or already dismissed) — show manual steps.
+            // No native prompt available (iOS, or already consumed) — show manual steps.
             setShowInstructions(true);
         }
     };
 
-    if (isStandalone) return null;
+    // Show only when installing is actually possible and the user hasn't opted out.
+    const canShow = !isStandalone && !dismissed && (deferredPrompt || isIOS);
 
     return (
         <>
-            <button
-                onClick={handleInstallClick}
-                aria-label="Įdiegti programėlę"
-                className="inline-flex items-center gap-1 min-h-touch rounded-control border border-brand-soft bg-brand-soft px-3 py-1 text-caption font-medium text-brand-hover transition-colors hover:bg-brand-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-            >
-                <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                <span className="uppercase tracking-wide">Įdiegti</span>
-            </button>
+            {canShow && (
+                <div className="flex items-center gap-3 border-b border-line bg-brand-soft px-4 py-2">
+                    <Download className="h-5 w-5 shrink-0 text-brand-hover" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-caption font-semibold text-brand-hover">Įdiegti WORKZ</p>
+                        <p className="truncate text-caption text-ink">
+                            Greitesnė prieiga iš pradžios ekrano
+                        </p>
+                    </div>
+                    <Button
+                        variant="primary"
+                        size="md"
+                        onClick={handleInstallClick}
+                        className="shrink-0 px-3 py-1.5"
+                    >
+                        {deferredPrompt ? 'Įdiegti' : 'Kaip įdiegti'}
+                    </Button>
+                    <IconButton icon={X} label="Atmesti" onClick={dismiss} />
+                </div>
+            )}
 
             {showInstructions && (
                 <Modal open onClose={() => setShowInstructions(false)} title="Įdiegti programėlę" size="sm">

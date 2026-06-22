@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
  * Custom hook to manage system notifications for active work sessions
  * Creates persistent notifications that appear in the device's status bar
  */
-export function useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning }) {
+export function useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning, enabled = true }) {
     const notificationRef = useRef(null);
     const previousStateRef = useRef(null);
 
@@ -17,6 +17,16 @@ export function useSessionNotification({ isQuickWorking, isCalling, isTakingBrea
 
         if (Notification.permission !== 'granted') {
             return; // Don't try to show notifications if not granted
+        }
+
+        // Respect the per-user profile toggle: tear down any live notification and show none.
+        if (!enabled) {
+            if (notificationRef.current) {
+                notificationRef.current.close();
+                notificationRef.current = null;
+            }
+            previousStateRef.current = null;
+            return;
         }
 
         // Determine current session state
@@ -89,7 +99,7 @@ export function useSessionNotification({ isQuickWorking, isCalling, isTakingBrea
                 notificationRef.current = null;
             }
         };
-    }, [isQuickWorking, isCalling, isTakingBreak, isRunning]);
+    }, [isQuickWorking, isCalling, isTakingBreak, isRunning, enabled]);
 
     // Cleanup on unmount
     useEffect(() => {
