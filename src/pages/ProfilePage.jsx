@@ -254,59 +254,59 @@ export default function ProfilePage() {
                 </div>
             </Card>
 
-            {/* Appearance — light / dark / system theme (ADR 0008). A 3-way segmented control;
-                each option pairs an icon with a label so the active choice is never color-only. */}
-            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Išvaizda</h2>
-            <Card className="mb-4 p-4">
-                <div className="flex items-center gap-3">
-                    <div className="min-w-0 flex-1">
-                        <p className="text-body font-medium text-ink-strong">Tema</p>
-                        <p className="text-caption text-ink-muted">
-                            „Sistemos“ seka jūsų įrenginio nustatymą
-                        </p>
-                    </div>
-                </div>
-                <div
-                    role="radiogroup"
-                    aria-label="Programėlės tema"
-                    className="mt-3 grid grid-cols-3 gap-2"
-                >
-                    {THEME_OPTIONS.map((opt) => {
-                        const selected = themePreference === opt.value;
-                        return (
-                            <button
-                                key={opt.value}
-                                type="button"
-                                role="radio"
-                                aria-checked={selected}
-                                onClick={() => handleThemeChange(opt.value)}
-                                disabled={savingTheme}
-                                className={cn(
-                                    'flex min-h-touch flex-col items-center justify-center gap-1 rounded-control border px-2 py-2.5 text-caption font-medium transition-colors duration-base',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
-                                    'disabled:opacity-50',
-                                    selected
-                                        ? 'border-brand bg-brand-soft text-brand'
-                                        : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
-                                )}
-                            >
-                                <opt.Icon className="h-5 w-5" aria-hidden="true" />
-                                {opt.label}
-                            </button>
-                        );
-                    })}
-                </div>
-                {themeError && (
-                    <p role="alert" className="mt-3 text-caption font-medium text-feedback-danger">
-                        {themeError}
-                    </p>
-                )}
-            </Card>
-
-            {/* Settings */}
-            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Nustatymai</h2>
+            {/* Actions — everything the user can do here, as one flat list with no section
+                headers: pick a theme, toggle notifications, install the app, log out. (Changing
+                the photo lives on the avatar tap target in the identity card above.) */}
             <Card className="mb-4 overflow-hidden">
-                <div className="flex items-center gap-3 p-4">
+                {/* Appearance — light / dark / system theme (ADR 0008). A 3-way segmented control;
+                    each option pairs an icon with a label so the active choice is never color-only. */}
+                <div className="border-b border-line p-4">
+                    <div className="flex items-center gap-3">
+                        <div className="min-w-0 flex-1">
+                            <p className="text-body font-medium text-ink-strong">Tema</p>
+                            <p className="text-caption text-ink-muted">
+                                „Sistemos“ seka jūsų įrenginio nustatymą
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        role="radiogroup"
+                        aria-label="Programėlės tema"
+                        className="mt-3 grid grid-cols-3 gap-2"
+                    >
+                        {THEME_OPTIONS.map((opt) => {
+                            const selected = themePreference === opt.value;
+                            return (
+                                <button
+                                    key={opt.value}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={selected}
+                                    onClick={() => handleThemeChange(opt.value)}
+                                    disabled={savingTheme}
+                                    className={cn(
+                                        'flex min-h-touch flex-col items-center justify-center gap-1 rounded-control border px-2 py-2.5 text-caption font-medium transition-colors duration-base',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        'disabled:opacity-50',
+                                        selected
+                                            ? 'border-brand bg-brand-soft text-brand'
+                                            : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
+                                    )}
+                                >
+                                    <opt.Icon className="h-5 w-5" aria-hidden="true" />
+                                    {opt.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {themeError && (
+                        <p role="alert" className="mt-3 text-caption font-medium text-feedback-danger">
+                            {themeError}
+                        </p>
+                    )}
+                </div>
+
+                <div className="flex items-center gap-3 border-b border-line p-4">
                     <Bell className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                         <p className="text-body font-medium text-ink-strong">Pranešimai</p>
@@ -339,50 +339,31 @@ export default function ProfilePage() {
                     </button>
                 </div>
                 {notifError && (
-                    <p role="alert" className="px-4 pb-3 text-caption font-medium text-feedback-danger">
+                    <p role="alert" className="border-b border-line px-4 pb-3 pt-1 text-caption font-medium text-feedback-danger">
                         {notifError}
                     </p>
                 )}
-            </Card>
 
-            {/* App install — a persistent, always-findable entry point (the banner above the
-                workspace is snoozable and race-prone; this is the reliable fallback). Hidden once
-                the app is already running standalone, since there is nothing left to install. */}
-            {!isStandalone && (
-                <>
-                    <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Programėlė</h2>
-                    <Card className="mb-4 overflow-hidden">
-                        <button
-                            type="button"
-                            onClick={handleInstall}
-                            className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
-                        >
-                            <Download className="h-5 w-5 shrink-0 text-brand" aria-hidden="true" />
-                            <div className="min-w-0 flex-1">
-                                <p className="text-body font-medium text-ink-strong">Įdiegti programėlę</p>
-                                <p className="text-caption text-ink-muted">
-                                    Spartesnė prieiga ir pranešimai telefono ekrane
-                                </p>
-                            </div>
-                            <ChevronRight className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
-                        </button>
-                    </Card>
-                </>
-            )}
+                {/* Install — a persistent, always-findable entry point (the banner above the
+                    workspace is snoozable and race-prone; this is the reliable fallback). Hidden
+                    once the app is already running standalone, since there is nothing to install. */}
+                {!isStandalone && (
+                    <button
+                        type="button"
+                        onClick={handleInstall}
+                        className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                    >
+                        <Download className="h-5 w-5 shrink-0 text-brand" aria-hidden="true" />
+                        <div className="min-w-0 flex-1">
+                            <p className="text-body font-medium text-ink-strong">Įdiegti programėlę</p>
+                            <p className="text-caption text-ink-muted">
+                                Spartesnė prieiga ir pranešimai telefono ekrane
+                            </p>
+                        </div>
+                        <ChevronRight className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
+                    </button>
+                )}
 
-            {/* Account */}
-            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Paskyra</h2>
-            <Card className="overflow-hidden">
-                <button
-                    type="button"
-                    onClick={handlePickPhoto}
-                    disabled={uploading}
-                    className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:opacity-50"
-                >
-                    <Camera className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
-                    <span className="flex-1 text-body font-medium text-ink-strong">Keisti nuotrauką</span>
-                    <ChevronRight className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
-                </button>
                 <button
                     type="button"
                     onClick={() => setConfirmLogout(true)}
