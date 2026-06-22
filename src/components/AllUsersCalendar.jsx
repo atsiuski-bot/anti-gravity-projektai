@@ -160,14 +160,14 @@ export default function AllUsersCalendar() {
     return (
         <div className="w-full bg-surface-card rounded-card shadow-lg border border-line overflow-hidden flex flex-col h-[70vh] min-h-[480px] max-h-[850px]">
             {/* Toolbar — single row on every viewport: the day stepper sits centered while the
-                "Šiandien" reset is pinned to the right edge, vertically aligned with the day name
+                "Šiandien" reset is pinned to the left edge, vertically aligned with the day name
                 (no longer a separate top row). Proportions are tuned down (smaller title/date,
                 tighter padding) so the header no longer dominates the card. */}
             <div className="relative p-3 sm:p-4 border-b border-line">
                 <Button
                     variant="secondary"
                     onClick={() => setCurrentDate(new Date())}
-                    className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 px-3 py-1.5 text-caption sm:text-body"
+                    className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 px-3 py-1.5 text-caption sm:text-body"
                 >
                     Šiandien
                 </Button>
@@ -311,8 +311,11 @@ export default function AllUsersCalendar() {
                 </div>
             </div>
 
-            {/* Mobile card stack (< md) — each user's shifts as readable rows, no horizontal scroll (§9) */}
-            <div className="md:hidden flex-1 overflow-y-auto p-4 space-y-3">
+            {/* Mobile card stack (< md) — compact rows, no horizontal scroll (§9). The per-user
+                name header is gone: each shift row now leads with the name and the work hours on
+                ONE line (name first, hours immediately after, packed left). The left colour stripe
+                still ties the row to its worker, so colour is never the sole signal (§4/§16). */}
+            <div className="md:hidden flex-1 overflow-y-auto p-4 space-y-2.5">
                 {usersWithEvents.length === 0 ? (
                     <EmptyState
                         icon={CalendarOff}
@@ -321,70 +324,61 @@ export default function AllUsersCalendar() {
                     />
                 ) : (
                     usersWithEvents.map((user) => (
-                        <div
+                        <ul
                             key={user.id}
-                            className="rounded-card border border-line bg-surface-card shadow-sm overflow-hidden"
+                            className="rounded-card border border-line bg-surface-card shadow-sm overflow-hidden divide-y divide-line"
                         >
-                            <div className="flex items-center gap-2 px-4 py-3 border-b border-line">
-                                <span
-                                    className="w-3 h-3 rounded-full flex-shrink-0"
-                                    style={{ backgroundColor: user.color || WORKER_FALLBACK_COLOR }}
-                                    aria-hidden="true"
-                                />
-                                <h3 className="text-body-lg font-semibold text-ink-strong truncate">
-                                    {user.displayName}
-                                </h3>
-                            </div>
-                            <ul className="divide-y divide-line">
-                                {user.events.map((event) => {
-                                    const status = eventStatus(event);
-                                    const barColor = event.isVacation ? VACATION_COLOR : (event.color || WORKER_FALLBACK_COLOR);
-                                    // Same proportional placement math as the desktop bars, but the
-                                    // track is the card width (7:00–22:00 span) — no horizontal scroll (§9).
-                                    const barStyle = getEventStyle(event.start, event.end);
-                                    return (
-                                        <li
-                                            key={event.id}
-                                            className="px-4 py-3"
-                                            style={{ borderLeft: `4px solid ${barColor}` }}
-                                        >
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0 flex-1">
-                                                    <p className="text-body font-semibold text-ink-strong truncate">
-                                                        {event.title}
-                                                    </p>
-                                                    <p className="text-caption text-ink-muted font-medium tabular-nums">
-                                                        {format(event.start, 'HH:mm')}–{format(event.end, 'HH:mm')}
-                                                    </p>
-                                                </div>
-                                                {status && (
-                                                    <span className={cn(
-                                                        'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-caption font-medium flex-shrink-0',
-                                                        event.isVacation ? 'bg-brand-soft text-brand-hover' : 'bg-amber-100 text-amber-800'
-                                                    )}>
-                                                        <status.Icon className="w-3.5 h-3.5" aria-hidden="true" />
-                                                        {status.label}
-                                                    </span>
-                                                )}
+                            {user.events.map((event) => {
+                                const status = eventStatus(event);
+                                const barColor = event.isVacation ? VACATION_COLOR : (event.color || WORKER_FALLBACK_COLOR);
+                                // Same proportional placement math as the desktop bars, but the
+                                // track is the card width (7:00–22:00 span) — no horizontal scroll (§9).
+                                const barStyle = getEventStyle(event.start, event.end);
+                                return (
+                                    <li
+                                        key={event.id}
+                                        className="px-3.5 py-2.5"
+                                        style={{ borderLeft: `4px solid ${barColor}` }}
+                                    >
+                                        <div className="flex items-center justify-between gap-2">
+                                            {/* Name first, then the work hours — packed to the left.
+                                                The name truncates with an ellipsis when it would
+                                                overflow the phone width; the hours never shrink. */}
+                                            <div className="flex items-baseline gap-2 min-w-0 flex-1">
+                                                <span className="text-body font-semibold text-ink-strong truncate min-w-0">
+                                                    {user.displayName}
+                                                </span>
+                                                <span className="text-caption text-ink-muted font-medium tabular-nums whitespace-nowrap flex-shrink-0">
+                                                    {format(event.start, 'HH:mm')}–{format(event.end, 'HH:mm')}
+                                                </span>
                                             </div>
-
-                                            {/* Proportional shift bar across the 7:00–22:00 day */}
-                                            {barStyle && (
-                                                <div
-                                                    className="relative mt-2.5 h-2.5 rounded-full bg-surface-sunken overflow-hidden"
-                                                    role="presentation"
-                                                >
-                                                    <div
-                                                        className="absolute inset-y-0 rounded-full"
-                                                        style={{ ...barStyle, backgroundColor: barColor }}
-                                                    />
-                                                </div>
+                                            {status && (
+                                                <span className={cn(
+                                                    'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-caption font-medium flex-shrink-0',
+                                                    event.isVacation ? 'bg-brand-soft text-brand-hover' : 'bg-amber-100 text-amber-800'
+                                                )}>
+                                                    <status.Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                                                    {status.label}
+                                                </span>
                                             )}
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-                        </div>
+                                        </div>
+
+                                        {/* Proportional shift bar across the 7:00–22:00 day */}
+                                        {barStyle && (
+                                            <div
+                                                className="relative mt-2 h-2.5 rounded-full bg-surface-sunken overflow-hidden"
+                                                role="presentation"
+                                            >
+                                                <div
+                                                    className="absolute inset-y-0 rounded-full"
+                                                    style={{ ...barStyle, backgroundColor: barColor }}
+                                                />
+                                            </div>
+                                        )}
+                                    </li>
+                                );
+                            })}
+                        </ul>
                     ))
                 )}
             </div>

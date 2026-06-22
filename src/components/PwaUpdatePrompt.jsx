@@ -1,52 +1,118 @@
+import { useEffect, useState } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, CheckCircle2, X } from 'lucide-react';
 import Button from './ui/Button';
+import IconButton from './ui/IconButton';
+
+// A field worker keeps the app open all day, so the browser's load-time check never fires and a
+// new deploy would go unseen. Re-ask the browser to look for a fresh service worker on this
+// cadence (skipping when offline or mid-install) so the update prompt below can actually appear.
+const UPDATE_CHECK_MS = 60 * 60 * 1000; // hourly
+
+// The first-install "ready offline" confirmation is a calm, one-off reassurance, not an action.
+// It dismisses itself so it never lingers over the work surface.
+const OFFLINE_READY_MS = 6000;
 
 /**
- * PwaUpdatePrompt — the accessible in-app replacement for the banned `window.confirm`
- * PWA update prompt (DESIGN_SYSTEM §8; `window.confirm`/`alert` are banned in UI flows).
+ * PwaUpdatePrompt — the accessible, in-app surface for the PWA service-worker lifecycle,
+ * replacing the banned `window.confirm` update prompt (DESIGN_SYSTEM §8).
  *
- * Driven by vite-plugin-pwa's `prompt` registerType: when a new service worker is waiting,
- * `needRefresh` flips true and we surface a labelled, aria-live banner offering a *controlled*
- * reload. This deliberately replaces the old `autoUpdate` strategy so a field worker is never
- * silently reloaded mid-task — they choose when to apply the update.
+ * Two transient, bottom-docked states (driven by vite-plugin-pwa's `prompt` registerType):
+ *  - `needRefresh` — a new service worker is waiting. Offer a *controlled* reload so a worker is
+ *    never silently reloaded mid-task; they choose when to apply it.
+ *  - `offlineReady` — first install finished caching. A self-dismissing confirmation that the
+ *    app now works without a connection.
  */
 export default function PwaUpdatePrompt() {
+    const [reloading, setReloading] = useState(false);
+
     const {
         needRefresh: [needRefresh, setNeedRefresh],
+        offlineReady: [offlineReady, setOfflineReady],
         updateServiceWorker,
-    } = useRegisterSW();
+    } = useRegisterSW({
+        onRegisteredSW(_swUrl, registration) {
+            if (!registration) return;
+            setInterval(() => {
+                if (registration.installing || !navigator.onLine) return;
+                registration.update();
+            }, UPDATE_CHECK_MS);
+        },
+    });
 
-    if (!needRefresh) return null;
+    // Auto-dismiss the offline-ready confirmation — it's reassurance, not a task.
+    useEffect(() => {
+        if (!offlineReady) return undefined;
+        const timer = setTimeout(() => setOfflineReady(false), OFFLINE_READY_MS);
+        return () => clearTimeout(timer);
+    }, [offlineReady, setOfflineReady]);
+
+    if (!needRefresh && !offlineReady) return null;
+
+    const applyUpdate = () => {
+        setReloading(true);
+        updateServiceWorker(true); // activates the waiting worker, then reloads the page
+    };
 
     return (
+        // Lifted clear of the bottom navigation + floating work pill (mirrors the `pb-navclear`
+        // 8rem clearance) so a worker mid-task never has their running-timer pill covered.
         <div
-            className="fixed inset-x-0 bottom-0 z-toast flex justify-center px-4 pt-4"
-            style={{ paddingBottom: 'calc(1rem + env(safe-area-inset-bottom))' }}
+            className="fixed inset-x-0 bottom-0 z-toast flex justify-center px-4"
+            style={{ paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))' }}
         >
-            <div
-                role="region"
-                aria-label="Programos atnaujinimas"
-                className="flex w-full max-w-md items-start gap-3 rounded-modal border border-line bg-surface-card p-4 shadow-xl"
-            >
-                <RefreshCw className="mt-0.5 h-5 w-5 shrink-0 text-brand" aria-hidden="true" />
-                <div className="min-w-0 flex-1">
-                    <p className="text-body font-semibold text-ink-strong" aria-live="polite">
-                        Yra naujas turinys
-                    </p>
-                    <p className="text-caption text-ink-muted">
-                        Įkelkite iš naujo, kad atnaujintumėte programą.
-                    </p>
-                    <div className="mt-3 flex gap-2">
-                        <Button size="md" onClick={() => updateServiceWorker(true)}>
-                            Įkelti iš naujo
-                        </Button>
-                        <Button variant="secondary" size="md" onClick={() => setNeedRefresh(false)}>
-                            Vėliau
-                        </Button>
+            {needRefresh ? (
+                <div
+                    role="status"
+                    aria-label="Programos atnaujinimas"
+                    className="flex w-full max-w-md items-start gap-3 rounded-modal border border-line bg-surface-card p-4 shadow-xl"
+                >
+                    <RefreshCw className="mt-0.5 h-5 w-5 shrink-0 text-brand" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-body font-semibold text-ink-strong">
+                            Atnaujinta versija
+                        </p>
+                        <p className="text-caption text-ink-muted">
+                            Paruošta naujesnė versija — atnaujinkite, kad gautumėte naujausius pakeitimus.
+                        </p>
+                        <div className="mt-3 flex gap-2">
+                            <Button size="md" loading={reloading} onClick={applyUpdate}>
+                                Atnaujinti
+                            </Button>
+                            <Button
+                                variant="secondary"
+                                size="md"
+                                disabled={reloading}
+                                onClick={() => setNeedRefresh(false)}
+                            >
+                                Vėliau
+                            </Button>
+                        </div>
                     </div>
                 </div>
-            </div>
+            ) : (
+                <div
+                    role="status"
+                    aria-label="Programa paruošta neprisijungus"
+                    className="flex w-full max-w-md items-start gap-3 rounded-modal border border-line bg-surface-card p-4 shadow-xl"
+                >
+                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-feedback-success" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-body font-semibold text-ink-strong">
+                            Paruošta neprisijungus
+                        </p>
+                        <p className="text-caption text-ink-muted">
+                            Programa veiks ir be interneto ryšio.
+                        </p>
+                    </div>
+                    <IconButton
+                        icon={X}
+                        label="Užverti"
+                        onClick={() => setOfflineReady(false)}
+                        className="-mr-1 -mt-1 shrink-0"
+                    />
+                </div>
+            )}
         </div>
     );
 }

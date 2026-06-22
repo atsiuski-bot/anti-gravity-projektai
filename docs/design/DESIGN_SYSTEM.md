@@ -209,6 +209,17 @@ Each replaces a cluster of today's copy-pasted variants (see
   standard padding, a `≥44px` close `IconButton`, `role="dialog"` + `aria-modal` +
   `aria-labelledby`, focus moved to the primary action on open, backdrop-tap to dismiss for
   non-destructive dialogs, `Escape` to close. Replaces ~10 hand-rolled modal scaffolds.
+- **Presentation rule (binding):** the scrim dims the **whole** viewport and the dialog is a
+  content-sized card **centred over it** — including on phones, where a pop-up must appear
+  centred over the full screen, **never anchored to a trigger, corner or some fixed spot**.
+  The card keeps its natural size (capped at `max-h-[90vh]`, body scrolls); it is *not*
+  stretched edge-to-edge. This is the single rule for **all** pop-ups; route new overlays
+  through `Modal` rather than hand-rolling a `fixed inset-0` scrim.
+- Two escape hatches keep specialised pop-ups on the same shell instead of forking it:
+  `bare` (caller supplies its own full-bleed chrome — e.g. the coloured time-warning /
+  time-limit headers — laid out as `flex-shrink-0` header, `flex-1 overflow-y-auto` body,
+  `flex-shrink-0` footer) and `level="top"` (raise above any other open modal, for the forced
+  time-limit alarm). The amber `TaskTimeWarningPopup` and red `TaskTimeLimitPopup` use both.
 
 ### `ConfirmDialog`
 - The **only** way to confirm a destructive/consequential action. **`window.confirm` /

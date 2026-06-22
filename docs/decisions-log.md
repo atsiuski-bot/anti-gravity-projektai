@@ -14,6 +14,18 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-06-22** — **Unified pop-up presentation on one shell.** Every informational pop-up /
+  dialog renders through the canonical `Modal`: the scrim dims the whole viewport and the
+  dialog is a content-sized card **centred over it**, including on phones, where a pop-up must
+  appear centred over the full screen rather than anchored to a trigger or corner (it is *not*
+  stretched edge-to-edge). The two worker time pop-ups (`TaskTimeWarningPopup`,
+  `TaskTimeLimitPopup`) — previously hand-rolled `fixed inset-0` overlays with their own scrim
+  opacities (`bg-black/40` vs `/50`), focus-traps and z-values — were folded onto `Modal` via
+  two new escape hatches: `bare` (caller-owned full-bleed chrome) and `level="top"` (alarm
+  above any open modal). `InfoPopover` keeps its compact anchored bubble on `≥sm` but opens as
+  a centred `Modal` over the dimmed screen on phones (so it is no longer a bubble that can clip
+  off the edge). Toast stays a transient top notification (already on the shared tokens).
+  Rationale + the design rule live in `DESIGN_SYSTEM.md` §8.
 - **2026-06-20** — Retired the legacy **"Viduramžiai.LT"** brand. The product name is now
   **WORKZ** only; the old name was removed from `index.html`, `vite.config.js`, and
   `README.md`, and must not be reintroduced anywhere in code or copy.
@@ -108,15 +120,16 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
   fixed (the bridge), three findings dismissed. Documented in
   [`DESIGN_SYSTEM.md`](./design/DESIGN_SYSTEM.md) §12 + [`tokens.md`](./design/tokens.md) §7.
   No backend/rules impact.
-- **2026-06-22** — **Functions migrated to Node 22 + `firebase-functions` 7 (code done; re-deploy pending).**
-  Node 20 is decommissioned for Cloud Functions **after 2026-10-30**, so ahead of that
-  `functions/package.json` was moved to `engines.node: "22"` and `firebase-functions ^6.1.0 → ^7.2.5`.
-  `firebase-admin` is **held at `^13`**: `firebase-functions@7` declares its peer as
-  `firebase-admin ^11.10 || ^12 || ^13`, so admin 14 (which itself requires Node ≥22) must wait for a
-  later `firebase-functions` peer bump — minor follow-up. Verified locally on Node 22: `npm install`
-  resolves cleanly (no `--legacy-peer-deps`) and every `index.js` import target (v2 firestore
-  triggers, `setGlobalOptions`, `logger`, and the admin `getFirestore`/`getMessaging`/`getStorage`
-  modular entry points) resolves on the new majors; functions `eslint` is clean. **The running
-  functions stay on Node 20 until the founder re-deploys** (`firebase deploy --only functions`) — the
-  runtime only changes at deploy time. See [ADR 0004](./adr/0004-notification-infrastructure.md) and
-  the [FCM runbook](./runbooks/fcm-notifications-deploy.md).
+- **2026-06-22** — **Functions migrated to Node 22 + `firebase-functions` 7 (deployed & verified).**
+  Node 20 is decommissioned for Cloud Functions **after 2026-10-30**, so `functions/package.json`
+  was moved to `engines.node: "22"` and `firebase-functions ^6.1.0 → ^7.2.5`. `firebase-admin` is
+  **held at `^13`**: `firebase-functions@7` declares its peer as `firebase-admin ^11.10 || ^12 || ^13`,
+  so admin 14 (which itself requires Node ≥22) must wait for a later `firebase-functions` peer bump —
+  minor follow-up. Verified locally on Node 22 (clean `npm install`, every `index.js` import target —
+  v2 firestore triggers, `setGlobalOptions`, `logger`, admin `getFirestore`/`getMessaging`/`getStorage`
+  — resolves on the new majors, `eslint` clean), then deployed and **confirmed via the Firebase API
+  that all five functions report runtime `nodejs22`**. NB: deploy from a checkout that has the latest
+  `main` — a stale checkout silently deploys old code and reports "Skipped (No changes detected)"; and
+  confirm the live runtime via the API/console, not the deploy log. See
+  [ADR 0004](./adr/0004-notification-infrastructure.md) and the
+  [FCM runbook](./runbooks/fcm-notifications-deploy.md).
