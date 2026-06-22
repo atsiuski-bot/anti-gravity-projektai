@@ -23,6 +23,7 @@ import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
+import { scopeRoster } from '../utils/teamScope';
 
 // Shared with WorkerView: the calendar/report views are the heavy part of the bundle
 // (react-big-calendar + date-fns + reports aggregation). Lazy-loading them in BOTH views
@@ -33,14 +34,19 @@ const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
 const Reports = React.lazy(() => import('../components/Reports'));
 
 export default function ManagerView() {
-    const { userRole, currentUser } = useAuth();
+    const { userRole, currentUser, userData } = useAuth();
     const { activeTab, scrollPositions } = useNavigation();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     const [viewMode, setViewMode] = useState('desktop');
 
     // Use custom hooks
-    const { tasks, users, allUsers, manualTaskOrder, saveManualOrder, error } = useManagerData(currentUser);
+    const { tasks, ownTasks, users, allUsers, manualTaskOrder, saveManualOrder, error } = useManagerData(currentUser);
+    // A scoped manager's pickers/reports must only offer their own team; admins & unscoped
+    // managers see everyone. (Data rows are already team-scoped by the listeners; this narrows
+    // the people you can FILTER/SELECT so no one outside the team is even named.)
+    const pickerUsers = scopeRoster(users, userData, currentUser?.uid);
+    const reportRoster = scopeRoster(allUsers || users, userData, currentUser?.uid);
     const {
         sortedTasks,
         filterUser, setFilterUser,
@@ -50,8 +56,9 @@ export default function ManagerView() {
         sortBy, setSortBy
     } = useTaskFiltering(tasks, manualTaskOrder);
 
-    // Task time monitoring — 80% warning and 100% limit for manager's own tasks
-    const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(tasks);
+    // Task time monitoring — 80% warning and 100% limit for manager's own tasks (ownTasks, so a
+    // scoped manager whose team listener excludes their own rows is still monitored correctly).
+    const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(ownTasks);
 
     const handleMoveUp = React.useCallback((taskId) => {
         const currentList = [...sortedTasks];
@@ -171,7 +178,7 @@ export default function ManagerView() {
                                 className={FILTER_FIELD}
                             >
                                 <option value="">Visi vykdytojai</option>
-                                {users.map(user => (
+                                {pickerUsers.map(user => (
                                     <option key={user.id} value={user.id}>
                                         {user.displayName || user.email}
                                     </option>
@@ -280,8 +287,9 @@ export default function ManagerView() {
             <div className={activeTab === 'my-tasks' ? 'block' : 'hidden'}>
                 {/* Reuse worker view logic for "My Tasks" */}
                 {(() => {
-                    const myTasks = tasks.filter(t => t.assignedUserId === currentUser?.uid);
-                    const filteredMyTasks = myTasks;
+                    // Own tasks come from the dedicated owner-scoped listener (ownTasks), so a
+                    // scoped manager — whose team listener excludes their own rows — still sees them.
+                    const filteredMyTasks = ownTasks;
                     const sortedMyTasks = sortWorkerTasks(filteredMyTasks);
 
                     return (
@@ -317,29 +325,35 @@ export default function ManagerView() {
                 })()}
             </div>
 
-            <div className={activeTab === 'my-calendar' ? 'block' : 'hidden'}>
+            {/* Calendar tabs render only while active. react-big-calendar measures its grid
+                geometry once at mount; mounting inside a display:none tab yields zero widths and a
+                misaligned header/gutter that only a window resize would fix. Gating on the active
+                tab keeps it mounting into a laid-out container (and honours the lazy-load intent:
+                the chunk streams in on first visit, not eagerly while hidden). */}
+            {activeTab === 'my-calendar' && (
                 <div className="w-full">
-                    <ErrorBoundary boundaryName="manager:my-calendar" resetKeys={[activeTab]}>
+                    <ErrorBoundary boundaryName="manager:my-calendar">
                         <React.Suspense fallback={<Spinner />}>
                             <WorkPlanner />
                         </React.Suspense>
                     </ErrorBoundary>
                 </div>
-            </div>
+            )}
 
-            <div className={activeTab === 'team-calendar' ? 'block' : 'hidden'}>
-                <ErrorBoundary boundaryName="manager:team-calendar" resetKeys={[activeTab]}>
+            {activeTab === 'team-calendar' && (
+                <ErrorBoundary boundaryName="manager:team-calendar">
                     <React.Suspense fallback={<Spinner />}>
                         <AllUsersCalendar />
                     </React.Suspense>
                 </ErrorBoundary>
-            </div>
+            )}
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="manager:reports" resetKeys={[activeTab]}>
                     <React.Suspense fallback={<Spinner />}>
-                        {/* Team report is the only place export is allowed (Kom. ataskaitos). */}
-                        <Reports users={allUsers || users} canExport />
+                        {/* Team report is the only place export is allowed (Kom. ataskaitos).
+                            roster is team-scoped for a scoped manager. */}
+                        <Reports users={reportRoster} canExport />
                     </React.Suspense>
                 </ErrorBoundary>
             </div>

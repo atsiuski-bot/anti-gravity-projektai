@@ -7,7 +7,7 @@ import SideRail from './SideRail';
 import InstallPrompt from './InstallPrompt';
 import Avatar from './ui/Avatar';
 import { runDailyAutomation } from '../utils/automationUtils';
-import { isManagerRole } from '../utils/formatters';
+import { canSeeWholeTeam } from '../utils/teamScope';
 import { useSessionNotification } from '../hooks/useSessionNotification';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
@@ -15,17 +15,18 @@ import { cn } from '../utils/cn';
 import QuickWorkDescribePrompt from './QuickWorkDescribePrompt';
 
 export default function Layout({ children }) {
-    const { currentUser, userData, userRole, isTakingBreak, workStatus } = useAuth();
+    const { currentUser, userData, isTakingBreak, workStatus } = useAuth();
     const { setActiveTab } = useNavigation();
 
-    // Run the full daily automation (promote + archive) once per day for managers/admins.
-    // Both this and Dashboard call the same gated entry point, so neither can consume the
-    // daily latch with only a partial subset of the work.
+    // Run the full daily automation (promote + archive) once per day. Gated to WHOLE-TEAM
+    // viewers (admins / unscoped managers): it reads & writes EVERY user's tasks, which a scoped
+    // manager neither may do (tighter rules) nor should. Both this and Dashboard call the same
+    // gated entry point, so neither can consume the daily latch with only a partial subset.
     useEffect(() => {
-        if (isManagerRole(userRole)) {
+        if (canSeeWholeTeam(userData)) {
             runDailyAutomation();
         }
-    }, [userRole]);
+    }, [userData]);
 
     const [isOnline, setIsOnline] = useState(navigator.onLine);
 
