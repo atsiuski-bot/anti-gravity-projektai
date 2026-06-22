@@ -11,6 +11,7 @@ import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTrian
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
+import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
@@ -1473,44 +1474,46 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         </div>
                         <div>
                             <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Žymą</label>
-                            <select
+                            <Select
                                 value={taskFilters.tag}
-                                onChange={(e) => setTaskFilters(prev => ({ ...prev, tag: e.target.value }))}
-                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
-                            >
-                                <option value="all">Visos Žymos</option>
-                                {TASK_TAGS.map(tag => (
-                                    <option key={tag} value={tag}>{tag}</option>
-                                ))}
-                            </select>
+                                onChange={(val) => setTaskFilters(prev => ({ ...prev, tag: val }))}
+                                options={[
+                                    { value: 'all', label: 'Visos Žymos' },
+                                    ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+                                ]}
+                                label="Žyma"
+                                ariaLabel="Filtruoti pagal žymą"
+                            />
                         </div>
                         {(isManagerRole(userRole)) && (
                             <div>
                                 <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Vykdytoją</label>
-                                <select
+                                <Select
                                     value={taskFilters.userId}
-                                    onChange={(e) => setTaskFilters(prev => ({ ...prev, userId: e.target.value }))}
-                                    className="w-full border border-line rounded-control px-3 py-2 text-sm"
-                                >
-                                    <option value="all">Visi Vykdytojai</option>
-                                    {users?.map(u => (
-                                        <option key={u.id} value={u.id}>{formatDisplayName(u.displayName || u.email)}</option>
-                                    ))}
-                                </select>
+                                    onChange={(val) => setTaskFilters(prev => ({ ...prev, userId: val }))}
+                                    options={[
+                                        { value: 'all', label: 'Visi Vykdytojai' },
+                                        ...(users?.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) })) || []),
+                                    ]}
+                                    label="Vykdytojas"
+                                    ariaLabel="Filtruoti pagal vykdytoją"
+                                />
                             </div>
                         )}
                         <div className="col-span-2 md:col-span-4 flex justify-end">
-                            <select
+                            <Select
                                 value={taskSort}
-                                onChange={(e) => setTaskSort(e.target.value)}
-                                aria-label="Rūšiuoti užduotis"
-                                className="border border-line rounded-control px-3 py-2 text-sm bg-surface-sunken"
-                            >
-                                <option value="date_desc">Naujausi viršuje</option>
-                                <option value="date_asc">Seniausi viršuje</option>
-                                <option value="time_desc">Ilgiausiai trukę viršuje</option>
-                                <option value="time_asc">Trumpiausiai trukę viršuje</option>
-                            </select>
+                                onChange={setTaskSort}
+                                options={[
+                                    { value: 'date_desc', label: 'Naujausi viršuje' },
+                                    { value: 'date_asc', label: 'Seniausi viršuje' },
+                                    { value: 'time_desc', label: 'Ilgiausiai trukę viršuje' },
+                                    { value: 'time_asc', label: 'Trumpiausiai trukę viršuje' },
+                                ]}
+                                label="Rūšiavimas"
+                                ariaLabel="Rūšiuoti užduotis"
+                                className="w-full sm:w-64"
+                            />
                         </div>
                     </div>
 

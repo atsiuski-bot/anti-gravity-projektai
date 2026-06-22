@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Filter, Search, ChevronDown, X, Activity, ListChecks } from 'lucide-react';
+import { ArrowUpDown, Filter, Search, X, Activity, ListChecks } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -9,6 +9,7 @@ import ActiveWorkSessions from '../components/ActiveWorkSessions';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Spinner } from '../components/ui/Loading';
+import Select from '../components/ui/Select';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -197,117 +198,101 @@ export default function ManagerView() {
                     to the right. Every control fills its cell (w-full) so tap targets are wide. */}
                 {(() => {
                     const hasActiveFilters = !!(searchText || filterUser || filterPriority || filterTag);
-                    const FILTER_FIELD =
-                        'w-full pl-10 pr-8 py-2.5 border border-line rounded-input text-body text-ink bg-surface-card ' +
-                        'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ' +
-                        'min-h-touch appearance-none';
                     const clearFilters = () => {
                         setSearchText('');
                         setFilterUser('');
                         setFilterPriority('');
                         setFilterTag('');
                     };
+                    const userOptions = [
+                        { value: '', label: 'Visi vykdytojai' },
+                        ...pickerUsers.map((user) => ({ value: user.id, label: user.displayName || user.email })),
+                    ];
+                    const priorityOptions = [
+                        { value: '', label: 'Visi prioritetai' },
+                        { value: PRIORITIES.URGENT, label: getPriorityLabel(PRIORITIES.URGENT) },
+                        { value: PRIORITIES.HIGH, label: getPriorityLabel(PRIORITIES.HIGH) },
+                        { value: PRIORITIES.MEDIUM, label: getPriorityLabel(PRIORITIES.MEDIUM) },
+                        { value: PRIORITIES.LOW, label: getPriorityLabel(PRIORITIES.LOW) },
+                        { value: PRIORITIES.VERY_LOW, label: getPriorityLabel(PRIORITIES.VERY_LOW) },
+                    ];
+                    const tagOptions = [
+                        { value: '', label: 'Visi Tagai' },
+                        ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+                    ];
+                    const sortOptions = [
+                        { value: 'none', label: 'Numatyta tvarka' },
+                        { value: 'status', label: 'Pagal būseną' },
+                        { value: 'priority', label: 'Pagal prioritetą' },
+                        { value: 'user', label: 'Pagal vartotoją' },
+                        { value: 'deadline-user', label: 'Pagal terminą-vartotoją' },
+                        { value: 'user-priority', label: 'Pagal vartotoją-prioritetą' },
+                        { value: 'manual', label: 'Rankiniu būdu' },
+                        ...TASK_TAGS.map((tag) => ({ value: `tag-${tag}`, label: `Rūšiuoti: ${tag}` })),
+                    ];
+                    // Mobile-first: search spans the full width, then the four classifiers form a
+                    // tidy 2x2 grid — [Vykdytojas | Rūšiavimas] over [Prioritetas | Žyma]. From lg+
+                    // everything collapses to one inline row with sort pushed to the right.
                     return (
-                <div className="flex flex-col gap-3 mb-4 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-                    {/* Filters */}
-                    <div className="grid grid-cols-2 gap-2 lg:flex lg:flex-wrap lg:items-center">
-                        <div className="relative col-span-2 lg:w-auto">
-                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                            <input
-                                type="search"
-                                value={searchText}
-                                onChange={(e) => setSearchText(e.target.value)}
-                                placeholder="Ieškoti užduočių…"
-                                aria-label="Ieškoti užduočių"
-                                className="w-full pl-10 pr-4 py-2.5 min-h-touch border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                            />
-                        </div>
-                        <div className="relative col-span-2 lg:w-auto">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                            <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                            <select
+                        <div className="grid grid-cols-2 gap-2 mb-4 lg:flex lg:flex-wrap lg:items-center lg:gap-3">
+                            <div className="relative col-span-2 lg:col-auto lg:w-64">
+                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
+                                <input
+                                    type="search"
+                                    value={searchText}
+                                    onChange={(e) => setSearchText(e.target.value)}
+                                    placeholder="Ieškoti užduočių…"
+                                    aria-label="Ieškoti užduočių"
+                                    className="w-full pl-10 pr-4 py-2.5 min-h-touch border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                />
+                            </div>
+                            <Select
                                 value={filterUser}
-                                onChange={(e) => setFilterUser(e.target.value)}
-                                aria-label="Filtruoti pagal vykdytoją"
-                                className={FILTER_FIELD}
-                            >
-                                <option value="">Visi vykdytojai</option>
-                                {pickerUsers.map(user => (
-                                    <option key={user.id} value={user.id}>
-                                        {user.displayName || user.email}
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
-                        <div className="relative lg:w-auto">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                            <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                            <select
+                                onChange={setFilterUser}
+                                options={userOptions}
+                                label="Vykdytojas"
+                                ariaLabel="Filtruoti pagal vykdytoją"
+                                icon={Filter}
+                                className="lg:w-auto lg:min-w-[10rem]"
+                            />
+                            <Select
+                                value={sortBy}
+                                onChange={setSortBy}
+                                options={sortOptions}
+                                label="Rūšiavimas"
+                                ariaLabel="Rūšiuoti užduotis"
+                                icon={ArrowUpDown}
+                                className="lg:order-last lg:ml-auto lg:w-auto lg:min-w-[11rem]"
+                            />
+                            <Select
                                 value={filterPriority}
-                                onChange={(e) => setFilterPriority(e.target.value)}
-                                aria-label="Filtruoti pagal prioritetą"
-                                className={FILTER_FIELD}
-                            >
-                                <option value="">Visi prioritetai</option>
-                                <option value={PRIORITIES.URGENT}>{getPriorityLabel(PRIORITIES.URGENT)}</option>
-                                <option value={PRIORITIES.HIGH}>{getPriorityLabel(PRIORITIES.HIGH)}</option>
-                                <option value={PRIORITIES.MEDIUM}>{getPriorityLabel(PRIORITIES.MEDIUM)}</option>
-                                <option value={PRIORITIES.LOW}>{getPriorityLabel(PRIORITIES.LOW)}</option>
-                                <option value={PRIORITIES.VERY_LOW}>{getPriorityLabel(PRIORITIES.VERY_LOW)}</option>
-                            </select>
-                        </div>
-                        <div className="relative lg:w-auto">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                            <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                            <select
+                                onChange={setFilterPriority}
+                                options={priorityOptions}
+                                label="Prioritetas"
+                                ariaLabel="Filtruoti pagal prioritetą"
+                                icon={Filter}
+                                className="lg:w-auto lg:min-w-[10rem]"
+                            />
+                            <Select
                                 value={filterTag}
-                                onChange={(e) => setFilterTag(e.target.value)}
-                                aria-label="Filtruoti pagal žymę"
-                                className={FILTER_FIELD}
-                            >
-                                <option value="">Visi Tagai</option>
-                                {TASK_TAGS.map(tag => (
-                                    <option key={`filter-${tag}`} value={tag}>{tag}</option>
-                                ))}
-                            </select>
+                                onChange={setFilterTag}
+                                options={tagOptions}
+                                label="Žyma"
+                                ariaLabel="Filtruoti pagal žymę"
+                                icon={Filter}
+                                className="lg:w-auto lg:min-w-[9rem]"
+                            />
+                            {hasActiveFilters && (
+                                <button
+                                    type="button"
+                                    onClick={clearFilters}
+                                    className="col-span-2 lg:col-auto inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                >
+                                    <X className="w-4 h-4" aria-hidden="true" />
+                                    Išvalyti filtrus
+                                </button>
+                            )}
                         </div>
-                        {/* Quick reset — only shown when something is actually filtered, so it never
-                            adds noise to the default state. Spans the grid row on mobile. */}
-                        {hasActiveFilters && (
-                            <button
-                                type="button"
-                                onClick={clearFilters}
-                                className="col-span-2 lg:col-auto inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                            >
-                                <X className="w-4 h-4" aria-hidden="true" />
-                                Išvalyti filtrus
-                            </button>
-                        )}
-                    </div>
-
-                    {/* Sort dropdown — full width on mobile, auto on lg+ */}
-                    <div className="relative w-full lg:w-auto">
-                        <ArrowUpDown className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                        <ChevronDown className="absolute right-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                        <select
-                            value={sortBy}
-                            onChange={(e) => setSortBy(e.target.value)}
-                            aria-label="Rūšiuoti užduotis"
-                            className={FILTER_FIELD}
-                        >
-                            <option value="none">Numatyta tvarka</option>
-                            <option value="status">Pagal būseną</option>
-                            <option value="priority">Pagal prioritetą</option>
-                            <option value="user">Pagal vartotoją</option>
-                            <option value="deadline-user">Pagal terminą-vartotoją</option>
-                            <option value="user-priority">Pagal vartotoją-prioritetą</option>
-                            <option value="manual">Rankiniu būdu</option>
-                            {TASK_TAGS.map(tag => (
-                                <option key={`sort-${tag}`} value={`tag-${tag}`}>Rūšiuoti: {tag}</option>
-                            ))}
-                        </select>
-                    </div>
-                </div>
                     );
                 })()}
 
