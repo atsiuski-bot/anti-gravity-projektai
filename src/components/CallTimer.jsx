@@ -227,7 +227,7 @@ export default function CallTimer({ compact = false }) {
                             ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isCalling
                                 ? 'bg-session-call-accent text-white ring-2 ring-blue-100'
-                                : 'text-ink hover:bg-surface-sunken'
+                                : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
                     title={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
                 >

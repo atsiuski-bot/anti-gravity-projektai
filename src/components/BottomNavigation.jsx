@@ -41,17 +41,20 @@ const BottomNavigation = () => {
 
     if (!currentUser) return null;
 
+    // Same key shape as the timer buttons (icon in a square + caption below), set apart only by
+    // its brand fill. Identical structure keeps the dock a uniform tray; the colour alone carries
+    // the "this is the primary action" rank (DESIGN_SYSTEM §8 — colour ranks, shape stays calm).
     const CreateButton = () => (
-        <button
-            onClick={() => window.dispatchEvent(new CustomEvent('open-task-modal'))}
-            aria-label="Sukurti užduotį"
-            className="flex flex-col items-center justify-center min-h-touch min-w-touch rounded-control text-brand transition-colors hover:bg-brand-soft active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-        >
-            <div className="mb-1 rounded-control bg-brand-soft p-1.5">
+        <div className="flex flex-col items-center">
+            <button
+                onClick={() => window.dispatchEvent(new CustomEvent('open-task-modal'))}
+                aria-label="Sukurti užduotį"
+                className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control bg-brand text-white transition-all hover:bg-brand-hover active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+            >
                 <Plus className="w-5 h-5" aria-hidden="true" />
-            </div>
-            <span className="text-caption font-bold uppercase leading-none tracking-wide">Sukurti</span>
-        </button>
+            </button>
+            <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Sukurti</span>
+        </div>
     );
 
     return (
@@ -59,27 +62,23 @@ const BottomNavigation = () => {
             {/* Work-controls floating pill (visible on all screens). Sits a fixed gap above the
                 main bar and clears the safe-area inset so both move together (DESIGN_SYSTEM §9). */}
             <div
-                className="fixed left-0 right-0 z-nav flex w-full flex-col items-center gap-2 px-3 pb-2 pointer-events-none"
+                className="fixed left-0 right-0 z-nav flex w-full flex-col items-center gap-2 px-3 pb-3 pointer-events-none"
                 style={{ bottom: 'calc(64px + env(safe-area-inset-bottom))' }}
             >
                 <ActiveSessionReadout />
 
                 <div className="pointer-events-auto flex w-full max-w-md items-center justify-between gap-2 rounded-card border border-line bg-surface-card/95 px-3 py-1.5 shadow-lg backdrop-blur-sm">
-                    {showCreateButton && (
-                        <div className="flex flex-shrink-0 items-center gap-2">
-                            <CreateButton />
-                            <div className="h-8 w-px bg-surface-sunken" />
-                        </div>
-                    )}
-
+                    {showCreateButton && <CreateButton />}
                     <QuickWorkTimer compact={true} />
                     <CallTimer compact={true} />
                     <BreakTimer currentUser={currentUser} compact={true} />
                 </div>
             </div>
 
-            {/* Main bottom bar */}
-            <div className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-card pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
+            {/* Main bottom bar — the quiet substrate. Recedes into the canvas (surface-base, no
+                shadow) so only the action dock above reads as "floating": two competing shadows
+                were the reason the two strips blended into one (DESIGN_SYSTEM §9). */}
+            <div className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-base pb-[env(safe-area-inset-bottom)]">
                 <div className="relative mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-2">
                     {/* Tablet (sm..lg): full tab set, centered, a thin separator between groups */}
                     <div className="hidden flex-1 items-center justify-center gap-2 sm:flex">
@@ -121,12 +120,18 @@ const BottomNavigation = () => {
                                     aria-current={active ? 'page' : undefined}
                                     className={cn(
                                         navItemBase,
-                                        'min-h-touch flex-1 px-0.5 py-1',
+                                        'relative min-h-touch flex-1 px-0.5 py-1',
                                         active ? 'text-brand' : 'text-ink-muted'
                                     )}
                                 >
-                                    <tab.icon className="mb-0.5 h-5 w-5" aria-hidden="true" />
-                                    <span className="line-clamp-2 text-center text-caption font-medium leading-tight">
+                                    {active && (
+                                        <span
+                                            aria-hidden="true"
+                                            className="absolute inset-x-1 inset-y-1.5 rounded-control bg-brand-soft"
+                                        />
+                                    )}
+                                    <tab.icon className="relative mb-0.5 h-5 w-5" aria-hidden="true" />
+                                    <span className="relative line-clamp-2 text-center text-caption font-medium leading-tight">
                                         {tab.label}
                                     </span>
                                 </button>
@@ -139,12 +144,18 @@ const BottomNavigation = () => {
                                 aria-expanded={moreOpen}
                                 className={cn(
                                     navItemBase,
-                                    'min-h-touch flex-1 px-0.5 py-1',
+                                    'relative min-h-touch flex-1 px-0.5 py-1',
                                     overflowActive ? 'text-brand' : 'text-ink-muted'
                                 )}
                             >
-                                <MoreHorizontal className="mb-0.5 h-5 w-5" aria-hidden="true" />
-                                <span className="text-center text-caption font-medium leading-tight">Daugiau</span>
+                                {overflowActive && (
+                                    <span
+                                        aria-hidden="true"
+                                        className="absolute inset-x-1 inset-y-1.5 rounded-control bg-brand-soft"
+                                    />
+                                )}
+                                <MoreHorizontal className="relative mb-0.5 h-5 w-5" aria-hidden="true" />
+                                <span className="relative text-center text-caption font-medium leading-tight">Daugiau</span>
                             </button>
                         )}
                     </div>

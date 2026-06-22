@@ -208,7 +208,7 @@ export default function QuickWorkTimer({ compact = false }) {
                             ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isQuickWorking
                                 ? 'bg-session-quickWork-shell text-white ring-2 ring-red-200 shadow-lg shadow-red-500/20'
-                                : 'text-ink hover:bg-surface-sunken'
+                                : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
                     title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
                 >
