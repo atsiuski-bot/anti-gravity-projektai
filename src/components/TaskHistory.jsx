@@ -20,8 +20,10 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import AssigneeChip from './task/AssigneeChip';
+import UserChip from './UserChip';
 
 // Filter field label — shared by every filter control. 12px floor (§5): was text-[10px].
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
@@ -880,9 +882,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     className="min-w-0 flex-1 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                 >
                                     <span className={clsx(
-                                        "text-body-lg font-bold text-ink-strong break-words",
-                                        deleted && "line-through text-ink-muted"
+                                        "text-body-lg font-bold break-words",
+                                        deleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                     )}>
+                                        {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
                                         {task.title}
                                     </span>
                                     {task.tag && (
@@ -940,7 +943,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             {(task.managerName || task.creatorName) && (
                                 <div className="text-caption text-ink-muted flex items-center gap-1">
                                     <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                    <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                    <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                 </div>
                             )}
 
@@ -950,7 +953,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                     {task.comments.map((comment, idx) => (
                                         <div key={idx} className="text-caption text-ink mb-1">
-                                            <span className="font-medium">{comment.user}:</span> {comment.text}
+                                            <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
                                         </div>
                                     ))}
                                 </div>
@@ -996,9 +999,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                             onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
                                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                             className={clsx(
-                                            "text-body font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                            (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                            "text-body font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                            (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                         )}>
+                                            {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                             {task.title}
                                             {task.tag && (
                                                 <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-medium bg-brand-soft text-brand-hover rounded align-middle">
@@ -1036,7 +1040,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                                 <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                                 {task.comments.map((comment, idx) => (
                                                     <div key={idx} className="text-caption text-ink mb-1">
-                                                        <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                        <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
                                                     </div>
                                                 ))}
                                             </div>
@@ -1044,7 +1048,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                         {(task.managerName || task.creatorName) && (
                                             <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                 <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                                <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                                <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                             </div>
                                         )}
                                     </td>

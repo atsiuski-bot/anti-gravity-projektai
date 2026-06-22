@@ -4,7 +4,9 @@ import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDo
 import { useAuth } from '../context/AuthContext';
 import { startOfWeek, format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, Trash2, Edit, MessageCircle, Clock, RotateCcw } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff } from 'lucide-react';
+import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
 import { deleteTask } from '../utils/taskActions';
 import { logCalendarChange } from '../utils/calendarNotifications';
@@ -12,21 +14,39 @@ import { DeleteConfirmationModal } from './TaskDetailsModals';
 import { SoundManager } from '../utils/soundUtils';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
+import EmptyState from './ui/EmptyState';
 
-export default function ManagerNotifications({ onEditAndApprove }) {
-    const { currentUser } = useAuth();
+/**
+ * NotificationFeed — the two-way feed rendered inside the notification bell's panel.
+ *
+ * It merges three live Firestore sources for the signed-in user and renders them as a HYBRID:
+ *   - ACTION items (a manager's pending approvals/completions/time-extensions/calendar requests,
+ *     and a worker's "returned for rework") are full cards with decision buttons; they stay until
+ *     the underlying work is resolved.
+ *   - INFO items (comments, and a worker's assigned/approved/confirmed/extension/calendar-decision
+ *     notices) are compact read/unread rows.
+ *
+ * The `request_notifications` listener is recipient-keyed, so it serves workers AND managers; the
+ * two calendar listeners are manager-only (a worker neither monitors nor approves calendars).
+ * `onClose` lets an action that navigates away (edit-and-approve / open a task) also close the
+ * bell panel that hosts this feed.
+ */
+export default function ManagerNotifications({ onClose }) {
+    const { currentUser, userRole } = useAuth();
+    const isManager = isManagerRole(userRole);
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
     const [bulkConfirming, setBulkConfirming] = useState(false); // batch "approve all completions" in flight
+    const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
     const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
 
 
-    // 1. Calendar Notifications (Existing Logic)
+    // 1. Calendar Notifications (manager-only — workers don't monitor the team calendar)
     useEffect(() => {
-        if (!currentUser) return;
+        if (!currentUser || !isManager) { setCalendarNotifications([]); return undefined; }
 
         const now = new Date();
         const weekStart = startOfWeek(now, { weekStartsOn: 1 });
@@ -50,7 +70,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
         });
 
         return () => unsubscribe();
-    }, [currentUser]);
+    }, [currentUser, isManager]);
 
     // 2. Task Verification Notifications (New Logic)
     useEffect(() => {
@@ -84,29 +104,30 @@ export default function ManagerNotifications({ onEditAndApprove }) {
         return () => unsubscribe();
     }, [currentUser]);
 
-    // 3. Calendar Approval Requests (New Logic)
+    // 3. Calendar Approval Requests (manager-only). These fan out to ALL of a worker's managers,
+    // so query the `managerIds` array (single-field array-contains needs no composite index) and
+    // filter to pending in-memory. The first manager to act flips the status, which drops the card
+    // for everyone. Legacy docs predating `managerIds` carried only a single `managerId`; those
+    // transient pending requests won't appear until re-submitted (acceptable — they resolve daily).
     useEffect(() => {
-        if (!currentUser) return;
+        if (!currentUser || !isManager) { setCalendarRequests([]); return undefined; }
 
         const q = query(
             collection(db, 'calendar_requests'),
-            where('managerId', '==', currentUser.uid),
-            where('status', '==', 'pending')
+            where('managerIds', 'array-contains', currentUser.uid)
         );
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            const requests = snapshot.docs.map(doc => ({
-                id: doc.id,
-                source: 'calendar_approval',
-                ...doc.data()
-            }));
+            const requests = snapshot.docs
+                .map(doc => ({ id: doc.id, source: 'calendar_approval', ...doc.data() }))
+                .filter(r => r.status === 'pending');
             setCalendarRequests(requests);
         }, (error) => {
             console.error("ManagerNotifications: Calendar Requests Listener Error:", error);
         });
 
         return () => unsubscribe();
-    }, [currentUser]);
+    }, [currentUser, isManager]);
 
     const handleDismissCalendar = async (notificationId) => {
         try {
@@ -166,6 +187,9 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                 new Date(requestedEvent.start),
                 new Date(requestedEvent.end)
             );
+
+            // Tell the worker their calendar request was approved (replaces the standalone banner).
+            await notify({ recipientId: userId, type: 'calendar_decision', decision: 'approved', reason: request.reason || null, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
         } catch (err) {
             console.error("Error approving calendar request:", err);
             setActionError("Nepavyko patvirtinti užklausos. Bandykite dar kartą.");
@@ -180,6 +204,8 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                 declinedAt: new Date().toISOString(),
                 declinedBy: currentUser.uid
             });
+            // Tell the worker their calendar request was declined.
+            await notify({ recipientId: request.userId, type: 'calendar_decision', decision: 'declined', reason: request.reason || null, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
         } catch (err) {
             console.error("Error declining calendar request:", err);
             setActionError("Nepavyko atmesti užklausos. Bandykite dar kartą.");
@@ -187,7 +213,21 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     };
 
 
-    const handleApproveTask = async (notificationId, taskId) => {
+    // Notify the worker who submitted a task that it was approved (they may start). The submitter
+    // is the notification's author (createdBy); a manager self-submitting gets no echo.
+    const notifyTaskApproved = async (notif) => {
+        await notify({
+            recipientId: notif.createdBy,
+            type: 'task_approved',
+            taskId: notif.taskId,
+            taskTitle: notif.taskTitle,
+            actorUid: currentUser.uid,
+            actorName: currentUser.displayName || currentUser.email,
+        });
+    };
+
+    const handleApproveTask = async (notif) => {
+        const taskId = notif?.taskId;
         if (!taskId) return;
         try {
             setActionError(null);
@@ -200,15 +240,17 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                 approvedBy: currentUser.uid
             });
 
-            // 2. Dismiss notification
-            await handleDismissTask(notificationId);
+            // 2. Dismiss notification + tell the worker
+            await handleDismissTask(notif.id);
+            await notifyTaskApproved(notif);
         } catch (err) {
             console.error("Error approving task:", err);
             setActionError("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
         }
     };
 
-    const handleEditAndApprove = async (notificationId, taskId) => {
+    const handleEditAndApprove = async (notif) => {
+        const taskId = notif?.taskId;
         if (!taskId) return;
         try {
             setActionError(null);
@@ -221,15 +263,15 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                 approvedBy: currentUser.uid
             });
 
-            // 2. Dismiss notification
-            await handleDismissTask(notificationId);
+            // 2. Dismiss notification + tell the worker
+            await handleDismissTask(notif.id);
+            await notifyTaskApproved(notif);
 
-            // 3. Fetch full task data and open edit modal
-            if (onEditAndApprove) {
-                const taskSnap = await getDoc(taskRef);
-                if (taskSnap.exists()) {
-                    onEditAndApprove({ id: taskSnap.id, ...taskSnap.data() });
-                }
+            // 3. Open the task for editing in whichever view hosts the modal, and close the bell.
+            const taskSnap = await getDoc(taskRef);
+            if (taskSnap.exists()) {
+                onClose?.();
+                window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
             }
         } catch (err) {
             console.error("Error in edit and approve:", err);
@@ -264,8 +306,10 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     };
 
     // --- Time Extension Handlers ---
-    const handleDismissExtension = async (notificationId) => {
-        await handleDismissTask(notificationId);
+    // "Do not extend" — dismiss the request AND tell the worker the answer was no.
+    const handleDismissExtension = async (notif) => {
+        await handleDismissTask(notif.id);
+        await notify({ recipientId: notif.userId, type: 'extension_denied', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
     };
 
     // Batch-confirm every pending task completion in one action. Each completion is a simple,
@@ -278,7 +322,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
         setActionError(null);
         try {
             for (const n of completions) {
-                await handleConfirmCompletion(n.id, n.taskId);
+                await handleConfirmCompletion(n);
             }
         } catch (err) {
             console.error('Error confirming all completions:', err);
@@ -289,7 +333,8 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     };
 
     // --- Task Completion Handlers ---
-    const handleConfirmCompletion = async (notificationId, taskId) => {
+    const handleConfirmCompletion = async (notif) => {
+        const taskId = notif?.taskId;
         if (!taskId) return;
         try {
             setActionError(null);
@@ -300,14 +345,17 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                 confirmedAt: new Date().toISOString(),
                 updatedAt: new Date().toISOString()
             });
-            await handleDismissTask(notificationId);
+            await handleDismissTask(notif.id);
+            // Close the loop: tell the worker their finished task was confirmed.
+            await notify({ recipientId: notif.userId, type: 'task_confirmed', taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
         } catch (err) {
             console.error('Error confirming task completion:', err);
             setActionError('Nepavyko patvirtinti užduoties. Bandykite dar kartą.');
         }
     };
 
-    const handleRevertTask = async (notificationId, taskId, _userName) => {
+    const handleRevertTask = async (notif) => {
+        const taskId = notif?.taskId;
         if (!taskId) return;
         try {
             setActionError(null);
@@ -329,7 +377,9 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                 updatedAt: new Date().toISOString(),
                 comments: arrayUnion(autoComment)
             });
-            await handleDismissTask(notificationId);
+            await handleDismissTask(notif.id);
+            // Tell the worker their task came back for rework (action item in their bell).
+            await notify({ recipientId: notif.userId, type: 'task_reverted', taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: managerName });
         } catch (err) {
             console.error('Error reverting task:', err);
             setActionError('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
@@ -344,11 +394,30 @@ export default function ManagerNotifications({ onEditAndApprove }) {
     const urgencyRank = (notif) => {
         if (notif.source === 'calendar_approval') return 0;          // blocks the worker's planning
         if (notif.source === 'task') {
-            if (notif.type === 'time_extension_request') return 0;   // worker is blocked on the task
-            if (notif.type === 'new_comment') return 2;              // informational
-            return 1;                                                // task_completion / assignment — needs action
+            // A blocked worker (time-extension) or a returned task is the most urgent action.
+            if (notif.type === 'time_extension_request' || notif.type === 'task_reverted') return 0;
+            return categoryOf(notif.type) === 'action' ? 1 : 2;      // other approvals → 1; info notices → 2
         }
         return 2;                                                    // calendar-change notice — informational
+    };
+
+    // "Mark all read" clears only INFORMATIONAL items (comments + worker-facing notices, and a
+    // manager's calendar-change notices). Action items that still need a decision are left alone —
+    // clearing them would silently skip the work they represent.
+    const infoTaskNotifs = taskNotifications.filter(n => categoryOf(n.type) === 'info');
+    const hasInfoToClear = infoTaskNotifs.length + calendarNotifications.length > 0;
+    const handleMarkAllRead = async () => {
+        setMarkingAll(true);
+        try {
+            await Promise.all([
+                ...infoTaskNotifs.map(n => handleDismissTask(n.id)),
+                ...calendarNotifications.map(n => handleDismissCalendar(n.id)),
+            ]);
+        } catch (err) {
+            console.error('Error marking all read:', err);
+        } finally {
+            setMarkingAll(false);
+        }
     };
 
     // Sort by urgency tier first, then newest within a tier.
@@ -362,15 +431,31 @@ export default function ManagerNotifications({ onEditAndApprove }) {
         return (urgencyRank(a) - urgencyRank(b)) || (getTimestamp(b) - getTimestamp(a));
     });
 
-    if (sortedNotifications.length === 0) return null;
+    if (sortedNotifications.length === 0) {
+        return (
+            <EmptyState
+                icon={BellOff}
+                title="Pranešimų nėra"
+                description="Čia matysite užduočių tvirtinimus, komentarus ir kalendoriaus naujienas."
+            />
+        );
+    }
 
     return (
-        <div className="mb-6 space-y-4">
+        <div className="space-y-3">
+            {hasInfoToClear && (
+                <div className="flex justify-end">
+                    <Button variant="ghost" size="sm" loading={markingAll} onClick={handleMarkAllRead}>
+                        Žymėti viską skaityta
+                    </Button>
+                </div>
+            )}
+
             {actionError && (
                 <div
                     role="alert"
                     aria-live="assertive"
-                    className="max-w-xl rounded-control border border-feedback-danger/30 bg-feedback-danger/10 px-4 py-3 text-body text-feedback-danger"
+                    className="rounded-control border border-feedback-danger/30 bg-feedback-danger/10 px-4 py-3 text-body text-feedback-danger"
                 >
                     {actionError}
                 </div>
@@ -497,6 +582,74 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                     );
                 } else if (notif.source === 'task') {
 
+                    // Worker-facing INFORMATIONAL notices (manager decisions) — compact read/unread rows.
+                    if (['task_assigned', 'task_approved', 'task_confirmed', 'extension_granted', 'extension_denied', 'calendar_decision'].includes(notif.type)) {
+                        const who = formatDisplayName(notif.createdByName) || 'Vadovas';
+                        const task = notif.taskTitle ? `„${notif.taskTitle}“` : '';
+                        let Icon = AlertCircle;
+                        let tone = 'text-brand';
+                        let text = '';
+                        switch (notif.type) {
+                            case 'task_assigned': Icon = ListTodo; tone = 'text-brand'; text = `${who} priskyrė Jums naują užduotį: ${task}`; break;
+                            case 'task_approved': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų užduotis patvirtinta — galite pradėti: ${task}`; break;
+                            case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis patvirtinta: ${task}`; break;
+                            case 'extension_granted': Icon = Clock; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
+                            case 'extension_denied': Icon = Clock; tone = 'text-ink-muted'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
+                            case 'calendar_decision': {
+                                const approved = notif.decision === 'approved';
+                                Icon = approved ? CheckCircle2 : XCircle;
+                                tone = approved ? 'text-feedback-success' : 'text-feedback-danger';
+                                text = approved ? 'Jūsų kalendoriaus pakeitimas patvirtintas.' : 'Jūsų kalendoriaus pakeitimas atmestas.';
+                                break;
+                            }
+                            default: break;
+                        }
+                        return (
+                            <div key={notif.id} className="flex items-start gap-3 rounded-card border border-line bg-surface-card p-3 shadow-sm animate-in fade-in slide-in-from-top-2">
+                                <Icon className={`mt-0.5 h-5 w-5 flex-shrink-0 ${tone}`} aria-hidden="true" />
+                                <p className="min-w-0 flex-1 text-body text-ink">{text}</p>
+                                <IconButton icon={X} label="Pažymėti skaitytu" variant="ghost" onClick={() => handleDismissTask(notif.id)} className="-mr-1 -mt-1" />
+                            </div>
+                        );
+                    }
+
+                    // Worker-facing ACTION: a returned task — open it to fix.
+                    if (notif.type === 'task_reverted') {
+                        return (
+                            <div key={notif.id} className="rounded-card border border-amber-200 bg-amber-50 p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
+                                <div className="flex items-start gap-3">
+                                    <RotateCcw className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1 text-sm text-amber-900">
+                                        <p><span className="font-semibold">{formatDisplayName(notif.createdByName) || 'Vadovas'}</span> grąžino užduotį tobulinti:</p>
+                                        <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
+                                    </div>
+                                </div>
+                                <div className="mt-3 flex items-center justify-end gap-2">
+                                    <Button variant="secondary" size="md" onClick={() => handleDismissTask(notif.id)}>Supratau</Button>
+                                    <Button
+                                        variant="primary"
+                                        size="md"
+                                        icon={Edit}
+                                        onClick={async () => {
+                                            await handleDismissTask(notif.id);
+                                            try {
+                                                const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
+                                                if (taskSnap.exists()) {
+                                                    onClose?.();
+                                                    window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                                                }
+                                            } catch (e) {
+                                                console.error('Failed to load reverted task:', e);
+                                            }
+                                        }}
+                                    >
+                                        Atidaryti užduotį
+                                    </Button>
+                                </div>
+                            </div>
+                        );
+                    }
+
                     if (notif.type === 'new_comment') {
                         return (
                             <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
@@ -564,7 +717,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                             size="md"
                                             icon={Check}
                                             className="whitespace-nowrap"
-                                            onClick={() => handleConfirmCompletion(notif.id, notif.taskId)}
+                                            onClick={() => handleConfirmCompletion(notif)}
                                             title="Patvirtinti užduoties atlikimą"
                                         >
                                             Patvirtinti
@@ -574,7 +727,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                             size="md"
                                             icon={RotateCcw}
                                             className="whitespace-nowrap"
-                                            onClick={() => handleRevertTask(notif.id, notif.taskId, notif.userName)}
+                                            onClick={() => handleRevertTask(notif)}
                                             title="Grąžinti į darbų sąrašą"
                                         >
                                             Sugrąžinti į darbų sąrašą
@@ -615,7 +768,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         size="md"
                                         icon={X}
                                         className="whitespace-nowrap"
-                                        onClick={() => handleDismissExtension(notif.id)}
+                                        onClick={() => handleDismissExtension(notif)}
                                     >
                                         Nepratęsti
                                     </Button>
@@ -627,18 +780,17 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         icon={Edit}
                                         className="whitespace-nowrap"
                                         onClick={async () => {
-                                            // Dismiss notification
+                                            // Dismiss the request, then open the task so the manager can extend the
+                                            // estimate (saving a longer time fires the worker's extension_granted notice).
                                             await handleDismissTask(notif.id);
-                                            // Open task modal without changing status
-                                            if (onEditAndApprove) {
-                                                try {
-                                                    const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
-                                                    if (taskSnap.exists()) {
-                                                        onEditAndApprove({ id: taskSnap.id, ...taskSnap.data() });
-                                                    }
-                                                } catch (e) {
-                                                    console.error("Failed to load task for extending time:", e);
+                                            try {
+                                                const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
+                                                if (taskSnap.exists()) {
+                                                    onClose?.();
+                                                    window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
                                                 }
+                                            } catch (e) {
+                                                console.error("Failed to load task for extending time:", e);
                                             }
                                         }}
                                     >
@@ -672,7 +824,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     size="md"
                                     icon={Check}
                                     className="whitespace-nowrap"
-                                    onClick={() => handleApproveTask(notif.id, notif.taskId)}
+                                    onClick={() => handleApproveTask(notif)}
                                     title="Patvirtinti užduotį"
                                 >
                                     Patvirtinti
@@ -683,7 +835,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                     size="md"
                                     icon={Edit}
                                     className="whitespace-nowrap"
-                                    onClick={() => handleEditAndApprove(notif.id, notif.taskId)}
+                                    onClick={() => handleEditAndApprove(notif)}
                                     title="Patvirtinti ir redaguoti užduotį"
                                 >
                                     Redaguoti

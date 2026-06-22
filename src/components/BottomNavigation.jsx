@@ -7,7 +7,6 @@ import { Plus, MoreHorizontal } from 'lucide-react';
 import BreakTimer from './BreakTimer';
 import CallTimer from './CallTimer';
 import QuickWorkTimer from './QuickWorkTimer';
-import ActiveSessionReadout from './ActiveSessionReadout';
 import Modal from './ui/Modal';
 import { cn } from '../utils/cn';
 
@@ -60,13 +59,13 @@ const BottomNavigation = () => {
     return (
         <>
             {/* Work-controls floating pill (visible on all screens). Sits a fixed gap above the
-                main bar and clears the safe-area inset so both move together (DESIGN_SYSTEM §9). */}
+                main bar and clears the safe-area inset so both move together (DESIGN_SYSTEM §9).
+                The active-session readout moved to the top bar (AppHeader); only the controls
+                stay here at thumb reach. */}
             <div
                 className="fixed left-0 right-0 z-nav flex w-full flex-col items-center gap-2 px-3 pb-3 pointer-events-none"
                 style={{ bottom: 'calc(64px + env(safe-area-inset-bottom))' }}
             >
-                <ActiveSessionReadout />
-
                 <div className="pointer-events-auto flex w-full max-w-md items-center justify-between gap-2 rounded-card border border-line bg-surface-card/95 px-3 py-1.5 shadow-lg backdrop-blur-sm">
                     {showCreateButton && <CreateButton />}
                     <QuickWorkTimer compact={true} />

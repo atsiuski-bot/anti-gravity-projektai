@@ -12,12 +12,16 @@ import clsx from 'clsx';
  *
  * @param {React.ElementType} [icon] - a lucide-react icon component.
  * @param {string} label - accessible name; also the tooltip when `title` is omitted.
- * @param {'default'|'primary'|'danger'|'ghost'} [variant]
+ * @param {'default'|'primary'|'danger'|'danger-solid'|'ghost'} [variant]
  */
 const VARIANTS = {
     default: 'text-ink-muted hover:text-ink hover:bg-surface-sunken',
-    primary: 'bg-brand text-white hover:bg-brand-hover',
+    primary: 'bg-brand text-white hover:bg-brand-hover shadow-sm',
+    // Outline danger (quiet, subordinate) vs. filled danger (the dominant destructive action,
+    // mirroring Button's `danger`). Both pair the red with a distinct glyph so color is never
+    // the sole signal (§5).
     danger: 'text-red-700 hover:bg-red-50',
+    'danger-solid': 'bg-feedback-danger text-white hover:bg-red-700 shadow-sm',
     ghost: 'text-ink-muted hover:text-ink',
 };
 

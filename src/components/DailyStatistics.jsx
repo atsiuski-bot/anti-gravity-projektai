@@ -7,6 +7,7 @@ import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import TaskStatusPill from './task/TaskStatusPill';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
@@ -22,6 +23,7 @@ import StatusPill from './ui/StatusPill';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
 import TaskModal from './TaskModal';
+import UserChip from './UserChip';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full', showTestUsers = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
@@ -1086,11 +1088,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
                 </div>
 
-                {/* Sort filter — a horizontal two-option segmented control (Pagal laiką |
-                    Pagal būseną) so both choices stay on one row and the toolbar keeps to a
-                    single line. */}
+                {/* Sort filter — a two-option segmented control (Pagal laiką | Pagal būseną).
+                    On md+ it sits horizontally inline in the toolbar. On a phone it stacks
+                    VERTICALLY and sits to the RIGHT of the date stepper on the same row:
+                    `self-stretch` matches its height to the date stepper (no magic numbers),
+                    `flex-1` splits that height between the two options — trading a wasted
+                    second toolbar row for a tighter header. */}
                 <div
-                    className="flex bg-surface-sunken rounded-control overflow-hidden border border-line"
+                    className="flex flex-col md:flex-row self-stretch md:self-auto bg-surface-sunken rounded-control overflow-hidden border border-line"
                     role="group"
                     aria-label="Rūšiuoti"
                 >
@@ -1099,7 +1104,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         onClick={() => setSortBy('time')}
                         aria-pressed={sortBy === 'time'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
+                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -1107,13 +1112,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         Pagal laiką
                     </button>
-                    <div className="w-px bg-line" aria-hidden="true" />
+                    <div className="w-full h-px md:w-px md:h-auto bg-line" aria-hidden="true" />
                     <button
                         type="button"
                         onClick={() => setSortBy('status')}
                         aria-pressed={sortBy === 'status'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
+                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -1204,7 +1209,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     className="p-4 cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                                 >
                                     <p className="flex items-center gap-1.5 text-body font-semibold text-ink-strong">
-                                        {summary.name}
+                                        <UserChip userId={userId} name={summary.name} linkToProfile={false} />
                                         <ChevronRight className="w-4 h-4 text-ink-muted" aria-hidden="true" />
                                     </p>
                                     <p className="mt-0.5 font-mono text-caption text-ink-muted">
@@ -1274,7 +1279,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     >
                                         <td className="px-4 py-3 text-ink-strong font-medium">
                                             <span className="inline-flex items-center gap-1.5">
-                                                {summary.name}
+                                                <UserChip userId={userId} name={summary.name} linkToProfile={false} />
                                                 <ChevronRight className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
                                             </span>
                                         </td>
@@ -1764,8 +1769,9 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                 <div className="flex-1">
                     <div className={clsx(
                         "font-bold text-body",
-                        task.isDeleted && "line-through text-ink-muted"
+                        task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : ""
                     )}>
+                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                         {task.title}
                     </div>
                     {task.isDeleted && <DeletedBadge />}
@@ -1783,14 +1789,14 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
             {(task.managerName || task.creatorName) && (
                 <div className="text-caption text-ink-muted mb-2 flex items-center gap-1">
                     <User className="w-3 h-3" />
-                    <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                    <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                 </div>
             )}
 
             <div className="flex flex-wrap items-center gap-2 mb-2 text-caption text-ink-muted">
                 <div className="bg-surface-sunken px-1.5 py-0.5 rounded flex items-center gap-1">
                     <User className="w-3 h-3" />
-                    <span className="font-medium">{formatDisplayName(userName)}</span>
+                    <UserChip userId={task.assignedUserId} name={userName} className="font-medium" />
                 </div>
                 <div className="bg-surface-sunken px-1.5 py-0.5 rounded font-mono">
                     {editingTime ? (
@@ -2035,9 +2041,10 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
                                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                                         className={clsx(
-                                                        "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                                        (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                                        "text-sm font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                        (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                                     )}>
+                                                        {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                                         {task.title}
                                                     </div>
                                                     {task.deadline && (
@@ -2069,7 +2076,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                     {(task.managerName || task.creatorName) && (
                                                         <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                             <User className="w-2.5 h-2.5" />
-                                                            <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                                            <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                                         </div>
                                                     )}
                                                 </>

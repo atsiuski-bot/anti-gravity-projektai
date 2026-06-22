@@ -8,6 +8,7 @@ import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { isScopedManager, scopeRoster } from '../utils/teamScope';
+import UserChip from './UserChip';
 
 export default function CombinedHoursSummary() {
     const { currentUser, userData } = useAuth();
@@ -249,9 +250,7 @@ export default function CombinedHoursSummary() {
                                             className="w-3 h-3 rounded-full flex-shrink-0"
                                             style={{ backgroundColor: user.color }}
                                         />
-                                        <span className="text-sm font-medium text-ink-strong truncate" title={user.name}>
-                                            {user.name}
-                                        </span>
+                                        <UserChip userId={user.id} name={user.name} className="text-sm font-medium text-ink-strong truncate" />
                                     </div>
 
                                     {/* Bars Area */}

@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { db } from '../firebase';
 import { doc, updateDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks } from 'lucide-react';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
@@ -12,12 +12,15 @@ import Button from './ui/Button';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
+import TaskDetailModal from './task/TaskDetailModal';
+import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
-import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { isManagerRole } from '../utils/formatters';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
@@ -29,9 +32,10 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     const [, setRefreshTick] = useState(0);
     const [deleteModalTask, setDeleteModalTask] = useState(null);
 
-    // Comment Editing State
-    const [editingComment, setEditingComment] = useState({ taskId: null, index: null });
-    const [editCommentText, setEditCommentText] = useState('');
+    // The desktop list opens one task at a time in a read/act detail sheet. We store the id (not
+    // the task object) so the open sheet always reflects the live task — comments added, time
+    // ticked, status changed — instead of a stale snapshot.
+    const [detailTaskId, setDetailTaskId] = useState(null);
 
     // Confirmation dialog targets (replace window.confirm — §8). Each destructive action gates
     // its own state so rapid clicks on different tasks can't race a single shared dialog.
@@ -133,8 +137,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         try {
             const task = tasks.find(t => t.id === taskId);
             await updateComment(taskId, index, newText, task?.comments);
-            setEditingComment({ taskId: null, index: null });
-            setEditCommentText('');
         } catch (err) {
             logError(err, { source: 'TaskTable.handleUpdateComment' });
             setError("Nepavyko atnaujinti komentaro.");
@@ -367,6 +369,30 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
     const isWorker = role === 'worker';
     const canManage = isManagerRole(userRole);
+    const canDelete = canManage || !isWorker;
+
+    // "Vadovas: X" repeats on every row when a list belongs to a single manager — pure noise.
+    // Show it only when the list actually mixes managers (then it disambiguates); otherwise it
+    // lives in the detail sheet. This is what kills the most-repeated cell in the screenshot.
+    const showManagerLine = new Set(
+        tasks.map(t => t.managerName || t.creatorName).filter(Boolean)
+    ).size > 1;
+
+    // Open a task's detail sheet. Clicking anywhere on a row (that is not itself an action)
+    // lands here, so a row with edit access opens an editable sheet and one without opens the
+    // same sheet read-only.
+    const openDetail = (task) => setDetailTaskId(task.id);
+    const closeDetail = () => setDetailTaskId(null);
+    const detailTask = detailTaskId ? tasks.find(t => t.id === detailTaskId) : null;
+
+    // Detail-sheet actions that lead to another dialog (edit form, confirm dialogs, the rich
+    // sub-modals) close the sheet first, so two modals never stack.
+    const editFromDetail = (task) => { closeDetail(); onEdit?.(task); };
+    const deleteFromDetail = (task) => { closeDetail(); handleDeleteTask(task.id, task.title); };
+    const revertFromDetail = (task) => { closeDetail(); setRevertTarget(task); };
+    const confirmFromDetail = (taskId) => { closeDetail(); handleConfirmTask(taskId); };
+    const approveFromDetail = (taskId) => { closeDetail(); handleApproveTask(taskId); };
+    const openSubModalFromDetail = (type) => (task) => { closeDetail(); setActiveModal({ type, taskId: task.id }); };
 
     return (
         <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
@@ -403,14 +429,15 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 <div className="min-w-0 flex-1">
                                     <div className={clsx(
                                         'text-body font-semibold break-words',
-                                        (task.completed || task.isDeleted) ? 'text-ink-muted line-through' : 'text-ink-strong'
+                                        task.isDeleted ? 'text-ink-muted line-through' : task.completed ? 'text-ink' : 'text-ink-strong'
                                     )}>
+                                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                         {task.title}
                                         {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                     </div>
                                     {(task.managerName || task.creatorName) && (
                                         <div className="text-caption text-purple-700 font-medium mt-0.5">
-                                            Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
+                                            Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
                                         </div>
                                     )}
                                 </div>
@@ -532,7 +559,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             <div className="text-caption">
                                                 <div className="flex items-center gap-1.5">
                                                     <MessageCircle className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" aria-hidden="true" />
-                                                    <span className="font-semibold text-indigo-700">{formatDisplayName(last.user)}</span>
+                                                    <UserChip userId={last.userId} name={last.user} className="font-semibold text-indigo-700" />
                                                     <span className="text-ink-muted">{new Date(last.createdAt).toLocaleDateString()}</span>
                                                 </div>
                                                 <div className="text-ink leading-snug break-words pl-4 line-clamp-2">{last.text}</div>
@@ -622,372 +649,175 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     ✓
                                 </th>
                             )}
-                            <th className={`px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider ${!isWorker ? 'w-72' : ''}`}>Užduotis</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">Darb.</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-16">Žyma</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-16">Atlikti iki</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-16">Prior.</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-20">Būsena</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-14" title="Numatytas laikas">Num.</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-16">Nuorodos</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-10 text-center">Kom.</th>
-                            {canManage && <th className="px-1 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-12">Patv.</th>}
-                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-24">Veik.</th>
+                            <th className="px-2 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider">Užduotis</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28">Darb.</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-20">Prior.</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">Būsena</th>
+                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" title="Sugaišta / numatyta">Laikas</th>
+                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-32">Veik.</th>
                         </tr>
                     </thead>
                     <tbody className="bg-surface-card divide-y divide-line">
                         {tasks.map((task) => {
                             const isAssignedToMe = currentUser?.uid === task.assignedUserId;
+                            const totalMinutes = calculateCurrentTotalMinutes(task);
+                            const hasStarted = task.status && task.status !== 'pending';
+                            const showSpent = totalMinutes > 0 || hasStarted;
+                            const deadline = task.deadline ? formatDeadline(task.deadline) : null;
+                            const links = (task.links || []).flatMap(l => l.split('\n')).filter(l => l.trim().length > 0);
+                            const hasImage = (task.attachmentUrls && task.attachmentUrls.length > 0) || task.attachmentUrl;
+                            const commentCount = task.comments?.length || 0;
+                            const checklist = task.checklist && task.checklist.length > 0 ? getChecklistProgress(task.checklist) : null;
                             return (
-                                <React.Fragment key={task.id}>
-                                    <tr className={clsx(
-                                        "transition-colors",
-                                        getStatusStyle(task),
-                                        !task.completed && "hover:opacity-90"
-                                    )}>
-                                        {showReorderControls && (
-                                            <td className="px-2 py-3 text-center">
-                                                <div className="flex flex-col items-center gap-1">
-                                                    <IconButton
-                                                        icon={ArrowUp}
-                                                        label="Perkelti aukštyn"
-                                                        variant="ghost"
-                                                        onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
-                                                    />
-                                                    <IconButton
-                                                        icon={ArrowDown}
-                                                        label="Perkelti žemyn"
-                                                        variant="ghost"
-                                                        onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
-                                                    />
-                                                </div>
-                                            </td>
-                                        )}
-                                        {!hideCheckboxes && (
-                                            <td className="px-1 py-3 text-center">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={task.completed || false}
-                                                    onChange={() => {
-                                                        if (isAssignedToMe) {
-                                                            handleToggleComplete(task.id, task.completed);
-                                                        }
-                                                    }}
-                                                    disabled={!isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved'}
-                                                    aria-label="Pažymėti atlikta"
-                                                    className={clsx(
-                                                        "w-4 h-4 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1",
-                                                        isAssignedToMe && task.status !== 'confirmed' && task.status !== 'unapproved' ? "cursor-pointer" : "cursor-not-allowed opacity-50"
-                                                    )}
+                                <tr
+                                    key={task.id}
+                                    onClick={() => openDetail(task)}
+                                    className={clsx(
+                                        "cursor-pointer transition hover:brightness-[0.97]",
+                                        getStatusStyle(task)
+                                    )}
+                                >
+                                    {showReorderControls && (
+                                        <td className="px-2 py-3 text-center align-top">
+                                            <div className="flex flex-col items-center gap-1">
+                                                <IconButton
+                                                    icon={ArrowUp}
+                                                    label="Perkelti aukštyn"
+                                                    variant="ghost"
+                                                    onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
                                                 />
-                                            </td>
-                                        )}
-                                        <td className="px-1 py-3">
-                                            <div className={clsx(
-                                                "text-body font-medium break-words rounded px-2 py-1",
-                                                (task.completed || task.isDeleted) ? "text-ink-muted line-through" : "text-ink-strong",
-                                                task.status === 'unapproved' ? "bg-surface-sunken text-ink" : ""
-                                            )}>
-                                                {task.title}
-                                                {task.isDeleted && <DeletedBadge inline className="ml-2" />}
+                                                <IconButton
+                                                    icon={ArrowDown}
+                                                    label="Perkelti žemyn"
+                                                    variant="ghost"
+                                                    onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
+                                                />
                                             </div>
-                                            {(task.managerName || task.creatorName) && (
-                                                <div className="text-caption text-purple-700 font-medium mt-0.5">
-                                                    Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
-                                                </div>
-                                            )}
-                                            {/* Deadline removed from here, moving to own column */}
-                                            {task.description && (
-                                                <button
-                                                    onClick={() => setActiveModal({ type: 'description', taskId: task.id })}
-                                                    aria-label="Peržiūrėti aprašymą"
-                                                    className="text-caption text-ink-muted hover:text-brand hover:bg-brand-soft/50 p-1 rounded-md transition-colors line-clamp-3 text-left w-full mt-1 border border-transparent hover:border-brand-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand whitespace-pre-wrap flex items-start gap-1"
-                                                >
-                                                    <SessionTypeIcon
-                                                        type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
-                                                        className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
-                                                    />
-                                                    {task.description}
-                                                </button>
-                                            )}
-
-                                            {/* Comments List */}
-                                            {task.comments && task.comments.length > 0 && (
-                                                <div className="mt-2 space-y-1.5 pl-2 border-l-2 border-indigo-100">
-                                                    {task.comments.map((comment, index) => {
-                                                        const isEditing = editingComment.taskId === task.id && editingComment.index === index;
-                                                        const canEdit = canManage || comment.userId === currentUser.uid;
-
-                                                        return (
-                                                            <div key={index} className="text-caption bg-indigo-50/30 rounded p-1.5 group hover:bg-indigo-50/60 transition-colors">
-                                                                <div className="flex justify-between items-start mb-0.5">
-                                                                    <div className="flex items-center gap-1.5 text-caption">
-                                                                        <MessageCircle className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" aria-hidden="true" />
-                                                                        <span className="font-semibold text-indigo-700">{formatDisplayName(comment.user)}</span>
-                                                                        <span className="text-ink-muted">{new Date(comment.createdAt).toLocaleDateString()}</span>
-                                                                    </div>
-                                                                    {canEdit && !isEditing && (
-                                                                        <div className="flex gap-1">
-                                                                            <IconButton
-                                                                                icon={Pencil}
-                                                                                label="Redaguoti komentarą"
-                                                                                variant="ghost"
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation();
-                                                                                    setEditingComment({ taskId: task.id, index });
-                                                                                    setEditCommentText(comment.text);
-                                                                                }}
-                                                                            />
-                                                                            <IconButton
-                                                                                icon={Trash2}
-                                                                                label="Ištrinti komentarą"
-                                                                                variant="danger"
-                                                                                onClick={(e) => {
-                                                                                    e.stopPropagation();
-                                                                                    handleDeleteComment(task.id, index);
-                                                                                }}
-                                                                            />
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-
-                                                                {isEditing ? (
-                                                                    <div onClick={(e) => e.stopPropagation()}>
-                                                                        <textarea
-                                                                            value={editCommentText}
-                                                                            onChange={(e) => setEditCommentText(e.target.value)}
-                                                                            className="w-full text-caption p-2 border border-line rounded-input resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                                                            rows={2}
-                                                                            autoFocus
-                                                                        />
-                                                                        <div className="flex justify-end gap-2 mt-1">
-                                                                            <Button
-                                                                                variant="secondary"
-                                                                                onClick={() => setEditingComment({ taskId: null, index: null })}
-                                                                            >
-                                                                                Atšaukti
-                                                                            </Button>
-                                                                            <Button
-                                                                                variant="primary"
-                                                                                onClick={() => handleUpdateComment(task.id, index, editCommentText)}
-                                                                            >
-                                                                                Išsaugoti
-                                                                            </Button>
-                                                                        </div>
-                                                                    </div>
-                                                                ) : (
-                                                                    <div className="text-ink leading-snug break-words pl-4">
-                                                                        {comment.text}
-                                                                    </div>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            )}
-                                            {task.completed && task.completedAt && (
-                                                <div className="text-caption text-ink-muted mt-1">
-                                                    {new Date(task.completedAt).toLocaleDateString()}
-                                                </div>
-                                            )}
                                         </td>
-                                        <td className="px-1 py-3 whitespace-nowrap">
-                                            {task.assignedUserName && (
-                                                <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[120px]" />
-                                            )}
+                                    )}
+                                    {!hideCheckboxes && (
+                                        <td className="px-1 py-3 text-center align-top">
+                                            <input
+                                                type="checkbox"
+                                                checked={task.completed || false}
+                                                onClick={(e) => e.stopPropagation()}
+                                                onChange={() => {
+                                                    if (isAssignedToMe) {
+                                                        handleToggleComplete(task.id, task.completed);
+                                                    }
+                                                }}
+                                                disabled={!isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved'}
+                                                aria-label="Pažymėti atlikta"
+                                                className={clsx(
+                                                    "mt-1 w-4 h-4 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1",
+                                                    isAssignedToMe && task.status !== 'confirmed' && task.status !== 'unapproved' ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+                                                )}
+                                            />
                                         </td>
-                                        <td className="px-1 py-3 whitespace-nowrap">
+                                    )}
+                                    {/* Task — title is the keyboard-accessible opener; the whole row opens on
+                                        mouse click. Tag / deadline / links / image / checklist / comments collapse
+                                        into one muted indicator row instead of their own (mostly empty) columns. */}
+                                    <td className="px-2 py-3 align-top">
+                                        <button
+                                            type="button"
+                                            onClick={(e) => { e.stopPropagation(); openDetail(task); }}
+                                            className={clsx(
+                                                "block w-full break-words rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                task.isDeleted ? "text-ink-muted line-through" : task.completed ? "text-ink" : "text-ink-strong"
+                                            )}
+                                        >
+                                            {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
+                                            {task.title}
+                                            {task.isDeleted && <DeletedBadge inline className="ml-2" />}
+                                        </button>
+                                        {showManagerLine && (task.managerName || task.creatorName) && (
+                                            <div className="mt-0.5 text-caption font-medium text-purple-700">
+                                                Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
+                                            </div>
+                                        )}
+                                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
                                             {task.tag && (
-                                                <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-purple-100 text-purple-800 border border-purple-200">
+                                                <span className="inline-flex items-center rounded-md border border-purple-200 bg-purple-100 px-1.5 py-0.5 font-semibold text-purple-800">
                                                     {task.tag}
                                                 </span>
                                             )}
-                                        </td>
-                                        <td className="px-1 py-3 whitespace-nowrap text-caption text-ink">
-                                            {formatDeadline(task.deadline)}
-                                        </td>
-                                        <td className="px-1 py-3 whitespace-nowrap">
-                                            <PriorityBadge priority={task.priority} />
-                                        </td>
-                                        <td className="px-1 py-3 whitespace-nowrap">
-                                            <div className="flex flex-col gap-0.5 items-start">
-                                                <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
-                                                {(() => {
-                                                    const totalMinutes = calculateCurrentTotalMinutes(task);
-                                                    const hasStarted = task.status && task.status !== 'pending';
-                                                    if (totalMinutes > 0 || hasStarted) {
-                                                        return (
-                                                            <div className="flex items-center gap-1 mt-0.5">
-                                                                <span className="text-body text-brand font-bold whitespace-nowrap">
-                                                                    {formatMinutesToTimeString(totalMinutes)}
-                                                                </span>
-                                                                {canManage && (
-                                                                    <IconButton
-                                                                        icon={Clock}
-                                                                        label="Koreguoti laiko įrašą"
-                                                                        variant="ghost"
-                                                                        onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'timeAdjustments', taskId: task.id }); }}
-                                                                    />
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    } else if (canManage && task.status === 'pending') {
-                                                        return (
-                                                            <div className="flex items-center gap-1 mt-0.5">
-                                                                <IconButton
-                                                                    icon={Clock}
-                                                                    label="Pridėti laiko korekciją"
-                                                                    variant="ghost"
-                                                                    onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'timeAdjustments', taskId: task.id }); }}
-                                                                />
-                                                            </div>
-                                                        );
-                                                    }
-                                                    return null;
-                                                })()}
-                                                <TimeChangedWarning task={task} />
-                                            </div>
-                                        </td>
-                                        <td className="px-1 py-3 whitespace-nowrap text-caption text-ink-muted">
-                                            {task.estimatedTime || '-'}
-                                        </td>
-                                        <td className="px-1 py-3 text-caption">
-                                            <div className="flex flex-wrap gap-1.5 min-w-[60px]">
-                                                {(() => {
-                                                    const allLinks = (task.links || []).flatMap(l => l.split('\n')).filter(l => l.trim().length > 0);
-                                                    return allLinks.slice(0, 4).map((link, idx) => (
-                                                        <a
-                                                            key={idx}
-                                                            href={link.trim().startsWith('http') ? link.trim() : `https://${link.trim()}`}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            className="text-blue-600 hover:text-blue-800 transition-transform active:scale-90"
-                                                            title={link.trim()}
-                                                            aria-label={`Nuoroda: ${link.trim()}`}
-                                                            onClick={(e) => e.stopPropagation()}
-                                                        >
-                                                            <LinkIcon className="w-4 h-4" aria-hidden="true" />
-                                                        </a>
-                                                    ));
-                                                })()}
-                                            </div>
-                                            {((task.attachmentUrls && task.attachmentUrls.length > 0) || task.attachmentUrl) && (
-                                                <div className="mt-1 flex justify-center">
-                                                    <IconButton
-                                                        icon={ImageIcon}
-                                                        label="Peržiūrėti nuotrauką"
-                                                        variant="ghost"
-                                                        className="text-pink-600"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setActiveModal({ type: 'image', taskId: task.id });
-                                                        }}
-                                                    />
-                                                </div>
+                                            {(task.isSystemTask || task.isQuickWork) && (
+                                                <SessionTypeIcon
+                                                    type={task.isSystemTask ? 'call' : 'quickWork'}
+                                                    className="h-3.5 w-3.5"
+                                                />
                                             )}
-                                        </td>
-                                        <td className="px-1 py-3 text-center">
-                                            <IconButton
-                                                label="Komentarai"
-                                                variant="ghost"
-                                                className="text-green-600"
-                                                onClick={(e) => {
-                                                    e.stopPropagation();
-                                                    setActiveModal({ type: 'comments', taskId: task.id });
-                                                }}
-                                            >
-                                                <MessageSquare className="w-4 h-4" aria-hidden="true" />
-                                                {task.comments?.length > 0 && (
-                                                    <span className="text-caption font-bold">{task.comments.length}</span>
-                                                )}
-                                            </IconButton>
-                                            {task.checklist && task.checklist.length > 0 && (() => {
-                                                const { done, total, allDone } = getChecklistProgress(task.checklist);
-                                                return (
-                                                    <button
-                                                        onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'checklist', taskId: task.id }); }}
-                                                        className={clsx(
-                                                            'mt-1 inline-flex items-center justify-center gap-1 rounded-control px-1.5 py-1 min-h-touch text-caption font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
-                                                            allDone ? 'text-feedback-success' : 'text-ink-muted hover:text-ink-strong'
-                                                        )}
-                                                        title={`Kontrolinis sąrašas: ${done}/${total}`}
-                                                        aria-label={`Kontrolinis sąrašas: atlikta ${done} iš ${total}`}
-                                                    >
-                                                        <ListChecks className="w-4 h-4" aria-hidden="true" />
-                                                        <span className="tabular-nums">{done}/{total}</span>
-                                                    </button>
-                                                );
-                                            })()}
-                                        </td>
-                                        {canManage && (
-                                            <td className="px-1 py-3 text-center">
-                                                {task.status === 'completed' && task.status !== 'confirmed' && (
-                                                    canManage ? (
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={false}
-                                                            onChange={() => handleConfirmTask(task.id)}
-                                                            className="w-4 h-4 rounded border-line text-green-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1 cursor-pointer"
-                                                            title="Patvirtinti atlikimą"
-                                                            aria-label="Patvirtinti atlikimą"
-                                                        />
-                                                    ) : null
-                                                )}
-                                                {task.status === 'unapproved' && (
-                                                    <button
-                                                        onClick={() => handleApproveTask(task.id)}
-                                                        className="min-h-touch text-caption bg-green-100 text-green-700 px-3 py-1 rounded border border-green-200 hover:bg-green-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1"
-                                                        title="Patvirtinti užduotį (leisti vykdyti)"
-                                                    >
-                                                        Patvirtinti
-                                                    </button>
-                                                )}
-                                                {task.status === 'confirmed' && (
-                                                    <span className="inline-flex items-center text-green-600">
-                                                        <CheckCircle2 className="w-4 h-4" />
-                                                    </span>
-                                                )}
-                                            </td>
+                                            {deadline && (
+                                                <span className="inline-flex items-center gap-1">
+                                                    <Calendar className="h-3.5 w-3.5" aria-hidden="true" />{deadline}
+                                                </span>
+                                            )}
+                                            {links.length > 0 && (
+                                                <span className="inline-flex items-center gap-1">
+                                                    <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />{links.length}
+                                                </span>
+                                            )}
+                                            {hasImage && <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+                                            {checklist && (
+                                                <span className={clsx("inline-flex items-center gap-1 tabular-nums", checklist.allDone && "text-feedback-success")}>
+                                                    <ListChecks className="h-3.5 w-3.5" aria-hidden="true" />{checklist.done}/{checklist.total}
+                                                </span>
+                                            )}
+                                            {commentCount > 0 && (
+                                                <span className="inline-flex items-center gap-1">
+                                                    <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />{commentCount}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <TimeChangedWarning task={task} />
+                                    </td>
+                                    <td className="px-1 py-3 align-top">
+                                        {task.assignedUserName && (
+                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[110px]" />
                                         )}
-                                        <td className="px-1 py-3 text-right text-caption font-medium valign-top">
-                                            <div className="flex flex-col items-end gap-2">
-                                                {onEdit && (
-                                                    <button
-                                                        onClick={() => onEdit(task)}
-                                                        className="rounded px-1 py-0.5 font-medium text-brand hover:text-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-                                                    >
-                                                        Redaguoti
-                                                    </button>
+                                    </td>
+                                    <td className="px-1 py-3 align-top whitespace-nowrap">
+                                        <PriorityBadge priority={task.priority} />
+                                    </td>
+                                    <td className="px-1 py-3 align-top whitespace-nowrap">
+                                        <TaskStatusPill task={task} isRunning={isTaskRunning(task)} doneIcon />
+                                    </td>
+                                    {/* Laikas — actual over planned in one cell (replaces the buried in-status
+                                        time + the near-empty "Num." column). */}
+                                    <td className="px-1 py-3 align-top whitespace-nowrap">
+                                        {!showSpent && !task.estimatedTime ? (
+                                            <span className="text-ink-muted">–</span>
+                                        ) : (
+                                            <div className="text-caption leading-tight">
+                                                {showSpent && (
+                                                    <div className="text-body font-bold text-brand">{formatMinutesToTimeString(totalMinutes)}</div>
                                                 )}
-                                                {(task.completed || task.isDeleted) && canManage && (
-                                                    <button
-                                                        onClick={() => setRevertTarget(task)}
-                                                        className="flex items-center justify-end gap-1 rounded px-1 py-0.5 font-medium text-amber-700 hover:text-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-                                                    >
-                                                        <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
-                                                        Grąžinti
-                                                    </button>
+                                                {task.estimatedTime && (
+                                                    <div className="text-ink-muted">{showSpent ? `/ ${task.estimatedTime}` : task.estimatedTime}</div>
                                                 )}
-                                                {(canManage || !isWorker) && (
-                                                    <button
-                                                        onClick={() => handleDeleteTask(task.id, task.title)}
-                                                        className="flex items-center justify-end gap-1 rounded px-1 py-0.5 font-medium text-feedback-danger hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-                                                    >
-                                                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
-                                                        Ištrinti
-                                                    </button>
-                                                )}
-                                                {/* Manual Archive button removed */}
-                                                <div className="w-full">
-                                                    <TaskTimerControls
-                                                        task={task}
-                                                        role={role}
-                                                    />
-                                                </div>
                                             </div>
-                                        </td>
-                                    </tr>
-                                </React.Fragment>
+                                        )}
+                                    </td>
+                                    {/* Veik. — only the contextual confirm/approve (shown when there is something
+                                        to act on) plus the worker's timer. Edit / revert / delete moved into the
+                                        detail sheet that the row opens. */}
+                                    <td className="px-1 py-3 align-top" onClick={(e) => e.stopPropagation()}>
+                                        <div className="flex flex-col items-stretch gap-2">
+                                            {canManage && task.status === 'completed' && (
+                                                <Button variant="success" size="md" icon={CheckCircle2} fullWidth onClick={() => handleConfirmTask(task.id)}>
+                                                    Patvirtinti
+                                                </Button>
+                                            )}
+                                            {canManage && task.status === 'unapproved' && (
+                                                <Button variant="success" size="md" icon={CheckCircle2} fullWidth onClick={() => handleApproveTask(task.id)}>
+                                                    Patvirtinti
+                                                </Button>
+                                            )}
+                                            <TaskTimerControls task={task} role={role} />
+                                        </div>
+                                    </td>
+                                </tr>
                             );
                         })}
                     </tbody>
@@ -1016,6 +846,10 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 onClose={() => setActiveModal({ type: null, taskId: null })}
                                 comments={task.comments}
                                 onAddComment={(text) => handleAddComment(task.id, text)}
+                                currentUserId={currentUser?.uid}
+                                canManage={canManage}
+                                onUpdateComment={(index, text) => handleUpdateComment(task.id, index, text)}
+                                onDeleteComment={(index) => handleDeleteComment(task.id, index)}
                             />
                             <ImageModal
                                 isOpen={activeModal.type === 'image'}
@@ -1042,6 +876,27 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                     );
                 })()
             }
+
+            {/* The single "open the task" sheet. Always read-only-capable (so a viewer without
+                edit access still sees everything); edit access surfaces the management actions. */}
+            <TaskDetailModal
+                isOpen={!!detailTask}
+                onClose={closeDetail}
+                task={detailTask}
+                isRunning={detailTask ? isTaskRunning(detailTask) : false}
+                canManage={canManage}
+                canDelete={canDelete}
+                showManagerLine={showManagerLine}
+                onEdit={onEdit ? editFromDetail : undefined}
+                onDelete={deleteFromDetail}
+                onRevert={revertFromDetail}
+                onConfirm={confirmFromDetail}
+                onApprove={approveFromDetail}
+                onOpenComments={openSubModalFromDetail('comments')}
+                onOpenChecklist={openSubModalFromDetail('checklist')}
+                onOpenImage={openSubModalFromDetail('image')}
+                onOpenTimeAdjustments={openSubModalFromDetail('timeAdjustments')}
+            />
 
             <DeleteConfirmationModal
                 isOpen={!!deleteModalTask}

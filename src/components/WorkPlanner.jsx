@@ -145,9 +145,10 @@ const CustomToolbar = (toolbar) => {
             {/* Phone / tablet (<lg): two compact rows — view + create on top, then the
                 navigation cluster — so nothing gets squeezed on a ~360px viewport. */}
             <div className="flex flex-col gap-2 lg:hidden">
-                {/* pr-12 keeps the create action clear of the fixed profile-avatar bubble
-                    pinned to the top-right corner (Layout) — without it they overlap on phones. */}
-                <div className="flex items-center justify-between gap-2 pr-12">
+                {/* The create action sits flush at the right edge: the profile avatar now lives
+                    in the sticky AppHeader bar above the content (Layout), not a floating bubble
+                    overlapping it, so no right-side clearance is needed. */}
+                <div className="flex items-center justify-between gap-2">
                     {viewToggle}
                     {addButton}
                 </div>
@@ -630,11 +631,19 @@ export default function WorkPlanner() {
         try {
             const isManagerOrAdmin = isManagerRole(userRole);
             const managerId = userData?.defaultManager || (isManagerOrAdmin ? currentUser.uid : null);
+            // Calendar/shift requests concern the PERSON, so they fan out to ALL of the worker's
+            // managers (any may approve; the first to act flips the status and clears it for the
+            // rest). `managerId` stays the primary (FCM fallback / legacy); `managerIds` is the
+            // array the bell queries with array-contains.
+            const managerIds = Array.isArray(userData?.teamManagerIds) && userData.teamManagerIds.length
+                ? userData.teamManagerIds
+                : (managerId ? [managerId] : []);
 
             const requestData = {
                 userId: currentUser.uid,
                 userName: userData?.displayName || currentUser.displayName || currentUser.email,
                 managerId: managerId,
+                managerIds: managerIds,
                 type: pendingAction.type,
                 reason: reasonValue,
                 status: 'pending',
@@ -889,13 +898,13 @@ export default function WorkPlanner() {
             )
             }
 
-            {/* Phones/tablets keep a fixed height (day view — vertical scroll is expected there).
-                On desktop (lg+, where the week grid + side rail live) the calendar instead fills the
-                viewport: an adaptive height (100vh minus the page chrome above/below it) means the
-                whole working day fits the real screen rather than a fixed 750px box that overflowed
-                and forced react-big-calendar's internal scrollbar. The min-height floor keeps it
-                usable on very short windows (it falls back to a small internal scroll only there). */}
-            <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[calc(100vh-11rem)] lg:min-h-[34rem]">
+            {/* The calendar is given a fixed pixel height tall enough to hold the entire working
+                day at a comfortable row height. Because react-big-calendar flexes its hour rows to
+                fill exactly this box, the grid renders in full with no internal scrollbar of its
+                own. On a screen too short to show the whole box, the *page* scrolls (the container
+                simply grows past the viewport) — the calendar no longer traps the scroll. Phones
+                use the day view, which is naturally shorter. */}
+            <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[880px]">
                 <Calendar
                     key={isPhone ? 'day' : 'week'}
                     localizer={localizer}

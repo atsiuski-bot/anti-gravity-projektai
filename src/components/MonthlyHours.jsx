@@ -2,13 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Calendar, ChevronDown, ChevronUp, Clock } from 'lucide-react';
-import { formatDisplayName } from '../utils/formatters';
 import { formatMinutesToTimeString, getLithuanianDateString, sanitizeReportMinutes } from '../utils/timeUtils';
 import { useAuth } from '../context/AuthContext';
 import { isScopedManager } from '../utils/teamScope';
 import Card from './ui/Card';
 import EmptyState from './ui/EmptyState';
 import { Spinner } from './ui/Loading';
+import UserChip from './UserChip';
 
 // Per-worker row, sorted by minutes desc. Shared by the mobile card stack and the
 // desktop table so both render identical data + figures.
@@ -164,9 +164,11 @@ export default function MonthlyHours({ users }) {
                                                             key={user.userId}
                                                             className="rounded-card border border-line bg-surface-card p-4"
                                                         >
-                                                            <p className="truncate text-body font-medium text-ink-strong">
-                                                                {formatDisplayName(user.name)}
-                                                            </p>
+                                                            <UserChip
+                                                                userId={user.userId}
+                                                                name={user.name}
+                                                                className="block truncate text-body font-medium text-ink-strong"
+                                                            />
                                                             <div className="mt-2 flex items-end justify-between gap-3">
                                                                 <span className="inline-flex items-center gap-1.5 font-mono text-h2 font-bold text-brand">
                                                                     <Clock className="h-4 w-4 opacity-75" aria-hidden="true" />
@@ -194,9 +196,11 @@ export default function MonthlyHours({ users }) {
                                                             {sortedUsers(stat).map((user) => (
                                                                 <tr key={user.userId} className="hover:bg-surface-sunken">
                                                                     <td className="px-4 py-2">
-                                                                        <div className="text-body font-medium text-ink-strong">
-                                                                            {formatDisplayName(user.name)}
-                                                                        </div>
+                                                                        <UserChip
+                                                                            userId={user.userId}
+                                                                            name={user.name}
+                                                                            className="text-body font-medium text-ink-strong"
+                                                                        />
                                                                     </td>
                                                                     <td className="px-4 py-2 text-right">
                                                                         <div className="flex items-center justify-end gap-1.5 font-mono text-body-lg font-semibold text-brand">
