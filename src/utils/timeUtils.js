@@ -43,6 +43,33 @@ export const formatMinutesToTimeString = (minutes) => {
     return `${prefix}${h}h ${m}m`;
 };
 
+// Zero-padded "HH:MM" rendering for the payroll CSV exports (Reports + TaskHistory).
+// The minute total is rounded to whole minutes ONCE, before the hour/minute split, so a
+// fractional remainder in [59.5, 60) carries into the hour instead of printing an invalid
+// ":60". (The previous in-line copies floored the hour and rounded the minute part
+// independently, which is what produced "03:60" rows in exported timesheets.) Magnitude
+// only — sign handling lives in formatSignedMinutesToHHMM.
+export const formatMinutesToHHMM = (totalMinutes) => {
+    if (!totalMinutes || !Number.isFinite(totalMinutes)) return '00:00';
+    const total = Math.round(Math.abs(totalMinutes));
+    const hours = Math.floor(total / 60);
+    const mins = total % 60;
+    return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
+};
+
+// Signed "±HH:MM" for difference columns (e.g. worked − planned). Rounds first so the sign
+// is decided on the same whole-minute value the magnitude is formatted from, then defers to
+// formatMinutesToHHMM (which already carries the minute correctly). Zero renders unsigned.
+export const formatSignedMinutesToHHMM = (minutes) => {
+    if (!Number.isFinite(minutes)) return '00:00';
+    // Round the MAGNITUDE, not the signed value: Math.round(-239.5) === -239 (ties round toward
+    // +∞), which would mis-carry the negative case to "-03:59" while +239.5 carries to "+04:00".
+    const rounded = Math.round(Math.abs(minutes));
+    if (rounded === 0) return '00:00';
+    const sign = minutes < 0 ? '-' : '+';
+    return `${sign}${formatMinutesToHHMM(rounded)}`;
+};
+
 // Hard ceiling for a single continuous timer/session interval (minutes). A real
 // break, call, quick-work, or task run never approaches this; a larger raw value can
 // only come from device-clock skew or a session/timer orphaned across a crash or
@@ -58,6 +85,46 @@ export const MAX_SESSION_MINUTES = 16 * 60;
 export const clampSessionMinutes = (minutes) => {
     if (!Number.isFinite(minutes) || minutes < 0) return 0;
     return Math.min(minutes, MAX_SESSION_MINUTES);
+};
+
+// Fat-finger ceiling for a manual task-total edit / correction delta (minutes). A task total
+// can legitimately exceed a single session (work accumulates across days), so it is NOT bound
+// by MAX_SESSION_MINUTES; but a mistyped hours field (e.g. "999") must not become permanent,
+// uncapped corruption. 1000h is far above any real single-task total yet catches gross typos.
+export const MAX_MANUAL_TASK_MINUTES = 1000 * 60;
+
+// Minimum credited/logged session length (minutes). A tap shorter than this is treated as an
+// accidental start/stop — the telemetry showed many 00:00–00:01 work/break rows from mis-taps —
+// so the segment is discarded rather than persisted. Raised from the original ~10s to 60s so a
+// fat-fingered toggle on a phone (gloved hands, outdoors) cannot mint a micro-session.
+export const MIN_LOGGED_SESSION_MINUTES = 1;
+
+// Read-side plausibility guard for report AGGREGATION. Already-persisted session docs can be
+// corrupt — a pre-clamp orphaned timer, or a manual edit entered before bounds existed — and
+// no write-time fix reaches data already in Firestore, so every report aggregator funnels each
+// stored value through this before summing. It is the read-side twin of clampSessionMinutes
+// (which guards writes): a normal tracked session is a positive interval capped at the 16h
+// single-session ceiling; a task total or manual-adjustment delta (allowLarge) may be negative
+// or legitimately large, so only its gross magnitude is capped (at MAX_MANUAL_TASK_MINUTES).
+export const sanitizeReportMinutes = (durationMinutes, { allowLarge = false } = {}) => {
+    const raw = Number(durationMinutes);
+    if (!Number.isFinite(raw)) return 0;
+    if (allowLarge) {
+        if (raw > MAX_MANUAL_TASK_MINUTES) return MAX_MANUAL_TASK_MINUTES;
+        if (raw < -MAX_MANUAL_TASK_MINUTES) return -MAX_MANUAL_TASK_MINUTES;
+        return raw;
+    }
+    if (raw <= 0) return 0;
+    return Math.min(raw, MAX_SESSION_MINUTES);
+};
+
+// True when a stored duration is implausible for its kind, so a report can FLAG the row to the
+// manager (a "⚠ patikrinti" affordance) rather than silently capping or dropping it. Mirrors
+// the ceilings sanitizeReportMinutes enforces.
+export const isImplausibleSessionMinutes = (durationMinutes, { allowLarge = false } = {}) => {
+    const raw = Number(durationMinutes);
+    if (!Number.isFinite(raw)) return false;
+    return allowLarge ? Math.abs(raw) > MAX_MANUAL_TASK_MINUTES : raw > MAX_SESSION_MINUTES;
 };
 
 // Calculate current total time including active session if running

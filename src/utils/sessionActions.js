@@ -1,7 +1,7 @@
 import { doc, getDoc, updateDoc, collection, addDoc, setDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
-import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, formatMinutesToTimeString } from './timeUtils';
+import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
 import { isManagerRole } from './formatters';
 
@@ -72,7 +72,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                     const interruptNow = getLithuanianNow();
                     const interruptStart = new Date(userData.activeSession.startTime);
                     const partialDuration = clampSessionMinutes((interruptNow - interruptStart) / (1000 * 60));
-                    if (partialDuration > (10 / 60)) {
+                    if (partialDuration > MIN_LOGGED_SESSION_MINUTES) {
                         // Log the partial segment and capture doc ID for later renaming
                         const partialType = userData.activeSession.type;
                         const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greitas darbas');
@@ -290,7 +290,7 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
         const doLogging = async () => {
             try {
                 const logPromises = [];
-                if (durationMinutes > (10 / 60)) {
+                if (durationMinutes > MIN_LOGGED_SESSION_MINUTES) {
                     logPromises.push(
                         addDoc(collection(db, 'sessions'), {
                             userId,
@@ -444,7 +444,7 @@ const endLegacySession = async (userId, type, userData) => {
 };
 
 const handleLegacyLogging = async (userId, userData, session, now, durationMinutes) => {
-    if (durationMinutes <= (10 / 60)) return; // Ignore short
+    if (durationMinutes <= MIN_LOGGED_SESSION_MINUTES) return; // Ignore accidental sub-minute taps
     const sessionDate = getLithuanianDateString(now);
 
     if (session.type === 'break') {
