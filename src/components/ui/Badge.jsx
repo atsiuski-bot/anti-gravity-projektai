@@ -12,10 +12,15 @@ import { cn } from '../../utils/cn';
  * Tier class strings are written as full literals (not interpolated) so Tailwind's content
  * scanner keeps them.
  *
+ * A `locked` badge is one the user has not earned yet: it drops all metal color to a neutral
+ * grey so the earned tiles read as "loud" against it, but it keeps its name + icon so the owner
+ * can see what is still available to earn (own-profile ladder only — guardrail W4).
+ *
  * @param {'bronze'|'silver'|'gold'|'platinum'} tier
  * @param {string} name - the badge name (e.g. "Pabaigiu, ką pradedu")
  * @param {React.ComponentType<{className?: string}>} [icon] - the badge glyph
  * @param {'sm'|'md'} [size]
+ * @param {boolean} [locked] - render the neutral not-yet-earned state
  */
 const TIERS = {
     bronze: {
@@ -49,13 +54,18 @@ const MEDALLION_SIZE = {
     md: 'h-12 w-12',
 };
 
-export default function Badge({ tier = 'bronze', name, icon: Icon, size = 'md', className }) {
+export default function Badge({ tier = 'bronze', name, icon: Icon, size = 'md', locked = false, className }) {
     const t = TIERS[tier] || TIERS.bronze;
+    const filledPips = locked ? 0 : t.order;
 
     return (
         <div
             role="img"
-            aria-label={`${name}: ${t.label}, lygis ${t.order} iš 4`}
+            aria-label={
+                locked
+                    ? `${name}: dar neturite`
+                    : `${name}: ${t.label}, lygis ${t.order} iš 4`
+            }
             className={cn('flex flex-col items-center text-center', className)}
         >
             <div
@@ -63,18 +73,22 @@ export default function Badge({ tier = 'bronze', name, icon: Icon, size = 'md', 
                 className={cn(
                     'flex items-center justify-center rounded-full ring-2',
                     MEDALLION_SIZE[size] || MEDALLION_SIZE.md,
-                    t.medallion
+                    locked ? 'bg-surface-sunken text-ink-muted ring-line' : t.medallion
                 )}
             >
                 {Icon && <Icon className={size === 'sm' ? 'h-5 w-5' : 'h-6 w-6'} />}
             </div>
-            <span className="mt-2 text-caption font-semibold text-ink">{name}</span>
-            <span className={cn('text-caption', t.tierText)}>{t.label}</span>
+            <span className={cn('mt-2 text-caption font-semibold', locked ? 'text-ink-muted' : 'text-ink')}>
+                {name}
+            </span>
+            <span className={cn('text-caption', locked ? 'text-ink-muted' : t.tierText)}>
+                {locked ? 'Dar neturite' : t.label}
+            </span>
             <div aria-hidden="true" className="mt-1.5 flex gap-1">
                 {[1, 2, 3, 4].map((i) => (
                     <span
                         key={i}
-                        className={cn('h-1.5 w-1.5 rounded-full', i <= t.order ? t.pip : 'bg-line')}
+                        className={cn('h-1.5 w-1.5 rounded-full', i <= filledPips ? t.pip : 'bg-line')}
                     />
                 ))}
             </div>

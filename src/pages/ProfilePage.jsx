@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Trophy, Download } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
@@ -10,14 +10,14 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
-import { BADGE_ICONS, tierKey } from '../utils/badgeCatalog';
+import { BADGE_ICONS, BADGE_CATALOG, tierKey } from '../utils/badgeCatalog';
+import BadgeDetailModal from '../components/BadgeDetailModal';
 import Card from '../components/ui/Card';
 import IconButton from '../components/ui/IconButton';
 import StatusPill from '../components/ui/StatusPill';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import Avatar from '../components/ui/Avatar';
 import Badge from '../components/ui/Badge';
-import EmptyState from '../components/ui/EmptyState';
 import InstallInstructions from '../components/InstallInstructions';
 
 // Role presentation — pair color with text so role is never color-only (DESIGN_SYSTEM §5).
@@ -46,6 +46,20 @@ export default function ProfilePage() {
     const [notifError, setNotifError] = useState('');
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [showInstall, setShowInstall] = useState(false);
+    const [selectedBadge, setSelectedBadge] = useState(null);
+
+    // The owner's profile shows the FULL ladder: every catalog badge merged with the tier the
+    // user has actually earned (0 = not yet). Sorted earned-first, highest tier down, then the
+    // not-yet-earned ones last — so the shelf reads brightest at the top. Unlike a peer's
+    // profile, an empty/partial ladder here is a motivating map of what is still ahead, not a
+    // deficit (guardrail W4 is relaxed for the owner only).
+    const earnedByKey = new Map(achievements.map((a) => [a.key, a]));
+    const badgeLadder = BADGE_CATALOG
+        .map((def) => {
+            const earned = earnedByKey.get(def.key);
+            return { ...def, tier: earned?.tier || 0, earnedAt: earned?.earnedAt || '' };
+        })
+        .sort((a, b) => (b.tier - a.tier) || String(b.earnedAt).localeCompare(String(a.earnedAt)));
 
     // The upload/save writes SHOULD complete even if the user navigates away mid-flight (the
     // photo still saves); we only guard the local UI state so we never setState post-unmount.
@@ -180,28 +194,33 @@ export default function ProfilePage() {
                 />
             </Card>
 
-            {/* Achievements — the trophy shelf. Earned tiers only; an empty shelf reads as
-                "new here", never a deficit (guardrail W4). */}
+            {/* Achievements — the full ladder. The owner sees every badge, earned ones in their
+                metal color first, then the still-locked ones; tapping any tile opens what earns
+                it. (Peer profiles stay earned-only — guardrail W4.) */}
             <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Pasiekimai</h2>
             <Card className="mb-4 p-4">
-                {achievements.length > 0 ? (
-                    <div className="grid grid-cols-3 gap-4">
-                        {achievements.map((a) => (
+                <p className="mb-3 text-caption text-ink-muted">
+                    Bakstelėkite ženkliuką ir pamatysite, už ką jis skiriamas.
+                </p>
+                <div className="grid grid-cols-3 gap-4">
+                    {badgeLadder.map((b) => (
+                        <button
+                            key={b.key}
+                            type="button"
+                            onClick={() => setSelectedBadge(b)}
+                            aria-label={`${b.name} — peržiūrėti, už ką skiriamas`}
+                            className="flex min-h-touch items-stretch rounded-control p-1 transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        >
                             <Badge
-                                key={a.id}
-                                tier={tierKey(a.tier)}
-                                name={a.name}
-                                icon={BADGE_ICONS[a.key]}
+                                className="w-full"
+                                tier={tierKey(b.tier)}
+                                name={b.name}
+                                icon={BADGE_ICONS[b.key]}
+                                locked={b.tier === 0}
                             />
-                        ))}
-                    </div>
-                ) : (
-                    <EmptyState
-                        icon={Trophy}
-                        title="Pirmieji ženkliukai dar laukia"
-                        description="Užbaik darbus ir dirbk nuosekliai — pasiekimai atsiras čia."
-                    />
-                )}
+                        </button>
+                    ))}
+                </div>
             </Card>
 
             {/* Settings */}
@@ -308,6 +327,10 @@ export default function ProfilePage() {
 
             {showInstall && (
                 <InstallInstructions isIOS={isIOS} onClose={() => setShowInstall(false)} />
+            )}
+
+            {selectedBadge && (
+                <BadgeDetailModal badge={selectedBadge} onClose={() => setSelectedBadge(null)} />
             )}
         </div>
     );
