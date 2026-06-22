@@ -16,6 +16,8 @@ import { TASK_TAGS } from '../utils/taskUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
+import TaskStatusPill from './task/TaskStatusPill';
+import DeletedBadge from './task/DeletedBadge';
 import { useModalA11y } from '../hooks/useModalA11y';
 
 // Persistent field label — fields previously had only placeholders, which vanish on input
@@ -659,9 +661,18 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             >
                 {/* Header - Fixed (vertically compact: tighter padding, X pinned hard right) */}
                 <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-b border-line flex-shrink-0">
-                    <h2 id="task-modal-title" className="text-lg font-bold text-ink-strong truncate min-w-0">
-                        {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Naujas darbas')}
-                    </h2>
+                    <div className="flex items-center gap-2 min-w-0">
+                        <h2 id="task-modal-title" className="text-lg font-bold text-ink-strong truncate min-w-0">
+                            {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Naujas darbas')}
+                        </h2>
+                        {/* Read-only status — the form previously showed none; now it carries the same
+                            Patvirtinta / Nepatvirtinta / Ištrinta the task shows on every other surface. */}
+                        {task && !isSavingTemplate && (
+                            (task.isDeleted || task.status === 'deleted')
+                                ? <DeletedBadge />
+                                : <TaskStatusPill task={task} />
+                        )}
+                    </div>
                     <div className="flex items-center gap-1 min-w-0">
                         {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
                             <select
