@@ -1,16 +1,24 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { collection, query, onSnapshot, where } from 'firebase/firestore';
 import { format, addDays, isSameDay, getDay } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, CalendarOff, Home, Palmtree, AlertTriangle } from 'lucide-react';
-import { formatDisplayName } from '../utils/formatters';
+import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { useUsers } from '../context/UsersContext';
+import { useAuth } from '../context/AuthContext';
+import { getLithuanianDateString } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import EmptyState from './ui/EmptyState';
+import Modal from './ui/Modal';
+
+// The day-report drill-down is a heavy component with its own Firestore listeners, so it is
+// lazy-loaded — it only mounts when a manager clicks a worker, never weighing on the calendar's
+// first paint.
+const DailyStatistics = lazy(() => import('./DailyStatistics'));
 
 // Calm indigo "free" state for vacation events — replaces a near-black (#000000) block so
 // vacation reads as time off, not a heavy bar. Paired everywhere with a Palmtree + "Atostogos"
@@ -67,6 +75,13 @@ export default function AllUsersCalendar() {
     }, []);
 
     const { activeUsers, usersMap } = useUsers();
+    const { currentUser, userRole } = useAuth();
+
+    // Manager-only drill-down: clicking a worker's shift opens that worker's day report for the
+    // day in view. Workers also see this team calendar, so we never expose a colleague's detailed
+    // time report to them — this mirrors the Reports privacy boundary (workers see only their own).
+    const canDrill = isManagerRole(userRole);
+    const [reportUser, setReportUser] = useState(null); // the worker whose day report modal is open
 
     // using usersMap from context
 
@@ -208,28 +223,31 @@ export default function AllUsersCalendar() {
 
             {/* Timeline Area — desktop only (md+). On phones, data is cards, never an h-scroll timeline (§9). */}
             <div className="hidden md:flex flex-1 overflow-auto relative flex-col">
-                <div className="relative flex flex-col min-w-full px-4">
-                    {/* Time Scale Header */}
-                    <div className="flex border-b border-line bg-surface-card sticky top-0 z-20 h-10">
-                        <div className="w-full relative">
-                            {hours.map((hour, i) => (
-                                <div
+                {/* flex-1 makes the track fill the full card height so the hour grid lines reach
+                    the bottom of the box even when only a few shifts are scheduled. */}
+                <div className="relative flex flex-col min-w-full px-4 flex-1">
+                    {/* Time Scale Header — hour labels only, aligned to the body grid lines below.
+                        First/last labels are edge-anchored so 7:00 / 22:00 never clip at the card
+                        edges; the rest are centered on their grid line. */}
+                    <div className="relative h-8 border-b border-line bg-surface-card sticky top-0 z-20">
+                        {hours.map((hour, i) => {
+                            const left = (i / TOTAL_HOURS) * 100;
+                            const shiftX = i === 0 ? '0' : i === TOTAL_HOURS ? '-100%' : '-50%';
+                            return (
+                                <span
                                     key={hour}
-                                    className="absolute top-0 bottom-0 border-l border-line"
-                                    style={{
-                                        left: `${(i / TOTAL_HOURS) * 100}%`
-                                    }}
+                                    className="absolute top-1/2 text-caption text-ink-muted font-medium tabular-nums whitespace-nowrap"
+                                    style={{ left: `${left}%`, transform: `translate(${shiftX}, -50%)` }}
                                 >
-                                    <span className="absolute -top-1 left-0 -translate-x-1/2 text-caption text-ink-muted font-medium">
-                                        {hour}:00
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                                    {hour}:00
+                                </span>
+                            );
+                        })}
                     </div>
 
-                    {/* Grid Body */}
-                    <div className="flex-1 relative mt-2">
+                    {/* Grid Body — fills the remaining height; grid lines run from just under the
+                        header to the bottom of the card. */}
+                    <div className="flex-1 relative">
                         {/* Vertical Grid Lines Background */}
                         <div className="absolute inset-0 z-0">
                             {hours.map((hour, i) => (
@@ -267,33 +285,50 @@ export default function AllUsersCalendar() {
                         <div className="relative z-10 space-y-3 py-4 w-full">
                             {usersWithEvents.map((user) => (
                                 <div key={user.id} className="relative h-8 w-full">
-                                    {/* Events Bar */}
+                                    {/* Events Bar — for managers each bar is a button that opens
+                                        that worker's day report for the day in view; for workers it
+                                        stays a non-interactive bar (no colleague drill-down). */}
                                     {user.events.map(event => {
                                         const style = getEventStyle(event.start, event.end);
                                         if (!style) return null;
                                         const status = eventStatus(event);
                                         const timeRange = `${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}`;
-                                        return (
+                                        const barStyle = { ...style, backgroundColor: event.isVacation ? VACATION_COLOR : event.color };
+                                        const labelBase = `${user.displayName}, ${event.title}${status ? `, ${status.label}` : ''}, ${timeRange}`;
+                                        const baseBar = "absolute top-1 h-6 p-0 rounded-full border border-line shadow-sm flex items-center justify-center hover:brightness-105 transition-all z-10";
+                                        const pill = (
+                                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-caption font-bold bg-surface-card text-ink border border-white/50 shadow-sm z-20 relative whitespace-nowrap leading-tight">
+                                                <span aria-hidden="true">👤</span>
+                                                {user.displayName}
+                                                {status && (
+                                                    <>
+                                                        <status.Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                                                        ({status.label})
+                                                    </>
+                                                )}
+                                            </span>
+                                        );
+                                        return canDrill ? (
+                                            <button
+                                                key={event.id}
+                                                type="button"
+                                                onClick={() => setReportUser(user)}
+                                                className={cn(baseBar, "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1")}
+                                                style={barStyle}
+                                                title={`${event.title} (${timeRange}) — peržiūrėti dienos ataskaitą`}
+                                                aria-label={`${labelBase}. Atidaryti dienos ataskaitą.`}
+                                            >
+                                                {pill}
+                                            </button>
+                                        ) : (
                                             <div
                                                 key={event.id}
-                                                className="absolute top-1 h-6 rounded-full border border-line shadow-sm flex items-center justify-center hover:brightness-105 transition-all cursor-default z-10"
-                                                style={{
-                                                    ...style,
-                                                    backgroundColor: event.isVacation ? VACATION_COLOR : event.color
-                                                }}
+                                                className={cn(baseBar, "cursor-default")}
+                                                style={barStyle}
                                                 title={`${event.title} (${timeRange})`}
-                                                aria-label={`${user.displayName}, ${event.title}${status ? `, ${status.label}` : ''}, ${timeRange}`}
+                                                aria-label={labelBase}
                                             >
-                                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-caption font-bold bg-surface-card text-ink border border-white/50 shadow-sm z-20 relative whitespace-nowrap leading-tight">
-                                                    <span aria-hidden="true">👤</span>
-                                                    {user.displayName}
-                                                    {status && (
-                                                        <>
-                                                            <status.Icon className="w-3.5 h-3.5" aria-hidden="true" />
-                                                            ({status.label})
-                                                        </>
-                                                    )}
-                                                </span>
+                                                {pill}
                                             </div>
                                         );
                                     })}
@@ -334,12 +369,8 @@ export default function AllUsersCalendar() {
                                 // Same proportional placement math as the desktop bars, but the
                                 // track is the card width (7:00–22:00 span) — no horizontal scroll (§9).
                                 const barStyle = getEventStyle(event.start, event.end);
-                                return (
-                                    <li
-                                        key={event.id}
-                                        className="px-3.5 py-2.5"
-                                        style={{ borderLeft: `4px solid ${barColor}` }}
-                                    >
+                                const cardBody = (
+                                    <>
                                         <div className="flex items-center justify-between gap-2">
                                             {/* Name first, then the work hours — packed to the left.
                                                 The name truncates with an ellipsis when it would
@@ -375,6 +406,27 @@ export default function AllUsersCalendar() {
                                                 />
                                             </div>
                                         )}
+                                    </>
+                                );
+                                return (
+                                    <li
+                                        key={event.id}
+                                        style={{ borderLeft: `4px solid ${barColor}` }}
+                                    >
+                                        {/* For managers the whole row is a button that opens the
+                                            worker's day report; for workers it stays static. */}
+                                        {canDrill ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => setReportUser(user)}
+                                                className="w-full text-left px-3.5 py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+                                                aria-label={`${user.displayName}, ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}. Atidaryti dienos ataskaitą.`}
+                                            >
+                                                {cardBody}
+                                            </button>
+                                        ) : (
+                                            <div className="px-3.5 py-2.5">{cardBody}</div>
+                                        )}
                                     </li>
                                 );
                             })}
@@ -382,6 +434,30 @@ export default function AllUsersCalendar() {
                     ))
                 )}
             </div>
+
+            {/* Manager drill-down — the clicked worker's report for the day in view. Reuses
+                DailyStatistics scoped to one worker (forceUserId) and embedded (no archive
+                browser), lazy-loaded so the heavy report only loads on demand. */}
+            {reportUser && (
+                <Modal
+                    open
+                    onClose={() => setReportUser(null)}
+                    title={reportUser.displayName}
+                    size="xl"
+                    className="max-w-4xl"
+                >
+                    <Suspense fallback={<div className="py-12 text-center text-body text-ink-muted">Kraunama dienos ataskaita…</div>}>
+                        <DailyStatistics
+                            currentUser={currentUser}
+                            userRole={userRole}
+                            users={activeUsers}
+                            forceUserId={reportUser.id}
+                            initialDate={getLithuanianDateString(currentDate)}
+                            embedded
+                        />
+                    </Suspense>
+                </Modal>
+            )}
         </div>
     );
 }

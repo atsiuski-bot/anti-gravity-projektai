@@ -3,21 +3,39 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, MAX_MANUAL_TASK_MINUTES } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
-import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
+import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
+import { useAuth } from '../context/AuthContext';
+import PriorityBadge from './task/PriorityBadge';
+import DeletedBadge from './task/DeletedBadge';
+import TaskStatusPill from './task/TaskStatusPill';
+import TimeChangedWarning from './task/TimeChangedWarning';
+import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, Zap, MessageSquare, Check, Filter, RotateCcw, X, Pencil } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Zap, MessageSquare, Check, Filter, RotateCcw, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
 import SessionTypeIcon from './SessionTypeIcon';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
+import Modal from './ui/Modal';
+import TaskModal from './TaskModal';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, showTestUsers = false }) {
-    // Managers can see everyone, Workers only themselves
-    const [selectedUserId, setSelectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
-    const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full', showTestUsers = false }) {
+    // userData carries the auth identity (role + scopedManager) the listeners scope against;
+    // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
+    const { userData } = useAuth();
+    const scoped = isScopedManager(userData);
+    const scopeUid = currentUser?.uid;
+    // Managers see the whole team here; workers see only themselves. The per-member picker was
+    // removed (individual drill-down moves to the team calendar), so this is fixed at mount and
+    // never changes — no setter. `forceUserId` overrides it: the team calendar opens this view
+    // embedded in a modal, scoped to one clicked worker. Narrowing is client-side only — the
+    // Firestore listeners still scope by role via privateScopeConstraints, so this never widens
+    // what the viewer may read.
+    const [selectedUserId] = useState(forceUserId ?? (isManagerRole(userRole) ? 'all' : currentUser?.uid));
+    const [selectedDate, setSelectedDate] = useState(initialDate ?? getLithuanianDateString());
     const [, setLoading] = useState(false);
 
     // When a date range is supplied (the period report), the component aggregates the whole span
@@ -56,6 +74,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // Restore confirmation (replaces window.confirm — §8)
     const [restoreTarget, setRestoreTarget] = useState(null);
     const [restoring, setRestoring] = useState(false);
+
+    // Per-worker drill-down: clicking a row in the team "Darbo valandos" summary opens a
+    // modal listing everything that worker touched that day — both finished work and the
+    // session still running — without forcing the manager to switch the user filter.
+    const [workerDetail, setWorkerDetail] = useState(null); // { userId, name } | null
+
+    // Clicking a work card inside that drill-down opens the full task. We swap modals rather
+    // than stack them (two focus-trapped dialogs fight) — the worker modal closes, the task
+    // opens; closing the task returns to the day statistics.
+    const [openTaskDetail, setOpenTaskDetail] = useState(null); // task | null
 
     // Calculate previous/next day
     const handleDateChange = (offset) => {
@@ -101,9 +129,17 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // has no firestore.indexes.json to declare). A range query (>= start, <= end) on
         // the same single field stays within that automatic index, so the period view
         // needs no extra index either — single day is just rangeStart === rangeEnd.
+        // Constrain each private listener to the rows this viewer may read (own / team /
+        // whole-company), so nothing is denied once the rules tighten. work_hours/calendar stay
+        // public and are not read here. Composite indexes (owner|team field + date/archivedAt) are
+        // declared in firestore.indexes.json.
+        const sessScope = privateScopeConstraints({ userData, uid: scopeUid, effectiveRole: userRole, ownerField: 'userId' });
+        const taskScope = privateScopeConstraints({ userData, uid: scopeUid, effectiveRole: userRole, ownerField: 'assignedUserId' });
+
         const breaksQ = query(collection(db, 'break_sessions'),
             where('date', '>=', rangeStart),
-            where('date', '<=', rangeEnd));
+            where('date', '<=', rangeEnd),
+            ...sessScope);
 
         const unsubBreaks = onSnapshot(breaksQ, (snap) => {
             const breaksData = snap.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -130,7 +166,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // orderBy on a different field would force a composite index; startTime ordering is done
         // client-side wherever it matters, e.g. the timeline below).
         const sessionsBaseQ = collection(db, 'work_sessions');
-        const sessionsQ = query(sessionsBaseQ, where('date', '>=', rangeStart), where('date', '<=', rangeEnd));
+        const sessionsQ = query(sessionsBaseQ, where('date', '>=', rangeStart), where('date', '<=', rangeEnd), ...sessScope);
 
         const unsubSessions = onSnapshot(sessionsQ, (snap) => {
             const sessionsData = snap.docs
@@ -159,11 +195,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         rangeEndDate.setDate(rangeEndDate.getDate() + 2);
         const endIso = `${rangeEndDate.toISOString().split('T')[0]}T23:59:59`;
 
-        activeQ = collection(db, 'tasks');
+        activeQ = taskScope.length ? query(collection(db, 'tasks'), ...taskScope) : collection(db, 'tasks');
         archivedQ = query(
             collection(db, 'archived_tasks'),
             where('archivedAt', '>=', startIso),
-            where('archivedAt', '<=', endIso)
+            where('archivedAt', '<=', endIso),
+            ...taskScope
         );
 
         let activeTasks = [];
@@ -224,7 +261,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         });
 
         // Listen to Deleted Tasks
-        const deletedQ = collection(db, 'deleted_tasks');
+        const deletedQ = taskScope.length ? query(collection(db, 'deleted_tasks'), ...taskScope) : collection(db, 'deleted_tasks');
 
         const unsubDeleted = onSnapshot(deletedQ, (snap) => {
             deletedTasks = snap.docs.map(d => ({ id: d.id, ...d.data(), isDeleted: true }));
@@ -241,7 +278,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             unsubArchived();
             unsubDeleted();
         };
-    }, [selectedUserId, rangeStart, rangeEnd]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag + `userRole`; depending on the whole object would re-subscribe every listener on each live-session user-doc update
+    }, [selectedUserId, rangeStart, rangeEnd, scoped, scopeUid, userRole]);
 
     // 3AM work-day window for the selected span: opens at 03:00 on the first day and closes at
     // 03:00 the day AFTER the last day. For a single day these collapse to the original
@@ -342,6 +380,29 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     }, [finishedTasks, rangeStart, rangeEnd, sortBy]);
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
+
+    // The "Patvirtinimas" surface (view='approval') shows a manager only the tasks they are
+    // responsible for: ones where they are the assigned vadovas (task.managerId), or where they
+    // manage the worker who did the task (the worker's managers include them). Admins are NOT
+    // narrowed — they oversee the whole company. "Managers of the doer" is read from the task's
+    // denormalized teamManagerIds (the same field the scoped-manager reads use, kept in sync by a
+    // Cloud Function), falling back to the worker's user doc so it still resolves for any legacy
+    // row written before that denormalization.
+    const applyApprovalFilter = view === 'approval' && userRole === 'manager';
+    const isApprovalRelevant = (task) => {
+        const uid = currentUser?.uid;
+        if (!uid) return false;
+        if (task.managerId && task.managerId === uid) return true;
+        if (Array.isArray(task.teamManagerIds) && task.teamManagerIds.includes(uid)) return true;
+        const doer = users.find(u => u.id === resolveUserId(task));
+        return !!doer && Array.isArray(doer.teamManagerIds) && doer.teamManagerIds.includes(uid);
+    };
+    const approvalTodayTasks = applyApprovalFilter ? todayTasks.filter(isApprovalRelevant) : todayTasks;
+    const approvalEarlierTasks = applyApprovalFilter ? earlierTasks.filter(isApprovalRelevant) : earlierTasks;
+    // The two task lists shown by this surface: full/hours surfaces use the raw split lists;
+    // the approval surface uses the manager-scoped ones.
+    const shownTodayTasks = view === 'approval' ? approvalTodayTasks : todayTasks;
+    const shownEarlierTasks = view === 'approval' ? approvalEarlierTasks : earlierTasks;
 
     // Test/founder accounts are kept out of the report unless the manager opted in (showTestUsers),
     // resolved against each user's isTest flag — applied to every session/timeline source below.
@@ -502,6 +563,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
             return {
                 id: s.id,
+                taskId: s.taskId,
                 type: 'session',
                 startTime: s.startTime,
                 endTime: s.endTime,
@@ -509,6 +571,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 duration: sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment }),
                 userId: resolveUserId(s),
                 userName: resolveUserName(s) || 'Nežinomas',
+                isActive: !!s.isActive,
                 isSystemTask: s.isSystemTask || (s.taskId && String(s.taskId).startsWith('call_')),
                 isQuickWork: s.isQuickWork || (s.taskId && String(s.taskId).startsWith('quick_'))
             };
@@ -885,7 +948,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const weekday = getLithuanianWeekday(selectedDate);
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {actionError && (
                 <div
                     role="alert"
@@ -901,9 +964,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             )}
 
+            {/* Hours surface (work timeline + day summary). The "Patvirtinimas" tab
+                (view='approval') drops all of this and shows only the task-confirmation
+                sections below. */}
+            {view !== 'approval' && (
+              <>
             {/* Header Controls — kept to a single compact row on every viewport (no column
                 stacking on mobile) so the date stepper + filters take minimal vertical space. */}
             <div className="bg-surface-card p-2 rounded-card shadow-sm border border-line flex flex-row flex-wrap gap-2 items-center justify-between">
+
+                {/* Left group — date control plus, on desktop, the day's totals inline, so on
+                    md+ the whole summary collapses into this single toolbar row. */}
+                <div className="flex flex-wrap items-center gap-2 md:gap-4">
 
                 {/* Day mode: a day stepper. Range mode: a static span label — the period is
                     chosen by the picker in the parent (Reports), so there is nothing to step. */}
@@ -931,29 +1003,41 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     </div>
                 )}
 
-                {(isManagerRole(userRole)) && users.length > 0 && (
-                    <div className="relative">
-                        <select
-                            value={selectedUserId}
-                            onChange={(e) => setSelectedUserId(e.target.value)}
-                            aria-label="Vykdytojas"
-                            className="pl-8 pr-3 py-1.5 border border-line rounded-control focus:ring-2 focus:ring-brand text-caption bg-surface-card"
-                        >
-                            <option value="all">Už visą komandą</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>
-                                    {formatDisplayName(u.displayName || u.email)}
-                                </option>
-                            ))}
-                        </select>
-                        <User className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" />
-                    </div>
-                )}
+                {/* Desktop only: the day's totals inline in the toolbar row (mobile keeps the
+                    dedicated summary card below). Merges the former four-card grid into one line. */}
+                <div className="hidden md:flex items-center gap-4 flex-wrap">
+                    {selectedUserId !== 'all' && !isRange && (
+                        <span className="flex items-center gap-1.5 whitespace-nowrap">
+                            <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                            <span className="text-caption text-ink-muted">Pradžia/Pabaiga</span>
+                            <span className="text-body font-bold text-ink-strong tabular-nums">
+                                {firstActivity ? formatTime(firstActivity) : '--:--'}–{lastActivity ? formatTime(lastActivity) : '--:--'}
+                            </span>
+                        </span>
+                    )}
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-ink-muted">Darbas</span>
+                        <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Coffee className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-ink-muted">Pertraukos</span>
+                        <span className="text-body font-bold text-amber-600 tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Zap className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-brand">Viso</span>
+                        <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
+                    </span>
+                </div>
+                </div>
 
-                {/* Sort filter — a vertical two-option segmented control (Pagal laiką above
-                    Pagal būseną) rather than a dropdown, so both choices are visible at once. */}
+                {/* Sort filter — a horizontal two-option segmented control (Pagal laiką |
+                    Pagal būseną) so both choices stay on one row and the toolbar keeps to a
+                    single line. */}
                 <div
-                    className="flex flex-col bg-surface-sunken rounded-control overflow-hidden border border-line"
+                    className="flex bg-surface-sunken rounded-control overflow-hidden border border-line"
                     role="group"
                     aria-label="Rūšiuoti"
                 >
@@ -962,7 +1046,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         onClick={() => setSortBy('time')}
                         aria-pressed={sortBy === 'time'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -970,13 +1054,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         Pagal laiką
                     </button>
-                    <div className="h-px bg-line" aria-hidden="true" />
+                    <div className="w-px bg-line" aria-hidden="true" />
                     <button
                         type="button"
                         onClick={() => setSortBy('status')}
                         aria-pressed={sortBy === 'status'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -1042,64 +1126,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             </div>
 
-            {/* Desktop: the spacious four-card grid (unchanged). */}
-            <div className="hidden md:grid grid-cols-4 gap-4">
-                {selectedUserId !== 'all' && !isRange && (
-                    <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                        <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                            <Clock className="w-4 h-4" />
-                            Dienos Pradžia/Pabaiga
-                        </div>
-                        <div className="text-body-lg font-semibold text-ink-strong">
-                            {firstActivity ? formatTime(firstActivity) : '--:--'} - {lastActivity ? formatTime(lastActivity) : '--:--'}
-                        </div>
-                        <div className="text-caption text-ink-muted mt-1">
-                            Pagal pirmą/paskutinį įrašą
-                        </div>
-                    </div>
-                )}
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                        <Clock className="w-4 h-4" />
-                        Darbo laikas
-                    </div>
-                    <div className="text-h2 font-bold text-ink-strong">
-                        {formatMinutesToTimeString(totalWorkedMinutes)}
-                    </div>
-                </div>
-
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                        <Coffee className="w-4 h-4" />
-                        Pertraukos
-                    </div>
-                    <div className="text-h2 font-bold text-amber-600">
-                        {formatMinutesToTimeString(totalBreakMinutes)}
-                    </div>
-                    <div className="text-caption text-ink-muted mt-1">
-                        Viso pertraukų laikas
-                    </div>
-                </div>
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-brand text-body font-medium">
-                        <Zap className="w-4 h-4" />
-                        Viso (D+P)
-                    </div>
-                    <div className="text-h2 font-bold text-brand">
-                        {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
-                    </div>
-                    <div className="text-caption text-ink-muted mt-1">
-                        Darbas + Pertraukos
-                    </div>
-                </div>
-
-
-
-            </div>
-
             {/* Timeline Table or Worker Summary */}
             <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
                 <div className="px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
@@ -1115,8 +1141,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         {/* Mobile: one card per worker — never a horizontal table on a phone (§9) */}
                         <ul className="divide-y divide-line md:hidden">
                             {workerList.map(([userId, summary]) => (
-                                <li key={userId} className="p-4">
-                                    <p className="text-body font-semibold text-ink-strong">{summary.name}</p>
+                                <li
+                                    key={userId}
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label={`Peržiūrėti ${summary.name} dienos užduotis`}
+                                    onClick={() => setWorkerDetail({ userId, name: summary.name })}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setWorkerDetail({ userId, name: summary.name }); } }}
+                                    className="p-4 cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                >
+                                    <p className="flex items-center gap-1.5 text-body font-semibold text-ink-strong">
+                                        {summary.name}
+                                        <ChevronRight className="w-4 h-4 text-ink-muted" aria-hidden="true" />
+                                    </p>
                                     <p className="mt-0.5 font-mono text-caption text-ink-muted">
                                         {formatTime(summary.earliestStart)} – {formatTime(summary.latestEnd)}
                                     </p>
@@ -1155,25 +1192,38 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                             </li>
                         </ul>
 
-                        {/* Desktop: dense team summary table */}
+                        {/* Desktop: dense team summary table. Every cell uses the same px-4 py-3
+                            padding (header included) so the columns line up — a leftover md:px-2
+                            override on the header only made it drift out of alignment. */}
                         <div className="hidden overflow-x-auto md:block">
-                        <table className="w-full md:w-auto divide-y divide-line text-sm">
+                        <table className="w-full divide-y divide-line text-sm">
                             <thead className="bg-surface-sunken">
                                 <tr>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-ink-muted">Vykdytojas</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-ink-muted">Pradžia</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-ink-muted">Pabaiga</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-muted">Pertraukos</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-muted">Užduotims</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-muted" title="Dienų su pažymėta pertrauka dalis nuo darbo dienų — kaip nuosekliai vykdytojas žymi pertraukas.">Pertraukų žym.</th>
+                                    <th scope="col" className="px-4 py-3 text-left font-medium text-ink-muted">Vykdytojas</th>
+                                    <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pradžia</th>
+                                    <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pabaiga</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Pertraukos</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Užduotims</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted" title="Dienų su pažymėta pertrauka dalis nuo darbo dienų — kaip nuosekliai vykdytojas žymi pertraukas.">Pertraukų žym.</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
                                 {workerList.map(([userId, summary]) => (
-                                    <tr key={userId} className="hover:bg-surface-sunken">
+                                    <tr
+                                        key={userId}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={`Peržiūrėti ${summary.name} dienos užduotis`}
+                                        onClick={() => setWorkerDetail({ userId, name: summary.name })}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setWorkerDetail({ userId, name: summary.name }); } }}
+                                        className="cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                    >
                                         <td className="px-4 py-3 text-ink-strong font-medium">
-                                            {summary.name}
+                                            <span className="inline-flex items-center gap-1.5">
+                                                {summary.name}
+                                                <ChevronRight className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
+                                            </span>
                                         </td>
                                         <td className="px-4 py-3 text-center text-ink-muted font-mono text-sm">
                                             {formatTime(summary.earliestStart)}
@@ -1187,10 +1237,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         <td className="px-4 py-3 text-right text-indigo-600 font-mono font-semibold">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes)}
                                         </td>
-                                        <td className="px-4 py-3 md:px-2 md:py-2 text-right text-ink-strong font-mono font-bold bg-blue-50/10">
+                                        <td className="px-4 py-3 text-right text-ink-strong font-mono font-bold bg-blue-50/10">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes + summary.breakMinutes)}
                                         </td>
-                                        <td className="px-4 py-3 md:px-2 md:py-2 text-right text-ink-muted font-mono">
+                                        <td className="px-4 py-3 text-right text-ink-muted font-mono">
                                             {summary.workDays.size > 0 ? `${Math.round(100 * summary.breakDays.size / summary.workDays.size)}%` : '—'}
                                         </td>
                                     </tr>
@@ -1199,16 +1249,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <td colSpan="3" className="px-4 py-3 text-right text-ink-strong">
                                         Viso komanda:
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-amber-700">
+                                    <td className="px-4 py-3 text-right text-amber-700">
                                         {formatMinutesToTimeString(totalBreakMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-indigo-700">
+                                    <td className="px-4 py-3 text-right text-indigo-700">
                                         {formatMinutesToTimeString(totalWorkedMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-ink-strong font-bold bg-blue-50/30">
+                                    <td className="px-4 py-3 text-right text-ink-strong font-bold bg-blue-50/30">
                                         {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-ink-muted">—</td>
+                                    <td className="px-4 py-3 text-right text-ink-muted">—</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1316,11 +1366,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 */
                 null
             )}
+              </>
+            )}
 
 
-            {todayTasks.length > 0 && (
+            {/* Task-confirmation sections. Hidden entirely on the hours-only surface (they move to
+                the "Patvirtinimas" tab); shown plain on the full surface; and as collapsible,
+                manager-scoped sections on the approval surface (today + awaiting-confirmation open
+                by default, the history archive collapsed). */}
+            {view !== 'hours' && (
+              <>
+            {shownTodayTasks.length > 0 && (
                 <TaskListTable
-                    tasks={todayTasks}
+                    tasks={shownTodayTasks}
                     title={isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}`}
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
@@ -1333,12 +1391,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     expandedTasks={expandedTasks}
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
+                    collapsible={view === 'approval'}
+                    defaultOpen
                 />
             )}
 
-            {earlierTasks.length > 0 && (
+            {shownEarlierTasks.length > 0 && (
                 <TaskListTable
-                    tasks={earlierTasks}
+                    tasks={shownEarlierTasks}
                     title="Užduotys atliktos anksčiau, laukia patvirtinimo"
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
@@ -1352,18 +1412,36 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
                     highlight={true}
+                    collapsible={view === 'approval'}
+                    defaultOpen
                 />
             )}
 
-            {/* Replaced legacy archived table with full TaskHistory component */}
-            <div className="mt-8">
-                <TaskHistory userId={selectedUserId} users={users} canExport={canExport} />
-            </div>
-
-            {todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0 && (
-                <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
-                    {isRange ? 'Nėra atliktų užduočių šiam laikotarpiui.' : 'Nėra atliktų užduočių šiai dienai.'}
+            {/* Full task-history browser — omitted in the embedded calendar drill-down, which is a
+                focused single-day report, not the archive browser. On the approval surface it is
+                scoped to this manager's tasks (matching the lists above). */}
+            {!embedded && (
+                <div className="mt-8">
+                    <TaskHistory
+                        userId={selectedUserId}
+                        users={users}
+                        canExport={canExport}
+                        approvalManagerUid={applyApprovalFilter ? currentUser?.uid : null}
+                    />
                 </div>
+            )}
+
+            {(view === 'approval'
+                ? (shownTodayTasks.length === 0 && shownEarlierTasks.length === 0)
+                : (todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0)
+            ) && (
+                <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
+                    {view === 'approval'
+                        ? 'Šiuo metu nėra užduočių, kurias turėtumėte patvirtinti.'
+                        : (isRange ? 'Nėra atliktų užduočių šiam laikotarpiui.' : 'Nėra atliktų užduočių šiai dienai.')}
+                </div>
+            )}
+              </>
             )}
 
             {/* Break log could be listed here if we stored individual breaks, 
@@ -1392,7 +1470,148 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     onCancel={() => setRestoreTarget(null)}
                 />
             )}
+
+            {/* Per-worker drill-down: every work segment that worker logged on the selected day,
+                finished or still running. Sourced from the same timeline that feeds the summary
+                row, so the numbers always reconcile. */}
+            {workerDetail && (
+                <WorkerDayDetailModal
+                    worker={workerDetail}
+                    date={selectedDate}
+                    items={combinedTimelineItems.filter(i => i.userId === workerDetail.userId)}
+                    tasks={finishedTasks}
+                    onOpenTask={(task) => { setWorkerDetail(null); setOpenTaskDetail(task); }}
+                    onClose={() => setWorkerDetail(null)}
+                />
+            )}
+
+            {/* Full task window opened from a worker's day-detail card. */}
+            {openTaskDetail && (
+                <TaskModal
+                    isOpen
+                    task={openTaskDetail}
+                    role={userRole}
+                    onClose={() => setOpenTaskDetail(null)}
+                />
+            )}
         </div>
+    );
+}
+
+// Worker day drill-down — chronological list of everything one worker did on the selected
+// day: tasks and quick-work/calls (finished or still running) plus breaks. Opened from a row
+// in the team "Darbo valandos" summary so a manager never has to switch the user filter just
+// to inspect one person.
+function WorkerDayDetailModal({ worker, date, items, tasks = [], onOpenTask, onClose }) {
+    // Map a timeline item back to its task so each card can show the same confirmation status
+    // (Patvirtinta / Nepatvirtinta / Ištrinta) the task carries everywhere else, and so clicking
+    // it can open the full task. Sessions key by taskId; manual-task items key by their own id.
+    const taskById = new Map(tasks.map(t => [t.id, t]));
+    const taskForItem = (item) => taskById.get(item.taskId) || taskById.get(item.id) || null;
+
+    // One chronological timeline — work segments and breaks interleaved in the order they
+    // happened (items arrive sorted by startTime); inactive gaps are not shown. The day's work
+    // and break totals sit in the header so the per-row breaks don't need a separate summary.
+    const timeline = items.filter(i => i.type !== 'inactive');
+    const dayWorkMinutes = timeline.filter(i => i.type !== 'break').reduce((a, i) => a + (i.duration || 0), 0);
+    const dayBreakMinutes = timeline.filter(i => i.type === 'break').reduce((a, i) => a + (i.duration || 0), 0);
+
+    return (
+        <Modal open onClose={onClose} size="lg" title={worker.name}>
+            {/* Day header: the date plus this worker's work and break totals for the day. */}
+            <div className="-mt-2 mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line pb-3 text-caption">
+                <span className="font-mono text-ink-muted">{date}</span>
+                <span className="text-ink-muted">Darbas <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
+                <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-amber-700">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
+            </div>
+
+            {timeline.length === 0 ? (
+                <p className="py-6 text-center text-ink-muted">Šią dieną įrašų nefiksuota.</p>
+            ) : (
+                <ul className="space-y-2">
+                    {timeline.map((item, idx) => {
+                        if (item.type === 'break') {
+                            return (
+                                <li key={item.id || idx}>
+                                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-amber-50/40 p-3 text-amber-700">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-1.5 font-medium">
+                                                <Coffee className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                                                Pertrauka
+                                            </div>
+                                            <p className="mt-0.5 font-mono text-caption">
+                                                {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                                            </p>
+                                        </div>
+                                        <span className="font-mono text-body font-bold whitespace-nowrap">
+                                            {formatMinutesToTimeString(item.duration)}
+                                        </span>
+                                    </div>
+                                </li>
+                            );
+                        }
+
+                        const task = taskForItem(item);
+                        const isDeleted = task && (task.isDeleted || task.status === 'deleted');
+
+                        // The same card body for clickable (task resolved) and static rows.
+                        const body = (
+                            <>
+                                <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-1.5 text-body text-ink-strong">
+                                        <SessionTypeIcon
+                                            type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')}
+                                            className="w-3.5 h-3.5 flex-shrink-0"
+                                            aria-hidden="true"
+                                        />
+                                        <span className="break-words font-medium">{item.title || 'Darbas'}</span>
+                                        {task?.priority && <PriorityBadge priority={task.priority} />}
+                                    </div>
+                                    <p className="mt-0.5 font-mono text-caption text-ink-muted">
+                                        {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                                    </p>
+                                    {/* Status: running work reads "Vykdoma"; finished work shows the same
+                                        Patvirtinta / Nepatvirtinta / Ištrinta the task carries elsewhere. */}
+                                    <div className="mt-1">
+                                        {item.isActive ? (
+                                            <span className="inline-block rounded bg-feedback-success/10 px-1.5 py-0.5 text-caption font-semibold text-feedback-success">
+                                                Vykdoma
+                                            </span>
+                                        ) : isDeleted ? (
+                                            <DeletedBadge />
+                                        ) : task ? (
+                                            <TaskStatusPill task={task} />
+                                        ) : null}
+                                    </div>
+                                </div>
+                                <span className="font-mono text-body font-bold text-brand whitespace-nowrap">
+                                    {formatMinutesToTimeString(item.duration)}
+                                </span>
+                            </>
+                        );
+
+                        return (
+                            <li key={item.id || idx}>
+                                {task ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onOpenTask?.(task)}
+                                        aria-label={`Atidaryti užduotį: ${item.title || 'Darbas'}`}
+                                        className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                    >
+                                        {body}
+                                    </button>
+                                ) : (
+                                    <div className="flex items-start justify-between gap-3 rounded-control border border-line p-3">
+                                        {body}
+                                    </div>
+                                )}
+                            </li>
+                        );
+                    })}
+                </ul>
+            )}
+        </Modal>
     );
 }
 
@@ -1435,22 +1654,10 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                     )}>
                         {task.title}
                     </div>
-                    {task.isDeleted && (
-                        <span className="text-caption font-bold text-feedback-danger uppercase bg-feedback-danger/10 px-1 py-0.5 rounded">Ištrinta</span>
-                    )}
+                    {task.isDeleted && <DeletedBadge />}
                 </div>
 
-                <span
-                    className={clsx(
-                        "px-1.5 py-0.5 text-caption font-bold rounded-md border border-black/5 uppercase whitespace-nowrap ml-2"
-                    )}
-                    style={{
-                        backgroundColor: getPriorityColor(task.priority),
-                        color: getPriorityTextColor(task.priority)
-                    }}
-                >
-                    {getPriorityLabel(task.priority)}
-                </span>
+                <PriorityBadge priority={task.priority} className="ml-2" />
             </div>
 
             {task.description && (
@@ -1504,21 +1711,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                             )}
                         </span>
                     )}
-                    {task.timeChanged && (
-                        <span className="block mt-0.5">
-                            <span className="block text-feedback-danger font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</span>
-                            {Number.isFinite(task.timeChangedFrom) && Number.isFinite(task.timeChangedTo) && (
-                                <span className="block text-caption text-ink-muted font-sans normal-case font-normal">
-                                    {formatMinutesToTimeString(task.timeChangedFrom)} → {formatMinutesToTimeString(task.timeChangedTo)}
-                                </span>
-                            )}
-                            {task.timeChangedReason && (
-                                <span className="block text-caption text-ink-muted font-sans normal-case font-normal italic break-words">
-                                    „{task.timeChangedReason}“{task.timeChangedByName ? ` — ${formatDisplayName(task.timeChangedByName)}` : ''}
-                                </span>
-                            )}
-                        </span>
-                    )}
+                    <TimeChangedWarning task={task} />
                 </div>
                 {task.deadline && (
                     <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
@@ -1601,11 +1794,14 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
 }
 
 // Task List Helper Component
-function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, onTimeChange, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false }) {
+function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, onTimeChange, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false, collapsible = false, defaultOpen = true }) {
     const [editingTimeTaskId, setEditingTimeTaskId] = useState(null);
     const [editHours, setEditHours] = useState(0);
     const [editMins, setEditMins] = useState(0);
     const [editReason, setEditReason] = useState('');
+    // The header doubles as an accordion toggle on the approval surface (collapsible); elsewhere
+    // the body is always shown.
+    const [open, setOpen] = useState(defaultOpen);
     const canEditTime = (userRole === 'admin');
 
     const startTimeEdit = (task) => {
@@ -1630,10 +1826,29 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                 highlight ? "bg-brand text-white py-6" : "py-3 bg-surface-sunken text-ink",
                 viewMode === 'mobile' && "rounded-control mb-2 border"
             )}>
-                <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
+                {collapsible ? (
+                    <button
+                        type="button"
+                        onClick={() => setOpen((o) => !o)}
+                        aria-expanded={open}
+                        className={clsx(
+                            "w-full min-h-touch flex items-center justify-between gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2",
+                            // The highlighted (bg-brand) header needs a white focus ring — an indigo
+                            // ring-brand on the indigo fill is invisible (WCAG 2.4.7 Focus Visible).
+                            highlight ? "focus-visible:ring-white" : "focus-visible:ring-brand"
+                        )}
+                    >
+                        <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
+                        {open
+                            ? <ChevronUp className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />
+                            : <ChevronDown className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />}
+                    </button>
+                ) : (
+                    <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
+                )}
             </div>
 
-            {viewMode === 'mobile' ? (
+            {(!collapsible || open) && (viewMode === 'mobile' ? (
                 <div className="space-y-1">
                     {tasks.map(task => (
                         <MobileStatsCard
@@ -1680,177 +1895,112 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                     const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '—');
 
                                     return (
-                                        <tr
+                                        <TaskRow
                                             key={task.id}
-                                            className={clsx(
+                                            task={task}
+                                            rowClassName={clsx(
                                                 "group transition-colors",
                                                 isConfirmed ? "bg-surface-sunken" : "bg-surface-card hover:bg-surface-sunken"
                                             )}
-                                        >
-                                            {(isManagerRole(userRole)) && (
-                                                <td className="px-2 py-2 text-center">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={isConfirmed}
-                                                        onChange={() => onToggleConfirm(task)}
-                                                        disabled={task.archivedAt}
-                                                        aria-label="Patvirtinti atlikimą"
-                                                        className="w-4 h-4 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1 cursor-pointer"
-                                                    />
-                                                </td>
-                                            )}
-                                            <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
-                                                <div
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    aria-expanded={expandedTasks.has(task.id)}
-                                                    onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
-                                                    className={clsx(
-                                                    "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                                    (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
-                                                )}>
-                                                    {task.title}
-                                                </div>
-                                                {task.deadline && (
-                                                    <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                                                        <Calendar className="w-2.5 h-2.5" />
-                                                        {task.deadline}
+                                            showConfirm={isManagerRole(userRole)}
+                                            confirmChecked={isConfirmed}
+                                            confirmDisabled={!!task.archivedAt}
+                                            onToggleConfirm={onToggleConfirm}
+                                            confirmAriaLabel="Patvirtinti atlikimą"
+                                            assigneeName={userName}
+                                            showCompletedAt
+                                            completedAtCell={task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                                            commentCount={task.comments?.length || 0}
+                                            onOpenComments={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
+                                            titleCell={
+                                                <>
+                                                    <div
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        aria-expanded={expandedTasks.has(task.id)}
+                                                        onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
+                                                        className={clsx(
+                                                        "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                        (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                                    )}>
+                                                        {task.title}
                                                     </div>
-                                                )}
-                                                <div className={clsx(
-                                                    "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
-                                                    expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                                )}>
-                                                    <SessionTypeIcon
-                                                        type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
-                                                        className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
-                                                    />
-                                                    {task.description}
-                                                </div>
-                                                {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                                    <div className="mt-2 pl-4 border-l-2 border-line">
-                                                        <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
-                                                        {task.comments.map((comment, idx) => (
-                                                            <div key={idx} className="text-caption text-ink-muted mb-1">
-                                                                <span className="font-medium">{comment.user}:</span> {comment.text}
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                                {(task.managerName || task.creatorName) && (
-                                                    <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
-                                                        <User className="w-2.5 h-2.5" />
-                                                        <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                <span className="px-2 py-1 rounded-full text-caption font-medium bg-surface-sunken text-ink border border-line">
-                                                    {formatDisplayName(userName).split(' ')[0]}
-                                                </span>
-                                            </td>
-                                            <td className="px-1 py-2 text-right text-ink-strong font-mono text-sm whitespace-nowrap">
-                                                {editingTimeTaskId === task.id ? (
-                                                    <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
-                                                        <div className="flex items-center gap-1">
-                                                            <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h
-                                                            <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                                                    {task.deadline && (
+                                                        <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                            <Calendar className="w-2.5 h-2.5" />
+                                                            {task.deadline}
                                                         </div>
-                                                        <input
-                                                            type="text"
-                                                            value={editReason}
-                                                            onChange={(e) => setEditReason(e.target.value)}
-                                                            aria-label="Laiko keitimo priežastis"
-                                                            placeholder="Keitimo priežastis (privaloma)"
-                                                            className="w-44 px-1.5 py-0.5 border border-line rounded text-caption font-sans text-left"
-                                                        />
-                                                        <div className="flex items-center gap-1">
-                                                            <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={() => saveTimeEdit(task)} />
-                                                            <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => { setEditingTimeTaskId(null); setEditReason(''); }} />
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <>
-                                                        <span className="text-brand">{task.estimatedTime || '-'}</span>
-                                                        <span className="text-ink-muted mx-1">/</span>
-                                                        <span>{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
-                                                        {canEditTime && (
-                                                            <IconButton
-                                                                icon={Pencil}
-                                                                label="Keisti darbo laiką"
-                                                                title="Keisti laiką"
-                                                                className="ml-1 align-middle"
-                                                                onClick={(e) => { e.stopPropagation(); startTimeEdit(task); }}
-                                                            />
-                                                        )}
-                                                    </>
-                                                )}
-                                                {task.timeChanged && (
-                                                    <div className="mt-0.5">
-                                                        <div className="text-feedback-danger font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</div>
-                                                        {Number.isFinite(task.timeChangedFrom) && Number.isFinite(task.timeChangedTo) && (
-                                                            <div className="text-caption text-ink-muted font-sans normal-case font-normal">
-                                                                {formatMinutesToTimeString(task.timeChangedFrom)} → {formatMinutesToTimeString(task.timeChangedTo)}
-                                                            </div>
-                                                        )}
-                                                        {task.timeChangedReason && (
-                                                            <div className="text-caption text-ink-muted font-sans normal-case font-normal italic break-words max-w-[12rem] ml-auto">
-                                                                „{task.timeChangedReason}“{task.timeChangedByName ? ` — ${formatDisplayName(task.timeChangedByName)}` : ''}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap text-caption text-ink-muted">
-                                                {task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                <span
-                                                    className={clsx(
-                                                        "px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md border border-black/5 uppercase"
                                                     )}
-                                                    style={{
-                                                        backgroundColor: getPriorityColor(task.priority),
-                                                        color: getPriorityTextColor(task.priority)
-                                                    }}
-                                                >
-                                                    {getPriorityLabel(task.priority)}
-                                                </span>
-                                            </td>
-                                            <td className="px-1 py-2 whitespace-nowrap">
-                                                {(task.isDeleted || task.status === 'deleted') ? (
-                                                    <span className="px-2 py-0.5 rounded text-caption font-semibold bg-feedback-danger/10 text-feedback-danger border border-feedback-danger">
-                                                        Ištrinta
-                                                    </span>
-                                                ) : isConfirmed ? (
-                                                    <span className="px-2 py-0.5 rounded text-caption font-semibold bg-feedback-success/10 text-feedback-success border border-feedback-success">
-                                                        Patvirt.
-                                                    </span>
-                                                ) : (
-                                                    <span className="px-2 py-0.5 rounded text-caption font-medium bg-surface-sunken text-ink">
-                                                        Nepatv.
-                                                    </span>
-                                                )}
-                                            </td>
-                                            <td className="px-1 py-2 text-center whitespace-nowrap">
-                                                <IconButton
-                                                    label={`Komentarai (${task.comments?.length || 0})`}
-                                                    title="Komentarai"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setActiveModal({ type: 'comments', taskId: task.id, task: task });
-                                                    }}
-                                                >
-                                                    <span className="inline-flex items-center">
-                                                        <MessageSquare className="w-4 h-4" aria-hidden="true" />
-                                                        {task.comments?.length > 0 && (
-                                                            <span className="ml-0.5 text-caption font-bold">{task.comments.length}</span>
-                                                        )}
-                                                    </span>
-                                                </IconButton>
-                                            </td>
-                                            <td className="px-1 py-2 text-center whitespace-nowrap">
+                                                    <div className={clsx(
+                                                        "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
+                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
+                                                    )}>
+                                                        <SessionTypeIcon
+                                                            type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
+                                                            className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+                                                        />
+                                                        {task.description}
+                                                    </div>
+                                                    {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
+                                                        <div className="mt-2 pl-4 border-l-2 border-line">
+                                                            <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
+                                                            {task.comments.map((comment, idx) => (
+                                                                <div key={idx} className="text-caption text-ink-muted mb-1">
+                                                                    <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    {(task.managerName || task.creatorName) && (
+                                                        <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
+                                                            <User className="w-2.5 h-2.5" />
+                                                            <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                                        </div>
+                                                    )}
+                                                </>
+                                            }
+                                            timeCell={
+                                                <>
+                                                    {editingTimeTaskId === task.id ? (
+                                                        <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
+                                                            <div className="flex items-center gap-1">
+                                                                <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h
+                                                                <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
+                                                            </div>
+                                                            <input
+                                                                type="text"
+                                                                value={editReason}
+                                                                onChange={(e) => setEditReason(e.target.value)}
+                                                                aria-label="Laiko keitimo priežastis"
+                                                                placeholder="Keitimo priežastis (privaloma)"
+                                                                className="w-44 px-1.5 py-0.5 border border-line rounded text-caption font-sans text-left"
+                                                            />
+                                                            <div className="flex items-center gap-1">
+                                                                <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={() => saveTimeEdit(task)} />
+                                                                <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => { setEditingTimeTaskId(null); setEditReason(''); }} />
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <>
+                                                            <span className="text-brand">{task.estimatedTime || '-'}</span>
+                                                            <span className="text-ink-muted mx-1">/</span>
+                                                            <span>{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
+                                                            {canEditTime && (
+                                                                <IconButton
+                                                                    icon={Pencil}
+                                                                    label="Keisti darbo laiką"
+                                                                    title="Keisti laiką"
+                                                                    className="ml-1 align-middle"
+                                                                    onClick={(e) => { e.stopPropagation(); startTimeEdit(task); }}
+                                                                />
+                                                            )}
+                                                        </>
+                                                    )}
+                                                    <TimeChangedWarning task={task} alignEnd />
+                                                </>
+                                            }
+                                            actions={
                                                 <IconButton
                                                     icon={RotateCcw}
                                                     label="Grąžinti užduotį"
@@ -1861,15 +2011,15 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         onRestore(task);
                                                     }}
                                                 />
-                                            </td>
-                                        </tr>
+                                            }
+                                        />
                                     );
                                 })
                             )}
                         </tbody>
                     </table>
                 </div>
-            )}
+            ))}
         </div>
     );
 }

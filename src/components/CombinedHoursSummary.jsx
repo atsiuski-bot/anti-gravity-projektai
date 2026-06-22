@@ -7,11 +7,15 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
+import { isScopedManager, scopeRoster } from '../utils/teamScope';
 
 export default function CombinedHoursSummary() {
-    const { currentUser } = useAuth();
+    const { currentUser, userData } = useAuth();
     const { users: allUsers, loading: usersLoading } = useUsers();
-    const users = allUsers;
+    // Scoped manager: only their team's rows + roster. Admin/unscoped manager: whole company.
+    const scoped = isScopedManager(userData);
+    const uid = currentUser?.uid;
+    const users = useMemo(() => scopeRoster(allUsers, userData, uid), [allUsers, scoped, uid]); // eslint-disable-line react-hooks/exhaustive-deps -- userData read via the stable `scoped` flag
     const [tasks, setTasks] = useState([]);
     const [workHours, setWorkHours] = useState([]);
     const [workSessions, setWorkSessions] = useState([]);
@@ -21,6 +25,11 @@ export default function CombinedHoursSummary() {
 
     useEffect(() => {
         if (!currentUser || usersLoading) return;
+
+        // Team filter for a scoped manager (array-contains on the row's denormalized
+        // teamManagerIds); null = whole-company (admin / unscoped manager). work_hours is the
+        // shift calendar and stays public, so it is intentionally NOT scoped.
+        const scope = scoped && uid ? where('teamManagerIds', 'array-contains', uid) : null;
 
         const now = getLithuanianNow();
 
@@ -39,7 +48,8 @@ export default function CombinedHoursSummary() {
             setTasks([...activeTasks, ...archivedTasks]);
         };
 
-        const unsubActive = onSnapshot(collection(db, 'tasks'), (snap) => {
+        const activeTasksQuery = scope ? query(collection(db, 'tasks'), scope) : query(collection(db, 'tasks'));
+        const unsubActive = onSnapshot(activeTasksQuery, (snap) => {
             activeTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             updateAllTasks();
         }, (error) => {
@@ -47,7 +57,7 @@ export default function CombinedHoursSummary() {
         });
 
         // Add query to limit archived tasks to the current week
-        const archivedQuery = query(collection(db, 'archived_tasks'), where('archivedAt', '>=', weekStartStr));
+        const archivedQuery = query(collection(db, 'archived_tasks'), where('archivedAt', '>=', weekStartStr), ...(scope ? [scope] : []));
 
         const unsubArchived = onSnapshot(archivedQuery, (snap) => {
             archivedTasks = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -77,7 +87,8 @@ export default function CombinedHoursSummary() {
         const sessionsQuery = query(
             collection(db, 'work_sessions'),
             where('date', '>=', weekStartStr),
-            where('date', '<=', weekEndStr)
+            where('date', '<=', weekEndStr),
+            ...(scope ? [scope] : [])
         );
         const unsubSessions = onSnapshot(sessionsQuery, (snapshot) => {
             const sessionsData = snapshot.docs
@@ -92,7 +103,8 @@ export default function CombinedHoursSummary() {
         const breakQuery = query(
             collection(db, 'break_sessions'),
             where('date', '>=', weekStartStr),
-            where('date', '<=', weekEndStr)
+            where('date', '<=', weekEndStr),
+            ...(scope ? [scope] : [])
         );
         const unsubBreakSessions = onSnapshot(breakQuery, (snapshot) => {
             const breakData = snapshot.docs
@@ -109,7 +121,7 @@ export default function CombinedHoursSummary() {
             unsubSessions();
             unsubBreakSessions();
         };
-    }, [currentUser, usersLoading]);
+    }, [currentUser, usersLoading, scoped, uid]);
 
     // Calculate stats
     const combinedStats = useMemo(() => {

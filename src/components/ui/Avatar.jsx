@@ -9,9 +9,10 @@ import { cn } from '../../utils/cn';
  * @param {string} [src] - photo URL (Auth or uploaded). Falls back to initials when absent.
  * @param {string} [name] - display name; first letter seeds the initial.
  * @param {string} [email] - used for the initial only when no name is available.
- * @param {'sm'|'md'|'lg'} [size]
+ * @param {'xs'|'sm'|'md'|'lg'} [size]
  */
 const SIZES = {
+    xs: 'h-6 w-6 text-xs',
     sm: 'h-9 w-9 text-sm',
     md: 'h-10 w-10 text-base',
     lg: 'h-20 w-20 text-2xl',

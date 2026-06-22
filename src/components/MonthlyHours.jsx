@@ -1,9 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { Calendar, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 import { formatMinutesToTimeString, getLithuanianDateString, sanitizeReportMinutes } from '../utils/timeUtils';
+import { useAuth } from '../context/AuthContext';
+import { isScopedManager } from '../utils/teamScope';
 import Card from './ui/Card';
 import EmptyState from './ui/EmptyState';
 import { Spinner } from './ui/Loading';
@@ -19,18 +21,23 @@ function sharePercent(minutes, totalMinutes) {
 }
 
 export default function MonthlyHours({ users }) {
+    const { currentUser, userData } = useAuth();
     const [sessions, setSessions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isCollapsed, setIsCollapsed] = useState(true);
     const [expandedMonth, setExpandedMonth] = useState(null);
 
+    const scoped = isScopedManager(userData);
+    const uid = currentUser?.uid;
+
     useEffect(() => {
         setLoading(true);
-        // We listen to ALL work_sessions.
-        // In a large production app, this should probably be a backend aggregation or
-        // limited by date (e.g., last 12 months).
-        // Since we want robust calculation of history, we fetch all.
-        const q = query(collection(db, 'work_sessions'));
+        // We listen to ALL work_sessions (whole history) for admins/unscoped managers; a scoped
+        // manager constrains to their team (array-contains), which is also required once the rules
+        // tighten — a broad read would be denied.
+        const q = scoped && uid
+            ? query(collection(db, 'work_sessions'), where('teamManagerIds', 'array-contains', uid))
+            : query(collection(db, 'work_sessions'));
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const data = snapshot.docs
@@ -44,7 +51,7 @@ export default function MonthlyHours({ users }) {
         });
 
         return () => unsubscribe();
-    }, []);
+    }, [scoped, uid]);
 
     const monthlyStats = useMemo(() => {
         const stats = {};

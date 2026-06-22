@@ -44,6 +44,38 @@ service cloud.firestore {
       return isAdmin() || isManager();
     }
 
+    // ---- Scoped-manager hierarchy (ADR 0005) -------------------------------
+    // A manager is "scoped" when an admin set scopedManager=true on their user doc: they may
+    // only SEE and ACT on their assigned people. Everyone else with manager reach — admins and
+    // managers left unscoped (the default) — keeps whole-company access exactly as before.
+    function isScopedManager() {
+      return isManager() && getUserData().get('scopedManager', false) == true;
+    }
+    function canSeeWholeTeam() {
+      return isAdmin() || (isManager() && getUserData().get('scopedManager', false) != true);
+    }
+    // The caller manages the given user (that user's team includes the caller). One get() on the
+    // target user doc — used on WRITES only (low volume), so the extra read is acceptable. Used at
+    // create/reassign time, before the row's denormalized teamManagerIds has been stamped.
+    function managesUser(uid) {
+      return uid is string &&
+             exists(/databases/$(database)/documents/users/$(uid)) &&
+             request.auth.uid in get(/databases/$(database)/documents/users/$(uid)).data.get('teamManagerIds', []);
+    }
+    // The EXISTING row is within the caller's team (denormalized teamManagerIds copied from the
+    // owner). Pure field compare — no extra read — so it is cheap on the hot read path.
+    function inCallerTeam() {
+      return request.auth.uid in resource.data.get('teamManagerIds', []);
+    }
+    // A private row (task/session) is readable by: whole-team viewers, its owner, the caller's
+    // team membership, or (tasks only) the manager/auditor named on the row.
+    function canReadOwnedTask() {
+      return canSeeWholeTeam() ||
+             ownsAssignedUser() ||
+             inCallerTeam() ||
+             request.auth.uid == resource.data.get('managerId', '');
+    }
+
     // ---- Per-document ownership helpers -------------------------------------
     // A worker "owns" a record when its owner field equals their uid. The owner
     // field per collection was audited from the client write sites: `userId` for
@@ -102,31 +134,61 @@ service cloud.firestore {
       // Update: own doc or a manager/admin acting on anyone. Only admins change
       // roles; only managers/admins toggle isDisabled (the `get` fallback keeps
       // legacy docs without the field editable).
+      // Membership is admin-only: only an admin may change a worker's team (teamManagerIds) or a
+      // manager's scope (scopedManager). Otherwise a worker could hide themselves from / expose
+      // themselves to a manager, or a scoped manager could lift their own restriction. (ADR 0005)
       allow update: if isAuthenticated()
                     && (request.auth.uid == userId || isManagerOrAdmin())
                     && (isAdmin() || request.resource.data.role == resource.data.role)
                     && (isManagerOrAdmin() ||
-                        request.resource.data.isDisabled == resource.data.get('isDisabled', false));
+                        request.resource.data.isDisabled == resource.data.get('isDisabled', false))
+                    && (isAdmin() ||
+                        request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []))
+                    && (isAdmin() ||
+                        request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false));
       allow delete: if isAdmin();
+
+      // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------
+      // Earned badges live HERE, not on the user doc — a worker can freely write
+      // its OWN /users/{uid} doc (see the update rule above), so storing badges
+      // on it would let anyone forge their own. Read is team-wide so peer trophy
+      // shelves render for any active member (same broad-read pattern as tasks/
+      // sessions). Write is denied to ALL clients incl. the owner: only the Admin
+      // SDK (a Cloud Function), which bypasses rules, grants/upgrades a tier.
+      match /achievements/{achievementId} {
+        allow read: if isUserActive();
+        allow write: if false;
+      }
     }
 
     // ---- TASKS --------------------------------------------------------------
     match /tasks/{taskId} {
-      // Team-wide read (Reports tab queries all tasks and filters client-side).
-      allow read: if isUserActive();
-      // Create a task you author (createdBy is always the caller); managers may
-      // author/recreate for anyone — the latter covers task RESTORE, which
-      // setDoc-recreates an archived task preserving its ORIGINAL createdBy. The
-      // self-confirmation guard lives on UPDATE, not CREATE (the legitimate call/
-      // quick-work auto-logging creates a worker's OWN task already confirmed).
-      allow create: if isUserActive()
-                    && (request.resource.data.createdBy == request.auth.uid || isManagerOrAdmin());
-      // The assignee edits their own task; managers edit any. A worker may NOT flip
-      // the manager-only approval/confirmation fields on their own task.
-      allow update: if isUserActive()
-                    && (isManagerOrAdmin() ||
-                        (ownsAssignedUser() && !changesApprovalFields()));
-      allow delete: if isUserActive() && (ownsAssignedUser() || isManagerOrAdmin());
+      // Read: whole-team viewers see all; a scoped manager sees only their team (the row's
+      // denormalized teamManagerIds) or tasks they audit; the assignee sees their own. (ADR 0005)
+      allow read: if isUserActive() && canReadOwnedTask();
+      // Create: a worker self-assigns (covers normal create + call/quick-work auto-logs);
+      // whole-team viewers may assign to anyone; a scoped manager may assign ONLY to their people
+      // (managesUser checks the assignee's team — also covers manager RESTORE of a team task).
+      allow create: if isUserActive() && (
+                      request.resource.data.assignedUserId == request.auth.uid ||
+                      canSeeWholeTeam() ||
+                      (isScopedManager() && managesUser(request.resource.data.assignedUserId))
+                    );
+      // Update: whole-team viewers edit any; a scoped manager edits their team's tasks and may
+      // only reassign within their team; the assignee edits their own but may NOT flip the
+      // manager-only approval fields.
+      allow update: if isUserActive() && (
+                      canSeeWholeTeam() ||
+                      (isScopedManager() && inCallerTeam() &&
+                        (request.resource.data.assignedUserId == resource.data.assignedUserId ||
+                         managesUser(request.resource.data.assignedUserId))) ||
+                      (ownsAssignedUser() && !changesApprovalFields())
+                    );
+      allow delete: if isUserActive() && (
+                      ownsAssignedUser() ||
+                      canSeeWholeTeam() ||
+                      (isScopedManager() && inCallerTeam())
+                    );
     }
 
     // ---- SHIFT LOGS (unused collection — locked) ----------------------------
@@ -136,19 +198,33 @@ service cloud.firestore {
 
     // ---- WORK SESSIONS ------------------------------------------------------
     match /work_sessions/{sessionId} {
-      // Team-wide read (Reports queries all sessions by date and filters client-side).
-      allow read:          if isUserActive();
-      // Workers log their own; managers create time corrections for any worker.
-      allow create:        if isUserActive() && (createOwnsUserId() || isManagerOrAdmin());
-      allow update, delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
+      // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.
+      allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
+      // Workers log their own; whole-team viewers create time corrections for anyone; a scoped
+      // manager only for their people.
+      allow create:        if isUserActive() && (
+                              createOwnsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedManager() && managesUser(request.resource.data.userId))
+                            );
+      allow update, delete: if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedManager() && inCallerTeam())
+                            );
     }
 
     // ---- BREAK SESSIONS -----------------------------------------------------
     match /break_sessions/{sessionId} {
-      // Team-wide read (Reports / DailyStatistics query all breaks by date).
-      allow read:          if isUserActive();
+      // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.
+      allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
+      // Breaks are self-logged only (no manager-create path), unchanged.
       allow create:        if isUserActive() && createOwnsUserId();
-      allow update, delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
+      allow update, delete: if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedManager() && inCallerTeam())
+                            );
     }
 
     // ---- DAILY STATS (unused collection — locked) ---------------------------
@@ -168,23 +244,36 @@ service cloud.firestore {
 
     // ---- ARCHIVED TASKS -----------------------------------------------------
     match /archived_tasks/{taskId} {
-      // Team-wide read (Reports / DailyStatistics query all archived tasks by date).
-      allow read:   if isUserActive();
-      allow create: if isUserActive()
-                    && (request.resource.data.assignedUserId == request.auth.uid || isManagerOrAdmin());
-      allow update: if isUserActive()
-                    && (isManagerOrAdmin() ||
-                        (ownsAssignedUser() && !changesApprovalFields()));
-      allow delete: if isUserActive() && (ownsAssignedUser() || isManagerOrAdmin());
+      // Read/write scoping mirrors /tasks (ADR 0005): whole-team viewers see/act on all, a scoped
+      // manager only on their team, the assignee on their own.
+      allow read:   if isUserActive() && canReadOwnedTask();
+      allow create: if isUserActive() && (
+                      request.resource.data.assignedUserId == request.auth.uid ||
+                      canSeeWholeTeam() ||
+                      (isScopedManager() && managesUser(request.resource.data.assignedUserId))
+                    );
+      allow update: if isUserActive() && (
+                      canSeeWholeTeam() ||
+                      (isScopedManager() && inCallerTeam() &&
+                        (request.resource.data.assignedUserId == resource.data.assignedUserId ||
+                         managesUser(request.resource.data.assignedUserId))) ||
+                      (ownsAssignedUser() && !changesApprovalFields())
+                    );
+      allow delete: if isUserActive() && (
+                      ownsAssignedUser() ||
+                      canSeeWholeTeam() ||
+                      (isScopedManager() && inCallerTeam())
+                    );
     }
 
     // ---- DELETED TASKS (read-only legacy) -----------------------------------
     // DailyStatistics still opens a collection-wide onSnapshot on this collection,
     // so READ must be allowed (a locked read makes that listener throw permission-
-    // denied on every mount). Nothing in the client WRITES it (the delete workflow
-    // uses archived_tasks), so writes stay locked.
+    // denied on every mount). Scoped to the caller's team like the other task collections.
+    // Nothing in the client WRITES it (the delete workflow uses archived_tasks), so writes stay
+    // locked — the re-stamp Cloud Function uses the admin SDK, which bypasses rules.
     match /deleted_tasks/{taskId} {
-      allow read:  if isUserActive();
+      allow read:  if isUserActive() && canReadOwnedTask();
       allow write: if false;
     }
 

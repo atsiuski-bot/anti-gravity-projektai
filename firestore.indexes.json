@@ -1,0 +1,94 @@
+{
+  "//": "Composite indexes for the scoped-manager hierarchy (ADR 0005). Scoped managers query private collections with where('teamManagerIds','array-contains', uid) plus the existing date/status/order constraints; personal/own views query with where(owner==uid) plus the same. Single-field array-contains-only queries (MonthlyHours, ActiveWorkSessions, DailyStatistics active/deleted listeners) are served by the automatic index and need NO entry here. Firestore emits an exact 'create index' link at runtime for any composite this file misses — create those during testing.",
+  "indexes": [
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamManagerIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamManagerIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamManagerIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "updatedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedUserId", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedUserId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "archived_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamManagerIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "archivedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "archived_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedUserId", "order": "ASCENDING" },
+        { "fieldPath": "archivedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "work_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamManagerIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "work_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "break_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamManagerIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "break_sessions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
