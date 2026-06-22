@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { cn } from '../../utils/cn';
+import { useModalA11y } from '../../hooks/useModalA11y';
 import IconButton from './IconButton';
 
 /**
@@ -30,23 +31,9 @@ export default function Modal({
     initialFocusRef,
 }) {
     const dialogRef = useRef(null);
-    const restoreFocusRef = useRef(null);
 
-    useEffect(() => {
-        if (!open) return undefined;
-        restoreFocusRef.current = document.activeElement;
-        const target = initialFocusRef?.current || dialogRef.current;
-        target?.focus?.();
-
-        const onKey = (e) => {
-            if (e.key === 'Escape' && dismissible) onClose?.();
-        };
-        document.addEventListener('keydown', onKey);
-        return () => {
-            document.removeEventListener('keydown', onKey);
-            restoreFocusRef.current?.focus?.();
-        };
-    }, [open, dismissible, onClose, initialFocusRef]);
+    // Focus-in, focus restore, Escape, and a Tab focus-trap — all shared (WCAG 2.4.3).
+    useModalA11y(dialogRef, { open, onClose, dismissible, initialFocusRef });
 
     if (!open) return null;
 

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { XOctagon, PauseCircle, BellOff } from 'lucide-react';
 import { SoundManager } from '../utils/soundUtils';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 /**
  * Hard stop shown to the worker when 100% of the estimated time is reached. The task is
@@ -12,6 +13,12 @@ import { formatMinutesToTimeString } from '../utils/timeUtils';
  */
 export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes, onDismiss }) {
     const [muted, setMuted] = useState(false);
+    const dialogRef = useRef(null);
+    const ackButtonRef = useRef(null);
+
+    // Forced-acknowledge alarm: move focus in and trap Tab, but do NOT let Escape dismiss it
+    // (the worker must explicitly acknowledge). WCAG 2.4.3.
+    useModalA11y(dialogRef, { open: !!task, dismissible: false, initialFocusRef: ackButtonRef });
 
     if (!task) return null;
 
@@ -32,13 +39,15 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
     return createPortal(
         <div className="fixed inset-0 z-top flex items-center justify-center bg-black bg-opacity-50 p-4">
             <div
+                ref={dialogRef}
                 role="alertdialog"
                 aria-modal="true"
                 aria-labelledby="time-limit-title"
-                className="w-full max-w-md overflow-hidden rounded-modal bg-surface-card shadow-2xl animate-in fade-in zoom-in-95 duration-300"
+                tabIndex={-1}
+                className="w-full max-w-md overflow-hidden rounded-modal bg-surface-card shadow-2xl animate-in fade-in zoom-in-95 duration-300 focus:outline-none"
             >
-                {/* Header */}
-                <div className="flex items-center gap-3 bg-gradient-to-r from-red-500 to-red-600 px-6 py-4">
+                {/* Header — darkened so the white title clears WCAG 1.4.3 (red-500 was ~3.99:1). */}
+                <div className="flex items-center gap-3 bg-gradient-to-r from-red-600 to-red-700 px-6 py-4">
                     <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
                         <XOctagon className="h-6 w-6 text-white" aria-hidden="true" />
                     </div>
@@ -90,6 +99,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                         {muted ? 'Nutildyta' : 'Nutildyti garsą'}
                     </button>
                     <button
+                        ref={ackButtonRef}
                         onClick={handleAcknowledge}
                         className="min-h-touch rounded-control bg-red-600 px-6 text-body font-semibold text-white shadow-sm transition-colors hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2"
                     >
