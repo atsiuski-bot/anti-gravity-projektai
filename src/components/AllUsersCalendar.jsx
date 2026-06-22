@@ -9,6 +9,7 @@ import { useUsers } from '../context/UsersContext';
 import { useAuth } from '../context/AuthContext';
 import { getLithuanianDateString } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
+import { absenceLabel } from '../utils/absence';
 import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
@@ -115,6 +116,7 @@ export default function AllUsersCalendar() {
                     color: user?.color || WORKER_FALLBACK_COLOR,
                     isWorkFromHome: data.isWorkFromHome || false,
                     isVacation: data.isVacation || false,
+                    absenceType: data.absenceType || (data.isVacation ? 'vacation' : null),
                 };
             });
             setEvents(allEvents);
@@ -167,7 +169,7 @@ export default function AllUsersCalendar() {
 
     // Friendly Lithuanian status descriptor for an event (text + icon, never color alone).
     const eventStatus = (event) => {
-        if (event.isVacation) return { label: 'Atostogos', Icon: Palmtree };
+        if (event.isVacation) return { label: absenceLabel(event) || 'Atostogos', Icon: Palmtree };
         if (event.isWorkFromHome) return { label: 'Iš namų', Icon: Home };
         return null;
     };

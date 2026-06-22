@@ -335,6 +335,25 @@ export default function Reports({ users, canExport = false, viewRole }) {
             });
             Object.values(userMap).forEach(u => { u.plannedMinutes = Math.round(u.plannedMinutes); });
 
+            // Expected-hours fallback: a worker who logged time but never hand-drew a calendar plan
+            // would show plannedMinutes 0 and a meaningless Skirtumas. If they carry a
+            // weeklyExpectedHours baseline, synthesize the plan for the span (baseline × weeks) so the
+            // delta has a real denominator. Only fills a MISSING plan — a real calendar plan wins.
+            const spanDays = Math.max(
+                1,
+                Math.round((new Date(endStr).getTime() - new Date(startStr).getTime()) / 86400000) + 1
+            );
+            const spanWeeks = spanDays / 7;
+            Object.values(userMap).forEach(u => {
+                if (u.plannedMinutes > 0) return;
+                const usr = users?.find(x => x.id === u.userId);
+                const baseline = usr?.weeklyExpectedHours;
+                if (Number.isFinite(baseline) && baseline > 0) {
+                    u.plannedMinutes = Math.round(baseline * 60 * spanWeeks);
+                    u.plannedFromBaseline = true;
+                }
+            });
+
             // Convert to array
             const results = Object.values(userMap).sort((a, b) => b.totalMinutes - a.totalMinutes);
             setWorkData(results);
@@ -1180,6 +1199,22 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             </Button>
                         )}
                     </div>
+
+                    {/* Plan-coverage indicator: how many of the listed workers have ANY plan
+                        (calendar or expected-hours baseline) for the span. Surfaces silently-missing
+                        plans so a manager sees that Skirtumas can't be trusted for the remainder. */}
+                    {reportPeriod !== 'day' && isManagerRole(userRole) && workData.length > 0 && (() => {
+                        const testIds = new Set((users || []).filter((u) => u.isTest).map((u) => u.id));
+                        const rows = showTestUsers ? workData : workData.filter((u) => !testIds.has(u.userId));
+                        if (rows.length === 0) return null;
+                        const withPlan = rows.filter((u) => u.plannedMinutes > 0).length;
+                        return (
+                            <p className="mb-3 px-1 text-caption text-ink-muted">
+                                Planą turi {withPlan} iš {rows.length} darbuotojų
+                                {withPlan < rows.length ? ' — likusiems „Skirtumas" neskaičiuojamas.' : '.'}
+                            </p>
+                        );
+                    })()}
 
                     {/* Day mode → the live daily timeline. Any multi-day range → the same view
                         aggregated over [start, end] (summary cards, sort filters).

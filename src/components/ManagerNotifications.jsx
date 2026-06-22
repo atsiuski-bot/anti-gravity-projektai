@@ -147,7 +147,8 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                     end: requestedEvent.end,
                     title: requestedEvent.title,
                     isWorkFromHome: requestedEvent.isWorkFromHome,
-                    isVacation: requestedEvent.isVacation
+                    isVacation: requestedEvent.isVacation,
+                    absenceType: requestedEvent.absenceType ?? null
                 });
             } else if (type === 'delete') {
                 await deleteDoc(doc(db, 'work_hours', requestedEvent.id));

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe } from 'lucide-react';
+import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -221,6 +221,68 @@ function LastActiveBadge({ user }) {
     const days = Math.floor((Date.now() - last) / (1000 * 60 * 60 * 24));
     if (days < STALE_AFTER_DAYS) return null;
     return <StatusPill tone="pending" icon={Clock}>{`Neaktyvus ${days} d.`}</StatusPill>;
+}
+
+// How long a freshly-created worker reads as "new" on the roster — so a near-empty history is read
+// as recency, not low engagement. Keyed on the user doc's createdAt (set at first login).
+const NEW_FOR_DAYS = 14;
+
+// "Naujas" badge for a recently-joined active worker. Same gating as the staleness badge (workers
+// only, never disabled/test); the two cannot both show — a brand-new worker isn't stale yet.
+function NewUserBadge({ user }) {
+    if (user.role !== 'worker' || user.isDisabled || user.isTest) return null;
+    const ts = user.createdAt;
+    if (!ts) return null;
+    const created = new Date(ts).getTime();
+    if (!Number.isFinite(created)) return null;
+    const days = Math.floor((Date.now() - created) / (1000 * 60 * 60 * 24));
+    if (days > NEW_FOR_DAYS) return null;
+    return <StatusPill tone="info" icon={Sparkles}>Naujas</StatusPill>;
+}
+
+// Per-worker weekly hours baseline. Feeds the report's Planuota fallback so Skirtumas has a real
+// denominator even when the worker never hand-drew a calendar plan (the root cause of the fake
+// "+164h surplus"). Workers only — managers/admins have no quota. Committed on blur, clamped to a
+// sane 0–168 h/week; an empty field clears the baseline (null).
+function ExpectedHoursInput({ user, onCommit }) {
+    const [val, setVal] = useState(
+        user.weeklyExpectedHours === undefined || user.weeklyExpectedHours === null ? '' : String(user.weeklyExpectedHours)
+    );
+    useEffect(() => {
+        setVal(user.weeklyExpectedHours === undefined || user.weeklyExpectedHours === null ? '' : String(user.weeklyExpectedHours));
+    }, [user.weeklyExpectedHours]);
+    if (user.role !== 'worker') return null;
+    const name = formatDisplayName(user.displayName) || user.email || '';
+    const commit = () => {
+        const trimmed = val.trim();
+        if (trimmed === '') {
+            if (user.weeklyExpectedHours !== undefined && user.weeklyExpectedHours !== null) onCommit(user, null);
+            return;
+        }
+        const n = Number(trimmed);
+        if (!Number.isFinite(n)) { setVal(user.weeklyExpectedHours == null ? '' : String(user.weeklyExpectedHours)); return; }
+        const clamped = Math.max(0, Math.min(168, Math.round(n)));
+        setVal(String(clamped));
+        if (clamped !== user.weeklyExpectedHours) onCommit(user, clamped);
+    };
+    return (
+        <label className="block">
+            <span className="mb-1 block text-caption font-medium text-ink-muted">Savaitės norma (val.)</span>
+            <input
+                type="number"
+                min="0"
+                max="168"
+                step="1"
+                inputMode="numeric"
+                value={val}
+                onChange={(e) => setVal(e.target.value)}
+                onBlur={commit}
+                placeholder="—"
+                aria-label={`${name} savaitės norma valandomis`}
+                className="block w-full rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            />
+        </label>
+    );
 }
 
 function BlockButton({ user, isSelf, onRequest, fullWidth }) {
@@ -489,6 +551,18 @@ export default function UserManagement() {
         }
     };
 
+    // Persist a worker's weekly hours baseline (or clear it with null). The report falls back to
+    // this when the worker has no calendar plan for the span, so Skirtumas stops being garbage.
+    const handleSetExpectedHours = async (user, hours) => {
+        setError('');
+        try {
+            await updateDoc(doc(db, 'users', user.id), { weeklyExpectedHours: hours });
+        } catch (err) {
+            console.error("Error updating expected hours:", err);
+            setError('Nepavyko išsaugoti savaitės normos. Bandykite dar kartą.');
+        }
+    };
+
     const requestBlock = (user) => {
         if (user.id === currentUser?.uid) {
             setError('Negalite užblokuoti savęs.');
@@ -645,6 +719,8 @@ export default function UserManagement() {
                                         {formatDisplayName(user.displayName) || 'Be vardo'}
                                     </p>
                                     <DisabledPill user={user} />
+                                    <NewUserBadge user={user} />
+                                    <LastActiveBadge user={user} />
                                 </div>
                                 <p className="truncate text-body text-ink-muted">{user.email}</p>
                                 <div className="mt-2">
@@ -671,6 +747,8 @@ export default function UserManagement() {
                                     onToggleScoped={handleToggleScoped}
                                 />
                             </div>
+                            <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
+                            <TestButton user={user} onToggle={handleToggleTest} fullWidth />
                             <BlockButton
                                 user={user}
                                 isSelf={user.id === currentUser?.uid}
@@ -715,6 +793,7 @@ export default function UserManagement() {
                                             <div className="flex flex-wrap items-center gap-2 text-body font-medium text-ink-strong">
                                                 {formatDisplayName(user.displayName) || 'Be vardo'}
                                                 <DisabledPill user={user} />
+                                                <NewUserBadge user={user} />
                                                 <LastActiveBadge user={user} />
                                             </div>
                                             <div className="text-body text-ink-muted">{user.email}</div>
@@ -739,6 +818,7 @@ export default function UserManagement() {
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col gap-2">
                                         <RoleSelect user={user} onChange={handleRoleChange} />
+                                        <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
                                         <BlockButton
                                             user={user}
                                             isSelf={user.id === currentUser?.uid}
