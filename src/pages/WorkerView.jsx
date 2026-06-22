@@ -22,7 +22,6 @@ import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
-import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
 
 import { useNavigation } from '../context/NavigationContext';
 
@@ -116,8 +115,10 @@ export default function WorkerView() {
             setError("Įvyko klaida. Bandykite perkrauti puslapį.");
         }
 
-        const handleOpenTaskModal = () => {
-            setEditingTask(null);
+        const handleOpenTaskModal = (e) => {
+            // A bare event opens a blank create modal; a `detail.task` (from the notification bell,
+            // e.g. opening a task that was returned for rework) opens that task for editing.
+            setEditingTask(e?.detail?.task || null);
             setIsModalOpen(true);
         };
         window.addEventListener('open-task-modal', handleOpenTaskModal);
@@ -223,10 +224,6 @@ export default function WorkerView() {
                 )}
             </div>
             
-            <div className="mb-6">
-                <CalendarRequestStatusBanner />
-            </div>
-
 
             {/* Tasks Tab */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>

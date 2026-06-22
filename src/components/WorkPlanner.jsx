@@ -10,11 +10,13 @@ import { isManagerRole } from '../utils/formatters';
 import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { preventEnterSubmit } from '../utils/formUtils';
+import { ABSENCE_TYPES, absenceLabel, absenceTypeForWrite } from '../utils/absence';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
+import DatePicker from './ui/DatePicker';
 
 // Map raw / Firebase errors to friendly Lithuanian copy (DESIGN_SYSTEM §10).
 // Never surface raw err.message to the user.
@@ -144,9 +146,10 @@ const CustomToolbar = (toolbar) => {
             {/* Phone / tablet (<lg): two compact rows — view + create on top, then the
                 navigation cluster — so nothing gets squeezed on a ~360px viewport. */}
             <div className="flex flex-col gap-2 lg:hidden">
-                {/* pr-12 keeps the create action clear of the fixed profile-avatar bubble
-                    pinned to the top-right corner (Layout) — without it they overlap on phones. */}
-                <div className="flex items-center justify-between gap-2 pr-12">
+                {/* The create action sits flush at the right edge: the profile avatar now lives
+                    in the sticky AppHeader bar above the content (Layout), not a floating bubble
+                    overlapping it, so no right-side clearance is needed. */}
+                <div className="flex items-center justify-between gap-2">
                     {viewToggle}
                     {addButton}
                 </div>
@@ -194,6 +197,7 @@ export default function WorkPlanner() {
     const [editingEvent, setEditingEvent] = useState(null);
     const [manualIsWorkFromHome, setManualIsWorkFromHome] = useState(false);
     const [manualIsVacation, setManualIsVacation] = useState(false);
+    const [manualAbsenceType, setManualAbsenceType] = useState('vacation');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
 
     // Approval workflow states
@@ -296,6 +300,7 @@ export default function WorkPlanner() {
                     userId: data.userId,
                     isWorkFromHome: data.isWorkFromHome || false,
                     isVacation: data.isVacation || false,
+                    absenceType: data.absenceType || (data.isVacation ? 'vacation' : null),
                 };
             });
             setEvents(hoursData);
@@ -326,7 +331,8 @@ export default function WorkPlanner() {
             startStr: format(start, 'HH:mm'),
             endStr: format(end, 'HH:mm'),
             isWorkFromHome: false,
-            isVacation: false
+            isVacation: false,
+            absenceType: 'vacation'
         });
         setError('');
     };
@@ -338,7 +344,8 @@ export default function WorkPlanner() {
             startStr: format(event.start, 'HH:mm'),
             endStr: format(event.end, 'HH:mm'),
             isWorkFromHome: event.isWorkFromHome || false,
-            isVacation: event.isVacation || false
+            isVacation: event.isVacation || false,
+            absenceType: event.absenceType || 'vacation'
         });
     };
 
@@ -358,7 +365,7 @@ export default function WorkPlanner() {
     // Name the entry an action collides with, so the overlap error points at the real culprit
     // instead of a generic "something overlaps" the worker then has to hunt for.
     const describeEvent = (ev) => {
-        const typeLabel = ev.isVacation ? 'Atostogos' : (ev.isWorkFromHome ? 'Darbas iš namų' : 'Darbas');
+        const typeLabel = ev.isVacation ? (absenceLabel(ev) || 'Atostogos') : (ev.isWorkFromHome ? 'Darbas iš namų' : 'Darbas');
         return `${typeLabel} ${format(ev.start, 'MM-dd HH:mm')}–${format(ev.end, 'HH:mm')}`;
     };
     const overlapMessage = (ev) => `Pasirinktas laikas persidengia su įrašu: ${describeEvent(ev)}.`;
@@ -400,7 +407,8 @@ export default function WorkPlanner() {
                     end: newEnd.toISOString(),
                     title: ev.title,
                     isWorkFromHome: ev.isWorkFromHome || false,
-                    isVacation: ev.isVacation || false
+                    isVacation: ev.isVacation || false,
+                    absenceType: absenceTypeForWrite(ev.isVacation, ev.absenceType)
                 }
             });
             copied++;
@@ -429,7 +437,8 @@ export default function WorkPlanner() {
                     end: action.data.end,
                     title: action.data.title,
                     isWorkFromHome: action.data.isWorkFromHome,
-                    isVacation: action.data.isVacation
+                    isVacation: action.data.isVacation,
+                    absenceType: action.data.absenceType ?? null
                 });
             } else if (action.type === 'delete') {
                 await deleteDoc(doc(db, 'work_hours', action.data.id));
@@ -489,8 +498,10 @@ export default function WorkPlanner() {
                 return;
             }
 
-            const title = editingEvent.isVacation ? 'Atostogos' : 'Darbas';
-            
+            const title = editingEvent.isVacation
+                ? absenceLabel({ isVacation: true, absenceType: editingEvent.absenceType })
+                : 'Darbas';
+
             const actionDetails = {
                 type: editingEvent.id ? 'edit' : 'add',
                 data: {
@@ -499,7 +510,8 @@ export default function WorkPlanner() {
                     end: endDateTime.toISOString(),
                     title: title,
                     isWorkFromHome: editingEvent.isWorkFromHome || false,
-                    isVacation: editingEvent.isVacation || false
+                    isVacation: editingEvent.isVacation || false,
+                    absenceType: absenceTypeForWrite(editingEvent.isVacation, editingEvent.absenceType)
                 },
                 originalEvent: editingEvent.id ? events.find(e => e.id === editingEvent.id) : null
             };
@@ -534,7 +546,8 @@ export default function WorkPlanner() {
                 end: editingEvent.end.toISOString(),
                 title: editingEvent.title,
                 isWorkFromHome: editingEvent.isWorkFromHome,
-                isVacation: editingEvent.isVacation
+                isVacation: editingEvent.isVacation,
+                absenceType: absenceTypeForWrite(editingEvent.isVacation, editingEvent.absenceType)
             },
             originalEvent: editingEvent
         };
@@ -573,7 +586,9 @@ export default function WorkPlanner() {
                 return;
             }
 
-            const title = manualIsVacation ? 'Atostogos' : 'Darbas';
+            const title = manualIsVacation
+                ? absenceLabel({ isVacation: true, absenceType: manualAbsenceType })
+                : 'Darbas';
 
             const actionDetails = {
                 type: 'add',
@@ -583,7 +598,8 @@ export default function WorkPlanner() {
                     end: endDateTime.toISOString(),
                     title: title,
                     isWorkFromHome: manualIsWorkFromHome || false,
-                    isVacation: manualIsVacation || false
+                    isVacation: manualIsVacation || false,
+                    absenceType: absenceTypeForWrite(manualIsVacation, manualAbsenceType)
                 }
             };
 
@@ -602,6 +618,7 @@ export default function WorkPlanner() {
             setManualEnd('');
             setManualIsWorkFromHome(false);
             setManualIsVacation(false);
+            setManualAbsenceType('vacation');
             setError('');
         } catch (err) {
             console.error("Error preparing manual work hours:", err);
@@ -615,11 +632,19 @@ export default function WorkPlanner() {
         try {
             const isManagerOrAdmin = isManagerRole(userRole);
             const managerId = userData?.defaultManager || (isManagerOrAdmin ? currentUser.uid : null);
+            // Calendar/shift requests concern the PERSON, so they fan out to ALL of the worker's
+            // managers (any may approve; the first to act flips the status and clears it for the
+            // rest). `managerId` stays the primary (FCM fallback / legacy); `managerIds` is the
+            // array the bell queries with array-contains.
+            const managerIds = Array.isArray(userData?.teamManagerIds) && userData.teamManagerIds.length
+                ? userData.teamManagerIds
+                : (managerId ? [managerId] : []);
 
             const requestData = {
                 userId: currentUser.uid,
                 userName: userData?.displayName || currentUser.displayName || currentUser.email,
                 managerId: managerId,
+                managerIds: managerIds,
                 type: pendingAction.type,
                 reason: reasonValue,
                 status: 'pending',
@@ -645,7 +670,8 @@ export default function WorkPlanner() {
                         end: pendingAction.data.end,
                         title: pendingAction.data.title,
                         isWorkFromHome: pendingAction.data.isWorkFromHome,
-                        isVacation: pendingAction.data.isVacation
+                        isVacation: pendingAction.data.isVacation,
+                        absenceType: pendingAction.data.absenceType ?? null
                     });
                 } else if (pendingAction.type === 'delete') {
                     await deleteDoc(doc(db, 'work_hours', pendingAction.data.id));
@@ -713,7 +739,8 @@ export default function WorkPlanner() {
             // near-black block (color is never the sole signal, §5).
             const isVacation = event.isVacation;
             const isWfh = !isVacation && event.isWorkFromHome;
-            const stateLabel = isVacation ? 'Atostogos' : isWfh ? 'Iš namų' : 'Dirbtuvėse';
+            const absLabel = absenceLabel(event) || 'Atostogos';
+            const stateLabel = isVacation ? absLabel : isWfh ? 'Iš namų' : 'Dirbtuvėse';
             const eventAriaLabel = `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, redaguoti`;
             return (
                 <div
@@ -741,7 +768,7 @@ export default function WorkPlanner() {
                         {isVacation ? (
                             <>
                                 <Palmtree className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                                <span>Atostogos</span>
+                                <span>{absLabel}</span>
                             </>
                         ) : isWfh ? (
                             <>
@@ -783,13 +810,10 @@ export default function WorkPlanner() {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
                             <label htmlFor="manualDate" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Data</label>
-                            <input
+                            <DatePicker
                                 id="manualDate"
-                                type="date"
                                 value={manualDate}
-                                onChange={(e) => setManualDate(e.target.value)}
-                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
-                                required
+                                onChange={setManualDate}
                             />
                         </div>
                         <div>
@@ -841,6 +865,20 @@ export default function WorkPlanner() {
                             <span className="text-body font-medium text-ink">Atostogos</span>
                         </label>
                     </div>
+                    {manualIsVacation && (
+                        <label className="mt-3 block">
+                            <span className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</span>
+                            <select
+                                value={manualAbsenceType}
+                                onChange={(e) => setManualAbsenceType(e.target.value)}
+                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
+                            >
+                                {ABSENCE_TYPES.map((a) => (
+                                    <option key={a.value} value={a.value}>{a.label}</option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
                     <div className="flex gap-2 mt-4">
                         <Button type="submit" variant="primary" size="md">
                             {approvalActive ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
@@ -858,13 +896,13 @@ export default function WorkPlanner() {
             )
             }
 
-            {/* Phones/tablets keep a fixed height (day view — vertical scroll is expected there).
-                On desktop (lg+, where the week grid + side rail live) the calendar instead fills the
-                viewport: an adaptive height (100vh minus the page chrome above/below it) means the
-                whole working day fits the real screen rather than a fixed 750px box that overflowed
-                and forced react-big-calendar's internal scrollbar. The min-height floor keeps it
-                usable on very short windows (it falls back to a small internal scroll only there). */}
-            <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[calc(100vh-11rem)] lg:min-h-[34rem]">
+            {/* The calendar is given a fixed pixel height tall enough to hold the entire working
+                day at a comfortable row height. Because react-big-calendar flexes its hour rows to
+                fill exactly this box, the grid renders in full with no internal scrollbar of its
+                own. On a screen too short to show the whole box, the *page* scrolls (the container
+                simply grows past the viewport) — the calendar no longer traps the scroll. Phones
+                use the day view, which is naturally shorter. */}
+            <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[880px]">
                 <Calendar
                     key={isPhone ? 'day' : 'week'}
                     localizer={localizer}
@@ -913,13 +951,10 @@ export default function WorkPlanner() {
                                 <div className="grid grid-cols-1 gap-4 mb-6">
                                     <div>
                                         <label htmlFor="editDate" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Data</label>
-                                        <input
+                                        <DatePicker
                                             id="editDate"
-                                            type="date"
                                             value={editingEvent.dateStr}
-                                            onChange={(e) => setEditingEvent({ ...editingEvent, dateStr: e.target.value })}
-                                            className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none"
-                                            required
+                                            onChange={(v) => setEditingEvent({ ...editingEvent, dateStr: v })}
                                         />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
@@ -981,6 +1016,20 @@ export default function WorkPlanner() {
                                         <span className="text-body font-medium text-ink">Atostogos</span>
                                     </label>
                                 </div>
+                                {editingEvent.isVacation && (
+                                    <label className="mt-3 block">
+                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</span>
+                                        <select
+                                            value={editingEvent.absenceType || 'vacation'}
+                                            onChange={(e) => setEditingEvent({ ...editingEvent, absenceType: e.target.value })}
+                                            className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none bg-surface-card appearance-none"
+                                        >
+                                            {ABSENCE_TYPES.map((a) => (
+                                                <option key={a.value} value={a.value}>{a.label}</option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                )}
 
 
                                 <div className="flex items-center justify-between gap-3 pt-4">

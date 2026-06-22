@@ -12,7 +12,7 @@ mechanical) with the resolved hex in parentheses.
 
 ---
 
-## 0. Theming — light / dark ([ADR 0006](../adr/0006-user-selectable-theme.md))
+## 0. Theming — light / dark ([ADR 0008](../adr/0008-user-selectable-theme.md))
 
 The **calm-canvas/chrome** token groups — `brand`, `surface`, `ink`, `line`, `feedback` — are
 **CSS-variable-backed**: `tailwind.config.js` defines each as `rgb(var(--x) / <alpha-value>)`

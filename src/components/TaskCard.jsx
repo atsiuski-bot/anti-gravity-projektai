@@ -9,14 +9,16 @@ import { InlineEditModal } from './InlineEditModal';
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
-import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { isManagerRole } from '../utils/formatters';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
+import UserChip from './UserChip';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
@@ -248,10 +250,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             <h3
                                 className={clsx(
                                     "flex-1 min-w-0 text-body font-bold leading-tight",
-                                    (task.completed || task.isDeleted) ? "line-through text-ink-muted" : "text-ink-strong",
+                                    task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong",
                                     taskStatus === 'unapproved' ? "rounded bg-surface-sunken px-2 py-1 text-ink" : ""
                                 )}
                             >
+                                {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                 {task.title}
                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                             </h3>
@@ -323,7 +326,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 )}
 
                                 {task.assignedUserName && (isManager || !isAssignedToMe) && (
-                                    <AssigneeChip name={task.assignedUserName} color={displayColor} ring />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={displayColor} ring />
                                 )}
 
                                 {task.tag && (
@@ -335,7 +338,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                                 {(task.managerName || task.creatorName) && (
                                     <span className="inline-flex items-center whitespace-nowrap">
-                                        Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
+                                        Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} className="ml-1" />
                                     </span>
                                 )}
                             </div>
@@ -379,9 +382,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                         <div key={index} className="bg-surface-sunken p-2 rounded-control border border-line">
                                             <div className="flex justify-between items-start mb-0.5">
                                                 <div className="flex items-center gap-1.5">
-                                                    <span className="text-caption font-bold text-ink">
-                                                        {formatDisplayName(comment.user)}
-                                                    </span>
+                                                    <UserChip userId={comment.userId} name={comment.user} className="text-caption font-bold text-ink" />
                                                     <span className="text-caption text-ink-muted">
                                                         {new Date(comment.createdAt).toLocaleDateString()}
                                                     </span>

@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { collection, onSnapshot, query, orderBy, where, doc, getDoc, setDoc } from 'firebase/firestore';
 import { useUsers } from '../context/UsersContext';
 import { useAuth } from '../context/AuthContext';
-import { isScopedManager } from '../utils/teamScope';
+import { isScopedOverseer } from '../utils/teamScope';
 import { logError } from '../utils/errorLog';
 
 export const useManagerData = (currentUser) => {
@@ -11,7 +11,7 @@ export const useManagerData = (currentUser) => {
     const { userData } = useAuth();
     // A scoped manager only ever queries their team's tasks (array-contains on the denormalized
     // teamManagerIds); admins and unscoped managers keep the broad team-wide read.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const uid = currentUser?.uid;
     const [tasks, setTasks] = useState([]);
     const [ownTasks, setOwnTasks] = useState([]);

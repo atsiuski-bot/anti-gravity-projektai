@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Filter, Search, ChevronDown, X } from 'lucide-react';
+import { ArrowUpDown, Filter, Search, ChevronDown, X, Activity, ListChecks } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -7,8 +7,6 @@ import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
 import DailyWorkProgress from '../components/DailyWorkProgress';
-import ManagerNotifications from '../components/ManagerNotifications';
-import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Spinner } from '../components/ui/Loading';
 import { useAuth } from '../context/AuthContext';
@@ -24,6 +22,7 @@ import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
 import { scopeRoster } from '../utils/teamScope';
+import { cn } from '../utils/cn';
 
 // Shared with WorkerView: the calendar/report views are the heavy part of the bundle
 // (react-big-calendar + date-fns + reports aggregation). Lazy-loading them in BOTH views
@@ -39,6 +38,8 @@ export default function ManagerView() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     const [viewMode, setViewMode] = useState('desktop');
+    // Komandos darbai splits into two sub-tabs: live activity first, the task list second.
+    const [teamTasksSubTab, setTeamTasksSubTab] = useState('active');
 
     // Use custom hooks
     const { tasks, ownTasks, users, allUsers, manualTaskOrder, saveManualOrder, error } = useManagerData(currentUser);
@@ -93,8 +94,10 @@ export default function ManagerView() {
         window.addEventListener('resize', handleResize);
         handleResize(); // Initial check
 
-        const handleOpenModalEvent = () => {
-            setEditingTask(null);
+        const handleOpenModalEvent = (e) => {
+            // A bare event opens a blank create modal; a `detail.task` (e.g. from the notification
+            // bell's "edit & approve" / "open reverted task") opens that task for editing.
+            setEditingTask(e?.detail?.task || null);
             setIsModalOpen(true);
         };
         window.addEventListener('open-task-modal', handleOpenModalEvent);
@@ -126,16 +129,67 @@ export default function ManagerView() {
                 </div>
             )}
 
-            <ManagerNotifications onEditAndApprove={handleEditTask} />
-            <CalendarRequestStatusBanner />
-
-            {/* Tab Content */}
+            {/* Tab Content — Komandos darbai splits into two sub-tabs:
+                 1. Aktyvūs darbai   — live team activity (ActiveWorkSessions).
+                 2. Užduočių sąrašas — the manageable task list + its filters.
+                The weekly planned-vs-worked summary that used to head this tab now lives in
+                Kom. kalendorius, next to the calendar it summarises. */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
-                <CombinedHoursSummary />
-                <ActiveWorkSessions />
+                <div role="tablist" aria-label="Komandos darbų rodinys" className="mb-4">
+                    <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                        <button
+                            type="button"
+                            role="tab"
+                            id="team-active-tab"
+                            aria-selected={teamTasksSubTab === 'active'}
+                            aria-controls="team-active-panel"
+                            onClick={() => setTeamTasksSubTab('active')}
+                            className={cn(
+                                'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            <Activity className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            Aktyvūs darbai
+                        </button>
+                        <div className="w-px bg-line" aria-hidden="true" />
+                        <button
+                            type="button"
+                            role="tab"
+                            id="team-list-tab"
+                            aria-selected={teamTasksSubTab === 'list'}
+                            aria-controls="team-list-panel"
+                            onClick={() => setTeamTasksSubTab('list')}
+                            className={cn(
+                                'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            <ListChecks className="h-4 w-4 shrink-0" aria-hidden="true" />
+                            Užduočių sąrašas
+                        </button>
+                    </div>
+                </div>
 
+                {/* Sub-tab 1 — Aktyvūs darbai */}
+                <div
+                    id="team-active-panel"
+                    role="tabpanel"
+                    aria-labelledby="team-active-tab"
+                    className={cn(teamTasksSubTab !== 'active' && 'hidden')}
+                >
+                    <ActiveWorkSessions embedded />
+                </div>
 
-
+                {/* Sub-tab 2 — Užduočių sąrašas */}
+                <div
+                    id="team-list-panel"
+                    role="tabpanel"
+                    aria-labelledby="team-list-tab"
+                    className={cn(teamTasksSubTab !== 'list' && 'hidden')}
+                >
                 {/* Filter and Sort Controls.
                     Mobile-first: search spans the full width, the three filters drop into a tidy
                     2-column grid, and sort takes the full width at the bottom — no more ragged
@@ -282,6 +336,7 @@ export default function ManagerView() {
                         hideCheckboxes={true}
                     />
                 )}
+                </div>
             </div>
 
             <div className={activeTab === 'my-tasks' ? 'block' : 'hidden'}>
@@ -341,11 +396,16 @@ export default function ManagerView() {
             )}
 
             {activeTab === 'team-calendar' && (
-                <ErrorBoundary boundaryName="manager:team-calendar">
-                    <React.Suspense fallback={<Spinner />}>
-                        <AllUsersCalendar />
-                    </React.Suspense>
-                </ErrorBoundary>
+                <div className="space-y-6">
+                    {/* Komandos darbai (Savaitės): the weekly planned-vs-worked summary moved here
+                        from Kom. darbai — it belongs beside the team calendar it summarises. */}
+                    <CombinedHoursSummary />
+                    <ErrorBoundary boundaryName="manager:team-calendar">
+                        <React.Suspense fallback={<Spinner />}>
+                            <AllUsersCalendar />
+                        </React.Suspense>
+                    </ErrorBoundary>
+                </div>
             )}
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>

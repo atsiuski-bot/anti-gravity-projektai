@@ -1,4 +1,4 @@
-# ADR 0006 — User-selectable light / dark theme
+# ADR 0008 — User-selectable light / dark theme
 
 **Status:** Accepted · **Date:** 2026-06-23 · **Supersedes (in part):** the dark-mode deferral noted in [ADR 0001](./0001-visual-design-system.md)
 

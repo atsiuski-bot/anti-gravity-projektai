@@ -9,6 +9,7 @@ import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
+import { notify } from '../utils/notify';
 import { getPriorityOptions, getPriorityLabel, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
@@ -548,6 +549,22 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     (task.checklist || []).map(item => item.id),
                     authoredChecklist || []
                 );
+
+                // Tell the worker about manager-side edits that concern them. Both are gated on
+                // "assignee is someone other than me" so a self-edit never notifies the author.
+                const assignee = formData.assignedUserId;
+                const actor = { actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email };
+                if (assignee && assignee !== currentUser.uid) {
+                    // The estimate was lifted on a task whose limit the worker had already hit →
+                    // their time-extension request was effectively granted.
+                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
+                        await notify({ recipientId: assignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                    }
+                    // The task was (re)assigned to a new worker.
+                    if (task.assignedUserId !== assignee) {
+                        await notify({ recipientId: assignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    }
+                }
             } else {
                 // Determine if user is a manager/admin based on Context OR Prop
                 const isManagerOrAdmin = isManagerRole(userRole) || isManagerRole(role);
@@ -593,6 +610,20 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     } catch (notifError) {
                         console.error('Error creating notification:', notifError);
                     }
+                }
+
+                // A manager created a task FOR a worker → tell that worker it landed in their list.
+                // (A worker self-creating, or assigning to themselves, gets no echo.)
+                if (isManagerOrAdmin && formData.assignedUserId && formData.assignedUserId !== currentUser.uid) {
+                    await notify({
+                        recipientId: formData.assignedUserId,
+                        type: 'task_assigned',
+                        taskId: docRef.id,
+                        taskTitle: taskData.title,
+                        estimatedTime: taskData.estimatedTime || null,
+                        actorUid: currentUser.uid,
+                        actorName: currentUser.displayName || currentUser.email,
+                    });
                 }
             }
 

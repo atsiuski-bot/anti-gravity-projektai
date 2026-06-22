@@ -225,7 +225,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
 
         return (
             <div className={cn(
-                'rounded-control border p-3 transition-colors',
+                'rounded-control border p-2.5 transition-colors',
                 reached
                     ? 'border-feedback-success/40 bg-feedback-success/10'
                     : 'border-line bg-surface-sunken/40'
@@ -233,12 +233,12 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                 <div className="flex items-center gap-3">
                     {/* Icon medallion — green check once the goal is reached */}
                     <div className={cn(
-                        'flex h-11 w-11 shrink-0 items-center justify-center rounded-full',
+                        'flex h-10 w-10 shrink-0 items-center justify-center rounded-full',
                         reached ? 'bg-feedback-success/20 text-feedback-success' : ringClass
                     )}>
                         {reached
-                            ? <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
-                            : <Icon className="h-6 w-6" aria-hidden="true" />}
+                            ? <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+                            : <Icon className="h-5 w-5" aria-hidden="true" />}
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -283,7 +283,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                         />
                     </div>
                 ) : (
-                    <p className="mt-2 text-caption text-ink-muted">
+                    <p className="mt-1.5 text-caption text-ink-muted">
                         Susiplanuokite valandas kalendoriuje, kad matytumėte savo pažangą.
                     </p>
                 )}
@@ -296,10 +296,6 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
             {loading && (
                 <div className="absolute inset-0 bg-surface-card/50 z-10 animate-pulse rounded-card" />
             )}
-            <h3 className="text-sm font-semibold text-ink-strong mb-4 uppercase tracking-wide">
-                Darbo Progresas
-            </h3>
-
             <div className="space-y-3">
                 {/* Day Progress */}
                 {renderGoal(

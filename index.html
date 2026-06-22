@@ -7,7 +7,7 @@
   <link rel="apple-touch-icon" href="/pwa-192x192.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#ffffff" />
-  <!-- Theme boot (ADR 0006): set <html data-theme> from the saved choice BEFORE first paint so
+  <!-- Theme boot (ADR 0008): set <html data-theme> from the saved choice BEFORE first paint so
        the dark canvas never flashes light on load. Reads only localStorage + the OS preference
        (Firestore isn't available pre-React; ThemeSync reconciles cross-device a tick later).
        The CSS-variable palette in index.css keys off this attribute. -->

@@ -39,10 +39,22 @@ function setAppBadge(count) {
 function copyFor(n) {
     const task = n.taskTitle || 'WORKZ';
     switch (n.type) {
+        // Worker → manager
         case 'time_extension_request': return { title: 'Laiko pratęsimo prašymas', body: task };
         case 'task_completion': return { title: 'Užduotis atlikta', body: task };
         case 'task_approval': return { title: 'Nauja užduotis tvirtinimui', body: task };
         case 'new_comment': return { title: 'Naujas komentaras', body: n.commentText ? `${task}: ${n.commentText}` : task };
+        // Manager → worker
+        case 'task_assigned': return { title: 'Nauja užduotis', body: task };
+        case 'task_approved': return { title: 'Užduotis patvirtinta', body: task };
+        case 'task_confirmed': return { title: 'Užduotis užbaigta ir patvirtinta', body: task };
+        case 'task_reverted': return { title: 'Užduotis grąžinta taisyti', body: task };
+        case 'extension_granted': return { title: 'Laikas pratęstas', body: task };
+        case 'extension_denied': return { title: 'Laikas nepratęstas', body: task };
+        case 'calendar_decision': return {
+            title: n.decision === 'approved' ? 'Kalendoriaus pakeitimas patvirtintas' : 'Kalendoriaus pakeitimas atmestas',
+            body: 'Darbo kalendorius',
+        };
         default: return { title: 'Naujas pranešimas', body: task };
     }
 }
@@ -65,9 +77,12 @@ export function NotificationsProvider({ children }) {
     const notificationsEnabledRef = useRef(notificationsEnabled);
     useEffect(() => { notificationsEnabledRef.current = notificationsEnabled; }, [notificationsEnabled]);
 
-    // Unread request notifications (task approvals/completions/comments/time-extensions).
+    // Unread request notifications. This feed is now TWO-WAY: a manager's approvals/completions/
+    // comments/time-extensions AND a worker's assigned/approved/confirmed/reverted/extension/
+    // calendar-decision notices. The rule already keys reads on recipientId, so every user counts
+    // and toasts their OWN unread — no manager gate here.
     useEffect(() => {
-        if (!currentUser || !isManager) {
+        if (!currentUser) {
             setRequestCount(0);
             seenRef.current = null;
             return undefined;
@@ -102,7 +117,7 @@ export function NotificationsProvider({ children }) {
             }
         }, (err) => console.error('NotificationsProvider: request listener', err));
         return () => unsub();
-    }, [currentUser, isManager, showToast]);
+    }, [currentUser, showToast]);
 
     // Pending calendar approval requests.
     useEffect(() => {

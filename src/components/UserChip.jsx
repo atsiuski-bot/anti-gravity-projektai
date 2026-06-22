@@ -10,14 +10,18 @@ import Avatar from './ui/Avatar';
  * on any surface (including the coloured live-session cards), and it is an inline link (WCAG
  * 2.5.5 inline exception) rather than a 44px block. The photo and canonical name are resolved
  * from the live users map, so call sites only need the uid (+ a fallback name for legacy rows).
- * With no resolvable uid it degrades to a static, non-clickable name.
+ * With no resolvable uid — or with `linkToProfile={false}` — it degrades to a static, non-clickable
+ * name (still showing the avatar). Pass `linkToProfile={false}` when the chip sits INSIDE another
+ * interactive element (e.g. a drill-down row that is itself a <button>), to avoid an invalid
+ * button-in-button while keeping the avatar + name.
  */
-export default function UserChip({ userId, name, size = 'sm', className }) {
+export default function UserChip({ userId, name, size = 'sm', linkToProfile = true, className }) {
     const { usersMap } = useUsers();
     const { openProfile } = useProfileViewer();
     const user = userId ? usersMap?.[userId] : null;
     const display = formatDisplayName(user?.displayName || name || '');
     const avatarSize = size === 'md' ? 'sm' : 'xs';
+    const clickable = !!userId && linkToProfile;
 
     const inner = (
         <>
@@ -26,7 +30,7 @@ export default function UserChip({ userId, name, size = 'sm', className }) {
         </>
     );
 
-    if (!userId) {
+    if (!clickable) {
         return <span className={cn('inline-flex items-center gap-1.5', className)}>{inner}</span>;
     }
 

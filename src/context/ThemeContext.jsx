@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 /**
- * ThemeContext — the app-wide light/dark theme (ADR 0006).
+ * ThemeContext — the app-wide light/dark theme (ADR 0008).
  *
  * The user's CHOICE is one of three values:
  *   - 'system' (default) — follow the OS `prefers-color-scheme`

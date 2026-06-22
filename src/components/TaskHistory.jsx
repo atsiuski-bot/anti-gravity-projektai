@@ -7,7 +7,7 @@ import { getPriorityLabel } from '../utils/priority';
 import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
-import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
+import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
@@ -17,11 +17,14 @@ import { addComment } from '../utils/commentActions';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
 import ConfirmDialog from './ui/ConfirmDialog';
+import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import AssigneeChip from './task/AssigneeChip';
+import UserChip from './UserChip';
 
 // Filter field label — shared by every filter control. 12px floor (§5): was text-[10px].
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
@@ -37,7 +40,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     const isManagerOrAdmin = isManagerRole(userRole);
     // Scoped managers only ever read their team's archived tasks (array-contains); this surface
     // is manager/admin-only (rendered when "all" is selected), so the effective role is never 'worker'.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
@@ -749,25 +752,21 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         >
                             <div className="flex flex-col gap-1">
                                 <label htmlFor="hist-date-from" className={FILTER_LABEL_CLASS}>Nuo</label>
-                                <input
+                                <DatePicker
                                     id="hist-date-from"
-                                    type="date"
                                     value={dateFrom}
                                     max={dateTo}
-                                    onChange={(e) => setDateFrom(e.target.value)}
-                                    className={SELECT_CLASS}
+                                    onChange={setDateFrom}
                                 />
                             </div>
                             <div className="flex flex-col gap-1">
                                 <label htmlFor="hist-date-to" className={FILTER_LABEL_CLASS}>Iki</label>
-                                <input
+                                <DatePicker
                                     id="hist-date-to"
-                                    type="date"
                                     value={dateTo}
                                     min={dateFrom}
                                     max={getLithuanianDateString()}
-                                    onChange={(e) => setDateTo(e.target.value)}
-                                    className={SELECT_CLASS}
+                                    onChange={setDateTo}
                                 />
                             </div>
                         </div>
@@ -880,9 +879,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     className="min-w-0 flex-1 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                 >
                                     <span className={clsx(
-                                        "text-body-lg font-bold text-ink-strong break-words",
-                                        deleted && "line-through text-ink-muted"
+                                        "text-body-lg font-bold break-words",
+                                        deleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                     )}>
+                                        {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
                                         {task.title}
                                     </span>
                                     {task.tag && (
@@ -897,7 +897,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             {/* Meta chips: worker + deadline + archive date */}
                             <div className="flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <AssigneeChip name={task.assignedUserName} firstNameOnly showIcon={false} />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} firstNameOnly showIcon={false} />
                                 )}
                                 {task.deadline && (
                                     <span className="inline-flex items-center gap-1 text-caption text-ink-muted">
@@ -940,7 +940,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             {(task.managerName || task.creatorName) && (
                                 <div className="text-caption text-ink-muted flex items-center gap-1">
                                     <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                    <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                    <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                 </div>
                             )}
 
@@ -950,7 +950,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                     {task.comments.map((comment, idx) => (
                                         <div key={idx} className="text-caption text-ink mb-1">
-                                            <span className="font-medium">{comment.user}:</span> {comment.text}
+                                            <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
                                         </div>
                                     ))}
                                 </div>
@@ -996,9 +996,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                             onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
                                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                             className={clsx(
-                                            "text-body font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                            (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                            "text-body font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                            (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                         )}>
+                                            {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                             {task.title}
                                             {task.tag && (
                                                 <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-medium bg-brand-soft text-brand-hover rounded align-middle">
@@ -1036,7 +1037,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                                 <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                                 {task.comments.map((comment, idx) => (
                                                     <div key={idx} className="text-caption text-ink mb-1">
-                                                        <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                        <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
                                                     </div>
                                                 ))}
                                             </div>
@@ -1044,13 +1045,13 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                         {(task.managerName || task.creatorName) && (
                                             <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                 <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                                <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                                <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                             </div>
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         {task.assignedUserName && (
-                                            <AssigneeChip name={task.assignedUserName} firstNameOnly showIcon={false} />
+                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} firstNameOnly showIcon={false} />
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium text-ink-strong align-top font-mono">

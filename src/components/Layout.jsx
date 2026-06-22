@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useNavigation } from '../context/NavigationContext';
 import { WifiOff } from 'lucide-react';
+import AppHeader from './AppHeader';
 import BottomNavigation from './BottomNavigation';
 import SideRail from './SideRail';
 import InstallPrompt from './InstallPrompt';
-import Avatar from './ui/Avatar';
 import { runDailyAutomation } from '../utils/automationUtils';
 import { canSeeWholeTeam } from '../utils/teamScope';
 import { useSessionNotification } from '../hooks/useSessionNotification';
@@ -15,8 +14,7 @@ import { cn } from '../utils/cn';
 import QuickWorkDescribePrompt from './QuickWorkDescribePrompt';
 
 export default function Layout({ children }) {
-    const { currentUser, userData, isTakingBreak, workStatus } = useAuth();
-    const { setActiveTab } = useNavigation();
+    const { userData, isTakingBreak, workStatus } = useAuth();
 
     // Run the full daily automation (promote + archive) once per day. Gated to WHOLE-TEAM
     // viewers (admins / unscoped managers): it reads & writes EVERY user's tasks, which a scoped
@@ -80,7 +78,7 @@ export default function Layout({ children }) {
     // ink inverts to near-white and would vanish on a still-light shell. We expose the active
     // shell kind so `.wz-on-shell` text pins to a fixed color (dark on the light shells, white on
     // the red quick-work shell). When idle there is no attribute, so themeable ink applies on the
-    // themed canvas. (ADR 0006; the bare page heading is the main consumer — DESIGN_SYSTEM §4-D.)
+    // themed canvas. (ADR 0008; the bare page heading is the main consumer — DESIGN_SYSTEM §4-D.)
     const onShellKind = session ? (effectiveSessionType === 'quickWork' ? 'red' : 'light') : undefined;
 
     // Use system notification hook to show notification in phone's status bar.
@@ -111,45 +109,16 @@ export default function Layout({ children }) {
                 {isDesktop && <SideRail />}
 
                 <div className={cn('min-w-0', isDesktop && 'flex-1')}>
-                    {/* Profile entry — a free-floating avatar "bubble" pinned to the top-right
-                        corner. No header bar of its own, and fixed (not absolute) so it stays in
-                        the corner even as the page scrolls. Off-desktop only; on lg+ the rail's
-                        account foot owns this entry point. */}
-                    {!isDesktop && (
-                        <button
-                            type="button"
-                            onClick={() => setActiveTab('profile')}
-                            aria-label="Atidaryti profilį"
-                            className="fixed top-2 right-2 z-toast inline-flex min-h-touch min-w-touch items-center justify-center rounded-full bg-surface-card shadow-md ring-1 ring-line/50 transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                        >
-                            <Avatar
-                                src={userData?.photoURL || currentUser?.photoURL}
-                                name={currentUser?.displayName}
-                                email={currentUser?.email}
-                                size="sm"
-                            />
-                        </button>
-                    )}
+                    {/* Calm top bar: active-session pill + notification bell + profile avatar.
+                        Replaces the old floating avatar bubble AND the full-width session strip —
+                        the pill still pairs the session colour with a label+icon (DESIGN_SYSTEM
+                        §4-A, WCAG 1.4.1). */}
+                    <AppHeader sessionType={effectiveSessionType} session={session} />
 
                     {/* PWA install — a slim, dismissible banner shown only when the browser offers
                         an install (or on iOS, manual steps). Mobile-only: it self-suppresses on
                         desktop (lg+), where the nudge is noise. */}
                     <InstallPrompt />
-
-                    {/* Persistent session-state label: color is never the sole signal (DESIGN_SYSTEM
-                        §4-A, WCAG 1.4.1). Always visible while a session is active. */}
-                    {session && (
-                        <div
-                            // Re-key on session type so the label re-plays its entrance each time
-                            // the session changes, riding in with the shell's color crossfade.
-                            key={effectiveSessionType}
-                            role="status"
-                            className="flex items-center justify-center gap-2 border-b border-line bg-surface-card px-4 py-1.5 text-caption font-semibold text-ink-strong animate-in fade-in slide-in-from-top-2"
-                        >
-                            <session.Icon className={cn('h-4 w-4 wz-pulse-soft', session.accent)} aria-hidden="true" />
-                            <span>{session.label}</span>
-                        </div>
-                    )}
 
                     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 relative">
                         <div className="relative z-10">

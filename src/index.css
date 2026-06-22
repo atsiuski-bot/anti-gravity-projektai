@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* =====================================================================
-   Theme palette (ADR 0006) — the calm-canvas/chrome tokens are CSS
+   Theme palette (ADR 0008) — the calm-canvas/chrome tokens are CSS
    variables so a single `data-theme` attribute on <html> swaps the whole
    palette. Each var holds three space-separated 0-255 RGB channels; the
    tailwind.config.js token reads them as `rgb(var(--x) / <alpha-value>)`,
@@ -127,7 +127,7 @@
   color-scheme: dark;
 }
 
-/* On-shell text (ADR 0006): text/icons that ride DIRECTLY on the theme-invariant session shell
+/* On-shell text (ADR 0008): text/icons that ride DIRECTLY on the theme-invariant session shell
    (not on a card) must use a FIXED color, because the themeable ink token inverts in dark and
    would vanish on a still-light shell. Mark such elements `.wz-on-shell`; Layout sets
    `data-session-shell` to the active shell kind. Idle = no attribute, so the element's own
@@ -148,6 +148,12 @@
 @layer base {
   body {
     @apply bg-surface-base text-ink-strong;
+    /* Disable the browser's native pull-to-refresh / overscroll chaining (Chrome
+       Android triggers a full reload on a downward swipe at the top of the page).
+       As an installed PWA the app inherits that page gesture, and field users on
+       phones hit it accidentally. `contain` stops the overscroll from propagating
+       to the browser viewport while leaving normal in-app scrolling untouched. */
+    overscroll-behavior-y: contain;
   }
 }
 

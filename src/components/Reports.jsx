@@ -10,9 +10,11 @@ import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTrian
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
+import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import TaskRow from './task/TaskRow';
 
@@ -316,6 +318,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
             plannedSnap.docs.forEach(d => {
                 const wh = d.data();
                 if (!wh.start || !wh.end) return;
+                // Approved leave is time OFF, not planned work: counting an "Atostogos" slot
+                // toward plannedMinutes makes a holiday week read as a planned shortfall against
+                // a denominator the worker was never expected to fill. Exclude it from the plan.
+                if (wh.isVacation) return;
                 const uid = wh.userId;
                 if (!uid) return;
                 if (!isManager && uid !== currentUser.uid) return;
@@ -323,11 +329,32 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 if (dayStr < startStr || dayStr > endStr) return;
                 const mins = (new Date(wh.end).getTime() - new Date(wh.start).getTime()) / (1000 * 60);
                 if (!Number.isFinite(mins) || mins <= 0) return;
-                if (userMap[uid]) {
-                    userMap[uid].plannedMinutes += mins;
-                }
+                // Seed the row from the plan too: a worker who was scheduled but logged no
+                // session in the span must still surface (worked 00:00, a real plan, a visible
+                // negative Skirtumas) instead of vanishing — the mirror of the surplus case.
+                initUser(uid);
+                userMap[uid].plannedMinutes += mins;
             });
             Object.values(userMap).forEach(u => { u.plannedMinutes = Math.round(u.plannedMinutes); });
+
+            // Expected-hours fallback: a worker who logged time but never hand-drew a calendar plan
+            // would show plannedMinutes 0 and a meaningless Skirtumas. If they carry a
+            // weeklyExpectedHours baseline, synthesize the plan for the span (baseline × weeks) so the
+            // delta has a real denominator. Only fills a MISSING plan — a real calendar plan wins.
+            const spanDays = Math.max(
+                1,
+                Math.round((new Date(endStr).getTime() - new Date(startStr).getTime()) / 86400000) + 1
+            );
+            const spanWeeks = spanDays / 7;
+            Object.values(userMap).forEach(u => {
+                if (u.plannedMinutes > 0) return;
+                const usr = users?.find(x => x.id === u.userId);
+                const baseline = usr?.weeklyExpectedHours;
+                if (Number.isFinite(baseline) && baseline > 0) {
+                    u.plannedMinutes = Math.round(baseline * 60 * spanWeeks);
+                    u.plannedFromBaseline = true;
+                }
+            });
 
             // Convert to array
             const results = Object.values(userMap).sort((a, b) => b.totalMinutes - a.totalMinutes);
@@ -801,13 +828,14 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     return (
                         <li key={task.id} className="bg-surface-card rounded-card shadow-sm border border-line p-4 space-y-3">
                             <div className="flex items-start justify-between gap-2">
-                                <div className={`min-w-0 flex-1 text-body-lg font-bold break-words ${deleted ? 'line-through text-ink-muted' : 'text-ink-strong'}`}>
+                                <div className={`min-w-0 flex-1 text-body-lg font-bold break-words ${deleted ? 'line-through text-ink-muted' : task.completed ? 'text-ink' : 'text-ink-strong'}`}>
+                                    {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
                                     {task.title}
                                 </div>
                                 <PriorityBadge priority={task.priority} />
                             </div>
                             <div className="flex flex-wrap items-center gap-2">
-                                <AssigneeChip name={userName} firstNameOnly showIcon={false} />
+                                <AssigneeChip userId={task.assignedUserId} name={userName} firstNameOnly showIcon={false} />
                                 {deleted ? <DeletedBadge /> : <TaskStatusPill task={task} />}
                                 {dateStr && (
                                     <span className="text-caption text-ink-muted">{new Date(dateStr).toLocaleString()}</span>
@@ -914,7 +942,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 titleCell={
                                     <>
                                         <div className="flex items-center gap-2">
-                                            <div className={`text-sm font-bold text-ink-strong whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-ink-muted' : ''}`}>
+                                            <div className={`text-sm font-bold whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-ink-muted' : task.completed ? 'text-ink' : 'text-ink-strong'}`}>
+                                                {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                                 {task.title}
                                             </div>
                                             {(task.isDeleted || task.status === 'deleted') && <DeletedBadge />}
@@ -1126,25 +1155,21 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
                                     <div className="flex-1">
                                         <label htmlFor="report-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                                        <input
+                                        <DatePicker
                                             id="report-from"
-                                            type="date"
                                             value={dateRange.start}
                                             max={dateRange.end}
-                                            onChange={(e) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, start: e.target.value })); }}
-                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            onChange={(v) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, start: v })); }}
                                         />
                                     </div>
                                     <div className="flex-1">
                                         <label htmlFor="report-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                                        <input
+                                        <DatePicker
                                             id="report-to"
-                                            type="date"
                                             value={dateRange.end}
                                             min={dateRange.start}
                                             max={getLithuanianDateString()}
-                                            onChange={(e) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, end: e.target.value })); }}
-                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            onChange={(v) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, end: v })); }}
                                         />
                                     </div>
                                 </div>
@@ -1174,6 +1199,22 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             </Button>
                         )}
                     </div>
+
+                    {/* Plan-coverage indicator: how many of the listed workers have ANY plan
+                        (calendar or expected-hours baseline) for the span. Surfaces silently-missing
+                        plans so a manager sees that Skirtumas can't be trusted for the remainder. */}
+                    {reportPeriod !== 'day' && isManagerRole(userRole) && workData.length > 0 && (() => {
+                        const testIds = new Set((users || []).filter((u) => u.isTest).map((u) => u.id));
+                        const rows = showTestUsers ? workData : workData.filter((u) => !testIds.has(u.userId));
+                        if (rows.length === 0) return null;
+                        const withPlan = rows.filter((u) => u.plannedMinutes > 0).length;
+                        return (
+                            <p className="mb-3 px-1 text-caption text-ink-muted">
+                                Planą turi {withPlan} iš {rows.length} darbuotojų
+                                {withPlan < rows.length ? ' — likusiems „Skirtumas" neskaičiuojamas.' : '.'}
+                            </p>
+                        );
+                    })()}
 
                     {/* Day mode → the live daily timeline. Any multi-day range → the same view
                         aggregated over [start, end] (summary cards, sort filters).
@@ -1257,25 +1298,21 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
                                     <div className="flex-1">
                                         <label htmlFor="history-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                                        <input
+                                        <DatePicker
                                             id="history-from"
-                                            type="date"
                                             value={historyRange.start}
                                             max={historyRange.end}
-                                            onChange={(e) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, start: e.target.value })); }}
-                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, start: v })); }}
                                         />
                                     </div>
                                     <div className="flex-1">
                                         <label htmlFor="history-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                                        <input
+                                        <DatePicker
                                             id="history-to"
-                                            type="date"
                                             value={historyRange.end}
                                             min={historyRange.start}
                                             max={getLithuanianDateString()}
-                                            onChange={(e) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, end: e.target.value })); }}
-                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, end: v })); }}
                                         />
                                     </div>
                                 </div>
@@ -1411,21 +1448,19 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 <div className="space-y-4">
                     <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div>
-                            <label className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                            <input
-                                type="date"
+                            <label htmlFor="task-filter-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
+                            <DatePicker
+                                id="task-filter-from"
                                 value={taskFilters.startDate}
-                                onChange={(e) => setTaskFilters(prev => ({ ...prev, startDate: e.target.value }))}
-                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
+                                onChange={(v) => setTaskFilters(prev => ({ ...prev, startDate: v }))}
                             />
                         </div>
                         <div>
-                            <label className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                            <input
-                                type="date"
+                            <label htmlFor="task-filter-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
+                            <DatePicker
+                                id="task-filter-to"
                                 value={taskFilters.endDate}
-                                onChange={(e) => setTaskFilters(prev => ({ ...prev, endDate: e.target.value }))}
-                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
+                                onChange={(v) => setTaskFilters(prev => ({ ...prev, endDate: v }))}
                             />
                         </div>
                         <div>

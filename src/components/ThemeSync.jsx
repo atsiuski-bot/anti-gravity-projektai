@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 
 /**
- * ThemeSync — the one-way bridge from the Firestore user doc to ThemeContext (ADR 0006).
+ * ThemeSync — the one-way bridge from the Firestore user doc to ThemeContext (ADR 0008).
  *
  * ThemeProvider sits above AuthProvider, so it cannot read auth state itself. This component
  * lives INSIDE the authed tree, where `userData` is available, and adopts the user's saved
