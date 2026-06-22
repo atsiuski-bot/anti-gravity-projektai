@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString } from '../utils/timeUtils';
-import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
+import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { addComment } from '../utils/commentActions';
-import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, Coffee, Info, AlertTriangle, Download, Calendar } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -17,7 +17,6 @@ import TaskRow from './task/TaskRow';
 
 import DailyStatistics from './DailyStatistics';
 import { CommentsModal } from './TaskDetailsModals';
-import SessionTypeIcon from './SessionTypeIcon';
 import { useAuth } from '../context/AuthContext';
 import { TASK_TAGS } from '../utils/taskUtils';
 
@@ -49,7 +48,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         return { start: `${today.slice(0, 7)}-01`, end: today };
     });
     const [workData, setWorkData] = useState([]); // Array of { userId, name, totalMinutes, days: { date: minutes } }
-    const [expandedUser, setExpandedUser] = useState(null);
 
     // Unified report period. 'day' renders DailyStatistics (its own day navigation); any other
     // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
@@ -65,7 +63,15 @@ export default function Reports({ users, canExport = false, viewRole }) {
     });
 
     // --- CALENDAR HISTORY STATE ---
-    const [historyMonth, setHistoryMonth] = useState(getLithuanianDateString().slice(0, 7));
+    // Same from/to range model as the work report (defaults to the current month so far), driven
+    // by the identical collapsible period picker. `historyPeriod` tracks the active preset for the
+    // collapsed label; `historyPeriodOpen` toggles the picker panel.
+    const [historyRange, setHistoryRange] = useState(() => {
+        const today = getLithuanianDateString();
+        return { start: `${today.slice(0, 7)}-01`, end: today };
+    });
+    const [historyPeriod, setHistoryPeriod] = useState('month'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
+    const [historyPeriodOpen, setHistoryPeriodOpen] = useState(false);
     const [calendarHistory, setCalendarHistory] = useState([]);
     const [filteredTasks, setFilteredTasks] = useState([]);
     const [taskSort, setTaskSort] = useState('date_desc'); // date_desc, date_asc, time_desc, time_asc
@@ -88,21 +94,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchWorkHours is recreated each render; intentionally refetch only on tab/period/range change
     }, [activeTab, reportPeriod, dateRange.start, dateRange.end]);
 
-    // Auto-expand when there's only one user (worker viewing own data)
-    useEffect(() => {
-        if (workData.length === 1 && !expandedUser) {
-            setExpandedUser(workData[0].userId);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally auto-expand only when workData changes, not on every expandedUser update
-    }, [workData]);
-
     // Fetch Calendar History
     useEffect(() => {
         if (activeTab === 'calendar-history') {
             fetchCalendarHistory();
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchCalendarHistory is recreated each render; intentionally refetch only on tab/month change
-    }, [activeTab, historyMonth]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchCalendarHistory is recreated each render; intentionally refetch only on tab/range change
+    }, [activeTab, historyRange.start, historyRange.end]);
 
     // Fetch Tasks Data
     useEffect(() => {
@@ -111,18 +109,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchTasks is recreated each render; intentionally refetch only on tab/filter change
     }, [activeTab, taskFilters]); // Refetch when filters change
-
-    const [expandedDays, setExpandedDays] = useState({}); // { userId: { dateString: boolean } }
-
-    const toggleDayExpand = (userId, date) => {
-        setExpandedDays(prev => ({
-            ...prev,
-            [userId]: {
-                ...prev[userId],
-                [date]: !prev[userId]?.[date]
-            }
-        }));
-    };
 
     const fetchWorkHours = async () => {
         setLoading(true);
@@ -434,8 +420,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
     const fetchCalendarHistory = async () => {
         setLoading(true);
         try {
-            const startStr = `${historyMonth}-01T00:00:00.000Z`;
-            const endStr = `${historyMonth}-31T23:59:59.999Z`;
+            const startStr = `${historyRange.start}T00:00:00.000Z`;
+            const endStr = `${historyRange.end}T23:59:59.999Z`;
 
             const q = query(
                 collection(db, 'calendar_requests'),
@@ -581,31 +567,11 @@ export default function Reports({ users, canExport = false, viewRole }) {
         }
     };
 
-    const getAvg = (totalMins, daysObj) => {
-        // Average work minutes over days that actually had WORK. Counting every day key would
-        // include break-only days (a break creates a day bucket too), inflating the
-        // denominator and understating the per-day average.
-        const workDaysCount = Object.values(daysObj).filter(d => (d.totalWork || 0) > 0).length;
-        if (workDaysCount === 0) return 0;
-        return Math.round(totalMins / workDaysCount);
-    };
-
-    // Worked-minus-planned for the row. Positive = overtime, negative = under the plan; null
-    // when the worker has no plan in the span (a delta against zero would be meaningless).
-    const getPlanDelta = (userStats) => {
-        if (!userStats.plannedMinutes || userStats.plannedMinutes <= 0) return null;
-        return userStats.totalMinutes - userStats.plannedMinutes;
-    };
-    const formatSignedDuration = (mins) => {
-        const rounded = Math.round(mins);
-        const sign = rounded > 0 ? '+' : (rounded < 0 ? '−' : '');
-        return `${sign}${formatMinutesToTimeString(Math.abs(rounded))}`;
-    };
-
     // Resolve a period preset to a from/to range. All math is pure date-string arithmetic
     // (addDaysToDateString is DST-safe), weeks are Monday-started per Lithuanian convention, and
-    // every range ends "today" so the report always runs up to the current day.
-    const applyPreset = (preset) => {
+    // every range ends "today" so the report always runs up to the current day. Pure (returns the
+    // range) so both the work-report and calendar-history pickers can share one source of truth.
+    const resolvePresetRange = (preset) => {
         const today = getLithuanianDateString();
         const pad = (n) => String(n).padStart(2, '0');
         const dayOfWeek = (dateStr) => {
@@ -619,6 +585,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
         let start;
         const end = today;
         switch (preset) {
+            case 'day':
+                start = today;
+                break;
             case 'week':
                 start = addDaysToDateString(today, -mondayOffset);
                 break;
@@ -635,9 +604,14 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 start = `${today.slice(0, 4)}-01-01`;
                 break;
             default:
-                return;
+                return null;
         }
-        setDateRange({ start, end });
+        return { start, end };
+    };
+
+    const applyPreset = (preset) => {
+        const range = resolvePresetRange(preset);
+        if (range) setDateRange(range);
     };
 
     // Period selector handler: 'day' falls through to the daily view; any preset resolves a range
@@ -652,6 +626,20 @@ export default function Reports({ users, canExport = false, viewRole }) {
     const periodLabel = reportPeriod === 'custom'
         ? `${dateRange.start} – ${dateRange.end}`
         : (PERIOD_PRESETS.find((p) => p.id === reportPeriod)?.label ?? `${dateRange.start} – ${dateRange.end}`);
+
+    // Calendar-history period picker — same collapsible modal + preset logic as the work report,
+    // but every preset (including 'day') resolves to a from/to range, since history is always a
+    // range query (there is no special daily-timeline mode here).
+    const chooseHistoryPeriod = (period) => {
+        setHistoryPeriod(period);
+        setHistoryPeriodOpen(false);
+        const range = resolvePresetRange(period);
+        if (range) setHistoryRange(range);
+    };
+
+    const historyPeriodLabel = historyPeriod === 'custom'
+        ? `${historyRange.start} – ${historyRange.end}`
+        : (PERIOD_PRESETS.find((p) => p.id === historyPeriod)?.label ?? `${historyRange.start} – ${historyRange.end}`);
 
     // Export the already-computed hours summary to a CSV the manager can hand to payroll.
     // One row per worker-day (work + break, HH:MM), then a per-worker "Viso" total row.
@@ -679,7 +667,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
             return `${sign}${formatMinutesToHHMM(Math.abs(rounded))}`;
         };
 
-        const headers = ['Darbuotojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
+        const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
         const rows = [];
 
         workData.forEach(userStats => {
@@ -923,97 +911,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
     // Per-user "Dienos Išklotinė" panel — shared by the desktop expanded row and the mobile card
     // (keeps the day breakdown identical across both layouts instead of duplicating ~80 lines).
-    const DayBreakdown = ({ userStats }) => (
-        <div className="bg-surface-card border border-line rounded-control overflow-hidden">
-            <div className="px-4 py-2 bg-surface-sunken border-b border-line flex justify-between items-center">
-                <h4 className="text-body font-bold text-ink">Dienos Išklotinė</h4>
-                <span className="text-caption text-ink-muted">Spauskite ant dienos detalesnei informacijai</span>
-            </div>
-            <div className="divide-y divide-line">
-                {Object.entries(userStats.days)
-                    .sort((a, b) => new Date(b[0]) - new Date(a[0]))
-                    .map(([date, dayData]) => {
-                        const isDayExpanded = expandedDays[userStats.userId]?.[date];
-                        return (
-                            <div key={date} className="group">
-                                <button
-                                    type="button"
-                                    onClick={() => toggleDayExpand(userStats.userId, date)}
-                                    aria-expanded={!!isDayExpanded}
-                                    aria-label={isDayExpanded ? `Slėpti ${date} dienos detales` : `Rodyti ${date} dienos detales`}
-                                    className={`w-full min-h-touch p-2 flex items-center justify-between cursor-pointer text-left hover:bg-blue-50 transition-colors border-b border-line last:border-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset ${isDayExpanded ? 'bg-blue-50/50' : ''}`}
-                                >
-                                    <div className="flex items-center gap-2">
-                                        <div className="inline-flex items-center justify-center w-9 h-9 bg-surface-card border border-line rounded text-ink-muted group-hover:text-blue-500 group-hover:border-blue-200 transition-colors">
-                                            {isDayExpanded ? <ChevronUp className="w-3.5 h-3.5" aria-hidden="true" /> : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
-                                        </div>
-                                        <span className="text-caption font-bold text-ink">{date}</span>
-                                    </div>
-                                    <div className="flex items-center gap-2 text-caption font-mono">
-                                        {dayData.dayStart && dayData.dayEnd && (
-                                            <div className="text-ink-muted mr-2 hidden sm:block">
-                                                <span className="text-ink-muted mr-1">Laikas:</span>
-                                                <span className="font-medium text-ink">{formatTime(dayData.dayStart)} - {formatTime(dayData.dayEnd)}</span>
-                                            </div>
-                                        )}
-                                        {dayData.totalBreak > 0 && (
-                                            <div className="text-amber-600 flex items-center gap-1" title="Pertraukos">
-                                                <Coffee className="w-3 h-3" aria-hidden="true" />
-                                                <span className="font-bold">{formatMinutesToTimeString(dayData.totalBreak)}</span>
-                                            </div>
-                                        )}
-                                        <div className="text-blue-700 flex items-center gap-1">
-                                            <Briefcase className="w-3 h-3" aria-hidden="true" />
-                                            <span className="font-bold">{formatMinutesToTimeString(dayData.totalWork)}</span>
-                                        </div>
-                                    </div>
-                                </button>
-                                {isDayExpanded && (
-                                    <div className="bg-surface-sunken px-4 py-2 border-t border-line shadow-inner animate-in fade-in slide-in-from-top-2">
-                                        <div className="space-y-1 pl-2 md:pl-10">
-                                            {dayData.sessions.map((session, idx) => (
-                                                <div key={session.id || idx} className={`text-caption flex items-center gap-3 py-1.5 border-b border-line last:border-0 ${session._type === 'break' ? 'text-amber-700' : session._type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
-                                                    <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${session._type === 'break' ? 'bg-amber-400' : session._type === 'inactive' ? 'bg-gray-300' : 'bg-blue-400'}`}></div>
-                                                    <div className="font-mono text-ink-muted w-24 flex-shrink-0">
-                                                        {formatTime(session.startTime)} - {formatTime(session.endTime)}
-                                                    </div>
-                                                    <div className="font-medium flex-grow truncate">
-                                                        {session._type === 'break' ? (
-                                                            <span className="flex items-center gap-1.5"><SessionTypeIcon type="break" className="w-3.5 h-3.5" /> Pertrauka</span>
-                                                        ) : session._type === 'inactive' ? (
-                                                            <span className="flex items-center gap-1.5 text-ink-muted">{session.taskTitle || 'Neaktyvus'}</span>
-                                                        ) : (
-                                                            <span className="flex items-center gap-1.5">
-                                                                <SessionTypeIcon
-                                                                    type={session.isSystemTask || (session.taskId && String(session.taskId).startsWith('call_')) ? 'call' : (session.isQuickWork || (session.taskId && String(session.taskId).startsWith('quick_')) ? 'quickWork' : 'task')}
-                                                                    className="w-3.5 h-3.5"
-                                                                />
-                                                                {session.taskTitle || 'Darbas'}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                    <div className={`font-mono font-bold w-12 text-right ${session._type === 'break' ? 'text-amber-600' : session._type === 'inactive' ? 'text-ink-muted' : 'text-blue-600'}`}>
-                                                        {formatMinutesToTimeString(session.durationMinutes)}
-                                                    </div>
-                                                </div>
-                                            ))}
-                                            {dayData.sessions.length === 0 && (
-                                                <div className="text-caption text-ink-muted italic py-1">Nėra detalių įrašų.</div>
-                                            )}
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        );
-                    })}
-            </div>
-        </div>
-    );
-
     // Derive the display fields for one calendar-history entry. Computed once and shared by the
     // mobile card and the desktop table so both layouts stay in sync (ISSUE #17b).
     const deriveCalendarEntry = (item) => {
-        const workerLabel = item.userName || "Nežinomas darbuotojas";
+        const workerLabel = item.userName || "Nežinomas vykdytojas";
 
         const eventStart = item.requestedEvent?.start || item.originalEvent?.start || null;
         const eventEnd = item.requestedEvent?.end || item.originalEvent?.end || null;
@@ -1078,8 +979,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
     return (
         <div className="space-y-6">
-            <h2 className="text-h2 font-bold text-ink-strong">Ataskaitos ir Duomenys</h2>
-
             {/* TABS — the calendar-change-history tab is a team/oversight feature, so it only
                 appears in the manager team view. In a personal report (worker, or a manager
                 viewing their OWN data via viewRole="worker") there is just one view, so the
@@ -1129,10 +1028,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
             {/* --- WORK REPORT TAB (merged daily view + detailed range summary) --- */}
             {activeTab === 'report' && (
                 <div className="space-y-4">
-                    {/* Period selector — base view is a single day; the button reveals the range
-                        ladder (week → month → 3 months → year) and a custom date picker. 'day'
-                        renders the daily timeline; any range renders the detailed work summary. */}
-                    <div className="bg-surface-card rounded-card shadow-sm border border-line">
+                    {/* Period selector + CSV export share one row: the collapsible period card
+                        flexes to fill; the export button sits beside it (icon-only on mobile,
+                        icon+label on desktop) and appears only for a multi-day range (day mode
+                        has no export). The button reveals the range ladder (week → month →
+                        3 months → year) and a custom date picker. */}
+                    <div className="flex items-start gap-2">
+                        <div className="flex-1 bg-surface-card rounded-card shadow-sm border border-line">
                         <button
                             type="button"
                             onClick={() => setPeriodOpen((o) => !o)}
@@ -1192,8 +1094,24 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 </div>
                             </div>
                         )}
+                        </div>
+
+                        {reportPeriod !== 'day' && (
+                            <Button
+                                variant="success"
+                                icon={Download}
+                                onClick={handleExportHoursCSV}
+                                disabled={loading || workData.length === 0}
+                                aria-label="Eksportuoti CSV"
+                                className="shrink-0 px-3 sm:px-4"
+                            >
+                                <span className="hidden sm:inline">Eksportuoti CSV</span>
+                            </Button>
+                        )}
                     </div>
 
+                    {/* Day mode → the live daily timeline. Any multi-day range → the same view
+                        aggregated over [start, end] (summary cards, sort filters, finished tasks). */}
                     {reportPeriod === 'day' ? (
                         <DailyStatistics
                             currentUser={currentUser}
@@ -1202,271 +1120,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             canExport={canExport}
                         />
                     ) : (
-                        <>
-                            <div className="flex justify-end">
-                                <Button
-                                    variant="success"
-                                    icon={Download}
-                                    onClick={handleExportHoursCSV}
-                                    disabled={loading || workData.length === 0}
-                                >
-                                    Eksportuoti CSV
-                                </Button>
-                            </div>
-
-                    {loading && (
-                        <div className="bg-surface-card p-8 rounded-card shadow-sm border border-line text-center text-ink-muted">Kraunami duomenys...</div>
-                    )}
-                    {!loading && workData.length === 0 && (
-                        <div className="bg-surface-card p-8 rounded-card shadow-sm border border-line text-center text-ink-muted">Nėra duomenų pasirinktam laikotarpiui.</div>
-                    )}
-
-                    {/* Single-user simplified view (worker viewing own data) */}
-                    {!loading && workData.length === 1 && (() => {
-                        const userStats = workData[0];
-                        return (
-                            <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
-                                {/* Stats header — work hours are the dominant month metric (§5/ISSUE #18) */}
-                                <div className="px-4 py-4 bg-surface-sunken border-b border-line space-y-3">
-                                    <div className="text-body font-bold text-ink-strong">{formatDisplayName(userStats.name).split(' ')[0]}</div>
-
-                                    {/* Primary metric: actual work hours, promoted to display size */}
-                                    <div>
-                                        <div className="text-caption uppercase font-bold tracking-wide text-ink-muted">Darbas</div>
-                                        <div className="text-display font-bold text-indigo-600 leading-none">
-                                            {formatMinutesToTimeString(userStats.totalMinutes)}
-                                        </div>
-                                    </div>
-
-                                    {/* Secondary peers: breaks, combined time, days, average */}
-                                    <div className="flex flex-wrap items-start gap-x-6 gap-y-2 text-body">
-                                        <div className="flex flex-col">
-                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Pertraukos</span>
-                                            <span className="text-amber-600 font-bold">{formatMinutesToTimeString(userStats.totalBreakMinutes)}</span>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="flex items-center gap-1 text-caption uppercase font-bold tracking-wide text-ink-muted">
-                                                Bendras laikas
-                                                <span
-                                                    className="inline-flex items-center"
-                                                    title="Apima darbą ir pertraukas — tai NE tik darbo valandos."
-                                                >
-                                                    <Info className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
-                                                    <span className="sr-only">Apima darbą ir pertraukas, ne tik darbo valandas.</span>
-                                                </span>
-                                            </span>
-                                            <span className="inline-flex w-fit items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-blue-700 font-bold">
-                                                <Briefcase className="w-3 h-3" aria-hidden="true" />
-                                                {formatMinutesToTimeString(userStats.totalMinutes + userStats.totalBreakMinutes)}
-                                            </span>
-                                            <span className="text-caption text-ink-muted">Darbas + Pertraukos</span>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Dienų</span>
-                                            <span className="text-ink font-medium">{Object.keys(userStats.days).length} d.</span>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Vid.</span>
-                                            <span className="text-ink font-medium">{formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}</span>
-                                        </div>
-                                        <div className="flex flex-col">
-                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Planuota</span>
-                                            <span className="text-ink font-medium">{userStats.plannedMinutes > 0 ? formatMinutesToTimeString(userStats.plannedMinutes) : '—'}</span>
-                                        </div>
-                                        <div className="flex flex-col" title="Faktas − planas: teigiamas = viršvalandžiai, neigiamas = trūksta">
-                                            <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Skirtumas</span>
-                                            {getPlanDelta(userStats) === null ? (
-                                                <span className="text-ink-muted font-medium">—</span>
-                                            ) : (
-                                                <span className={`font-bold ${getPlanDelta(userStats) >= 0 ? 'text-feedback-success' : 'text-feedback-danger'}`}>
-                                                    {formatSignedDuration(getPlanDelta(userStats))}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="p-3">
-                                    <DayBreakdown userStats={userStats} />
-                                </div>
-                            </div>
-                        );
-                    })()}
-
-                    {/* Multi-user view (manager/admin). On a phone, data is cards — never a
-                        horizontally-scrolling table (§9). The expand action is an always-visible
-                        44px button, since group-hover affordances are invisible on touch. */}
-                    {!loading && workData.length > 1 && (
-                        <>
-                            {/* Mobile / touch: one card per worker */}
-                            <ul className="space-y-3 md:hidden">
-                                {workData.map((userStats) => {
-                                    const isExpanded = expandedUser === userStats.userId;
-                                    const workerName = formatDisplayName(userStats.name).split(' ')[0];
-                                    return (
-                                        <li key={userStats.userId} className="bg-surface-card rounded-card border border-line shadow-sm overflow-hidden">
-                                            <div className="p-4 space-y-3">
-                                                <div className="flex items-start justify-between gap-2">
-                                                    <div className="min-w-0">
-                                                        <div className="text-caption uppercase font-bold tracking-wide text-ink-muted">Darbuotojas</div>
-                                                        <div className="text-body font-bold text-ink-strong truncate">{workerName}</div>
-                                                    </div>
-                                                    <IconButton
-                                                        icon={isExpanded ? ChevronUp : ChevronDown}
-                                                        label={isExpanded ? `Slėpti ${workerName} dienų išklotinę` : `Rodyti ${workerName} dienų išklotinę`}
-                                                        aria-expanded={isExpanded}
-                                                        onClick={() => setExpandedUser(isExpanded ? null : userStats.userId)}
-                                                    />
-                                                </div>
-
-                                                {/* Primary metric: actual work hours */}
-                                                <div>
-                                                    <div className="text-caption uppercase font-bold tracking-wide text-ink-muted">Darbas</div>
-                                                    <div className="text-h1 font-bold text-indigo-600 leading-none">
-                                                        {formatMinutesToTimeString(userStats.totalMinutes)}
-                                                    </div>
-                                                </div>
-
-                                                {/* Secondary peers */}
-                                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-body">
-                                                    <div className="flex flex-col">
-                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Pertraukos</span>
-                                                        <span className="text-amber-600 font-bold">{formatMinutesToTimeString(userStats.totalBreakMinutes)}</span>
-                                                    </div>
-                                                    <div className="flex flex-col">
-                                                        <span className="flex items-center gap-1 text-caption uppercase font-bold tracking-wide text-ink-muted">
-                                                            Bendras laikas
-                                                            <span className="inline-flex items-center" title="Apima darbą ir pertraukas — tai NE tik darbo valandos.">
-                                                                <Info className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
-                                                                <span className="sr-only">Apima darbą ir pertraukas, ne tik darbo valandas.</span>
-                                                            </span>
-                                                        </span>
-                                                        <span className="inline-flex w-fit items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-blue-700 font-bold">
-                                                            <Briefcase className="w-3 h-3" aria-hidden="true" />
-                                                            {formatMinutesToTimeString(userStats.totalMinutes + userStats.totalBreakMinutes)}
-                                                        </span>
-                                                    </div>
-                                                    <div className="flex flex-col">
-                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Dienų</span>
-                                                        <span className="text-ink font-medium">{Object.keys(userStats.days).length} d.</span>
-                                                    </div>
-                                                    <div className="flex flex-col">
-                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Vid.</span>
-                                                        <span className="text-ink font-medium">{formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}</span>
-                                                    </div>
-                                                    <div className="flex flex-col">
-                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Planuota</span>
-                                                        <span className="text-ink font-medium">{userStats.plannedMinutes > 0 ? formatMinutesToTimeString(userStats.plannedMinutes) : '—'}</span>
-                                                    </div>
-                                                    <div className="flex flex-col" title="Faktas − planas: teigiamas = viršvalandžiai, neigiamas = trūksta">
-                                                        <span className="text-caption uppercase font-bold tracking-wide text-ink-muted">Skirtumas</span>
-                                                        {getPlanDelta(userStats) === null ? (
-                                                            <span className="text-ink-muted font-medium">—</span>
-                                                        ) : (
-                                                            <span className={`font-bold ${getPlanDelta(userStats) >= 0 ? 'text-feedback-success' : 'text-feedback-danger'}`}>
-                                                                {formatSignedDuration(getPlanDelta(userStats))}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            {isExpanded && (
-                                                <div className="bg-surface-sunken border-t border-line p-3 animate-in fade-in slide-in-from-top-2">
-                                                    <DayBreakdown userStats={userStats} />
-                                                </div>
-                                            )}
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-
-                            {/* Desktop / wide: denser table is allowed (§9) */}
-                            <div className="hidden bg-surface-card rounded-card shadow-sm border border-line overflow-x-auto md:block">
-                                <table className="min-w-full divide-y divide-line">
-                                    <thead className="bg-surface-sunken">
-                                        <tr>
-                                            <th scope="col" className="px-6 py-3 text-left text-caption uppercase tracking-wider font-bold text-ink-muted">Darb.</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Darbas</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Pertraukos</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted" title="Bendras laikas: apima darbą ir pertraukas — ne tik darbo valandos.">Bendras laikas</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Dienų</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Vid.</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted">Planuota</th>
-                                            <th scope="col" className="px-6 py-3 text-right text-caption uppercase tracking-wider font-bold text-ink-muted" title="Faktas − planas: teigiamas = viršvalandžiai, neigiamas = trūksta">Skirtumas</th>
-                                            <th scope="col" className="px-6 py-3 w-10"></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-surface-card divide-y divide-line">
-                                        {workData.map((userStats) => {
-                                            const isExpanded = expandedUser === userStats.userId;
-                                            const workerName = formatDisplayName(userStats.name).split(' ')[0];
-                                            return (
-                                                <React.Fragment key={userStats.userId}>
-                                                    <tr
-                                                        className={`hover:bg-surface-sunken cursor-pointer transition-colors ${isExpanded ? 'bg-blue-50' : ''}`}
-                                                        onClick={() => setExpandedUser(isExpanded ? null : userStats.userId)}
-                                                    >
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body font-medium text-ink-strong">
-                                                            {workerName}
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-indigo-600 font-medium">
-                                                            {formatMinutesToTimeString(userStats.totalMinutes)}
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-amber-600 font-medium">
-                                                            {formatMinutesToTimeString(userStats.totalBreakMinutes)}
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-blue-700 font-bold bg-blue-50/10">
-                                                            {formatMinutesToTimeString(userStats.totalMinutes + userStats.totalBreakMinutes)}
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-ink-muted">
-                                                            {Object.keys(userStats.days).length} d.
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-ink-muted">
-                                                            {formatMinutesToTimeString(getAvg(userStats.totalMinutes, userStats.days))}
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right text-ink-muted">
-                                                            {userStats.plannedMinutes > 0 ? formatMinutesToTimeString(userStats.plannedMinutes) : '—'}
-                                                        </td>
-                                                        <td className="px-6 py-4 whitespace-nowrap text-body text-right font-bold">
-                                                            {getPlanDelta(userStats) === null ? (
-                                                                <span className="text-ink-muted font-normal">—</span>
-                                                            ) : (
-                                                                <span className={getPlanDelta(userStats) >= 0 ? 'text-feedback-success' : 'text-feedback-danger'}>
-                                                                    {formatSignedDuration(getPlanDelta(userStats))}
-                                                                </span>
-                                                            )}
-                                                        </td>
-                                                        <td className="px-6 py-4 text-right text-ink-muted">
-                                                            <button
-                                                                type="button"
-                                                                onClick={(e) => { e.stopPropagation(); setExpandedUser(isExpanded ? null : userStats.userId); }}
-                                                                aria-expanded={isExpanded}
-                                                                aria-label={isExpanded ? `Slėpti ${workerName} dienas` : `Rodyti ${workerName} dienas`}
-                                                                className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
-                                                            >
-                                                                {isExpanded ? <ChevronUp className="w-4 h-4" aria-hidden="true" /> : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                    {isExpanded && (
-                                                        <tr className="bg-surface-sunken">
-                                                            <td colSpan="9" className="px-6 py-4">
-                                                                {/* Animate the inner div, not the <tr>/<td> — transforms on
-                                                                    table rows/cells are unreliable across browsers. */}
-                                                                <div className="animate-in fade-in slide-in-from-top-2">
-                                                                    <DayBreakdown userStats={userStats} />
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    )}
-                                                </React.Fragment>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </>
-                    )}
-                        </>
+                        <DailyStatistics
+                            currentUser={currentUser}
+                            userRole={userRole}
+                            users={users}
+                            canExport={canExport}
+                            dateRange={dateRange}
+                        />
                     )}
                 </div>
             )}
@@ -1474,16 +1134,68 @@ export default function Reports({ users, canExport = false, viewRole }) {
             {/* --- CALENDAR HISTORY TAB CONTENT --- */}
             {activeTab === 'calendar-history' && (
                 <div className="space-y-4">
-                    <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line flex flex-wrap gap-4 items-center">
-                        <div>
-                            <label className="block text-caption font-semibold text-ink-muted mb-1">Pasirinkite mėnesį</label>
-                            <input
-                                type="month"
-                                value={historyMonth}
-                                onChange={(e) => setHistoryMonth(e.target.value)}
-                                className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                            />
-                        </div>
+                    {/* Period selector — identical collapsible modal to the work report tab, so
+                        calendar filtering behaves the same everywhere in the app. */}
+                    <div className="bg-surface-card rounded-card shadow-sm border border-line">
+                        <button
+                            type="button"
+                            onClick={() => setHistoryPeriodOpen((o) => !o)}
+                            aria-expanded={historyPeriodOpen}
+                            className="w-full min-h-touch flex items-center justify-between gap-3 px-4 py-3 text-left rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        >
+                            <span className="flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
+                                <Calendar className="w-4 h-4" aria-hidden="true" />
+                                Laikotarpis
+                            </span>
+                            <span className="flex items-center gap-2 min-w-0">
+                                <span className="text-body font-semibold text-ink-strong truncate">{historyPeriodLabel}</span>
+                                {historyPeriodOpen
+                                    ? <ChevronUp className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                                    : <ChevronDown className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />}
+                            </span>
+                        </button>
+
+                        {historyPeriodOpen && (
+                            <div className="border-t border-line p-3 space-y-3 animate-in fade-in slide-in-from-top-2">
+                                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                                    {PERIOD_PRESETS.map((p) => (
+                                        <Button
+                                            key={p.id}
+                                            variant={historyPeriod === p.id ? 'primary' : 'secondary'}
+                                            onClick={() => chooseHistoryPeriod(p.id)}
+                                            className="justify-center"
+                                        >
+                                            {p.label}
+                                        </Button>
+                                    ))}
+                                </div>
+                                <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
+                                    <div className="flex-1">
+                                        <label htmlFor="history-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
+                                        <input
+                                            id="history-from"
+                                            type="date"
+                                            value={historyRange.start}
+                                            max={historyRange.end}
+                                            onChange={(e) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, start: e.target.value })); }}
+                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                        />
+                                    </div>
+                                    <div className="flex-1">
+                                        <label htmlFor="history-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
+                                        <input
+                                            id="history-to"
+                                            type="date"
+                                            value={historyRange.end}
+                                            min={historyRange.start}
+                                            max={getLithuanianDateString()}
+                                            onChange={(e) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, end: e.target.value })); }}
+                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     {loading && (
@@ -1492,7 +1204,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
                     {!loading && calendarHistory.length === 0 && (
                         <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
-                            Pagal pasirinktą mėnesį nėra išsaugota jokių kalendoriaus pakeitimų istorijoje.
+                            Pagal pasirinktą laikotarpį nėra išsaugota jokių kalendoriaus pakeitimų istorijoje.
                         </div>
                     )}
 
@@ -1550,7 +1262,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 <table className="min-w-full divide-y divide-line">
                                     <thead className="bg-surface-sunken">
                                         <tr>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Darbuotojas</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Vykdytojas</th>
                                             <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Data ir laikas (kalendoriuje)</th>
                                             <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Veiksmas / tipas</th>
                                             <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Keitimo laikas</th>
@@ -1646,13 +1358,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         </div>
                         {(isManagerRole(userRole)) && (
                             <div>
-                                <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Darbuotoją</label>
+                                <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Vykdytoją</label>
                                 <select
                                     value={taskFilters.userId}
                                     onChange={(e) => setTaskFilters(prev => ({ ...prev, userId: e.target.value }))}
                                     className="w-full border border-line rounded-control px-3 py-2 text-sm"
                                 >
-                                    <option value="all">Visi Darbuotojai</option>
+                                    <option value="all">Visi Vykdytojai</option>
                                     {users?.map(u => (
                                         <option key={u.id} value={u.id}>{formatDisplayName(u.displayName || u.email)}</option>
                                     ))}

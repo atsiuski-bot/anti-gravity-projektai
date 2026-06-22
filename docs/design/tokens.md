@@ -210,6 +210,9 @@ Each modifier only sets one CSS variable, so they compose:
 > referenced (the plugin was never installed, so they were dead until defined locally).
 > `duration-*` alone sets only `transition-duration`; the bridge classes also set
 > `--wz-enter-duration` so `animate-in … duration-300` actually runs at 300 ms.
+>
+> The `-2` (0.5rem) reveals are the default; the `-4` (1rem) variants are reserved for larger
+> sheet/dialog entrances (e.g. the WorkPlanner reason dialog), per DESIGN_SYSTEM §12.1.
 
 ### Purpose-built effects (`src/index.css`)
 

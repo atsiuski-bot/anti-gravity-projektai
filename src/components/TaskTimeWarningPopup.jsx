@@ -26,7 +26,6 @@ export default function TaskTimeWarningPopup({ task, remaining, onDismiss }) {
             size="md"
             ariaLabelledby="time-warning-title"
             initialFocusRef={okButtonRef}
-            className="motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95"
         >
             {/* Header — darkened so the white title/icon clear WCAG 1.4.3 (was amber-400/orange-400 ~1.8:1). */}
             <div className="flex flex-shrink-0 items-center gap-3 bg-gradient-to-r from-amber-700 to-orange-700 px-6 py-4">

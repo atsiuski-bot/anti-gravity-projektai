@@ -150,7 +150,7 @@ export function useTaskTimeMonitor(tasks) {
                                 taskTitle: task.title || 'Užduotis',
                                 estimatedTime: task.estimatedTime,
                                 actualMinutes: actualTime,
-                                userName: currentUser?.displayName || currentUser?.email || 'Darbuotojas',
+                                userName: currentUser?.displayName || currentUser?.email || 'Vykdytojas',
                                 userId: currentUser?.uid,
                                 isRead: false,
                                 createdAt: new Date().toISOString()

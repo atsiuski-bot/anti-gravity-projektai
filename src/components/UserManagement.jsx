@@ -21,7 +21,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
     manager: { label: 'Vadovas', tone: 'neutral' },
-    worker: { label: 'Darbuotojas', tone: 'running' },
+    worker: { label: 'Vykdytojas', tone: 'running' },
 };
 
 const SELECT_CLASS =
@@ -74,7 +74,7 @@ function RoleSelect({ user, onChange }) {
             aria-label={`${name} rolė`}
             className={SELECT_CLASS}
         >
-            <option value="worker">Darbuotojas</option>
+            <option value="worker">Vykdytojas</option>
             <option value="manager">Vadovas</option>
             <option value="admin">Administratorius</option>
         </select>

@@ -312,8 +312,9 @@ Each replaces a cluster of today's copy-pasted variants (see
 2. **Product register: short and out of the way.** 150–250 ms on virtually everything; the one
    slower beat is the 300 ms whole-screen shell crossfade (§4). No page-load choreography —
    workers are mid-task and won't wait for a show.
-3. **Subtle over showy.** Small distances (≤ 0.5rem slides, 0.95 scales), gentle opacity. A
-   field worker in bright sun should *feel* the response, not be distracted by it.
+3. **Subtle over showy.** Small distances (0.5rem slides for inline reveals, up to 1rem for
+   sheet/dialog entrances; 0.95 scales), gentle opacity. A field worker in bright sun should
+   *feel* the response, not be distracted by it.
 4. **GPU-only.** Animate `transform` and `opacity` (and, one-shot, `box-shadow`). **Never**
    animate layout properties (width, height, top, left, margin) — they cause reflow and jank on
    low-end phones. Use the bare `transition` utility, not `transition-all`.

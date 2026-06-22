@@ -752,7 +752,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 className="w-4 h-4 text-blue-600 rounded"
                                             />
                                             <span className="capitalize">{
-                                                key === 'assignedUserId' ? 'Priskirtas darbuotojas' :
+                                                key === 'assignedUserId' ? 'Priskirtas vykdytojas' :
                                                     key === 'managerId' ? 'Priskirtas vadovas' :
                                                         key === 'estimatedTime' ? 'Planuojamas laikas' :
                                                             key === 'deadline' ? 'Terminas' :
@@ -867,15 +867,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
                             {/* Worker (assignee) — managers choose; a worker sees themselves, locked. */}
                             <div>
-                                <span className="mb-1 block text-body font-medium text-ink">Darbuotojas</span>
+                                <span className="mb-1 block text-body font-medium text-ink">Vykdytojas</span>
                                 <select
                                     value={formData.assignedUserId}
                                     onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
                                     disabled={!isManager}
-                                    aria-label="Darbuotojas"
+                                    aria-label="Vykdytojas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
                                 >
-                                    <option value="">Priskirti darbuotoją...</option>
+                                    <option value="">Priskirti vykdytoją...</option>
                                     {workers.map(worker => (
                                         <option key={worker.id} value={worker.id}>
                                             {formatDisplayName(worker.displayName || worker.email)}

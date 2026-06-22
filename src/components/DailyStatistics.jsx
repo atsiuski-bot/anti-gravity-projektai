@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, orderBy, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import PriorityBadge from './task/PriorityBadge';
@@ -19,11 +19,22 @@ import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false }) {
-    // Managers can see everyone, Workers only themselves
-    const [selectedUserId, setSelectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null }) {
+    // Managers see the whole team here; workers see only themselves. The per-member picker was
+    // removed (individual drill-down moves to the team calendar), so this is fixed at mount and
+    // never changes — no setter.
+    const [selectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
     const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
     const [, setLoading] = useState(false);
+
+    // When a date range is supplied (the period report), the component aggregates the whole span
+    // instead of a single day: the day stepper, the live ticker, the per-day timeline gaps and the
+    // "day start/end" card are dropped, but the summary cards, the sort filters and the finished-
+    // task list all compute over [rangeStart, rangeEnd]. With no range it stays a single-day view,
+    // byte-for-byte identical to before (rangeStart === rangeEnd === selectedDate).
+    const isRange = !!(dateRange && dateRange.start && dateRange.end);
+    const rangeStart = isRange ? dateRange.start : selectedDate;
+    const rangeEnd = isRange ? dateRange.end : selectedDate;
 
     // Data states
     const [, setDailyStats] = useState(null); // From daily_stats collection (legacy/ref for other stats if any)
@@ -78,10 +89,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     };
 
     useEffect(() => {
-        if (!selectedUserId || !selectedDate) return;
+        if (!selectedUserId || !rangeStart || !rangeEnd) return;
 
         setLoading(true);
-        const weekday = getLithuanianWeekday(selectedDate);
+        const weekday = getLithuanianWeekday(rangeStart);
 
         // Clear previous data to avoid stale state
         setDailyStats(null);
@@ -99,9 +110,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // the work-day boundary. Equality on a single field needs only the automatic
         // index (no composite), so we sort by startTime client-side rather than via
         // orderBy on a second field (which would demand a composite index this repo
-        // has no firestore.indexes.json to declare).
+        // has no firestore.indexes.json to declare). A range query (>= start, <= end) on
+        // the same single field stays within that automatic index, so the period view
+        // needs no extra index either — single day is just rangeStart === rangeEnd.
         const breaksQ = query(collection(db, 'break_sessions'),
-            where('date', '==', selectedDate));
+            where('date', '>=', rangeStart),
+            where('date', '<=', rangeEnd));
 
         const unsubBreaks = onSnapshot(breaksQ, (snap) => {
             const breaksData = snap.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -124,9 +138,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         let unsubStats = () => { }; // No-op
 
 
-        // 2. Listen to Work Sessions
+        // 2. Listen to Work Sessions. Range on `date` only (no orderBy — an inequality plus an
+        // orderBy on a different field would force a composite index; startTime ordering is done
+        // client-side wherever it matters, e.g. the timeline below).
         const sessionsBaseQ = collection(db, 'work_sessions');
-        const sessionsQ = query(sessionsBaseQ, where('date', '==', selectedDate), orderBy('startTime', 'asc'));
+        const sessionsQ = query(sessionsBaseQ, where('date', '>=', rangeStart), where('date', '<=', rangeEnd));
 
         const unsubSessions = onSnapshot(sessionsQ, (snap) => {
             const sessionsData = snap.docs
@@ -146,12 +162,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // 3. Listen to Tasks (Active & Archived)
         let activeQ, archivedQ;
 
-        // Limit query to selectedDate + 2 days to capture anything archived shortly after completion
-        // Start from beginning of selected day
-        const startIso = `${selectedDate}T00:00:00`;
+        // Limit query to rangeEnd + 2 days to capture anything archived shortly after completion.
+        // Start from the beginning of the range's first day.
+        const startIso = `${rangeStart}T00:00:00`;
 
-        // End 2 days later at end of day (handles weekend archives or delayed archiving)
-        const rangeEndDate = new Date(selectedDate);
+        // End 2 days after the range's last day (handles weekend archives or delayed archiving)
+        const rangeEndDate = new Date(rangeEnd);
         rangeEndDate.setDate(rangeEndDate.getDate() + 2);
         const endIso = `${rangeEndDate.toISOString().split('T')[0]}T23:59:59`;
 
@@ -182,13 +198,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             const scheduled = allRelevantTasks.filter(t => t.dayOfWeek === weekday);
             setScheduledTasks(scheduled);
 
-            // Filter for finished OR deleted today OR unconfirmed (status === 'completed' and active)
+            // Filter for finished OR deleted in range OR unconfirmed (status === 'completed' and active)
+            const inRange = (dateStr) => !!dateStr && dateStr >= rangeStart && dateStr <= rangeEnd;
             const finishedToday = allRelevantTasks.filter(t => {
                 const compDate = t.completedAt?.split('T')[0];
                 const archDate = t.archivedAt?.split('T')[0];
                 const delDate = t.deletedAt?.split('T')[0];
 
-                const isRelevantDate = compDate === selectedDate || archDate === selectedDate || delDate === selectedDate;
+                const isRelevantDate = inRange(compDate) || inRange(archDate) || inRange(delDate);
 
                 // Include ALL unconfirmed active tasks (status 'completed') AND confirmed tasks that haven't been archived yet.
                 // This ensures they stay visible after confirmation until the nightly archive job runs.
@@ -236,11 +253,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             unsubArchived();
             unsubDeleted();
         };
-    }, [selectedUserId, selectedDate]);
+    }, [selectedUserId, rangeStart, rangeEnd]);
 
-    // Helper to get 3AM cutoff for "today"
+    // 3AM work-day window for the selected span: opens at 03:00 on the first day and closes at
+    // 03:00 the day AFTER the last day. For a single day these collapse to the original
+    // [03:00 today, 03:00 tomorrow) window; for a range they widen to cover the whole span.
     const get3AMCutoff = () => {
-        return getLithuanian3AMCutoff(selectedDate);
+        return getLithuanian3AMCutoff(rangeStart);
+    };
+    const getNextDayCutoff = () => {
+        return getLithuanian3AMCutoff(addDaysToDateString(rangeEnd, 1));
     };
 
     // Sorting state
@@ -251,8 +273,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         const cutoff = get3AMCutoff();
         // End the window at the NEXT calendar day's 03:00 cutoff, not "cutoff + 24h":
         // across a DST switch a fixed +24h drifts the boundary by an hour, dropping or
-        // double-counting work done in that hour.
-        const nextDayCutoff = getLithuanian3AMCutoff(addDaysToDateString(selectedDate, 1));
+        // double-counting work done in that hour. (Range-aware: closes after rangeEnd.)
+        const nextDayCutoff = getNextDayCutoff();
 
         const todayTasksList = [];
         const earlierTasksList = [];
@@ -328,8 +350,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             earlierTasks: sortTasks(earlierTasksList),
             archivedTasks: sortTasks(archivedTasksList)
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff only reads selectedDate, already listed
-    }, [finishedTasks, selectedDate, sortBy]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
+    }, [finishedTasks, rangeStart, rangeEnd, sortBy]);
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
 
@@ -340,8 +362,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // Active Sessions Integration
     const activeTaskSessionsForToday = useMemo(() => {
         const active = [];
-        if (selectedDate !== getLithuanianDateString()) return active;
-        
+        // A period report is about recorded work, not what is ticking right now — skip live
+        // sessions in range mode. In day mode, only the current day shows live progress.
+        if (isRange || selectedDate !== getLithuanianDateString()) return active;
+
         users.forEach(u => {
             if (u.activeSession && u.activeSession.type === 'task') {
                 const start = new Date(u.activeSession.startTime);
@@ -367,12 +391,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return active.filter(s => s.userId === selectedUserId);
         }
         return active;
-    }, [users, selectedDate, selectedUserId, currentTime]);
+    }, [users, isRange, selectedDate, selectedUserId, currentTime]);
 
     const activeBreaksForToday = useMemo(() => {
         const active = [];
-        if (selectedDate !== getLithuanianDateString()) return active;
-        
+        if (isRange || selectedDate !== getLithuanianDateString()) return active;
+
+
         users.forEach(u => {
             if (u.activeSession && u.activeSession.type === 'break') {
                 const start = new Date(u.activeSession.startTime);
@@ -396,7 +421,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return active.filter(s => s.userId === selectedUserId);
         }
         return active;
-    }, [users, selectedDate, selectedUserId, currentTime]);
+    }, [users, isRange, selectedDate, selectedUserId, currentTime]);
 
     const allValidSessions = useMemo(() => [...validSessions, ...activeTaskSessionsForToday], [validSessions, activeTaskSessionsForToday]);
     const allBreakSessions = useMemo(() => [...breakSessions, ...activeBreaksForToday], [breakSessions, activeBreaksForToday]);
@@ -410,7 +435,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const manualTasks = useMemo(() => {
         const cutoff = get3AMCutoff();
         // Calendar-day next cutoff (DST-safe), not "cutoff + 24h" — see splitTasks above.
-        const nextDayCutoff = getLithuanian3AMCutoff(addDaysToDateString(selectedDate, 1));
+        const nextDayCutoff = getNextDayCutoff();
 
         // Build a set of taskIds that already have explicit work_sessions.
         // Exclude manual-adjustment sessions: an adjustment is a correction layered on top
@@ -446,8 +471,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             const finishedDate = new Date(dateStr);
             return finishedDate >= cutoff && finishedDate < nextDayCutoff;
         });
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff only reads selectedDate, already listed
-    }, [finishedTasks, sessions, selectedDate]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
+    }, [finishedTasks, sessions, rangeStart, rangeEnd]);
 
     const totalManualMinutes = manualTasks.reduce((acc, t) => acc + (t.manualMinutes || 0), 0);
 
@@ -526,8 +551,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // Sort by start time
         const sortedItems = items.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-        // Inject inactive gaps for individual mode (matches Reports.jsx logic)
-        if (selectedUserId !== 'all' && sortedItems.length > 0) {
+        // Inject inactive gaps for individual mode (matches Reports.jsx logic). Skipped in range
+        // mode — an overnight gap between one day's last session and the next day's first would
+        // render as a giant, meaningless "Neaktyvus" block spanning the hours nobody works.
+        if (!isRange && selectedUserId !== 'all' && sortedItems.length > 0) {
              const withGaps = [];
              for (let i = 0; i < sortedItems.length; i++) {
                  const current = sortedItems[i];
@@ -557,7 +584,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
         return sortedItems;
         // eslint-disable-next-line react-hooks/exhaustive-deps -- finishedTasks changes already propagate via manualTasks; preserving current timing
-    }, [allValidSessions, manualTasks, allBreakSessions, selectedUserId]);
+    }, [allValidSessions, manualTasks, allBreakSessions, selectedUserId, isRange]);
 
 
     // Find earliest start and latest end from COMBINED items
@@ -792,7 +819,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     taskTitle: `🕒 Laiko korekcija: ${task.title || 'Užduotis'}`,
                     reason: trimmedReason,
                     userId: task.assignedUserId || task.creatorId || 'unknown',
-                    userName: task.assignedUserName || task.creatorName || 'Nežinomas darbuotojas',
+                    userName: task.assignedUserName || task.creatorName || 'Nežinomas vykdytojas',
                     adjustedBy: currentUser?.uid || 'unknown',
                     startTime: completedDateDate.toISOString(),
                     endTime: new Date().toISOString(),
@@ -838,7 +865,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const weekday = getLithuanianWeekday(selectedDate);
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {actionError && (
                 <div
                     role="alert"
@@ -858,46 +885,71 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 stacking on mobile) so the date stepper + filters take minimal vertical space. */}
             <div className="bg-surface-card p-2 rounded-card shadow-sm border border-line flex flex-row flex-wrap gap-2 items-center justify-between">
 
-                <div className="flex items-center gap-1 bg-surface-sunken p-1 rounded-control border border-line">
-                    <IconButton
-                        icon={ChevronLeft}
-                        label="Ankstesnė diena"
-                        onClick={() => handleDateChange(-1)}
-                    />
-                    <div className="flex items-center gap-1.5 px-1.5 justify-center font-medium text-caption text-ink-strong whitespace-nowrap">
-                        <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" />
-                        {selectedDate}
-                    </div>
-                    <IconButton
-                        icon={ChevronRight}
-                        label="Kita diena"
-                        onClick={() => handleDateChange(1)}
-                    />
-                </div>
+                {/* Left group — date control plus, on desktop, the day's totals inline, so on
+                    md+ the whole summary collapses into this single toolbar row. */}
+                <div className="flex flex-wrap items-center gap-2 md:gap-4">
 
-                {(isManagerRole(userRole)) && users.length > 0 && (
-                    <div className="relative">
-                        <select
-                            value={selectedUserId}
-                            onChange={(e) => setSelectedUserId(e.target.value)}
-                            aria-label="Darbuotojas"
-                            className="pl-8 pr-3 py-1.5 border border-line rounded-control focus:ring-2 focus:ring-brand text-caption bg-surface-card"
-                        >
-                            <option value="all">Už visą komandą</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>
-                                    {formatDisplayName(u.displayName || u.email)}
-                                </option>
-                            ))}
-                        </select>
-                        <User className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" />
+                {/* Day mode: a day stepper. Range mode: a static span label — the period is
+                    chosen by the picker in the parent (Reports), so there is nothing to step. */}
+                {isRange ? (
+                    <div className="flex items-center gap-1.5 bg-surface-sunken px-3 py-2 rounded-control border border-line font-medium text-caption text-ink-strong whitespace-nowrap">
+                        <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" aria-hidden="true" />
+                        {rangeStart} – {rangeEnd}
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-1 bg-surface-sunken p-1 rounded-control border border-line">
+                        <IconButton
+                            icon={ChevronLeft}
+                            label="Ankstesnė diena"
+                            onClick={() => handleDateChange(-1)}
+                        />
+                        <div className="flex items-center gap-1.5 px-1.5 justify-center font-medium text-caption text-ink-strong whitespace-nowrap">
+                            <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" />
+                            {selectedDate}
+                        </div>
+                        <IconButton
+                            icon={ChevronRight}
+                            label="Kita diena"
+                            onClick={() => handleDateChange(1)}
+                        />
                     </div>
                 )}
 
-                {/* Sort filter — a vertical two-option segmented control (Pagal laiką above
-                    Pagal būseną) rather than a dropdown, so both choices are visible at once. */}
+                {/* Desktop only: the day's totals inline in the toolbar row (mobile keeps the
+                    dedicated summary card below). Merges the former four-card grid into one line. */}
+                <div className="hidden md:flex items-center gap-4 flex-wrap">
+                    {selectedUserId !== 'all' && !isRange && (
+                        <span className="flex items-center gap-1.5 whitespace-nowrap">
+                            <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                            <span className="text-caption text-ink-muted">Pradžia/Pabaiga</span>
+                            <span className="text-body font-bold text-ink-strong tabular-nums">
+                                {firstActivity ? formatTime(firstActivity) : '--:--'}–{lastActivity ? formatTime(lastActivity) : '--:--'}
+                            </span>
+                        </span>
+                    )}
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-ink-muted">Darbas</span>
+                        <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Coffee className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-ink-muted">Pertraukos</span>
+                        <span className="text-body font-bold text-amber-600 tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Zap className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-brand">Viso</span>
+                        <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
+                    </span>
+                </div>
+                </div>
+
+                {/* Sort filter — a horizontal two-option segmented control (Pagal laiką |
+                    Pagal būseną) so both choices stay on one row and the toolbar keeps to a
+                    single line. */}
                 <div
-                    className="flex flex-col bg-surface-sunken rounded-control overflow-hidden border border-line"
+                    className="flex bg-surface-sunken rounded-control overflow-hidden border border-line"
                     role="group"
                     aria-label="Rūšiuoti"
                 >
@@ -906,7 +958,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         onClick={() => setSortBy('time')}
                         aria-pressed={sortBy === 'time'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -914,13 +966,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         Pagal laiką
                     </button>
-                    <div className="h-px bg-line" aria-hidden="true" />
+                    <div className="w-px bg-line" aria-hidden="true" />
                     <button
                         type="button"
                         onClick={() => setSortBy('status')}
                         aria-pressed={sortBy === 'status'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -937,7 +989,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 the whole day summary fits in the top half of the first screen (§9 dual density:
                 a tuned, denser mobile layout instead of one card per row). */}
             <div className="md:hidden bg-surface-card rounded-card shadow-sm border border-line p-3">
-                {selectedUserId !== 'all' && (
+                {selectedUserId !== 'all' && !isRange && (
                     <div className="flex items-center justify-between gap-2 border-b border-line pb-2.5 mb-2.5">
                         <span className="flex items-center gap-1.5 text-caption text-ink-muted">
                             <Clock className="w-3.5 h-3.5" aria-hidden="true" />
@@ -979,73 +1031,15 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             </div>
 
-            {/* Desktop: the spacious four-card grid (unchanged). */}
-            <div className="hidden md:grid grid-cols-4 gap-4">
-                {selectedUserId !== 'all' && (
-                    <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                        <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                            <Clock className="w-4 h-4" />
-                            Dienos Pradžia/Pabaiga
-                        </div>
-                        <div className="text-body-lg font-semibold text-ink-strong">
-                            {firstActivity ? formatTime(firstActivity) : '--:--'} - {lastActivity ? formatTime(lastActivity) : '--:--'}
-                        </div>
-                        <div className="text-caption text-ink-muted mt-1">
-                            Pagal pirmą/paskutinį įrašą
-                        </div>
-                    </div>
-                )}
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                        <Clock className="w-4 h-4" />
-                        Darbo laikas
-                    </div>
-                    <div className="text-h2 font-bold text-ink-strong">
-                        {formatMinutesToTimeString(totalWorkedMinutes)}
-                    </div>
-                </div>
-
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                        <Coffee className="w-4 h-4" />
-                        Pertraukos
-                    </div>
-                    <div className="text-h2 font-bold text-amber-600">
-                        {formatMinutesToTimeString(totalBreakMinutes)}
-                    </div>
-                    <div className="text-caption text-ink-muted mt-1">
-                        Viso pertraukų laikas
-                    </div>
-                </div>
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-brand text-body font-medium">
-                        <Zap className="w-4 h-4" />
-                        Viso (D+P)
-                    </div>
-                    <div className="text-h2 font-bold text-brand">
-                        {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
-                    </div>
-                    <div className="text-caption text-ink-muted mt-1">
-                        Darbas + Pertraukos
-                    </div>
-                </div>
-
-
-
-            </div>
-
             {/* Timeline Table or Worker Summary */}
             <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
                 <div className="px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
-                    <h3 className="font-semibold">{selectedUserId === 'all' ? 'Darbo valandos' : 'Darbų eiga (Timeline)'}</h3>
+                    <h3 className="font-semibold">{selectedUserId === 'all' ? 'Darbo valandos' : (isRange ? 'Darbų eiga' : 'Darbų eiga (Timeline)')}</h3>
                 </div>
 
                 {combinedTimelineItems.length === 0 ? (
                     <div className="p-12 text-center text-ink-muted">
-                        <p>Šią dieną darbo sesijų nefiksuota.</p>
+                        <p>{isRange ? 'Šiuo laikotarpiu darbo sesijų nefiksuota.' : 'Šią dieną darbo sesijų nefiksuota.'}</p>
                     </div>
                 ) : selectedUserId === 'all' ? (
                     <>
@@ -1110,7 +1104,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <table className="w-full divide-y divide-line text-sm">
                             <thead className="bg-surface-sunken">
                                 <tr>
-                                    <th scope="col" className="px-4 py-3 text-left font-medium text-ink-muted">Darbuotojas</th>
+                                    <th scope="col" className="px-4 py-3 text-left font-medium text-ink-muted">Vykdytojas</th>
                                     <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pradžia</th>
                                     <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pabaiga</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Pertraukos</th>
@@ -1277,7 +1271,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {todayTasks.length > 0 && (
                 <TaskListTable
                     tasks={todayTasks}
-                    title={`Užduotys atliktos ${selectedDate} ${weekday}`}
+                    title={isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}`}
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
@@ -1318,7 +1312,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
             {todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0 && (
                 <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
-                    Nėra atliktų užduočių šiai dienai.
+                    {isRange ? 'Nėra atliktų užduočių šiam laikotarpiui.' : 'Nėra atliktų užduočių šiai dienai.'}
                 </div>
             )}
 

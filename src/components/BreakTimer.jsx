@@ -110,7 +110,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                             ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isTakingBreak
                                 ? 'bg-session-break-accent text-white ring-2 ring-amber-100'
-                                : 'text-ink hover:bg-surface-sunken'
+                                : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
                     title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                 >

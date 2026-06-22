@@ -284,7 +284,7 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
         const headers = [
             "Pavadinimas",
             "Aprašymas",
-            "Darbuotojas",
+            "Vykdytojas",
             "Vadovas",
             "Sukūrė",
             "Būsena",
@@ -725,11 +725,11 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                 {/* User Filter (Manager Only) */}
                 {(isManagerOrAdmin && userId === 'all') && (
                     <div className="flex flex-col gap-1 min-w-[150px]">
-                        <label className={FILTER_LABEL_CLASS}>Darbuotojas</label>
+                        <label className={FILTER_LABEL_CLASS}>Vykdytojas</label>
                         <select
                             value={filterUser}
                             onChange={(e) => setFilterUser(e.target.value)}
-                            aria-label="Darbuotojas"
+                            aria-label="Vykdytojas"
                             className={SELECT_CLASS}
                         >
                             <option value="all">Visi</option>
