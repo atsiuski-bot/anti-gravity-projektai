@@ -3,11 +3,13 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { WifiOff } from 'lucide-react';
 import BottomNavigation from './BottomNavigation';
+import SideRail from './SideRail';
 import InstallPrompt from './InstallPrompt';
 import Avatar from './ui/Avatar';
 import { runDailyAutomation } from '../utils/automationUtils';
 import { isManagerRole } from '../utils/formatters';
 import { useSessionNotification } from '../hooks/useSessionNotification';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
 import { cn } from '../utils/cn';
 import QuickWorkDescribePrompt from './QuickWorkDescribePrompt';
@@ -26,6 +28,11 @@ export default function Layout({ children }) {
     }, [userRole]);
 
     const [isOnline, setIsOnline] = useState(navigator.onLine);
+
+    // Desktop (lg+) swaps the bottom bar + floating work pill for a single left rail. Gated by
+    // a JS media query rather than CSS so only ONE nav mounts at a time — the session timers
+    // can't be duplicated in the DOM (see useMediaQuery).
+    const isDesktop = useMediaQuery('(min-width: 1024px)');
 
     useEffect(() => {
         const handleOnline = () => setIsOnline(true);
@@ -78,7 +85,7 @@ export default function Layout({ children }) {
     });
 
     return (
-        <div className={cn('min-h-screen transition-colors duration-slow pb-navclear sm:pb-navclear-lg', bgColor)}>
+        <div className={cn('min-h-screen transition-colors duration-slow', bgColor, !isDesktop && 'pb-navclear sm:pb-navclear-lg')}>
             {/* Offline banner — neutral slate, NOT red, so it never collides with the
                 quick-work shell (DESIGN_SYSTEM §4-C). Paired with a wifi-off icon. */}
             {!isOnline && (
@@ -88,54 +95,66 @@ export default function Layout({ children }) {
                 </div>
             )}
 
-            {/* Top bar — a single entry point to the profile. Role, name, install and logout
-                all moved INTO the profile page; the header is just the avatar (per product
-                decision 2026-06-22). */}
-            <nav className="bg-surface-card shadow-sm border-b border-line">
-                <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
-                    <div className="flex h-14 sm:h-16 items-center justify-end">
-                        <button
-                            type="button"
-                            onClick={() => setActiveTab('profile')}
-                            aria-label="Atidaryti profilį"
-                            className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+            {/* Desktop (lg+): one left rail replaces the bottom bar + floating work pill
+                (DESIGN_SYSTEM §9). Mounted exclusively opposite BottomNavigation so the session
+                timers are never duplicated in the DOM (see useMediaQuery). */}
+            <div className={cn(isDesktop && 'flex items-start')}>
+                {isDesktop && <SideRail />}
+
+                <div className={cn('min-w-0', isDesktop && 'flex-1')}>
+                    {/* Top bar — a single avatar that opens the profile page (role, name, install
+                        and logout all live there, per the 2026-06-22 decision). Off-desktop only;
+                        on lg+ the rail's account foot owns this entry point. */}
+                    {!isDesktop && (
+                        <nav className="bg-surface-card shadow-sm border-b border-line">
+                            <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
+                                <div className="flex h-14 sm:h-16 items-center justify-end">
+                                    <button
+                                        type="button"
+                                        onClick={() => setActiveTab('profile')}
+                                        aria-label="Atidaryti profilį"
+                                        className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                    >
+                                        <Avatar
+                                            src={userData?.photoURL || currentUser?.photoURL}
+                                            name={currentUser?.displayName}
+                                            email={currentUser?.email}
+                                            size="sm"
+                                        />
+                                    </button>
+                                </div>
+                            </div>
+                        </nav>
+                    )}
+
+                    {/* PWA install — a slim, dismissible banner shown only when the browser offers
+                        an install (or on iOS, manual steps). On desktop it heads the workspace. */}
+                    <InstallPrompt />
+
+                    {/* Persistent session-state label: color is never the sole signal (DESIGN_SYSTEM
+                        §4-A, WCAG 1.4.1). Always visible while a session is active. */}
+                    {session && (
+                        <div
+                            role="status"
+                            className="flex items-center justify-center gap-2 border-b border-line bg-surface-card px-4 py-1.5 text-caption font-semibold text-ink-strong"
                         >
-                            <Avatar
-                                src={userData?.photoURL || currentUser?.photoURL}
-                                name={currentUser?.displayName}
-                                email={currentUser?.email}
-                                size="sm"
-                            />
-                        </button>
-                    </div>
-                </div>
-            </nav>
+                            <session.Icon className={cn('h-4 w-4', session.accent)} aria-hidden="true" />
+                            <span>{session.label}</span>
+                        </div>
+                    )}
 
-            {/* PWA install — a slim, dismissible banner shown only when the browser offers an
-                install (or on iOS, manual steps). Replaces the old header button. */}
-            <InstallPrompt />
-
-            {/* Persistent session-state label: color is never the sole signal (DESIGN_SYSTEM §4-A,
-                WCAG 1.4.1). Always visible while a session is active, regardless of the shell color. */}
-            {session && (
-                <div
-                    role="status"
-                    className="flex items-center justify-center gap-2 border-b border-line bg-surface-card px-4 py-1.5 text-caption font-semibold text-ink-strong"
-                >
-                    <session.Icon className={cn('h-4 w-4', session.accent)} aria-hidden="true" />
-                    <span>{session.label}</span>
+                    <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 relative">
+                        <div className="relative z-10">
+                            {/* Retroactive description for quick-work sessions ended on another
+                                device — a calm prompt that never collides with the shell above. */}
+                            <QuickWorkDescribePrompt />
+                            {children}
+                        </div>
+                    </main>
                 </div>
-            )}
+            </div>
 
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 relative">
-                <div className="relative z-10">
-                    {/* Retroactive description for quick-work sessions ended on another device —
-                        a calm prompt that never collides with the active-session shell above. */}
-                    <QuickWorkDescribePrompt />
-                    {children}
-                </div>
-            </main>
-            <BottomNavigation />
+            {!isDesktop && <BottomNavigation />}
         </div>
     );
 }
