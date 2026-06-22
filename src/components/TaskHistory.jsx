@@ -868,7 +868,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             {/* Meta chips: worker + deadline + archive date */}
                             <div className="flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <AssigneeChip name={task.assignedUserName} firstNameOnly showIcon={false} />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} firstNameOnly showIcon={false} />
                                 )}
                                 {task.deadline && (
                                     <span className="inline-flex items-center gap-1 text-caption text-ink-muted">
@@ -1021,7 +1021,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         {task.assignedUserName && (
-                                            <AssigneeChip name={task.assignedUserName} firstNameOnly showIcon={false} />
+                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} firstNameOnly showIcon={false} />
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium text-ink-strong align-top font-mono">
