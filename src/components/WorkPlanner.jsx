@@ -39,6 +39,53 @@ const localizer = dateFnsLocalizer({
     locales,
 });
 
+// Compact, dismissible planner help. The four usage tips live behind an info icon (placed left
+// of the primary "Pridėti" action) instead of a permanent box that ate vertical space on a
+// phone. Controlled (open state lives in the parent) so a toolbar remount never loses it.
+function InstructionsPopover({ open, onToggle, onClose }) {
+    // Escape closes; outside clicks are caught by the transparent backdrop below.
+    useEffect(() => {
+        if (!open) return undefined;
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, [open, onClose]);
+
+    return (
+        <div className="relative">
+            <IconButton
+                icon={Info}
+                label="Instrukcija"
+                onClick={onToggle}
+                aria-expanded={open}
+                aria-controls="workplanner-instructions"
+                className="relative z-50 border border-line bg-surface-card shadow-sm"
+            />
+            {open && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
+                    <div
+                        id="workplanner-instructions"
+                        role="region"
+                        aria-label="Instrukcija"
+                        className="absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-card border border-line bg-surface-card p-3 text-left shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95"
+                    >
+                        <p className="mb-2 flex items-center gap-1.5 text-body font-bold text-brand">
+                            <Info className="h-4 w-4" aria-hidden="true" /> Instrukcija:
+                        </p>
+                        <ul className="list-inside list-disc space-y-1 text-caption text-ink">
+                            <li>Tempkite kalendoriuje laikui žymėti</li>
+                            <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
+                            <li>Bakstelėkite įrašą trynimui</li>
+                            <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
+                        </ul>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+}
+
 const CustomToolbar = (toolbar) => {
     const goToToday = () => { toolbar.onNavigate('TODAY'); };
     const toggleView = (view) => { toolbar.onView(view); };
@@ -84,17 +131,24 @@ const CustomToolbar = (toolbar) => {
                     </button>
                 </div>
 
-                {/* Primary create action — short label on phones, full label once there's room. */}
-                <Button
-                    variant="primary"
-                    size="md"
-                    icon={Plus}
-                    onClick={toolbar.onManualClick}
-                    className="shrink-0"
-                >
-                    <span className="sm:hidden">Pridėti</span>
-                    <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
-                </Button>
+                {/* Right cluster: usage-help info icon + the single dominant create action. */}
+                <div className="flex items-center gap-2 shrink-0">
+                    <InstructionsPopover
+                        open={toolbar.helpOpen}
+                        onToggle={toolbar.onToggleHelp}
+                        onClose={toolbar.onCloseHelp}
+                    />
+                    {/* Primary create action — short label on phones, full label once there's room. */}
+                    <Button
+                        variant="primary"
+                        size="md"
+                        icon={Plus}
+                        onClick={toolbar.onManualClick}
+                    >
+                        <span className="sm:hidden">Pridėti</span>
+                        <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
+                    </Button>
+                </div>
             </div>
 
             {/* Row 2 — one navigation cluster: jump-to-today + the period readout with step
@@ -150,6 +204,9 @@ export default function WorkPlanner() {
     const { currentUser, userData, userRole } = useAuth();
     const [events, setEvents] = useState([]);
     const [showManualInput, setShowManualInput] = useState(false);
+    // Planner usage-help popover (the four tips behind the toolbar info icon). Held here, not in
+    // the toolbar, so a react-big-calendar toolbar remount doesn't dismiss it.
+    const [showHelp, setShowHelp] = useState(false);
     const [manualDate, setManualDate] = useState('');
     const [manualStart, setManualStart] = useState('');
     const [manualEnd, setManualEnd] = useState('');
@@ -724,6 +781,9 @@ export default function WorkPlanner() {
                 onManualClick={() => setShowManualInput(!showManualInput)}
                 onCopyLastWeek={handleCopyLastWeek}
                 copyDisabled={approvalActive}
+                helpOpen={showHelp}
+                onToggleHelp={() => setShowHelp((v) => !v)}
+                onCloseHelp={() => setShowHelp(false)}
             />
         )
     };
@@ -990,17 +1050,6 @@ export default function WorkPlanner() {
                 )
             }
 
-            <div className="mt-8 p-3 bg-brand-soft rounded-card border border-line">
-                <p className="text-body font-bold text-brand mb-2 flex items-center gap-1.5">
-                    <Info className="w-4 h-4" aria-hidden="true" /> Instrukcija:
-                </p>
-                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-caption text-ink list-disc list-inside">
-                    <li>Tempkite kalendoriuje laikui žymėti</li>
-                    <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
-                    <li>Bakstelėkite įrašą trynimui</li>
-                    <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
-                </ul>
-            </div>
 
             {/* Approval Logic Confirmation Modal */}
             {showApprovalFeedback && (
