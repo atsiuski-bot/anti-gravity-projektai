@@ -316,6 +316,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
             plannedSnap.docs.forEach(d => {
                 const wh = d.data();
                 if (!wh.start || !wh.end) return;
+                // Approved leave is time OFF, not planned work: counting an "Atostogos" slot
+                // toward plannedMinutes makes a holiday week read as a planned shortfall against
+                // a denominator the worker was never expected to fill. Exclude it from the plan.
+                if (wh.isVacation) return;
                 const uid = wh.userId;
                 if (!uid) return;
                 if (!isManager && uid !== currentUser.uid) return;

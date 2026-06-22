@@ -22,6 +22,7 @@ import StatusPill from './ui/StatusPill';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
 import TaskModal from './TaskModal';
+import UserChip from './UserChip';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full', showTestUsers = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
@@ -1204,7 +1205,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     className="p-4 cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                                 >
                                     <p className="flex items-center gap-1.5 text-body font-semibold text-ink-strong">
-                                        {summary.name}
+                                        <UserChip userId={userId} name={summary.name} linkToProfile={false} />
                                         <ChevronRight className="w-4 h-4 text-ink-muted" aria-hidden="true" />
                                     </p>
                                     <p className="mt-0.5 font-mono text-caption text-ink-muted">
@@ -1274,7 +1275,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     >
                                         <td className="px-4 py-3 text-ink-strong font-medium">
                                             <span className="inline-flex items-center gap-1.5">
-                                                {summary.name}
+                                                <UserChip userId={userId} name={summary.name} linkToProfile={false} />
                                                 <ChevronRight className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
                                             </span>
                                         </td>
@@ -1783,14 +1784,14 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
             {(task.managerName || task.creatorName) && (
                 <div className="text-caption text-ink-muted mb-2 flex items-center gap-1">
                     <User className="w-3 h-3" />
-                    <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                    <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                 </div>
             )}
 
             <div className="flex flex-wrap items-center gap-2 mb-2 text-caption text-ink-muted">
                 <div className="bg-surface-sunken px-1.5 py-0.5 rounded flex items-center gap-1">
                     <User className="w-3 h-3" />
-                    <span className="font-medium">{formatDisplayName(userName)}</span>
+                    <UserChip userId={task.assignedUserId} name={userName} className="font-medium" />
                 </div>
                 <div className="bg-surface-sunken px-1.5 py-0.5 rounded font-mono">
                     {editingTime ? (
@@ -2069,7 +2070,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                     {(task.managerName || task.creatorName) && (
                                                         <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                             <User className="w-2.5 h-2.5" />
-                                                            <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                                            <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                                         </div>
                                                     )}
                                                 </>

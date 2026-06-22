@@ -7,8 +7,6 @@ import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
 import DailyWorkProgress from '../components/DailyWorkProgress';
-import ManagerNotifications from '../components/ManagerNotifications';
-import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Spinner } from '../components/ui/Loading';
 import { useAuth } from '../context/AuthContext';
@@ -96,8 +94,10 @@ export default function ManagerView() {
         window.addEventListener('resize', handleResize);
         handleResize(); // Initial check
 
-        const handleOpenModalEvent = () => {
-            setEditingTask(null);
+        const handleOpenModalEvent = (e) => {
+            // A bare event opens a blank create modal; a `detail.task` (e.g. from the notification
+            // bell's "edit & approve" / "open reverted task") opens that task for editing.
+            setEditingTask(e?.detail?.task || null);
             setIsModalOpen(true);
         };
         window.addEventListener('open-task-modal', handleOpenModalEvent);
@@ -128,9 +128,6 @@ export default function ManagerView() {
                     <p className="text-body text-feedback-danger">{error}</p>
                 </div>
             )}
-
-            <ManagerNotifications onEditAndApprove={handleEditTask} />
-            <CalendarRequestStatusBanner />
 
             {/* Tab Content — Komandos darbai splits into two sub-tabs:
                  1. Aktyvūs darbai   — live team activity (ActiveWorkSessions).
