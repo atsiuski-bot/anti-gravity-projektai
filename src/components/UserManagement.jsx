@@ -305,7 +305,7 @@ export default function UserManagement() {
 
     // Color Picker State
     const [editingColorUser, setEditingColorUser] = useState(null);
-    const [tempColor, setTempColor] = useState({ r: 59, g: 130, b: 246 }); // Default blue
+    const [tempColor, setTempColor] = useState({ r: 79, g: 70, b: 229 }); // Default brand indigo (#4F46E5)
 
     // Block/unblock confirmation (replaces window.confirm — §8)
     const [blockTarget, setBlockTarget] = useState(null);
@@ -388,7 +388,7 @@ export default function UserManagement() {
             r: parseInt(result[1], 16),
             g: parseInt(result[2], 16),
             b: parseInt(result[3], 16)
-        } : { r: 59, g: 130, b: 246 };
+        } : { r: 79, g: 70, b: 229 };
     };
 
     // Helper: RGB to Hex

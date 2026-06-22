@@ -217,8 +217,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 className={clsx(
                     "rounded-card border-2 shadow-sm p-3 mb-2 transition-shadow duration-base",
                     isRunning ? "bg-session-task-surface border-session-task-shell"
-                        : task.inspectionStatus === 'inspecting' ? "bg-blue-100 border-blue-300"
-                        : isLimitExceeded ? "bg-red-50 border-red-300"
+                        : task.inspectionStatus === 'inspecting' ? "bg-feedback-info-soft border-feedback-info-border"
+                        : isLimitExceeded ? "bg-feedback-danger-soft border-feedback-danger-border"
                         : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
                     task.completed && "opacity-75",
                     justCompleted && "wz-flash-success"

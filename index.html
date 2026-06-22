@@ -7,6 +7,22 @@
   <link rel="apple-touch-icon" href="/pwa-192x192.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#ffffff" />
+  <!-- Theme boot (ADR 0006): set <html data-theme> from the saved choice BEFORE first paint so
+       the dark canvas never flashes light on load. Reads only localStorage + the OS preference
+       (Firestore isn't available pre-React; ThemeSync reconciles cross-device a tick later).
+       The CSS-variable palette in index.css keys off this attribute. -->
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem('theme');
+        var sysDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        var resolved = (stored === 'light' || stored === 'dark') ? stored : (sysDark ? 'dark' : 'light');
+        document.documentElement.dataset.theme = resolved;
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = resolved === 'dark' ? '#0E1117' : '#ffffff';
+      } catch (e) { /* storage blocked — default light applies */ }
+    })();
+  </script>
   <!-- Standalone home-screen launch hints. The modern `mobile-web-app-capable` plus the
        still-required Apple-prefixed pair so iOS/iPadOS Safari open the installed app chromeless. -->
   <meta name="mobile-web-app-capable" content="yes" />

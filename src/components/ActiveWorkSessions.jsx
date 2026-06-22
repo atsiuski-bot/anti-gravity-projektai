@@ -212,7 +212,7 @@ const ActiveSessionRow = React.memo(({ session }) => {
     }, [session.startTime, session.task]);
 
     return (
-        <div className={`p-3 rounded-card flex items-center justify-between shadow-sm transition-all ${session.colorClass} ${isStale ? 'opacity-70 ring-1 ring-amber-300' : ''}`}>
+        <div className={`p-3 rounded-card flex items-center justify-between shadow-sm transition-all ${session.colorClass} ${isStale ? 'opacity-70 ring-1 ring-feedback-warning' : ''}`}>
             <div className="flex-shrink-0">
                 <SessionTypeIcon type={session.type} className="w-5 h-5" />
             </div>
@@ -224,7 +224,7 @@ const ActiveSessionRow = React.memo(({ session }) => {
                         className="min-w-0 font-semibold text-sm"
                     />
                     {isStale && (
-                        <span className="inline-flex items-center whitespace-nowrap rounded-full border border-amber-200 bg-amber-100 px-1.5 py-0.5 text-caption font-semibold text-amber-800">
+                        <span className="inline-flex items-center whitespace-nowrap rounded-full border border-feedback-warning-border bg-feedback-warning-soft px-1.5 py-0.5 text-caption font-semibold text-feedback-warning-text">
                             galimai pasenusi
                         </span>
                     )}

@@ -835,7 +835,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                         onChange={() => handleToggleConfirm(task)}
                                         disabled={task.isArchived}
                                         aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
-                                        className="w-5 h-5 rounded border-line text-green-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                        className="w-5 h-5 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                     />
                                     <span className="text-caption text-ink">{isConfirmed ? 'Patvirtinta' : 'Nepatvirtinta'}</span>
                                 </label>
@@ -902,7 +902,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             <TaskRow
                                 key={task.id}
                                 task={task}
-                                rowClassName={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-blue-50'}`}
+                                rowClassName={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-feedback-info-soft'}`}
                                 showConfirm
                                 confirmChecked={isConfirmed}
                                 confirmDisabled={task.isArchived}
@@ -932,7 +932,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 }
                                 timeCell={
                                     <>
-                                        <span className="text-blue-600">{task.estimatedTime || '-'}</span>
+                                        <span className="text-brand">{task.estimatedTime || '-'}</span>
                                         <span className="text-ink-muted mx-1">/</span>
                                         <span className="text-ink-strong">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
                                     </>
@@ -943,7 +943,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                             label="Grąžinti užduotį"
                                             variant="primary"
                                             onClick={() => handleRevert(task)}
-                                            className="ml-auto bg-transparent text-blue-600 hover:bg-blue-50"
+                                            className="ml-auto bg-transparent text-brand hover:bg-brand-soft"
                                         >
                                             <RotateCcw className="w-4 h-4" aria-hidden="true" />
                                         </IconButton>
@@ -976,9 +976,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
         const actionTimeLabel = new Date(item.createdAt).toLocaleString('lt-LT');
 
         const getActionColor = (action) => {
-            if (action === 'add') return 'text-green-600 bg-green-50 border-green-200';
-            if (action === 'delete') return 'text-red-600 bg-red-50 border-red-200';
-            return 'text-blue-600 bg-blue-50 border-blue-200';
+            if (action === 'add') return 'text-feedback-success bg-feedback-success-soft border-feedback-success-border';
+            if (action === 'delete') return 'text-feedback-danger bg-feedback-danger-soft border-feedback-danger-border';
+            return 'text-feedback-info bg-feedback-info-soft border-feedback-info-border';
         };
         const getActionText = (action) => {
             if (action === 'add') return 'Pridėjo';
@@ -993,21 +993,21 @@ export default function Reports({ users, canExport = false, viewRole }) {
         if (evt.isVacation) {
             TypeIcon = null;
             typeLabel = "Atostogos";
-            typeColor = "text-amber-500";
+            typeColor = "text-feedback-warning";
         } else if (evt.isWorkFromHome) {
             TypeIcon = null;
             typeLabel = "Nuotolinis darbas";
-            typeColor = "text-blue-500";
+            typeColor = "text-feedback-info";
         }
 
         let statusLabel = "Laukiama";
-        let statusColor = "bg-yellow-100 text-yellow-800";
+        let statusColor = "bg-feedback-warning-soft text-feedback-warning-text";
         if (item.status === 'approved') {
             statusLabel = "Patvirtinta";
-            statusColor = "bg-green-100 text-green-800";
+            statusColor = "bg-feedback-success-soft text-feedback-success-text";
         } else if (item.status === 'declined') {
             statusLabel = "Atmesta";
-            statusColor = "bg-red-100 text-red-800";
+            statusColor = "bg-feedback-danger-soft text-feedback-danger-text";
         }
 
         const getManagerName = (sysId) => {
@@ -1037,21 +1037,21 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
                     <button
                         onClick={() => setActiveTab('report')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
                     >
                         Darbo ataskaita
                     </button>
                     <button
                         onClick={() => setActiveTab('approval')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
                     >
                         Patvirtinimas
                     </button>
                     <button
                         onClick={() => setActiveTab('calendar-history')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
                     >
                         Kalendoriaus pakeitimų istorija
@@ -1064,15 +1064,15 @@ export default function Reports({ users, canExport = false, viewRole }) {
             {error && (
                 <div
                     role="alert"
-                    className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-red-50 p-4"
+                    className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-4"
                 >
                     <AlertTriangle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-red-700">{error}</p>
+                    <p className="text-body text-feedback-danger-text">{error}</p>
                     <button
                         type="button"
                         onClick={() => setError('')}
                         aria-label="Uždaryti pranešimą"
-                        className="ml-auto text-caption font-semibold text-red-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
                         Uždaryti
                     </button>

@@ -309,12 +309,14 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     };
 
     const getStatusStyle = (task) => {
-        if (isTaskRunning(task)) return 'bg-green-200 border-green-300';
+        // The running row uses the canonical task-session surface (theme-invariant, like the
+        // running card + session label elsewhere) so it matches app-wide and never glares on dark.
+        if (isTaskRunning(task)) return 'bg-session-task-surface border-session-task-shell';
 
         const status = task.status || 'pending';
-        if (status === 'confirmed') return 'bg-gray-50';
-        if (status === 'completed') return 'bg-gray-100';
-        if (status === 'unapproved') return 'bg-amber-50';
+        if (status === 'confirmed') return 'bg-surface-base';
+        if (status === 'completed') return 'bg-surface-sunken';
+        if (status === 'unapproved') return 'bg-feedback-warning-soft';
         return 'bg-surface-card';
     };
 
@@ -372,14 +374,14 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
             {/* Friendly error banner — replaces the banned window.alert with mapped LT copy (§8/§10) */}
             {error && (
-                <div className="flex items-start gap-3 border-b border-feedback-danger bg-red-50 p-4" role="alert">
+                <div className="flex items-start gap-3 border-b border-feedback-danger bg-feedback-danger-soft p-4" role="alert">
                     <AlertCircle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-red-700">{error}</p>
+                    <p className="text-body text-feedback-danger-text">{error}</p>
                     <button
                         type="button"
                         onClick={() => setError('')}
                         aria-label="Uždaryti pranešimą"
-                        className="ml-auto text-body font-medium text-red-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                        className="ml-auto text-body font-medium text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
                     >
                         Uždaryti
                     </button>
@@ -409,7 +411,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                     </div>
                                     {(task.managerName || task.creatorName) && (
-                                        <div className="text-caption text-purple-700 font-medium mt-0.5">
+                                        <div className="text-caption text-feedback-info-text font-medium mt-0.5">
                                             Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
                                         </div>
                                     )}
@@ -438,7 +440,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 )}
                                 <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
                                 {task.tag && (
-                                    <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-purple-100 text-purple-800 border border-purple-200">
+                                    <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-feedback-info-soft text-feedback-info-text border border-feedback-info-border">
                                         {task.tag}
                                     </span>
                                 )}
@@ -451,7 +453,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             {/* Live time readout (>= text-body-lg per live-timer rule) + adjust control */}
                             {showTime && (
                                 <div className="mt-2 flex items-center gap-2">
-                                    <span className="text-body-lg text-blue-600 font-bold whitespace-nowrap">
+                                    <span className="text-body-lg text-brand font-bold whitespace-nowrap">
                                         {formatMinutesToTimeString(totalMinutes)}
                                     </span>
                                     {canManage && (
@@ -488,7 +490,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             title={link.trim()}
                                             aria-label={`Nuoroda: ${link.trim()}`}
                                             onClick={(e) => e.stopPropagation()}
-                                            className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control text-blue-600 hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                            className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control text-brand hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                         >
                                             <LinkIcon className="w-5 h-5" aria-hidden="true" />
                                         </a>
@@ -498,7 +500,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             icon={ImageIcon}
                                             label="Peržiūrėti nuotrauką"
                                             variant="ghost"
-                                            className="text-pink-600"
+                                            className="text-feedback-danger"
                                             onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'image', taskId: task.id }); }}
                                         />
                                     )}
@@ -525,14 +527,14 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
                             {/* Comments preview (last 1) + open-modal control */}
                             {task.comments && task.comments.length > 0 && (
-                                <div className="mt-3 pl-2 border-l-2 border-indigo-100">
+                                <div className="mt-3 pl-2 border-l-2 border-brand-soft">
                                     {(() => {
                                         const last = task.comments[task.comments.length - 1];
                                         return (
                                             <div className="text-caption">
                                                 <div className="flex items-center gap-1.5">
-                                                    <MessageCircle className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" aria-hidden="true" />
-                                                    <span className="font-semibold text-indigo-700">{formatDisplayName(last.user)}</span>
+                                                    <MessageCircle className="w-3.5 h-3.5 text-brand flex-shrink-0" aria-hidden="true" />
+                                                    <span className="font-semibold text-brand">{formatDisplayName(last.user)}</span>
                                                     <span className="text-ink-muted">{new Date(last.createdAt).toLocaleDateString()}</span>
                                                 </div>
                                                 <div className="text-ink leading-snug break-words pl-4 line-clamp-2">{last.text}</div>
@@ -584,7 +586,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     icon={MessageSquare}
                                     label={`Komentarai${task.comments?.length ? ` (${task.comments.length})` : ''}`}
                                     variant="ghost"
-                                    className="text-green-600"
+                                    className="text-feedback-success"
                                     onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'comments', taskId: task.id }); }}
                                 />
                                 {(task.completed || task.isDeleted) && canManage && (
@@ -692,7 +694,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                             </div>
                                             {(task.managerName || task.creatorName) && (
-                                                <div className="text-caption text-purple-700 font-medium mt-0.5">
+                                                <div className="text-caption text-feedback-info-text font-medium mt-0.5">
                                                     Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
                                                 </div>
                                             )}
@@ -713,17 +715,17 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
                                             {/* Comments List */}
                                             {task.comments && task.comments.length > 0 && (
-                                                <div className="mt-2 space-y-1.5 pl-2 border-l-2 border-indigo-100">
+                                                <div className="mt-2 space-y-1.5 pl-2 border-l-2 border-brand-soft">
                                                     {task.comments.map((comment, index) => {
                                                         const isEditing = editingComment.taskId === task.id && editingComment.index === index;
                                                         const canEdit = canManage || comment.userId === currentUser.uid;
 
                                                         return (
-                                                            <div key={index} className="text-caption bg-indigo-50/30 rounded p-1.5 group hover:bg-indigo-50/60 transition-colors">
+                                                            <div key={index} className="text-caption bg-brand-soft/30 rounded p-1.5 group hover:bg-brand-soft/60 transition-colors">
                                                                 <div className="flex justify-between items-start mb-0.5">
                                                                     <div className="flex items-center gap-1.5 text-caption">
-                                                                        <MessageCircle className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" aria-hidden="true" />
-                                                                        <span className="font-semibold text-indigo-700">{formatDisplayName(comment.user)}</span>
+                                                                        <MessageCircle className="w-3.5 h-3.5 text-brand flex-shrink-0" aria-hidden="true" />
+                                                                        <span className="font-semibold text-brand">{formatDisplayName(comment.user)}</span>
                                                                         <span className="text-ink-muted">{new Date(comment.createdAt).toLocaleDateString()}</span>
                                                                     </div>
                                                                     {canEdit && !isEditing && (
@@ -798,7 +800,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
                                             {task.tag && (
-                                                <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-purple-100 text-purple-800 border border-purple-200">
+                                                <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-feedback-info-soft text-feedback-info-text border border-feedback-info-border">
                                                     {task.tag}
                                                 </span>
                                             )}
@@ -861,7 +863,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                             href={link.trim().startsWith('http') ? link.trim() : `https://${link.trim()}`}
                                                             target="_blank"
                                                             rel="noopener noreferrer"
-                                                            className="text-blue-600 hover:text-blue-800 transition-transform active:scale-90"
+                                                            className="text-brand hover:text-brand-hover transition-transform active:scale-90"
                                                             title={link.trim()}
                                                             aria-label={`Nuoroda: ${link.trim()}`}
                                                             onClick={(e) => e.stopPropagation()}
@@ -877,7 +879,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                         icon={ImageIcon}
                                                         label="Peržiūrėti nuotrauką"
                                                         variant="ghost"
-                                                        className="text-pink-600"
+                                                        className="text-feedback-danger"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setActiveModal({ type: 'image', taskId: task.id });
@@ -890,7 +892,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             <IconButton
                                                 label="Komentarai"
                                                 variant="ghost"
-                                                className="text-green-600"
+                                                className="text-feedback-success"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     setActiveModal({ type: 'comments', taskId: task.id });
@@ -927,7 +929,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                             type="checkbox"
                                                             checked={false}
                                                             onChange={() => handleConfirmTask(task.id)}
-                                                            className="w-4 h-4 rounded border-line text-green-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1 cursor-pointer"
+                                                            className="w-4 h-4 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1 cursor-pointer"
                                                             title="Patvirtinti atlikimą"
                                                             aria-label="Patvirtinti atlikimą"
                                                         />
@@ -936,14 +938,14 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 {task.status === 'unapproved' && (
                                                     <button
                                                         onClick={() => handleApproveTask(task.id)}
-                                                        className="min-h-touch text-caption bg-green-100 text-green-700 px-3 py-1 rounded border border-green-200 hover:bg-green-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1"
+                                                        className="min-h-touch text-caption bg-feedback-success-soft text-feedback-success-text px-3 py-1 rounded border border-feedback-success-border hover:bg-feedback-success-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-success focus-visible:ring-offset-1"
                                                         title="Patvirtinti užduotį (leisti vykdyti)"
                                                     >
                                                         Patvirtinti
                                                     </button>
                                                 )}
                                                 {task.status === 'confirmed' && (
-                                                    <span className="inline-flex items-center text-green-600">
+                                                    <span className="inline-flex items-center text-feedback-success">
                                                         <CheckCircle2 className="w-4 h-4" />
                                                     </span>
                                                 )}
@@ -962,7 +964,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 {(task.completed || task.isDeleted) && canManage && (
                                                     <button
                                                         onClick={() => setRevertTarget(task)}
-                                                        className="flex items-center justify-end gap-1 rounded px-1 py-0.5 font-medium text-amber-700 hover:text-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                                        className="flex items-center justify-end gap-1 rounded px-1 py-0.5 font-medium text-feedback-warning-text hover:text-feedback-warning-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                                     >
                                                         <Undo2 className="w-3.5 h-3.5" aria-hidden="true" />
                                                         Grąžinti
@@ -971,7 +973,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 {(canManage || !isWorker) && (
                                                     <button
                                                         onClick={() => handleDeleteTask(task.id, task.title)}
-                                                        className="flex items-center justify-end gap-1 rounded px-1 py-0.5 font-medium text-feedback-danger hover:text-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                                        className="flex items-center justify-end gap-1 rounded px-1 py-0.5 font-medium text-feedback-danger hover:text-feedback-danger-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                                     >
                                                         <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                                                         Ištrinti

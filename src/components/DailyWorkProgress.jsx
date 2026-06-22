@@ -320,9 +320,9 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
 
             {/* Breaks — shown separately and explicitly NOT counted toward the goal above. */}
             {(dayBreakHours > 0 || weekBreakHours > 0) && (
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-1 border-t border-gray-100 pt-3 text-xs text-gray-500">
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-1 border-t border-line pt-3 text-xs text-ink-muted">
                     <span>Pertraukos (neįskaičiuotos į tikslą)</span>
-                    <span className="font-medium text-gray-700">
+                    <span className="font-medium text-ink">
                         Šiandien {formatTime(dayBreakHours)} · Savaitę {formatTime(weekBreakHours)}
                     </span>
                 </div>

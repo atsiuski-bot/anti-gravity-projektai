@@ -1074,9 +1074,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <Coffee className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
+                        <Coffee className="w-4 h-4 text-feedback-warning shrink-0" aria-hidden="true" />
                         <span className="text-caption text-ink-muted">Pertraukos</span>
-                        <span className="text-body font-bold text-amber-600 tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
+                        <span className="text-body font-bold text-feedback-warning tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                         <Zap className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
@@ -1125,7 +1125,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             </div>
 
             {hasAnomaly && (
-                <div role="alert" className="mb-3 flex items-start gap-2 rounded-card border border-amber-300 bg-amber-50 p-3 text-caption text-amber-800">
+                <div role="alert" className="mb-3 flex items-start gap-2 rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-3 text-caption text-feedback-warning-text">
                     <span aria-hidden="true">⚠</span>
                     <span>Kai kurios šio laikotarpio reikšmės atrodo neįprastos ir buvo apribotos iki 16 val. vienai sesijai. Patikrinkite šiuos įrašus rankiniu būdu.</span>
                 </div>
@@ -1213,7 +1213,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
                                         <div>
                                             <dt className="text-caption text-ink-muted">Pertraukos</dt>
-                                            <dd className="font-mono text-body font-semibold text-amber-700">{formatMinutesToTimeString(summary.breakMinutes)}</dd>
+                                            <dd className="font-mono text-body font-semibold text-feedback-warning-text">{formatMinutesToTimeString(summary.breakMinutes)}</dd>
                                         </div>
                                         <div>
                                             <dt className="text-caption text-ink-muted">Užduotims</dt>
@@ -1231,7 +1231,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 <dl className="grid grid-cols-3 gap-2 text-center">
                                     <div>
                                         <dt className="text-caption text-ink-muted">Pertraukos</dt>
-                                        <dd className="font-mono text-body font-semibold text-amber-700">{formatMinutesToTimeString(totalBreakMinutes)}</dd>
+                                        <dd className="font-mono text-body font-semibold text-feedback-warning-text">{formatMinutesToTimeString(totalBreakMinutes)}</dd>
                                     </div>
                                     <div>
                                         <dt className="text-caption text-ink-muted">Užduotims</dt>
@@ -1284,13 +1284,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         <td className="px-4 py-3 text-center text-ink-muted font-mono text-sm">
                                             {formatTime(summary.latestEnd)}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-amber-600 font-mono">
+                                        <td className="px-4 py-3 text-right text-feedback-warning font-mono">
                                             {formatMinutesToTimeString(summary.breakMinutes)}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-indigo-600 font-mono font-semibold">
+                                        <td className="px-4 py-3 text-right text-brand font-mono font-semibold">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes)}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-ink-strong font-mono font-bold bg-blue-50/10">
+                                        <td className="px-4 py-3 text-right text-ink-strong font-mono font-bold bg-feedback-info-soft/10">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes + summary.breakMinutes)}
                                         </td>
                                         <td className="px-4 py-3 text-right text-ink-muted font-mono">
@@ -1302,13 +1302,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <td colSpan="3" className="px-4 py-3 text-right text-ink-strong">
                                         Viso komanda:
                                     </td>
-                                    <td className="px-4 py-3 text-right text-amber-700">
+                                    <td className="px-4 py-3 text-right text-feedback-warning-text">
                                         {formatMinutesToTimeString(totalBreakMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 text-right text-indigo-700">
+                                    <td className="px-4 py-3 text-right text-brand">
                                         {formatMinutesToTimeString(totalWorkedMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 text-right text-ink-strong font-bold bg-blue-50/30">
+                                    <td className="px-4 py-3 text-right text-ink-strong font-bold bg-feedback-info-soft/30">
                                         {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
                                     </td>
                                     <td className="px-4 py-3 text-right text-ink-muted">—</td>
@@ -1346,7 +1346,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     </div>
                                     <span className={clsx(
                                         "font-mono text-body font-bold whitespace-nowrap",
-                                        item.type === 'break' ? 'text-amber-700' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'
+                                        item.type === 'break' ? 'text-feedback-warning-text' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'
                                     )}>
                                         {formatMinutesToTimeString(item.duration)}
                                     </span>
@@ -1370,7 +1370,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                             </thead>
                             <tbody className="divide-y divide-line">
                                 {combinedTimelineItems.map((item, idx) => (
-                                    <tr key={item.id || idx} className={`text-xs hover:bg-surface-sunken border-b border-line last:border-0 ${item.type === 'break' ? 'text-amber-700 bg-amber-50/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
+                                    <tr key={item.id || idx} className={`text-xs hover:bg-surface-sunken border-b border-line last:border-0 ${item.type === 'break' ? 'text-feedback-warning-text bg-feedback-warning-soft/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
                                         <td className="px-4 py-3 font-mono text-ink-muted w-24">
                                             {formatTime(item.startTime)} - {formatTime(item.endTime)}
                                         </td>
@@ -1389,7 +1389,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                 </span>
                                             )}
                                         </td>
-                                        <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-amber-600' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'}`}>
+                                        <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-feedback-warning' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'}`}>
                                             {formatMinutesToTimeString(item.duration)}
                                         </td>
                                     </tr>
@@ -1398,7 +1398,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <td colSpan="2" className="px-4 py-3 text-right text-ink-strong">
                                         Viso (laikmatis + rankinis):
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-indigo-600">
+                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-brand">
                                         {formatMinutesToTimeString(totalWorkedMinutes)}
                                     </td>
                                 </tr>
@@ -1618,7 +1618,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
         if (item.type === 'break') {
             return (
                 <li key={item.id || idx}>
-                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-amber-50/40 p-3 text-amber-700">
+                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-feedback-warning-soft/40 p-3 text-feedback-warning-text">
                         <div className="min-w-0">
                             <div className="flex items-center gap-1.5 font-medium">
                                 <Coffee className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
@@ -1692,7 +1692,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                     <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption">
                         <span className="font-mono text-ink-muted">{headerSpan}</span>
                         <span className="text-ink-muted">Darbas <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
-                        <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-amber-700">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
+                        <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-feedback-warning-text">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
                     </div>
                 </div>
                 <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2 -mt-2" />
@@ -1828,14 +1828,14 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                     <TimeChangedWarning task={task} />
                 </div>
                 {task.deadline && (
-                    <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Calendar className="w-3 h-3 text-orange-500" />
+                    <div className="bg-feedback-warning-soft text-feedback-warning-text border border-feedback-warning-border px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-feedback-warning" />
                         {task.deadline}
                     </div>
                 )}
                 {task.completedAt && (
-                    <div className="bg-green-50 text-green-700 border border-green-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Check className="w-3 h-3 text-green-500" />
+                    <div className="bg-feedback-success-soft text-feedback-success-text border border-feedback-success-border px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Check className="w-3 h-3 text-feedback-success" />
                         {new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </div>
                 )}

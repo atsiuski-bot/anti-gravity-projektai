@@ -17,7 +17,7 @@ import clsx from 'clsx';
 const VARIANTS = {
     default: 'text-ink-muted hover:text-ink hover:bg-surface-sunken',
     primary: 'bg-brand text-white hover:bg-brand-hover',
-    danger: 'text-red-700 hover:bg-red-50',
+    danger: 'text-feedback-danger-text hover:bg-feedback-danger-soft',
     ghost: 'text-ink-muted hover:text-ink',
 };
 

@@ -2,6 +2,149 @@
 @tailwind components;
 @tailwind utilities;
 
+/* =====================================================================
+   Theme palette (ADR 0006) — the calm-canvas/chrome tokens are CSS
+   variables so a single `data-theme` attribute on <html> swaps the whole
+   palette. Each var holds three space-separated 0-255 RGB channels; the
+   tailwind.config.js token reads them as `rgb(var(--x) / <alpha-value>)`,
+   which keeps Tailwind opacity utilities (`bg-surface-card/50`) working.
+   `:root` is light (also explicit `[data-theme="light"]`); the dark block
+   overrides only what changes. SESSION + TIER + scrim are literal hex in
+   the config (theme-invariant) and never appear here.
+   ===================================================================== */
+:root,
+[data-theme="light"] {
+  /* Brand (indigo) — DEFAULT/hover are fill-safe (white text passes AA on them) in BOTH
+     themes; only `soft` (chip bg) and `ring` change for dark. */
+  --brand: 79 70 229;          /* indigo-600 #4F46E5 */
+  --brand-hover: 67 56 202;    /* indigo-700 #4338CA */
+  --brand-soft: 238 242 255;   /* indigo-50  #EEF2FF */
+  --brand-ring: 129 140 248;   /* indigo-400 #818CF8 */
+
+  /* Neutrals — the calm canvas */
+  --surface-base: 249 250 251; /* gray-50  #F9FAFB */
+  --surface-card: 255 255 255; /* white    #FFFFFF */
+  --surface-sunken: 243 244 246;/* gray-100 #F3F4F6 */
+  --ink-strong: 17 24 39;      /* gray-900 #111827 */
+  --ink: 55 65 81;             /* gray-700 #374151 */
+  --ink-muted: 107 114 128;    /* gray-500 #6B7280 */
+  --line: 229 231 235;         /* gray-200 #E5E7EB */
+
+  /* Feedback triads (solid / soft bg / border / accent text / solid-hover) */
+  --fb-success: 22 163 74;     /* green-600 */
+  --fb-success-soft: 240 253 244;   /* green-50 */
+  --fb-success-border: 187 247 208; /* green-200 */
+  --fb-success-text: 21 128 61;     /* green-700 (AA on soft) */
+  --fb-success-hover: 21 128 61;    /* green-700 */
+
+  --fb-warning: 245 158 11;    /* amber-500 */
+  --fb-warning-soft: 255 251 235;   /* amber-50 */
+  --fb-warning-border: 253 230 138; /* amber-200 */
+  --fb-warning-text: 180 83 9;      /* amber-700 (AA on soft) */
+  --fb-warning-hover: 217 119 6;    /* amber-600 */
+
+  --fb-danger: 220 38 38;      /* red-600 */
+  --fb-danger-soft: 254 242 242;    /* red-50 */
+  --fb-danger-border: 254 202 202;  /* red-200 */
+  --fb-danger-text: 185 28 28;      /* red-700 (AA on soft) */
+  --fb-danger-hover: 185 28 28;     /* red-700 */
+
+  --fb-info: 79 70 229;        /* indigo-600 */
+  --fb-info-soft: 238 242 255;      /* indigo-50 */
+  --fb-info-border: 199 210 254;    /* indigo-200 */
+  --fb-info-text: 67 56 202;        /* indigo-700 */
+  --fb-info-hover: 67 56 202;       /* indigo-700 */
+
+  --fb-offline: 30 41 59;      /* slate-800 — neutral offline banner, never red (§4-C) */
+
+  /* Priority ramp (theme-reactive; consumed via inline style in PriorityBadge / priority.js).
+     Full colors, not channels — used directly as var() in `style`. Light: black(urgent) ->
+     near-white(very-low). */
+  --priority-urgent-bg: #000000;  --priority-urgent-text: #FFFFFF;
+  --priority-high-bg: #666666;    --priority-high-text: #FFFFFF;
+  --priority-medium-bg: #A3A3A3;  --priority-medium-text: #111111;
+  --priority-low-bg: #E0E0E0;     --priority-low-text: #111111;
+  --priority-verylow-bg: #FAFAFA; --priority-verylow-text: #111111;
+  --priority-hairline: rgba(0, 0, 0, 0.05);
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  /* Brand fills stay indigo-600/700 (white label keeps AA); the chip bg becomes a deep
+     indigo wash and the focus ring brightens for visibility on a dark canvas. */
+  --brand: 79 70 229;          /* indigo-600 — fills (white text 6.3:1) */
+  --brand-hover: 67 56 202;    /* indigo-700 */
+  --brand-soft: 30 27 75;      /* indigo-950 #1E1B4B wash */
+  --brand-ring: 165 180 252;   /* indigo-300 #A5B4FC */
+
+  /* Calm DARK canvas: base (canvas) < card (raised) < sunken (hover/secondary fill). */
+  --surface-base: 14 17 23;    /* #0E1117 */
+  --surface-card: 23 28 38;    /* #171C26 */
+  --surface-sunken: 34 41 54;  /* #222936 */
+  --ink-strong: 243 245 247;   /* #F3F5F7 near-white headings */
+  --ink: 200 206 215;          /* #C8CED7 body */
+  --ink-muted: 154 163 178;    /* #9AA3B2 meta (>=4.5:1 on card & sunken) */
+  --line: 47 56 70;            /* #2F3846 subtle hairline */
+
+  /* Feedback — DEFAULT solids unchanged (white-text fills keep AA); soft/border become deep
+     low-saturation washes and accent text lightens for legibility on the dark canvas. */
+  --fb-success: 22 163 74;
+  --fb-success-soft: 14 42 26;
+  --fb-success-border: 27 77 51;
+  --fb-success-text: 74 222 128;    /* green-400 */
+  --fb-success-hover: 22 163 74;    /* green-600 */
+
+  --fb-warning: 245 158 11;
+  --fb-warning-soft: 46 36 16;
+  --fb-warning-border: 74 58 18;
+  --fb-warning-text: 251 191 36;    /* amber-400 */
+  --fb-warning-hover: 217 119 6;
+
+  --fb-danger: 220 38 38;
+  --fb-danger-soft: 58 21 24;
+  --fb-danger-border: 90 31 34;
+  --fb-danger-text: 248 113 113;    /* red-400 */
+  --fb-danger-hover: 185 28 28;
+
+  --fb-info: 79 70 229;
+  --fb-info-soft: 30 27 75;
+  --fb-info-border: 49 46 129;
+  --fb-info-text: 165 180 252;      /* indigo-300 */
+  --fb-info-hover: 67 56 202;
+
+  --fb-offline: 51 65 85;      /* slate-700 — lifts the offline banner off the dark canvas */
+
+  /* Dark inverts the ramp: bright(urgent) -> faint(very-low), so "more urgent = louder against
+     the canvas" still holds and no chip glares. Each pair is AA-legible on its own bg. */
+  --priority-urgent-bg: #E5E7EB;  --priority-urgent-text: #111111;
+  --priority-high-bg: #9CA3AF;    --priority-high-text: #111111;
+  --priority-medium-bg: #6B7280;  --priority-medium-text: #FFFFFF;
+  --priority-low-bg: #3F4654;     --priority-low-text: #E5E7EB;
+  --priority-verylow-bg: #2A303C; --priority-verylow-text: #9AA3B2;
+  --priority-hairline: rgba(255, 255, 255, 0.10);
+
+  color-scheme: dark;
+}
+
+/* On-shell text (ADR 0006): text/icons that ride DIRECTLY on the theme-invariant session shell
+   (not on a card) must use a FIXED color, because the themeable ink token inverts in dark and
+   would vanish on a still-light shell. Mark such elements `.wz-on-shell`; Layout sets
+   `data-session-shell` to the active shell kind. Idle = no attribute, so the element's own
+   ink token applies on the themed canvas. Only put `.wz-on-shell` on genuinely bare-on-shell
+   elements — never on text inside a card (it would force dark text onto a dark card). */
+[data-session-shell="light"] .wz-on-shell { color: #111827; } /* dark text on the light tint shells */
+[data-session-shell="red"] .wz-on-shell { color: #ffffff; }   /* white text on the quick-work red shell */
+
+/* Foreground decoupling: brand/feedback DEFAULTs are tuned as FILLS (white text rides on
+   them), so the same value used as FOREGROUND text is too dark on the dark canvas. Override
+   only the `text-*` utilities in dark to the lighter accent — fills (`bg-*`) are untouched. */
+[data-theme="dark"] .text-brand { color: rgb(165 180 252); }            /* indigo-300 */
+[data-theme="dark"] .text-feedback-success { color: rgb(74 222 128); }  /* green-400 */
+[data-theme="dark"] .text-feedback-warning { color: rgb(251 191 36); }  /* amber-400 */
+[data-theme="dark"] .text-feedback-danger { color: rgb(248 113 113); }  /* red-400 */
+[data-theme="dark"] .text-feedback-info { color: rgb(165 180 252); }    /* indigo-300 */
+
 @layer base {
   body {
     @apply bg-surface-base text-ink-strong;

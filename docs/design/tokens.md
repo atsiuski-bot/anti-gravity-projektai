@@ -12,6 +12,34 @@ mechanical) with the resolved hex in parentheses.
 
 ---
 
+## 0. Theming — light / dark ([ADR 0006](../adr/0006-user-selectable-theme.md))
+
+The **calm-canvas/chrome** token groups — `brand`, `surface`, `ink`, `line`, `feedback` — are
+**CSS-variable-backed**: `tailwind.config.js` defines each as `rgb(var(--x) / <alpha-value>)`
+(channel form, so opacity utilities like `bg-surface-card/50` still work), and the actual
+channel values for **both themes** live in `src/index.css` under `:root` (light) and
+`[data-theme="dark"]`. A single `data-theme` attribute on `<html>` (set before first paint by a
+boot script in `index.html`, owned at runtime by `ThemeProvider`) swaps the whole palette. The
+light values below are unchanged; the table is the LIGHT source of truth, `index.css` is the dark
+override.
+
+**Theme-INVARIANT (literal hex in the config, no dark variant):** the **session** colors (§ below
+— the loud whole-screen identity), the **tier** medallions, and `feedback.scrim`. The loud
+time-warning / time-limit popups are likewise kept vivid in both themes.
+
+**Feedback gained a tint triad.** Each of `feedback.{success,warning,danger,info}` now carries
+sub-tokens — `DEFAULT` (solid fill / on-white icon), `soft` (tinted bg, was `*-50`), `border`
+(was `*-200`), `text` (accent text on a tint, was `*-700`), `hover` (solid-button hover) — because
+the app consumes colored states as `bg-50` / `border-200` / `text-700` triads. `.text-feedback-*`
+DEFAULT and `.text-brand` also get a `[data-theme="dark"]` foreground override so a fill-tuned
+accent stays legible as text on the dark canvas.
+
+**Priority is theme-reactive** (JS-driven inline styles can't theme via Tailwind): the ramp reads
+`--priority-<slug>-bg/-text` from `index.css` and **inverts** in dark (bright urgent → faint
+very-low) so "more urgent = louder against the canvas" holds without glare.
+
+---
+
 ## 1. Color
 
 ### Brand (the only interactive accent — indigo)

@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Trophy, Download } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Trophy, Download, Sun, Moon, Monitor } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { useNavigation } from '../context/NavigationContext';
 import { useAchievements } from '../hooks/useAchievements';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
@@ -28,6 +29,14 @@ const ROLE_META = {
     worker: { label: 'Vykdytojas', tone: 'neutral' },
 };
 
+// Theme choices (ADR 0006). 'system' follows the OS preference and is the default; each option
+// pairs an icon with a label so the active state is never color-only (DESIGN_SYSTEM §5).
+const THEME_OPTIONS = [
+    { value: 'light', label: 'Šviesi', Icon: Sun },
+    { value: 'dark', label: 'Tamsi', Icon: Moon },
+    { value: 'system', label: 'Sistemos', Icon: Monitor },
+];
+
 // A user photo stays small; cap the long edge and re-encode so the upload is light on a
 // field worker's mobile connection. Lives at a fixed per-user path so a new photo overwrites
 // the old one (no orphaned avatar files accumulate, unlike multi-file task attachments).
@@ -35,6 +44,7 @@ const AVATAR_MAX_EDGE = 512;
 
 export default function ProfilePage() {
     const { currentUser, userData, userRole, logout } = useAuth();
+    const { preference: themePreference, setPreference: setThemePreference } = useTheme();
     const { goToPreviousTab } = useNavigation();
     const { achievements } = useAchievements(currentUser?.uid);
     const { canPromptNative, isIOS, isStandalone, promptInstall } = useInstallPrompt();
@@ -44,6 +54,8 @@ export default function ProfilePage() {
     const [photoError, setPhotoError] = useState('');
     const [savingNotif, setSavingNotif] = useState(false);
     const [notifError, setNotifError] = useState('');
+    const [savingTheme, setSavingTheme] = useState(false);
+    const [themeError, setThemeError] = useState('');
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [showInstall, setShowInstall] = useState(false);
 
@@ -93,6 +105,26 @@ export default function ProfilePage() {
             if (mountedRef.current) setPhotoError('Nepavyko įkelti nuotraukos. Bandykite dar kartą.');
         } finally {
             if (mountedRef.current) setUploading(false);
+        }
+    };
+
+    // Apply the theme instantly (local + DOM via ThemeContext), then persist for cross-device
+    // sync. The local apply is optimistic and independent of the write, so the UI flips even
+    // when offline or signed out; a failed write only surfaces a calm note — the theme still
+    // holds locally. Mirrors the notifications-toggle write pattern.
+    const handleThemeChange = async (next) => {
+        if (next === themePreference) return;
+        setThemeError('');
+        setThemePreference(next);
+        if (!currentUser) return; // logged-out preview: localStorage already holds the choice
+        setSavingTheme(true);
+        try {
+            await updateDoc(doc(db, 'users', currentUser.uid), { themePreference: next });
+        } catch (err) {
+            logError(err, { source: 'profile:themeToggle' });
+            if (mountedRef.current) setThemeError('Nepavyko išsaugoti nustatymo.');
+        } finally {
+            if (mountedRef.current) setSavingTheme(false);
         }
     };
 
@@ -204,6 +236,55 @@ export default function ProfilePage() {
                 )}
             </Card>
 
+            {/* Appearance — light / dark / system theme (ADR 0006). A 3-way segmented control;
+                each option pairs an icon with a label so the active choice is never color-only. */}
+            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Išvaizda</h2>
+            <Card className="mb-4 p-4">
+                <div className="flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                        <p className="text-body font-medium text-ink-strong">Tema</p>
+                        <p className="text-caption text-ink-muted">
+                            „Sistemos“ seka jūsų įrenginio nustatymą
+                        </p>
+                    </div>
+                </div>
+                <div
+                    role="radiogroup"
+                    aria-label="Programėlės tema"
+                    className="mt-3 grid grid-cols-3 gap-2"
+                >
+                    {THEME_OPTIONS.map((opt) => {
+                        const selected = themePreference === opt.value;
+                        return (
+                            <button
+                                key={opt.value}
+                                type="button"
+                                role="radio"
+                                aria-checked={selected}
+                                onClick={() => handleThemeChange(opt.value)}
+                                disabled={savingTheme}
+                                className={cn(
+                                    'flex min-h-touch flex-col items-center justify-center gap-1 rounded-control border px-2 py-2.5 text-caption font-medium transition-colors duration-base',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                    'disabled:opacity-50',
+                                    selected
+                                        ? 'border-brand bg-brand-soft text-brand'
+                                        : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
+                                )}
+                            >
+                                <opt.Icon className="h-5 w-5" aria-hidden="true" />
+                                {opt.label}
+                            </button>
+                        );
+                    })}
+                </div>
+                {themeError && (
+                    <p role="alert" className="mt-3 text-caption font-medium text-feedback-danger">
+                        {themeError}
+                    </p>
+                )}
+            </Card>
+
             {/* Settings */}
             <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Nustatymai</h2>
             <Card className="mb-4 overflow-hidden">
@@ -287,10 +368,10 @@ export default function ProfilePage() {
                 <button
                     type="button"
                     onClick={() => setConfirmLogout(true)}
-                    className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                    className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                 >
-                    <LogOut className="h-5 w-5 shrink-0 text-red-700" aria-hidden="true" />
-                    <span className="flex-1 text-body font-medium text-red-700">Atsijungti</span>
+                    <LogOut className="h-5 w-5 shrink-0 text-feedback-danger-text" aria-hidden="true" />
+                    <span className="flex-1 text-body font-medium text-feedback-danger-text">Atsijungti</span>
                 </button>
             </Card>
 

@@ -26,7 +26,7 @@ export default function ConfirmDialog({
             <div className="space-y-3">
                 {message && <p className="text-body text-ink">{message}</p>}
                 {warning && (
-                    <div className="flex items-start gap-2 rounded-control bg-red-50 p-3 text-body text-red-700">
+                    <div className="flex items-start gap-2 rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">
                         <AlertTriangle className="w-5 h-5 shrink-0" aria-hidden="true" />
                         <span>{warning}</span>
                     </div>
