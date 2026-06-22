@@ -15,6 +15,13 @@ const TONES = {
     success: 'bg-green-100 text-green-800',
     info: 'bg-brand-soft text-brand-hover',
     danger: 'bg-red-50 text-red-700',
+    // Achievement tiers — a sibling set for the inline (earned-chip) form of a badge. These
+    // carry NO status semantics; the trophy-tile form is <Badge>. Pair with a tier label so
+    // color is never the sole signal (§5).
+    tierBronze: 'bg-tier-bronze-surface text-tier-bronze-accent',
+    tierSilver: 'bg-tier-silver-surface text-tier-silver-accent',
+    tierGold: 'bg-tier-gold-surface text-tier-gold-accent',
+    tierPlatinum: 'bg-tier-platinum-surface text-tier-platinum-accent',
 };
 
 export default function StatusPill({ tone = 'neutral', icon: Icon, children, className }) {

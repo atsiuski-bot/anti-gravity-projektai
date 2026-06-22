@@ -58,6 +58,25 @@ Each session has a `shell` (full-screen bg), a `surface` (the running card), and
 > were darkened from red-600/amber-600 to red-700/amber-700 so the timer/icon/label text clears
 > ≥4.5:1 against the session `surface` tint (WCAG 1.4.3).
 
+### Achievement tiers (closed set — badges only, never the session shell)
+
+Each tier is a calm `surface` (the badge medallion fill), an `accent` (icon + tier text), and a
+metallic `ring` (the border that carries the metal identity). Every badge pairs the color with a
+text tier label **and** 1–4 pips, so color is never the sole signal (§5). `silver` is a warm gray
+and `platinum` a cool blue-slate, so the contrast-risk pair reads as two distinct hues.
+
+| Tier | `surface` | `accent` (text/icon) | `ring` | Label (LT) | accent-on-surface |
+|---|---|---|---|---|---|
+| `tier.bronze` | `#F3E4D3` | `#7A4A21` | `#C28E5A` | "Bronza" | ~6.0:1 ✓ |
+| `tier.silver` | `#E8EAED` | `#4B5563` | `#B6BCC4` | "Sidabras" | ~6.5:1 ✓ |
+| `tier.gold` | `#FBEFC6` | `#8A6500` | `#DCBB4A` | "Auksas" | ~5.0:1 ✓ |
+| `tier.platinum` | `#E6ECF2` | `#334155` | `#9FB2C6` | "Platina" | ~8.5:1 ✓ |
+
+> Classes: `bg-tier-gold-surface`, `text-tier-gold-accent`, `ring-tier-gold-ring`. Rendered by the
+> `<Badge>` primitive (trophy tile) and as inline `StatusPill` tier tones. Achievements are
+> server-awarded only (a worker can write its own user doc) — stored in a `write:if false`
+> subcollection, granted by a Cloud Function.
+
 ### Feedback (messages & validation — never decorative)
 
 | Token | Value | Use |
@@ -258,6 +277,12 @@ extend: {
       call:      { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB' },
       break:     { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309' },
       task:      { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D' },
+    },
+    tier: { // achievement badges — surface + AA accent text + metallic ring; never a session shell
+      bronze:   { surface: '#F3E4D3', accent: '#7A4A21', ring: '#C28E5A' },
+      silver:   { surface: '#E8EAED', accent: '#4B5563', ring: '#B6BCC4' },
+      gold:     { surface: '#FBEFC6', accent: '#8A6500', ring: '#DCBB4A' },
+      platinum: { surface: '#E6ECF2', accent: '#334155', ring: '#9FB2C6' },
     },
     feedback: { success: '#16A34A', warning: '#F59E0B', danger: '#DC2626', info: '#4F46E5', offline: '#1E293B', scrim: 'rgb(0 0 0 / 0.5)' },
   },
