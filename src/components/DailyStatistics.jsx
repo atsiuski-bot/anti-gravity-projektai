@@ -15,8 +15,10 @@ import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null }) {
-    // Managers can see everyone, Workers only themselves
-    const [selectedUserId, setSelectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
+    // Managers see the whole team here; workers see only themselves. The per-member picker was
+    // removed (individual drill-down moves to the team calendar), so this is fixed at mount and
+    // never changes — no setter.
+    const [selectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
     const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
     const [, setLoading] = useState(false);
 
@@ -851,7 +853,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const weekday = getLithuanianWeekday(selectedDate);
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {actionError && (
                 <div
                     role="alert"
@@ -870,6 +872,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {/* Header Controls — kept to a single compact row on every viewport (no column
                 stacking on mobile) so the date stepper + filters take minimal vertical space. */}
             <div className="bg-surface-card p-2 rounded-card shadow-sm border border-line flex flex-row flex-wrap gap-2 items-center justify-between">
+
+                {/* Left group — date control plus, on desktop, the day's totals inline, so on
+                    md+ the whole summary collapses into this single toolbar row. */}
+                <div className="flex flex-wrap items-center gap-2 md:gap-4">
 
                 {/* Day mode: a day stepper. Range mode: a static span label — the period is
                     chosen by the picker in the parent (Reports), so there is nothing to step. */}
@@ -897,29 +903,41 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     </div>
                 )}
 
-                {(isManagerRole(userRole)) && users.length > 0 && (
-                    <div className="relative">
-                        <select
-                            value={selectedUserId}
-                            onChange={(e) => setSelectedUserId(e.target.value)}
-                            aria-label="Vykdytojas"
-                            className="pl-8 pr-3 py-1.5 border border-line rounded-control focus:ring-2 focus:ring-brand text-caption bg-surface-card"
-                        >
-                            <option value="all">Už visą komandą</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>
-                                    {formatDisplayName(u.displayName || u.email)}
-                                </option>
-                            ))}
-                        </select>
-                        <User className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" />
-                    </div>
-                )}
+                {/* Desktop only: the day's totals inline in the toolbar row (mobile keeps the
+                    dedicated summary card below). Merges the former four-card grid into one line. */}
+                <div className="hidden md:flex items-center gap-4 flex-wrap">
+                    {selectedUserId !== 'all' && !isRange && (
+                        <span className="flex items-center gap-1.5 whitespace-nowrap">
+                            <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                            <span className="text-caption text-ink-muted">Pradžia/Pabaiga</span>
+                            <span className="text-body font-bold text-ink-strong tabular-nums">
+                                {firstActivity ? formatTime(firstActivity) : '--:--'}–{lastActivity ? formatTime(lastActivity) : '--:--'}
+                            </span>
+                        </span>
+                    )}
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-ink-muted">Darbas</span>
+                        <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Coffee className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-ink-muted">Pertraukos</span>
+                        <span className="text-body font-bold text-amber-600 tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 whitespace-nowrap">
+                        <Zap className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
+                        <span className="text-caption text-brand">Viso</span>
+                        <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
+                    </span>
+                </div>
+                </div>
 
-                {/* Sort filter — a vertical two-option segmented control (Pagal laiką above
-                    Pagal būseną) rather than a dropdown, so both choices are visible at once. */}
+                {/* Sort filter — a horizontal two-option segmented control (Pagal laiką |
+                    Pagal būseną) so both choices stay on one row and the toolbar keeps to a
+                    single line. */}
                 <div
-                    className="flex flex-col bg-surface-sunken rounded-control overflow-hidden border border-line"
+                    className="flex bg-surface-sunken rounded-control overflow-hidden border border-line"
                     role="group"
                     aria-label="Rūšiuoti"
                 >
@@ -928,7 +946,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         onClick={() => setSortBy('time')}
                         aria-pressed={sortBy === 'time'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -936,13 +954,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         Pagal laiką
                     </button>
-                    <div className="h-px bg-line" aria-hidden="true" />
+                    <div className="w-px bg-line" aria-hidden="true" />
                     <button
                         type="button"
                         onClick={() => setSortBy('status')}
                         aria-pressed={sortBy === 'status'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors text-left",
+                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -999,64 +1017,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         </span>
                     </div>
                 </div>
-            </div>
-
-            {/* Desktop: the spacious four-card grid (unchanged). */}
-            <div className="hidden md:grid grid-cols-4 gap-4">
-                {selectedUserId !== 'all' && !isRange && (
-                    <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                        <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                            <Clock className="w-4 h-4" />
-                            Dienos Pradžia/Pabaiga
-                        </div>
-                        <div className="text-body-lg font-semibold text-ink-strong">
-                            {firstActivity ? formatTime(firstActivity) : '--:--'} - {lastActivity ? formatTime(lastActivity) : '--:--'}
-                        </div>
-                        <div className="text-caption text-ink-muted mt-1">
-                            Pagal pirmą/paskutinį įrašą
-                        </div>
-                    </div>
-                )}
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                        <Clock className="w-4 h-4" />
-                        Darbo laikas
-                    </div>
-                    <div className="text-h2 font-bold text-ink-strong">
-                        {formatMinutesToTimeString(totalWorkedMinutes)}
-                    </div>
-                </div>
-
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
-                        <Coffee className="w-4 h-4" />
-                        Pertraukos
-                    </div>
-                    <div className="text-h2 font-bold text-amber-600">
-                        {formatMinutesToTimeString(totalBreakMinutes)}
-                    </div>
-                    <div className="text-caption text-ink-muted mt-1">
-                        Viso pertraukų laikas
-                    </div>
-                </div>
-
-                <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
-                    <div className="flex items-center gap-3 mb-2 text-brand text-body font-medium">
-                        <Zap className="w-4 h-4" />
-                        Viso (D+P)
-                    </div>
-                    <div className="text-h2 font-bold text-brand">
-                        {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
-                    </div>
-                    <div className="text-caption text-ink-muted mt-1">
-                        Darbas + Pertraukos
-                    </div>
-                </div>
-
-
-
             </div>
 
             {/* Timeline Table or Worker Summary */}

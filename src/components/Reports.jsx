@@ -974,10 +974,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
             {/* --- WORK REPORT TAB (merged daily view + detailed range summary) --- */}
             {activeTab === 'report' && (
                 <div className="space-y-4">
-                    {/* Period selector — base view is a single day; the button reveals the range
-                        ladder (week → month → 3 months → year) and a custom date picker. 'day'
-                        renders the daily timeline; any range renders the detailed work summary. */}
-                    <div className="bg-surface-card rounded-card shadow-sm border border-line">
+                    {/* Period selector + CSV export share one row: the collapsible period card
+                        flexes to fill; the export button sits beside it (icon-only on mobile,
+                        icon+label on desktop) and appears only for a multi-day range (day mode
+                        has no export). The button reveals the range ladder (week → month →
+                        3 months → year) and a custom date picker. */}
+                    <div className="flex items-start gap-2">
+                        <div className="flex-1 bg-surface-card rounded-card shadow-sm border border-line">
                         <button
                             type="button"
                             onClick={() => setPeriodOpen((o) => !o)}
@@ -1037,8 +1040,24 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 </div>
                             </div>
                         )}
+                        </div>
+
+                        {reportPeriod !== 'day' && (
+                            <Button
+                                variant="success"
+                                icon={Download}
+                                onClick={handleExportHoursCSV}
+                                disabled={loading || workData.length === 0}
+                                aria-label="Eksportuoti CSV"
+                                className="shrink-0 px-3 sm:px-4"
+                            >
+                                <span className="hidden sm:inline">Eksportuoti CSV</span>
+                            </Button>
+                        )}
                     </div>
 
+                    {/* Day mode → the live daily timeline. Any multi-day range → the same view
+                        aggregated over [start, end] (summary cards, sort filters, finished tasks). */}
                     {reportPeriod === 'day' ? (
                         <DailyStatistics
                             currentUser={currentUser}
@@ -1047,30 +1066,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             canExport={canExport}
                         />
                     ) : (
-                        <>
-                            <div className="flex justify-end">
-                                <Button
-                                    variant="success"
-                                    icon={Download}
-                                    onClick={handleExportHoursCSV}
-                                    disabled={loading || workData.length === 0}
-                                >
-                                    Eksportuoti CSV
-                                </Button>
-                            </div>
-
-                            {/* The detailed period view reuses the day view, aggregated over the
-                                whole span: same summary cards, the Pagal laiką/Pagal būseną sort
-                                filters, and the finished-task list — computed for [start, end]. */}
-                            <DailyStatistics
-                                currentUser={currentUser}
-                                userRole={userRole}
-                                users={users}
-                                canExport={canExport}
-                                dateRange={dateRange}
-                            />
-
-                        </>
+                        <DailyStatistics
+                            currentUser={currentUser}
+                            userRole={userRole}
+                            users={users}
+                            canExport={canExport}
+                            dateRange={dateRange}
+                        />
                     )}
                 </div>
             )}
