@@ -15,6 +15,23 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-06-22** — **Four-level manager hierarchy — added the `seniorManager` (Vyr. vadovas)
+  rank.** A fourth role was inserted between `admin` and `manager` so the org chain reads
+  `Administratorius → Vyr. vadovas → Vadovas → Vykdytojas`. Per the founder's scoping choices it
+  is deliberately the SIMPLE shape: a senior manager sees the **whole company** (no transitive
+  subtree → **no** new denormalization / re-stamp Cloud Function, unlike [ADR 0005](./adr/0005-scoped-manager-hierarchy.md));
+  its powers are **view + assign/confirm tasks + reports** (account management — role changes,
+  block/unblock, team membership, logged-time edits — stays admin-only); and the existing manual
+  per-manager scope toggle (`scopedManager`) is kept for `manager` only — a senior is **never**
+  scoped. Security-wise the rank equals an *unscoped* manager: `isManagerRole` (`src/utils/formatters.js`),
+  `canSeeWholeTeam` (`src/utils/teamScope.js`) and the `firestore.rules` predicates
+  `isManagerOrAdmin`/`canSeeWholeTeam` were broadened to include it (new `isSeniorManager()`),
+  while the admin-only gates (the `users`/"Vartotojai" tab in `navTabs.js`, the role-change rule,
+  `canEditTime`) were left untouched. The role label was added to all four role→label maps
+  (`UserManagement`, `SideRail`, `ProfilePage`, plus the `RoleSelect` dropdown). **Additive — no
+  data migration.** **Rollout ordering:** the client makes a senior issue whole-company queries the
+  OLD rules would deny, so the `firestore.rules` change must be deployed (founder-run) **before**
+  anyone is promoted to Vyr. vadovas; until a senior account exists, shipping the client is inert.
 - **2026-06-22** — **Unified pop-up presentation on one shell.** Every informational pop-up /
   dialog renders through the canonical `Modal`: the scrim dims the whole viewport and the
   dialog is a content-sized card **centred over it**, including on phones, where a pop-up must

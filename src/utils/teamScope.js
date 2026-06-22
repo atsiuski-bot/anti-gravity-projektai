@@ -18,10 +18,12 @@ import { where } from 'firebase/firestore';
 export const isScopedManager = (userData) =>
     !!userData && userData.role === 'manager' && userData.scopedManager === true;
 
-// The signed-in user may see EVERY private row (no team filter): admins, and unscoped managers.
+// The signed-in user may see EVERY private row (no team filter): admins, senior managers
+// (Vyr. vadovas — whole-company oversight rank, never scoped), and unscoped managers.
 export const canSeeWholeTeam = (userData) =>
     !!userData && (
         userData.role === 'admin' ||
+        userData.role === 'seniorManager' ||
         (userData.role === 'manager' && userData.scopedManager !== true)
     );
 

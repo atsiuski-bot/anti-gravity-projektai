@@ -7,6 +7,8 @@ import {
     getLithuanian3AMCutoff,
     addDaysToDateString,
     calculateCurrentTotalMinutes,
+    formatMinutesToHHMM,
+    formatSignedMinutesToHHMM,
 } from './timeUtils';
 
 // These are characterization tests for the pure time-math + timezone helpers that the
@@ -177,5 +179,55 @@ describe('calculateCurrentTotalMinutes', () => {
         const total = calculateCurrentTotalMinutes({ timerStatus: 'running', timerStartedAt: thirtyMinAgo });
         expect(total).toBeGreaterThan(29.5);
         expect(total).toBeLessThan(31);
+    });
+});
+
+describe('formatMinutesToHHMM (carry-the-minute, payroll CSV)', () => {
+    it('carries a [59.5, 60) minute remainder into the hour instead of printing ":60"', () => {
+        // The exact regression: 3h59m30s used to render "03:60".
+        expect(formatMinutesToHHMM(239.5)).toBe('04:00');
+        expect(formatMinutesToHHMM(599.5)).toBe('10:00');
+        expect(formatMinutesToHHMM(59.5)).toBe('01:00');
+        // The minute field is never 60 for any input.
+        for (let m = 0; m <= 720; m += 0.5) {
+            expect(formatMinutesToHHMM(m).endsWith(':60')).toBe(false);
+        }
+    });
+
+    it('zero-pads hours and minutes', () => {
+        expect(formatMinutesToHHMM(0)).toBe('00:00');
+        expect(formatMinutesToHHMM(5)).toBe('00:05');
+        expect(formatMinutesToHHMM(65)).toBe('01:05');
+        expect(formatMinutesToHHMM(600)).toBe('10:00');
+    });
+
+    it('rounds to the nearest whole minute', () => {
+        expect(formatMinutesToHHMM(90.4)).toBe('01:30');
+        expect(formatMinutesToHHMM(90.6)).toBe('01:31');
+    });
+
+    it('renders magnitude only (sign is dropped) and guards junk input', () => {
+        expect(formatMinutesToHHMM(-90)).toBe('01:30');
+        expect(formatMinutesToHHMM(NaN)).toBe('00:00');
+        expect(formatMinutesToHHMM(Infinity)).toBe('00:00');
+        expect(formatMinutesToHHMM(null)).toBe('00:00');
+        expect(formatMinutesToHHMM(undefined)).toBe('00:00');
+    });
+});
+
+describe('formatSignedMinutesToHHMM (difference columns)', () => {
+    it('prefixes a sign and carries the minute', () => {
+        expect(formatSignedMinutesToHHMM(239.5)).toBe('+04:00');
+        expect(formatSignedMinutesToHHMM(-239.5)).toBe('-04:00');
+    });
+
+    it('renders zero unsigned', () => {
+        expect(formatSignedMinutesToHHMM(0)).toBe('00:00');
+        expect(formatSignedMinutesToHHMM(0.2)).toBe('00:00');
+    });
+
+    it('guards non-finite input', () => {
+        expect(formatSignedMinutesToHHMM(NaN)).toBe('00:00');
+        expect(formatSignedMinutesToHHMM(Infinity)).toBe('00:00');
     });
 });
