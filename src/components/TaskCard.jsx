@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, User, Pause, ListChecks, CheckCircle2 } from 'lucide-react';
+import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, Pause, ListChecks, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -16,6 +16,7 @@ import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import StatusPill from './ui/StatusPill';
+import UserChip from './UserChip';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
@@ -359,10 +360,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                         className="inline-flex items-center justify-center p-[2px] rounded-full"
                                         style={{ backgroundColor: displayColor || WORKER_FALLBACK_COLOR }}
                                     >
-                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-bold bg-surface-card text-ink">
-                                            <User className="w-3.5 h-3.5" aria-hidden="true" />
-                                            {formatDisplayName(task.assignedUserName)}
-                                        </span>
+                                        <UserChip
+                                            userId={task.assignedUserId}
+                                            name={task.assignedUserName}
+                                            className="gap-1 rounded-full bg-surface-card px-1.5 py-0.5 font-bold text-ink"
+                                        />
                                     </span>
                                 )}
 
