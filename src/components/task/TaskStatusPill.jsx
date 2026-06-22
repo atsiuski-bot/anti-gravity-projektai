@@ -1,31 +1,29 @@
-import { CheckCircle2 } from 'lucide-react';
 import StatusPill from '../ui/StatusPill';
 import { deriveTaskStatus } from '../../utils/taskStatus';
+import { StatusConfirmedGlyph } from '../icons/statusGlyphs';
 
 /**
  * TaskStatusPill — the ONLY way any surface renders a task's lifecycle/confirmation status.
- * Wraps the canonical <StatusPill> and drives its tone/label/icon from deriveTaskStatus, so a
+ * Wraps the canonical <StatusPill> and drives its tone/label/glyph from deriveTaskStatus, so a
  * "Vyksta" / "Pristabdyta" / "Nepatvirtinta" / "Patvirtinta" pill is byte-identical whether it
  * appears on a worker card, a manager table row, or the task form header.
  *
- * Deleted is rendered separately (<DeletedBadge>), not through here.
+ * The status glyph (ADR 0007) is always present now — the shape carries the state on every
+ * surface (no per-surface opt-in), which is the whole point of the custom set. Deleted is
+ * rendered separately (<DeletedBadge>), not through here.
  *
  * @param {Object} props
  * @param {Object} props.task
  * @param {boolean} [props.isRunning] - live timer truth; overrides stored status to "Vyksta"
- * @param {boolean} [props.justCompleted] - one-shot completion celebration (green + check)
- * @param {boolean} [props.doneIcon] - persist a completion check on finished work
- *   (Nepatvirtinta / Patvirtinta), so a "done" row carries the same visual mark a worker's
- *   own finished card shows. Off by default — surfaces opt in.
+ * @param {boolean} [props.justCompleted] - one-shot completion celebration (green fill + check)
  * @param {string} [props.className]
  */
-export default function TaskStatusPill({ task, isRunning = false, justCompleted = false, doneIcon = false, className }) {
-    const { key, tone, label, Icon } = deriveTaskStatus(task, { isRunning });
-    const isDone = key === 'completed' || key === 'confirmed';
+export default function TaskStatusPill({ task, isRunning = false, justCompleted = false, className }) {
+    const { tone, label, Icon } = deriveTaskStatus(task, { isRunning });
     return (
         <StatusPill
             tone={justCompleted ? 'success' : tone}
-            icon={justCompleted || (doneIcon && isDone) ? CheckCircle2 : Icon}
+            icon={justCompleted ? StatusConfirmedGlyph : Icon}
             className={className}
         >
             {label}

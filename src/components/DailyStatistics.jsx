@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
 import TaskStatusPill from './task/TaskStatusPill';
+import { StatusRunningGlyph } from './icons/statusGlyphs';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
@@ -1609,9 +1610,9 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
     // DeletedBadge; resolved task -> its pill with a persistent completion check on finished
     // work; an unresolvable quick-work/call (after-the-fact log) -> a generic "Atlikta".
     const renderStatus = (item, task) => {
-        if (item.isActive) return <StatusPill tone="running">Vyksta</StatusPill>;
+        if (item.isActive) return <StatusPill tone="running" icon={StatusRunningGlyph}>Vyksta</StatusPill>;
         if (task && (task.isDeleted || task.status === 'deleted')) return <DeletedBadge />;
-        if (task) return <TaskStatusPill task={task} doneIcon />;
+        if (task) return <TaskStatusPill task={task} />;
         return <StatusPill tone="done" icon={CheckCircle2}>Atlikta</StatusPill>;
     };
 
