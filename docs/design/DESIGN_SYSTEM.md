@@ -262,6 +262,17 @@ Each replaces a cluster of today's copy-pasted variants (see
 - `Loading`: one consistent treatment (skeleton rows for tables, spinner for blocks). No more
   bare "Kraunami duomenys..." strings duplicated per screen.
 
+### `DatePicker`
+- The **only** way to pick a date. **Native `<input type="date">` is banned** in UI flows:
+  its drop-down calendar renders month/weekday names in the *browser's* UI language, not the
+  page's, so on an English-language browser every date field showed English months regardless
+  of `lang="lt"`. `DatePicker` draws the whole calendar through `date-fns` + the `lt` locale,
+  so months are always Lithuanian on every machine.
+- Monday-first grid (Lithuanian convention), `yyyy-MM-dd` value contract (drop-in for the
+  native input), `min`/`max` to disable out-of-range days, ≥44 px day targets, full keyboard
+  navigation (arrows / Home·End / PageUp·PageDown / Enter / Escape), roving tabindex, a
+  `dialog`-role popover dismissed on outside-click or `Escape`.
+
 ### Session controls (timers)
 - The primary work action has the strongest resting affordance; Call/Break are secondary.
 - Idle compact timers keep their fixed-height placeholder (good, prevents layout jump) but

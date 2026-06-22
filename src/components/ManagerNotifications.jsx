@@ -168,7 +168,8 @@ export default function ManagerNotifications({ onClose }) {
                     end: requestedEvent.end,
                     title: requestedEvent.title,
                     isWorkFromHome: requestedEvent.isWorkFromHome,
-                    isVacation: requestedEvent.isVacation
+                    isVacation: requestedEvent.isVacation,
+                    absenceType: requestedEvent.absenceType ?? null
                 });
             } else if (type === 'delete') {
                 await deleteDoc(doc(db, 'work_hours', requestedEvent.id));
@@ -462,8 +463,8 @@ export default function ManagerNotifications({ onClose }) {
 
             {/* Batch-approve bar — only when there are several completed tasks to confirm. */}
             {taskNotifications.filter(n => n.type === 'task_completion').length >= 2 && (
-                <div className="flex items-center justify-between gap-3 rounded-lg border border-green-200 bg-green-50 px-4 py-2 max-w-xl">
-                    <span className="text-sm font-medium text-green-900">
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-feedback-success-border bg-feedback-success-soft px-4 py-2 max-w-xl">
+                    <span className="text-sm font-medium text-feedback-success-text">
                         Užbaigtos užduotys: {taskNotifications.filter(n => n.type === 'task_completion').length}
                     </span>
                     <Button variant="success" size="md" icon={Check} loading={bulkConfirming} onClick={handleConfirmAllCompletions}>
@@ -475,22 +476,22 @@ export default function ManagerNotifications({ onClose }) {
             {sortedNotifications.map(notif => {
                 if (notif.source === 'calendar') {
                     return (
-                        <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm max-w-xl">
+                        <div key={notif.id} className="bg-feedback-info-soft border border-feedback-info-border rounded-lg p-4 relative shadow-sm max-w-xl">
                             <IconButton
                                 icon={X}
                                 label="Uždaryti pranešimą"
                                 variant="ghost"
                                 onClick={() => handleDismissCalendar(notif.id)}
-                                className="absolute top-2 right-2 text-blue-400 hover:text-blue-600"
+                                className="absolute top-2 right-2 text-ink-muted hover:text-feedback-info"
                             />
 
                             <div className="flex items-start gap-3">
-                                <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                                <AlertCircle className="w-5 h-5 text-feedback-info mt-0.5 flex-shrink-0" />
                                 <div>
-                                    <h4 className="font-medium text-blue-900">
+                                    <h4 className="font-medium text-feedback-info-text">
                                         <UserChip userId={notif.userId} name={notif.userName} /> atnaujino darbo kalendorių
                                     </h4>
-                                    <div className="mt-2 text-sm text-blue-800 space-y-1">
+                                    <div className="mt-2 text-sm text-feedback-info-text space-y-1">
                                         {notif.changes && notif.changes.map((change, index) => {
                                             const start = parseISO(change.start);
                                             const end = parseISO(change.end);
@@ -504,9 +505,9 @@ export default function ManagerNotifications({ onClose }) {
                                             return (
                                                 <div key={index} className="flex gap-2">
                                                     <span className={
-                                                        isAdd ? 'text-green-600 font-medium min-w-[70px]' :
-                                                            isEdit ? 'text-amber-600 font-medium min-w-[70px]' :
-                                                                'text-red-600 font-medium min-w-[70px]'
+                                                        isAdd ? 'text-feedback-success font-medium min-w-[70px]' :
+                                                            isEdit ? 'text-feedback-warning font-medium min-w-[70px]' :
+                                                                'text-feedback-danger font-medium min-w-[70px]'
                                                     }>
                                                         {isAdd ? '+ Pridėta:' : isEdit ? '~ Pakeista:' : '- Atšaukta:'}
                                                     </span>
@@ -537,22 +538,22 @@ export default function ManagerNotifications({ onClose }) {
                                        'nori pakeisti darbo laiką';
 
                     return (
-                        <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                        <div key={notif.id} className="bg-feedback-info-soft border border-feedback-info-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                             <div className="flex items-start gap-4">
-                                <div className="w-10 h-10 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shrink-0">
+                                <div className="w-10 h-10 bg-feedback-info-soft text-feedback-info rounded-full flex items-center justify-center shrink-0">
                                     <Clock className="w-5 h-5" />
                                 </div>
                                 <div className="flex-1">
-                                    <h4 className="font-bold text-blue-900 leading-tight">
+                                    <h4 className="font-bold text-feedback-info-text leading-tight">
                                         <UserChip userId={notif.userId} name={notif.userName} /> {actionText}
                                     </h4>
-                                    <p className="text-sm text-blue-800 mt-1 font-medium">
+                                    <p className="text-sm text-feedback-info-text mt-1 font-medium">
                                         {dayName}, {notif.type === 'edit' ? `nuo ${oldTimeRange} iki ${timeRange}` : timeRange}
                                     </p>
-                                    
-                                    <div className="mt-3 bg-surface-card/50 rounded-lg p-3 border border-blue-100">
-                                        <p className="text-xs font-bold text-blue-600 uppercase tracking-wider mb-1">Priežastis:</p>
-                                        <p className="text-sm text-blue-800 italic">&quot;{notif.reason}&quot;</p>
+
+                                    <div className="mt-3 bg-surface-card/50 rounded-lg p-3 border border-feedback-info-border">
+                                        <p className="text-xs font-bold text-feedback-info uppercase tracking-wider mb-1">Priežastis:</p>
+                                        <p className="text-sm text-feedback-info-text italic">&quot;{notif.reason}&quot;</p>
                                     </div>
 
                                     <div className="mt-4 flex gap-3">
@@ -651,22 +652,22 @@ export default function ManagerNotifications({ onClose }) {
 
                     if (notif.type === 'new_comment') {
                         return (
-                            <div key={notif.id} className="bg-blue-50 border border-blue-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                            <div key={notif.id} className="bg-feedback-info-soft border border-feedback-info-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                                 <IconButton
                                     icon={X}
                                     label="Uždaryti pranešimą"
                                     variant="ghost"
                                     onClick={() => handleDismissTask(notif.id)}
-                                    className="absolute top-2 right-2 text-blue-400 hover:text-blue-600 sm:hidden"
+                                    className="absolute top-2 right-2 text-ink-muted hover:text-feedback-info sm:hidden"
                                 />
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                                     <div className="flex items-start gap-3 pr-6 sm:pr-0 min-w-0">
-                                        <MessageCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+                                        <MessageCircle className="w-5 h-5 text-feedback-info mt-0.5 flex-shrink-0" />
                                         <div className="min-w-0">
-                                            <div className="text-sm text-blue-800">
+                                            <div className="text-sm text-feedback-info-text">
                                                 <p><UserChip userId={notif.createdById} name={notif.createdByName} className="font-semibold" /> pakomentavo užduotį:</p>
                                                 <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
-                                                {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-blue-300 pl-2"> &quot;{notif.commentText}&quot;</p>}
+                                                {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-info-border pl-2"> &quot;{notif.commentText}&quot;</p>}
                                             </div>
                                         </div>
                                     </div>
@@ -691,23 +692,23 @@ export default function ManagerNotifications({ onClose }) {
                             ? format(new Date(notif.completedAt), 'yyyy-MM-dd HH:mm')
                             : '';
                         return (
-                            <div key={notif.id} className="bg-green-50 border border-green-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                            <div key={notif.id} className="bg-feedback-success-soft border border-feedback-success-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                                 <div className="flex flex-col gap-3">
                                     <div className="flex items-start gap-3">
-                                        <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
-                                        <div className="text-sm text-green-900">
+                                        <Check className="w-5 h-5 text-feedback-success mt-0.5 flex-shrink-0" />
+                                        <div className="text-sm text-feedback-success-text">
                                             <p>
                                                 <UserChip userId={notif.userId} name={notif.userName} className="font-semibold" />
                                                 {' '}baigė užduotį{' '}
                                                 <span className="font-medium">&quot;{notif.taskTitle}&quot;</span>
-                                                {completedDate && <span className="text-green-700"> {completedDate}</span>}
+                                                {completedDate && <span className="text-feedback-success-text"> {completedDate}</span>}
                                                 .
                                             </p>
                                             <p className="mt-1">
                                                 Užduočiai sugaištas laikas:{' '}
                                                 <span className="font-semibold">{notif.actualTime || '—'}</span>.
                                             </p>
-                                            <p className="mt-1 text-green-700">Patvirtinkite atlikimą arba grąžinkite užduotį tobulinti.</p>
+                                            <p className="mt-1 text-feedback-success-text">Patvirtinkite atlikimą arba grąžinkite užduotį tobulinti.</p>
                                         </div>
                                     </div>
                                     <div className="flex items-center justify-between mt-2 mb-1 px-2 gap-2">
@@ -742,14 +743,14 @@ export default function ManagerNotifications({ onClose }) {
                         return (
                             <div
                                 key={notif.id}
-                                className="rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl border bg-red-50 border-red-200"
+                                className="rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl border bg-feedback-danger-soft border-feedback-danger-border"
                             >
                                 <div className="flex flex-col gap-3">
                                     {/* Header */}
                                     <div className="flex items-start gap-3">
-                                        <Clock className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-600" />
+                                        <Clock className="w-5 h-5 mt-0.5 flex-shrink-0 text-feedback-danger" />
                                         <div>
-                                            <div className="text-sm text-red-800">
+                                            <div className="text-sm text-feedback-danger-text">
                                                 <p className="font-medium leading-relaxed">
                                                     <UserChip userId={notif.userId} name={notif.userName} className="font-semibold" />{' '}
                                                     išnaudojo visą numatomą laiką užduočiai &quot;{notif.taskTitle}&quot; atlikti. Aptarkite tolesnę eigą ir jei reikia, pratęskite numatomą laiką.
@@ -802,17 +803,17 @@ export default function ManagerNotifications({ onClose }) {
 
                 // Default fallback for task assignments / approvals
                 return (
-                    <div key={notif.id} className="bg-amber-50 border border-amber-200 rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                    <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
 
                         <div className="flex flex-col gap-3">
                             <div className="flex items-start gap-3">
-                                <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                                <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
                                 <div>
-                                    <div className="text-sm text-amber-800">
+                                    <div className="text-sm text-feedback-warning-text">
                                         <p><UserChip userId={notif.createdById} name={notif.createdByName} className="font-semibold" /> priskyrė Jus vadovu užduočiai:</p>
                                         <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
                                         {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
-                                        {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-amber-300 pl-2"> {notif.description}</p>}
+                                        {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}
                                     </div>
                                 </div>
                             </div>

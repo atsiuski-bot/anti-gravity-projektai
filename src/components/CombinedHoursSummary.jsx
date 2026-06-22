@@ -7,14 +7,14 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
-import { isScopedManager, scopeRoster } from '../utils/teamScope';
+import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
 import UserChip from './UserChip';
 
 export default function CombinedHoursSummary() {
     const { currentUser, userData } = useAuth();
     const { users: allUsers, loading: usersLoading } = useUsers();
     // Scoped manager: only their team's rows + roster. Admin/unscoped manager: whole company.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const uid = currentUser?.uid;
     const users = useMemo(() => scopeRoster(allUsers, userData, uid), [allUsers, scoped, uid]); // eslint-disable-line react-hooks/exhaustive-deps -- userData read via the stable `scoped` flag
     const [tasks, setTasks] = useState([]);

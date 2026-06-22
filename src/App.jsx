@@ -5,8 +5,10 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { UsersProvider } from './context/UsersContext';
 import { ToastProvider } from './context/ToastContext';
 import { NotificationsProvider } from './context/NotificationsContext';
+import { ThemeProvider } from './context/ThemeContext';
 import Layout from './components/Layout';
 import AchievementCelebrator from './components/AchievementCelebrator';
+import ThemeSync from './components/ThemeSync';
 import { ProfileViewerProvider } from './context/ProfileViewerContext';
 
 // Lazy load pages
@@ -64,6 +66,9 @@ function App() {
 
     return (
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            {/* ThemeProvider wraps AuthProvider so the chosen theme is live pre-login and during
+                the auth spinner (AuthProvider gates its children behind a full-screen loader). */}
+            <ThemeProvider>
             <AuthProvider>
                 <UsersProvider>
                     <ToastProvider>
@@ -77,6 +82,9 @@ function App() {
                                                 {/* ProfileViewer hosts the app-wide read-only peer-profile
                                                     overlay any UserChip opens (P2). */}
                                                 <ProfileViewerProvider>
+                                                    {/* Adopt the user's saved theme across devices
+                                                        (one-way Firestore -> ThemeContext bridge). */}
+                                                    <ThemeSync />
                                                     {/* Foreground badge celebration — app-wide, so it fires
                                                         no matter which tab earned the badge (C2). */}
                                                     <AchievementCelebrator />
@@ -93,6 +101,7 @@ function App() {
                     </ToastProvider>
                 </UsersProvider>
             </AuthProvider>
+            </ThemeProvider>
         </BrowserRouter>
     );
 }

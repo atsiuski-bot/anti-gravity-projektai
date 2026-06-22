@@ -9,12 +9,12 @@ import { cn } from '../../utils/cn';
  */
 const TONES = {
     neutral: 'bg-surface-sunken text-ink',
-    pending: 'bg-amber-100 text-amber-800',
-    running: 'bg-green-100 text-green-800',
+    pending: 'bg-feedback-warning-soft text-feedback-warning-text',
+    running: 'bg-feedback-success-soft text-feedback-success-text',
     done: 'bg-surface-sunken text-ink-muted',
-    success: 'bg-green-100 text-green-800',
-    info: 'bg-brand-soft text-brand-hover',
-    danger: 'bg-red-50 text-red-700',
+    success: 'bg-feedback-success-soft text-feedback-success-text',
+    info: 'bg-feedback-info-soft text-feedback-info-text',
+    danger: 'bg-feedback-danger-soft text-feedback-danger-text',
     // Achievement tiers — a sibling set for the inline (earned-chip) form of a badge. These
     // carry NO status semantics; the trophy-tile form is <Badge>. Pair with a tier label so
     // color is never the sole signal (§5).

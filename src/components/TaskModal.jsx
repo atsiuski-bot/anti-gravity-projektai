@@ -10,7 +10,7 @@ import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { notify } from '../utils/notify';
-import { getPriorityOptions, getPriorityLabel, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
+import { getPriorityOptions, getPriorityLabel, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
@@ -764,7 +764,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                     <button
                                                         type="button"
                                                         onClick={() => setTemplateName(t.templateName)}
-                                                        className="min-h-touch text-sm text-left flex-1 truncate text-ink hover:text-blue-600 font-medium rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                                        className="min-h-touch text-sm text-left flex-1 truncate text-ink hover:text-brand font-medium rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                                     >
                                                         {t.templateName}
                                                     </button>
@@ -789,7 +789,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 type="checkbox"
                                                 checked={selectedTemplateFields[key]}
                                                 onChange={(e) => setSelectedTemplateFields(prev => ({ ...prev, [key]: e.target.checked }))}
-                                                className="w-4 h-4 text-blue-600 rounded"
+                                                className="w-4 h-4 text-brand rounded"
                                             />
                                             <span className="capitalize">{
                                                 key === 'assignedUserId' ? 'Priskirtas vykdytojas' :
@@ -845,7 +845,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 aria-pressed={active}
                                                 title={p.label}
                                                 className={`flex h-9 flex-1 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'ring-2 ring-brand' : 'ring-1 ring-line'}`}
-                                                style={{ backgroundColor: p.color }}
+                                                style={{ backgroundColor: getPriorityColor(p.id) }}
                                             >
                                                 {active && <Check className="h-4 w-4" style={{ color: getPriorityTextColor(p.id) }} aria-hidden="true" />}
                                             </button>
@@ -978,7 +978,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                             type="button"
                                                             onClick={() => removeExistingAttachment(index)}
                                                             aria-label="Pašalinti nuotrauką"
-                                                            className="absolute top-1 right-1 inline-flex items-center justify-center min-h-touch min-w-touch bg-white rounded-full text-red-500 shadow transition-colors hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                            className="absolute top-1 right-1 inline-flex items-center justify-center min-h-touch min-w-touch bg-surface-card rounded-full text-feedback-danger shadow transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                         >
                                                             <Trash2 className="w-4 h-4" aria-hidden="true" />
                                                         </button>
@@ -1001,7 +1001,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                                 type="button"
                                                                 onClick={() => removeSelectedFile(index)}
                                                                 aria-label={`Pašalinti ${file.name}`}
-                                                                className="inline-flex items-center justify-center min-h-touch min-w-touch shrink-0 text-ink-muted hover:text-red-500 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                                className="inline-flex items-center justify-center min-h-touch min-w-touch shrink-0 text-ink-muted hover:text-feedback-danger rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                             >
                                                                 <X className="w-4 h-4" aria-hidden="true" />
                                                             </button>
@@ -1120,7 +1120,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                             <div className="mt-2 space-y-2">
                                                 {formData.links.map((link, index) => (
                                                     <div key={index} className="flex items-center justify-between bg-surface-sunken p-2 rounded-lg">
-                                                        <a href={link} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 truncate hover:underline flex-1 mr-2">
+                                                        <a href={link} target="_blank" rel="noopener noreferrer" className="text-sm text-brand truncate hover:underline flex-1 mr-2">
                                                             {link}
                                                         </a>
                                                         <IconButton
@@ -1158,7 +1158,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 rows={2}
                                                 className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base resize-y"
                                             />
-                                            <button type="button" onClick={addComment} className="min-h-touch bg-blue-50 text-blue-600 px-4 rounded-lg hover:bg-blue-100 font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
+                                            <button type="button" onClick={addComment} className="min-h-touch bg-brand-soft text-brand px-4 rounded-lg hover:bg-brand-soft font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
                                                 Skelbti
                                             </button>
                                         </div>
@@ -1182,7 +1182,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                             const spent = calculateCurrentTotalMinutes(task);
                                             if (spent > 0) {
                                                 return (
-                                                    <div className="flex items-center gap-1 font-bold text-blue-600 mt-1">
+                                                    <div className="flex items-center gap-1 font-bold text-feedback-info mt-1">
                                                         <Clock className="w-3.5 h-3.5" />
                                                         Praleistas laikas: {formatMinutesToTimeString(spent)}
                                                     </div>

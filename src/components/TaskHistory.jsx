@@ -7,7 +7,7 @@ import { getPriorityLabel } from '../utils/priority';
 import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
-import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
+import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
@@ -18,6 +18,7 @@ import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
 import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
+import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
@@ -40,7 +41,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     const isManagerOrAdmin = isManagerRole(userRole);
     // Scoped managers only ever read their team's archived tasks (array-contains); this surface
     // is manager/admin-only (rendered when "all" is selected), so the effective role is never 'worker'.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
@@ -676,14 +677,14 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleExportCSV}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <FileText className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti (CSV)
                         </button>
                         <button
                             onClick={handleExport}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <Download className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti AI analizei (JSON)
@@ -752,25 +753,21 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         >
                             <div className="flex flex-col gap-1">
                                 <label htmlFor="hist-date-from" className={FILTER_LABEL_CLASS}>Nuo</label>
-                                <input
+                                <DatePicker
                                     id="hist-date-from"
-                                    type="date"
                                     value={dateFrom}
                                     max={dateTo}
-                                    onChange={(e) => setDateFrom(e.target.value)}
-                                    className={SELECT_CLASS}
+                                    onChange={setDateFrom}
                                 />
                             </div>
                             <div className="flex flex-col gap-1">
                                 <label htmlFor="hist-date-to" className={FILTER_LABEL_CLASS}>Iki</label>
-                                <input
+                                <DatePicker
                                     id="hist-date-to"
-                                    type="date"
                                     value={dateTo}
                                     min={dateFrom}
                                     max={getLithuanianDateString()}
-                                    onChange={(e) => setDateTo(e.target.value)}
-                                    className={SELECT_CLASS}
+                                    onChange={setDateTo}
                                 />
                             </div>
                         </div>

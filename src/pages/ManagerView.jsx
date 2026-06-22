@@ -125,7 +125,7 @@ export default function ManagerView() {
     return (
         <div className="pt-1 sm:pt-4">
             {error && (
-                <div className="mb-6 bg-red-50 border-l-4 border-feedback-danger p-4" role="alert">
+                <div className="mb-6 bg-feedback-danger-soft border-l-4 border-feedback-danger p-4" role="alert">
                     <p className="text-body text-feedback-danger">{error}</p>
                 </div>
             )}
