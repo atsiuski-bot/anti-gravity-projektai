@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe } from 'lucide-react';
+import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -569,16 +569,6 @@ export default function UserManagement() {
 
     return (
         <Card as="section" className="mb-8 overflow-hidden">
-            <div className="border-b border-line bg-surface-sunken p-6">
-                <div className="flex items-center gap-2">
-                    <UserCog className="h-6 w-6 text-brand" aria-hidden="true" />
-                    <h2 className="text-h2 text-ink-strong">Vartotojų valdymas</h2>
-                </div>
-                <p className="mt-1 text-body text-ink-muted">
-                    Valdykite vartotojų roles ir spalvas.
-                </p>
-            </div>
-
             {error && (
                 <div className="m-4 flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4">
                     <ShieldAlert className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
