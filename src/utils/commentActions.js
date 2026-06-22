@@ -1,5 +1,6 @@
-import { doc, updateDoc, getDoc, addDoc, collection } from 'firebase/firestore';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import { notifyMany } from './notify';
 
 /**
  * Adds a new comment to a task.
@@ -38,18 +39,18 @@ export const addComment = async (taskId, text, currentUser, currentComments = nu
             updatedAt: new Date().toISOString()
         });
 
-        // Add notification for manager if commenter is not the manager
-        if (taskData && taskData.managerId && taskData.managerId !== currentUser.uid) {
-            await addDoc(collection(db, 'request_notifications'), {
-                recipientId: taskData.managerId,
+        // Notify the OTHER party so the thread reaches them in their bell: the assigned manager
+        // when the commenter isn't the manager, AND the worker when the commenter isn't the
+        // worker. This makes a manager's comment reach the worker (two-way) without ever echoing
+        // back to the author (notifyMany drops the actor and de-dupes).
+        if (taskData) {
+            await notifyMany([taskData.managerId, taskData.assignedUserId], {
                 type: 'new_comment',
-                taskId: taskId,
+                taskId,
                 taskTitle: taskData.title,
                 commentText: text,
-                isRead: false,
-                createdAt: new Date().toISOString(),
-                createdBy: currentUser.uid,
-                createdByName: currentUser.displayName || currentUser.email
+                actorUid: currentUser.uid,
+                actorName: currentUser.displayName || currentUser.email,
             });
         }
     } catch (err) {

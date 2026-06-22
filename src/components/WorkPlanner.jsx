@@ -615,11 +615,19 @@ export default function WorkPlanner() {
         try {
             const isManagerOrAdmin = isManagerRole(userRole);
             const managerId = userData?.defaultManager || (isManagerOrAdmin ? currentUser.uid : null);
+            // Calendar/shift requests concern the PERSON, so they fan out to ALL of the worker's
+            // managers (any may approve; the first to act flips the status and clears it for the
+            // rest). `managerId` stays the primary (FCM fallback / legacy); `managerIds` is the
+            // array the bell queries with array-contains.
+            const managerIds = Array.isArray(userData?.teamManagerIds) && userData.teamManagerIds.length
+                ? userData.teamManagerIds
+                : (managerId ? [managerId] : []);
 
             const requestData = {
                 userId: currentUser.uid,
                 userName: userData?.displayName || currentUser.displayName || currentUser.email,
                 managerId: managerId,
+                managerIds: managerIds,
                 type: pendingAction.type,
                 reason: reasonValue,
                 status: 'pending',
