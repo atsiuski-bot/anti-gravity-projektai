@@ -896,7 +896,7 @@ export default function WorkPlanner() {
                             aria-modal="true"
                             aria-labelledby="edit-event-title"
                             tabIndex={-1}
-                            className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in duration-200 focus-visible:outline-none"
+                            className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in focus-visible:outline-none"
                         >
                             <h3 id="edit-event-title" className="text-h2 text-ink-strong mb-4">
                                 {editingEvent.id ? 'Redaguoti laiką' : 'Pridėti darbo laiką'}
@@ -1036,7 +1036,7 @@ export default function WorkPlanner() {
                         aria-modal="true"
                         aria-labelledby="approval-feedback-title"
                         tabIndex={-1}
-                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-sm p-8 text-center animate-in zoom-in duration-300 focus-visible:outline-none"
+                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-sm p-8 text-center animate-in zoom-in focus-visible:outline-none"
                     >
                         {feedbackVariant === 'approved' ? (
                             <div className="w-16 h-16 bg-feedback-success/10 text-feedback-success rounded-full flex items-center justify-center mx-auto mb-4">
@@ -1071,7 +1071,7 @@ export default function WorkPlanner() {
                         aria-modal="true"
                         aria-labelledby="reason-modal-title"
                         tabIndex={-1}
-                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 animate-in fade-in slide-in-from-bottom-4 duration-300 focus-visible:outline-none"
+                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 animate-in fade-in slide-in-from-bottom-4 focus-visible:outline-none"
                     >
                         <h3 id="reason-modal-title" className="text-h2 text-ink-strong mb-2">Pakeitimų priežastis</h3>
                         <label htmlFor="reasonValue" className="block text-body text-ink-muted mb-4">Prašome nurodyti kodėl darote šį pakeitimą (min. 10 simbolių).</label>

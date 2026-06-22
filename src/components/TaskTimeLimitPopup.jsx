@@ -44,7 +44,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                 aria-modal="true"
                 aria-labelledby="time-limit-title"
                 tabIndex={-1}
-                className="w-full max-w-md overflow-hidden rounded-modal bg-surface-card shadow-2xl animate-in fade-in zoom-in-95 duration-300 focus:outline-none"
+                className="w-full max-w-md overflow-hidden rounded-modal bg-surface-card shadow-2xl animate-in fade-in zoom-in-95 focus:outline-none"
             >
                 {/* Header — darkened so the white title clears WCAG 1.4.3 (red-500 was ~3.99:1). */}
                 <div className="flex items-center gap-3 bg-gradient-to-r from-red-600 to-red-700 px-6 py-4">

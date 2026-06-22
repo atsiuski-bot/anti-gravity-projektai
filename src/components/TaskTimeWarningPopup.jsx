@@ -25,7 +25,7 @@ export default function TaskTimeWarningPopup({ task, remaining, onDismiss }) {
                 aria-modal="true"
                 aria-labelledby="time-warning-title"
                 tabIndex={-1}
-                className="w-full max-w-md overflow-hidden rounded-modal bg-surface-card shadow-2xl animate-in fade-in zoom-in-95 duration-300 focus:outline-none"
+                className="w-full max-w-md overflow-hidden rounded-modal bg-surface-card shadow-2xl animate-in fade-in zoom-in-95 focus:outline-none"
             >
                 {/* Header — darkened so the white title/icon clear WCAG 1.4.3 (was amber-400/orange-400 ~1.8:1). */}
                 <div className="flex items-center gap-3 bg-gradient-to-r from-amber-700 to-orange-700 px-6 py-4">
