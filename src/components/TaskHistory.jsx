@@ -17,6 +17,7 @@ import { addComment } from '../utils/commentActions';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
 import ConfirmDialog from './ui/ConfirmDialog';
+import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
@@ -750,25 +751,21 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         >
                             <div className="flex flex-col gap-1">
                                 <label htmlFor="hist-date-from" className={FILTER_LABEL_CLASS}>Nuo</label>
-                                <input
+                                <DatePicker
                                     id="hist-date-from"
-                                    type="date"
                                     value={dateFrom}
                                     max={dateTo}
-                                    onChange={(e) => setDateFrom(e.target.value)}
-                                    className={SELECT_CLASS}
+                                    onChange={setDateFrom}
                                 />
                             </div>
                             <div className="flex flex-col gap-1">
                                 <label htmlFor="hist-date-to" className={FILTER_LABEL_CLASS}>Iki</label>
-                                <input
+                                <DatePicker
                                     id="hist-date-to"
-                                    type="date"
                                     value={dateTo}
                                     min={dateFrom}
                                     max={getLithuanianDateString()}
-                                    onChange={(e) => setDateTo(e.target.value)}
-                                    className={SELECT_CLASS}
+                                    onChange={setDateTo}
                                 />
                             </div>
                         </div>

@@ -15,6 +15,7 @@ import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
+import DatePicker from './ui/DatePicker';
 
 // Map raw / Firebase errors to friendly Lithuanian copy (DESIGN_SYSTEM §10).
 // Never surface raw err.message to the user.
@@ -791,13 +792,10 @@ export default function WorkPlanner() {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
                             <label htmlFor="manualDate" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Data</label>
-                            <input
+                            <DatePicker
                                 id="manualDate"
-                                type="date"
                                 value={manualDate}
-                                onChange={(e) => setManualDate(e.target.value)}
-                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
-                                required
+                                onChange={setManualDate}
                             />
                         </div>
                         <div>
@@ -921,13 +919,10 @@ export default function WorkPlanner() {
                                 <div className="grid grid-cols-1 gap-4 mb-6">
                                     <div>
                                         <label htmlFor="editDate" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Data</label>
-                                        <input
+                                        <DatePicker
                                             id="editDate"
-                                            type="date"
                                             value={editingEvent.dateStr}
-                                            onChange={(e) => setEditingEvent({ ...editingEvent, dateStr: e.target.value })}
-                                            className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none"
-                                            required
+                                            onChange={(v) => setEditingEvent({ ...editingEvent, dateStr: v })}
                                         />
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">

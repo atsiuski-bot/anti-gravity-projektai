@@ -5,6 +5,7 @@ import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
+import DatePicker from './ui/DatePicker';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -335,14 +336,12 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                 <form onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="mt-auto pt-4 border-t border-line flex flex-col gap-3">
                     <h4 className="text-sm font-semibold text-ink">Pridėti naują įrašą</h4>
                     <div className="flex flex-wrap gap-2">
-                        <input
-                            type="date"
+                        <DatePicker
                             value={date}
-                            onChange={(e) => setDate(e.target.value)}
+                            onChange={setDate}
                             max={new Date().toISOString().split('T')[0]}
                             aria-label="Data"
-                            className="min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm flex-1 min-w-[120px]"
-                            required
+                            className="flex-1 min-w-[140px]"
                         />
                         <div className="flex items-center gap-1">
                             <input
