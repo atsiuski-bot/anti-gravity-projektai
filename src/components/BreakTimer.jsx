@@ -99,6 +99,8 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
             <div className="flex flex-col items-center">
                 {isTakingBreak ? (
                     <span
+                        role="timer"
+                        aria-label="Pertraukos laikas"
                         className="text-body-lg font-bold text-session-break-accent font-mono mb-1 leading-6"
                     >
                         {totalDisplay}

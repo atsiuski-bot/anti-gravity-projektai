@@ -11,7 +11,7 @@ const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 
 const LoadingFallback = () => (
     <div className="flex h-screen items-center justify-center bg-surface-base">
-        <div className="text-center">
+        <div className="text-center" role="status">
             <div className="w-12 h-12 border-4 border-brand border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
             <p className="text-ink-muted font-medium">Kraunama…</p>
         </div>
@@ -21,7 +21,7 @@ const LoadingFallback = () => (
 const ProtectedRoute = ({ children }) => {
     const { currentUser, loading } = useAuth();
 
-    if (loading) return <div className="flex h-screen items-center justify-center">Kraunama…</div>;
+    if (loading) return <div className="flex h-screen items-center justify-center" role="status">Kraunama…</div>;
 
     if (!currentUser) {
         return <Navigate to="/login" />;

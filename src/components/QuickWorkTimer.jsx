@@ -198,6 +198,8 @@ export default function QuickWorkTimer({ compact = false }) {
                 {/* Timer Display — paired label + live readout (color is never the sole signal) */}
                 {isQuickWorking ? (
                     <span
+                        role="timer"
+                        aria-label="Greito darbo laikas"
                         className="text-body-lg font-bold text-session-quickWork-accent font-mono mb-1 leading-6 animate-pulse"
                     >
                         {formatMinutesToTimeString(currentSessionMinutes)}

@@ -217,6 +217,8 @@ export default function CallTimer({ compact = false }) {
                 {/* Timer Display — live readout (color is never the sole signal) */}
                 {isCalling ? (
                     <span
+                        role="timer"
+                        aria-label="Skambučio laikas"
                         className="text-body-lg font-bold text-session-call-accent font-mono mb-1 leading-6 animate-pulse"
                     >
                         {totalDisplay}
