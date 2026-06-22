@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { startOfWeek, format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { X, AlertCircle, Check, Trash2, Edit, MessageCircle, Clock, RotateCcw } from 'lucide-react';
-import { formatDisplayName } from '../utils/formatters';
+import UserChip from './UserChip';
 import { deleteTask } from '../utils/taskActions';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
@@ -403,7 +403,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                 <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                                 <div>
                                     <h4 className="font-medium text-blue-900">
-                                        {formatDisplayName(notif.userName)} atnaujino darbo kalendorių
+                                        <UserChip userId={notif.userId} name={notif.userName} /> atnaujino darbo kalendorių
                                     </h4>
                                     <div className="mt-2 text-sm text-blue-800 space-y-1">
                                         {notif.changes && notif.changes.map((change, index) => {
@@ -459,7 +459,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                 </div>
                                 <div className="flex-1">
                                     <h4 className="font-bold text-blue-900 leading-tight">
-                                        {formatDisplayName(notif.userName)} {actionText}
+                                        <UserChip userId={notif.userId} name={notif.userName} /> {actionText}
                                     </h4>
                                     <p className="text-sm text-blue-800 mt-1 font-medium">
                                         {dayName}, {notif.type === 'edit' ? `nuo ${oldTimeRange} iki ${timeRange}` : timeRange}
@@ -511,7 +511,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         <MessageCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                                         <div>
                                             <div className="text-sm text-blue-800">
-                                                <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> pakomentavo užduotį:</p>
+                                                <p><UserChip userId={notif.createdById} name={notif.createdByName} className="font-semibold" /> pakomentavo užduotį:</p>
                                                 <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
                                                 {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-blue-300 pl-2"> &quot;{notif.commentText}&quot;</p>}
                                             </div>
@@ -544,7 +544,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         <Check className="w-5 h-5 text-green-600 mt-0.5 flex-shrink-0" />
                                         <div className="text-sm text-green-900">
                                             <p>
-                                                <span className="font-semibold">{formatDisplayName(notif.userName)}</span>
+                                                <UserChip userId={notif.userId} name={notif.userName} className="font-semibold" />
                                                 {' '}baigė užduotį{' '}
                                                 <span className="font-medium">&quot;{notif.taskTitle}&quot;</span>
                                                 {completedDate && <span className="text-green-700"> {completedDate}</span>}
@@ -598,9 +598,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                         <div>
                                             <div className="text-sm text-red-800">
                                                 <p className="font-medium leading-relaxed">
-                                                    <span className="font-semibold">
-                                                        {formatDisplayName(notif.userName)}
-                                                    </span>{' '}
+                                                    <UserChip userId={notif.userId} name={notif.userName} className="font-semibold" />{' '}
                                                     išnaudojo visą numatomą laiką užduočiai &quot;{notif.taskTitle}&quot; atlikti. Aptarkite tolesnę eigą ir jei reikia, pratęskite numatomą laiką.
                                                 </p>
                                             </div>
@@ -659,7 +657,7 @@ export default function ManagerNotifications({ onEditAndApprove }) {
                                 <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
                                 <div>
                                     <div className="text-sm text-amber-800">
-                                        <p><span className="font-semibold">{formatDisplayName(notif.createdByName)}</span> priskyrė Jus vadovu užduočiai:</p>
+                                        <p><UserChip userId={notif.createdById} name={notif.createdByName} className="font-semibold" /> priskyrė Jus vadovu užduočiai:</p>
                                         <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
                                         {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
                                         {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-amber-300 pl-2"> {notif.description}</p>}
