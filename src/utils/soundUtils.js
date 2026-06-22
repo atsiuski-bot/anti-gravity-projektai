@@ -1,3 +1,5 @@
+import { showLocalNotification } from './localNotify';
+
 export const SoundManager = {
     audioContext: null,
     intervalId: null,
@@ -96,25 +98,22 @@ export const SoundManager = {
         if (Notification.permission === "granted") {
             try {
 
-                // Vibrate if available and allowed
+                // Vibrate if available and allowed (no-op on iOS — guarded, never throws).
                 if (navigator.vibrate && (!navigator.userActivation || navigator.userActivation.hasBeenActive)) {
                     try {
                         navigator.vibrate([200, 100, 200, 100, 400]);
                     } catch (e) { /* ignore */ }
                 }
 
-                const notification = new Notification("Laikas!", {
+                // Routed through the SW helper so it also fires on Android / installed PWA
+                // (where the page Notification constructor throws).
+                showLocalNotification("Laikas!", {
                     body: "Praėjo 7 min. laiko blokas.",
-                    icon: '/favicon.ico', // Assuming there's a favicon
                     tag: 'timer-notification', // Replace existing notification
                     renotify: true,
-                    requireInteraction: true // Keep visible until user interacts
+                    requireInteraction: true, // Keep visible until user interacts
+                    onClick: () => { try { window.focus(); } catch { /* ignore */ } }
                 });
-
-                notification.onclick = function () {
-                    window.focus();
-                    notification.close();
-                };
 
             } catch (e) {
                 console.error("Notification error:", e);
@@ -283,9 +282,8 @@ export const SoundManager = {
         // System notification
         if (Notification.permission === 'granted') {
             try {
-                new Notification('⚠️ 80% laiko panaudota', {
+                showLocalNotification('⚠️ 80% laiko panaudota', {
                     body: 'Jūsų užduoties planuojamas laikas baigiasi!',
-                    icon: '/favicon.ico',
                     tag: 'time-warning-80',
                     renotify: true
                 });
@@ -308,9 +306,8 @@ export const SoundManager = {
             // System notification
             if (Notification.permission === 'granted') {
                 try {
-                    new Notification('🛑 Laikas baigėsi!', {
+                    showLocalNotification('🛑 Laikas baigėsi!', {
                         body: 'Užduoties planuojamas laikas baigėsi. Darbas sustabdytas.',
-                        icon: '/favicon.ico',
                         tag: 'time-limit-reached',
                         renotify: true,
                         requireInteraction: true

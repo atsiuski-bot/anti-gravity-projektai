@@ -116,15 +116,26 @@ export function NotificationsProvider({ children }) {
     }, [unreadCount]);
 
     // Register this device's FCM token once permission is granted (now or when the user grants
-    // it via the first-interaction prompt, which dispatches 'notifications-granted').
+    // it via the first-interaction prompt, which dispatches 'notifications-granted'). Also
+    // re-register on every return to the foreground: FCM tokens rotate, and registering only at
+    // login would let a rotated token silently go stale (it gets pruned server-side on the next
+    // send failure and never re-added). arrayUnion dedupes, so re-registration is cheap.
     useEffect(() => {
         if (!currentUser) return undefined;
-        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            registerFcmToken(currentUser);
-        }
+        const tryRegister = () => {
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                registerFcmToken(currentUser);
+            }
+        };
+        tryRegister();
         const onGranted = () => registerFcmToken(currentUser);
+        const onVisible = () => { if (document.visibilityState === 'visible') tryRegister(); };
         window.addEventListener('notifications-granted', onGranted);
-        return () => window.removeEventListener('notifications-granted', onGranted);
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            window.removeEventListener('notifications-granted', onGranted);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
     }, [currentUser]);
 
     return (
