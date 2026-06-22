@@ -3,11 +3,15 @@
  * Single source of truth to eliminate duplication.
  */
 
+// Single source of truth for status copy. `completed`/`confirmed` carry the manager-
+// confirmation vocabulary (Nepatvirtinta / Patvirtinta) so every surface — worker card,
+// manager table, daily statistics, reports — uses the same word for the same state, and the
+// on-screen label always matches the export label.
 export const STATUS_LABELS = {
     'pending': 'Nepradėtas',
     'in-progress': 'Pradėtas',
-    'completed': 'Užbaigtas, nepriduotas',
-    'confirmed': 'Užbaigtas, priduotas',
+    'completed': 'Nepatvirtinta',
+    'confirmed': 'Patvirtinta',
     'unapproved': 'Laukia patvirtinimo',
     'approved': 'Patvirtintas'
 };
