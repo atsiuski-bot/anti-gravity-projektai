@@ -167,10 +167,10 @@ export default function ManagerView() {
                             <select
                                 value={filterUser}
                                 onChange={(e) => setFilterUser(e.target.value)}
-                                aria-label="Filtruoti pagal darbuotoją"
+                                aria-label="Filtruoti pagal vykdytoją"
                                 className={FILTER_FIELD}
                             >
-                                <option value="">Visi darbuotojai</option>
+                                <option value="">Visi vykdytojai</option>
                                 {users.map(user => (
                                     <option key={user.id} value={user.id}>
                                         {user.displayName || user.email}

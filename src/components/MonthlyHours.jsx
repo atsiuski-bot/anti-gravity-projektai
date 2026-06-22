@@ -118,7 +118,7 @@ export default function MonthlyHours({ users }) {
                         <EmptyState
                             icon={Calendar}
                             title="Nėra duomenų"
-                            description="Kai darbuotojai pradės registruoti laiką, čia matysite mėnesinę ataskaitą."
+                            description="Kai vykdytojai pradės registruoti laiką, čia matysite mėnesinę ataskaitą."
                         />
                     ) : (
                         <div className="divide-y divide-line">
@@ -177,7 +177,7 @@ export default function MonthlyHours({ users }) {
                                                     <table className="min-w-full divide-y divide-line">
                                                         <thead className="bg-surface-sunken">
                                                             <tr>
-                                                                <th scope="col" className="px-4 py-2 text-left text-caption font-medium uppercase tracking-wider text-ink-muted">Darbuotojas</th>
+                                                                <th scope="col" className="px-4 py-2 text-left text-caption font-medium uppercase tracking-wider text-ink-muted">Vykdytojas</th>
                                                                 <th scope="col" className="px-4 py-2 text-right text-caption font-medium uppercase tracking-wider text-ink-muted">Valandos</th>
                                                                 <th scope="col" className="px-4 py-2 text-right text-caption font-medium uppercase tracking-wider text-ink-muted md:w-32">% nuo bendro</th>
                                                             </tr>

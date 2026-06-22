@@ -14,7 +14,7 @@ import { cn } from '../utils/cn';
 
 const ROLE_NAMES = {
     manager: 'Vadovas',
-    worker: 'Darbuotojas',
+    worker: 'Vykdytojas',
     admin: 'Administratorius',
 };
 
