@@ -227,9 +227,31 @@ service cloud.firestore {
     // ---- REQUEST NOTIFICATIONS (recipient = owner) --------------------------
     // Created BY a worker/system FOR a manager (recipientId). The recipient reads
     // and updates (mark read); any active user may create one to notify a manager.
+    //
+    // CREATE was previously `if isUserActive()` with NO shape check — yet every doc
+    // created here fires a Cloud Function that pushes an OS notification to the
+    // recipient's devices. That conflated "may write a doc" with "may ring someone's
+    // phone". The tightened create rule below cannot rate-limit (rules can't count over
+    // time — that needs a sender-side throttle), but it does:
+    //   * require a non-empty string recipientId (no malformed/auto-display abuse),
+    //   * bind provenance to the caller — the doc must stamp the caller's uid as either
+    //     `createdBy` (comment/approval writers) OR `userId` (completion/time-extension
+    //     writers), so a user cannot forge a notification "from" someone else,
+    //   * require it start unread, and
+    //   * clamp the only free-form, user-authored field (`commentText`) that crosses the
+    //     app boundary onto a lockscreen, so it can't carry an oversized/multiline payload.
+    // All four current client write-sites satisfy this (audited 2026-06-22).
     match /request_notifications/{notifId} {
       allow read:   if isUserActive() && resource.data.recipientId == request.auth.uid;
-      allow create: if isUserActive();
+      allow create: if isUserActive()
+                    && request.resource.data.recipientId is string
+                    && request.resource.data.recipientId.size() > 0
+                    && (request.resource.data.get('createdBy', '') == request.auth.uid ||
+                        request.resource.data.get('userId', '') == request.auth.uid)
+                    && request.resource.data.get('isRead', false) == false
+                    && (!('commentText' in request.resource.data) ||
+                        (request.resource.data.commentText is string &&
+                         request.resource.data.commentText.size() <= 2000));
       allow update: if isUserActive() && resource.data.recipientId == request.auth.uid;
       allow delete: if isUserActive() &&
                     (resource.data.recipientId == request.auth.uid || isManagerOrAdmin());

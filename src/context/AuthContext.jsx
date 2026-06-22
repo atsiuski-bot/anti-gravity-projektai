@@ -9,6 +9,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { logError } from '../utils/errorLog';
+import { removeFcmToken } from '../utils/messaging';
 
 const AuthContext = createContext();
 
@@ -115,7 +116,18 @@ export function AuthProvider({ children }) {
         }
     }
 
-    function logout() {
+    async function logout() {
+        // Remove this device's push token BEFORE signing out — the owner-only fcm_tokens rule
+        // needs the user still authenticated. Best-effort and time-boxed: never let a slow/hung
+        // network call delay sign-out (a leftover token is pruned server-side on next send).
+        try {
+            await Promise.race([
+                removeFcmToken(currentUser),
+                new Promise((resolve) => setTimeout(resolve, 2000))
+            ]);
+        } catch {
+            /* ignore — sign-out must always proceed */
+        }
         return signOut(auth);
     }
 
@@ -165,7 +177,10 @@ export function AuthProvider({ children }) {
                         ? new Date(user.metadata.lastSignInTime).getTime()
                         : null;
                     if (lastSignIn && Date.now() - lastSignIn > FOUR_DAYS_MS) {
-                        logout();
+                        // Direct signOut (not logout()) — keeps this auth effect free of the
+                        // logout dependency; token cleanup matters on explicit logout, and a
+                        // token orphaned by rare auto-expiry is pruned server-side on next send.
+                        signOut(auth);
                     }
                 };
 

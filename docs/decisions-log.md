@@ -55,6 +55,29 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
   (admin SDK deletes objects on attachment removal / true task deletion, with an archive-vs-delete
   sibling guard) plus a tightened `storage.rules` (`image/*`, < 20 MB). **Activation is founder-run**
   (Blaze plan, VAPID key, `firebase deploy --only functions` + rules) — `docs/runbooks/fcm-notifications-deploy.md`.
+- **2026-06-22** — **Notification module cross-device hardening** (multi-agent review of the FCM
+  stack). Fixes, no architectural change to ADR 0004: (1) **Android-safe local notifications** —
+  session/timer alerts used the page `new Notification(...)` constructor, which throws "Illegal
+  constructor" on Android Chrome / installed PWAs (silently swallowed → dead on the worker's main
+  device). New `src/utils/localNotify.js` routes through a service worker (FCM SW → desktop
+  constructor → Workbox SW fallback), with real PNG icons instead of emoji/`favicon.ico`. (2)
+  **Token lifecycle** — `registerFcmToken` now re-runs on `visibilitychange` (FCM tokens rotate;
+  login-only registration let a rotated token go stale), returns a status; new `removeFcmToken`
+  (arrayRemove + `deleteToken`) runs on explicit logout so a handed-over device stops receiving
+  the previous user's push (owner-rule requires it BEFORE `signOut`). (3) **Push routing/dedup** —
+  FCM SW `notificationclick` honors a per-message `data.link` (deep link to `?tab=`); per-event
+  `notifId` tag + `renotify` so distinct alerts (esp. multiple pending calendar requests) no longer
+  silently collapse onto one slot. (4) **SW resilience** — pinned FCM SDK bumped 10.8.0 → 10.14.1
+  (match bundle) and `importScripts`/init wrapped in try/catch. (5) **Payload hygiene** — comment
+  text clamped/whitespace-collapsed (100 ch) before it crosses onto a lockscreen; removed the dead
+  `onForegroundMessage` export + corrected the "onMessage foreground" doc/comments (foreground is
+  Firestore-listener-sourced by design). (6) **iOS** — InstallPrompt now states push needs the PWA
+  installed to Home Screen. **`firestore.rules` change (needs founder deploy):** `request_notifications`
+  CREATE was `if isUserActive()` with no shape check, yet each doc triggers a push — now requires a
+  string `recipientId`, binds provenance to the caller (`createdBy` OR `userId` == uid, so a user
+  can't forge a notification "from" someone else), requires unread, and clamps `commentText` ≤ 2000.
+  All four client write-sites satisfy it. Residual (rules can't rate-limit): a per-sender throttle
+  belongs in the Cloud Function — open follow-up.
 - **2026-06-22** — **Desktop app shell → a single left rail.** On `lg+` (≥1024 px) the bottom
   tab bar and the floating work pill are replaced by one docked left rail (`SideRail`), read
   top→bottom: brand → primary `Sukurti` → grouped destinations (Mano / Komanda /
