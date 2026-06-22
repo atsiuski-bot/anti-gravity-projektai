@@ -16,6 +16,7 @@ import { TASK_TAGS } from '../utils/taskUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
+import { useModalA11y } from '../hooks/useModalA11y';
 
 // Persistent field label — fields previously had only placeholders, which vanish on input
 // and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
@@ -181,37 +182,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }
     }, [role, isOpen]);
 
-    // Dialog semantics: close on Escape, move focus into the dialog on open,
-    // and restore focus to the previously-focused element on close (WCAG 2.1.1 / 2.4.3).
+    // Focus-in, focus restore, Escape, and a Tab focus-trap — all shared (WCAG 2.4.3).
+    useModalA11y(panelRef, { open: isOpen, onClose, dismissible: true });
+
+    // Clear any stale error / pending confirmations from a previous open.
     useEffect(() => {
         if (!isOpen) return;
-        // Clear any stale error / pending confirmations from a previous open.
         setFormError('');
         setTemplateToDelete(null);
         setOverwriteTemplate(null);
-        const previouslyFocused = document.activeElement;
-
-        const handleKeyDown = (e) => {
-            if (e.key === 'Escape') {
-                e.stopPropagation();
-                onClose();
-            }
-        };
-        document.addEventListener('keydown', handleKeyDown);
-
-        // Move focus into the dialog after it mounts.
-        const focusTimer = window.setTimeout(() => {
-            panelRef.current?.focus();
-        }, 0);
-
-        return () => {
-            document.removeEventListener('keydown', handleKeyDown);
-            window.clearTimeout(focusTimer);
-            if (previouslyFocused instanceof HTMLElement) {
-                previouslyFocused.focus();
-            }
-        };
-    }, [isOpen, onClose]);
+    }, [isOpen]);
 
     const fetchTemplates = async () => {
         try {
@@ -635,6 +615,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     value={templateName}
                                     onChange={(e) => setTemplateName(e.target.value)}
                                     placeholder="Šablono pavadinimas"
+                                    aria-label="Šablono pavadinimas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand"
                                 />
                                 {templates.length > 0 && (
@@ -646,7 +627,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                     <button
                                                         type="button"
                                                         onClick={() => setTemplateName(t.templateName)}
-                                                        className="text-sm text-left flex-1 truncate text-ink hover:text-blue-600 font-medium"
+                                                        className="min-h-touch text-sm text-left flex-1 truncate text-ink hover:text-blue-600 font-medium rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                                     >
                                                         {t.templateName}
                                                     </button>
@@ -700,6 +681,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                                     disabled={!isManager && !!task}
                                     placeholder="Pavadinimas"
+                                    aria-label="Pavadinimas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand focus:border-brand disabled:bg-surface-sunken text-base"
                                     required
                                 />
@@ -709,6 +691,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     value={formData.priority}
                                     onChange={(e) => setFormData({ ...formData, priority: e.target.value })}
                                     disabled={!isManager && !!task}
+                                    aria-label="Prioritetas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base mt-4"
                                 >
                                     {getPriorityOptions().map(p => (
@@ -724,6 +707,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     value={formData.deadline}
                                     onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
                                     onFocus={(e) => e.target.type = 'date'}
+                                    aria-label="Atlikti iki"
                                     onBlur={(e) => !e.target.value && (e.target.type = 'text')}
                                     placeholder="Atlikti iki"
                                     disabled={!isManager && !!task}
@@ -735,6 +719,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     value={formData.estimatedTime}
                                     onChange={(e) => setFormData({ ...formData, estimatedTime: e.target.value })}
                                     disabled={!isManager && !!task}
+                                    aria-label="Planuojamas laikas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base mt-4"
                                     required
                                 >
@@ -776,6 +761,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     value={formData.managerId}
                                     onChange={(e) => setFormData({ ...formData, managerId: e.target.value })}
                                     disabled={!isManager && !!task}
+                                    aria-label="Vadovas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base mt-4"
                                 >
                                     <option value="">Priskirti vadovą...</option>
@@ -791,6 +777,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     value={formData.assignedUserId}
                                     onChange={(e) => setFormData({ ...formData, assignedUserId: e.target.value })}
                                     disabled={!isManager}
+                                    aria-label="Darbuotojas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base mt-4"
                                 >
                                     <option value="">Priskirti darbuotoją...</option>
@@ -808,6 +795,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     disabled={!isManager && !!task}
                                     rows={3}
                                     placeholder="Užduoties aprašymas..."
+                                    aria-label="Aprašymas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base mt-4"
                                 />
 
@@ -818,6 +806,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         value={newLink}
                                         onChange={(e) => setNewLink(e.target.value)}
                                         placeholder="https://..."
+                                        aria-label="Nuoroda"
                                         inputMode="url"
                                         className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
                                         onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addLink())}
@@ -853,6 +842,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     value={formData.tag || ''}
                                     onChange={(e) => setFormData({ ...formData, tag: e.target.value })}
                                     disabled={!isManager && !!task}
+                                    aria-label="Žyma"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base mt-4"
                                 >
                                     <option value="">Pasirinkti žymą...</option>
@@ -926,7 +916,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                             type="button"
                                                             onClick={() => removeSelectedFile(index)}
                                                             aria-label={`Pašalinti ${file.name}`}
-                                                            className="shrink-0 text-ink-muted hover:text-red-500"
+                                                            className="inline-flex items-center justify-center min-h-touch min-w-touch shrink-0 text-ink-muted hover:text-red-500 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                         >
                                                             <X className="w-4 h-4" aria-hidden="true" />
                                                         </button>
@@ -1001,9 +991,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         value={newComment}
                                         onChange={(e) => setNewComment(e.target.value)}
                                         placeholder="Rašyti komentarą..."
+                                        aria-label="Rašyti komentarą"
                                         className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
                                     />
-                                    <button type="button" onClick={addComment} className="bg-blue-50 text-blue-600 px-4 rounded-lg hover:bg-blue-100 font-medium whitespace-nowrap">
+                                    <button type="button" onClick={addComment} className="min-h-touch bg-blue-50 text-blue-600 px-4 rounded-lg hover:bg-blue-100 font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
                                         Skelbti
                                     </button>
                                 </div>

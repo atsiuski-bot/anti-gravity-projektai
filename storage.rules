@@ -15,8 +15,13 @@ service firebase.storage {
     // through their already-stored tokenized URLs.
     match /attachments/{userId}/{fileName} {
       allow read: if request.auth != null && request.auth.uid == userId;
+      // Delete (request.resource == null) stays unrestricted for the owner. Uploads must be
+      // images (the client only ever sends compressed JPEGs) and under 20 MB — this closes
+      // the client-side `accept="image/*"` bypass (a renamed .exe) and caps quota abuse.
       allow write: if request.auth != null && request.auth.uid == userId
-                   && (request.resource == null || request.resource.size < 100 * 1024 * 1024);
+                   && (request.resource == null
+                       || (request.resource.size < 20 * 1024 * 1024
+                           && request.resource.contentType.matches('image/.*')));
     }
   }
 }

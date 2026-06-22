@@ -43,17 +43,27 @@ const CustomToolbar = (toolbar) => {
     const goToToday = () => { toolbar.onNavigate('TODAY'); };
     const toggleView = (view) => { toolbar.onView(view); };
 
+    // Copy-last-week only works inside the planning window (Fri 13:00–Sun 21:00); the parent
+    // passes copyDisabled=true during the work week. It used to render disabled the rest of the
+    // week with a title= explaining when it unlocks — but title tooltips never fire on touch
+    // (§7), so on a phone it was a dead, unexplained button hogging vertical space. We surface it
+    // ONLY when it can actually run, as a clear full-width CTA, keeping the off-window toolbar to
+    // two compact rows.
+    const showCopy = Boolean(toolbar.onCopyLastWeek) && !toolbar.copyDisabled;
+
     return (
-        <div className="flex flex-col gap-1 mb-2">
-            {/* Top Row: Buttons */}
-            <div className="flex justify-between items-center w-full">
-                {/* Left: Week/Day */}
+        <div className="flex flex-col gap-2 mb-2">
+            {/* Row 1 — global controls: view mode (left) + the single dominant create action
+                (right). The right side previously stacked Today + Add + Copy vertically, eating
+                ~150px of height before the grid appeared on a phone. */}
+            <div className="flex items-center justify-between gap-2">
+                {/* View: Week / Day */}
                 <div className="flex items-center bg-surface-sunken rounded-control overflow-hidden border border-line shadow-sm" role="group" aria-label="Rodinio pasirinkimas">
                     <button
                         onClick={() => toggleView('week')}
                         aria-pressed={toolbar.view === 'week'}
                         className={clsx(
-                            "w-[90px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
+                            "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             toolbar.view === 'week' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
                         )}
@@ -65,7 +75,7 @@ const CustomToolbar = (toolbar) => {
                         onClick={() => toggleView('day')}
                         aria-pressed={toolbar.view === 'day'}
                         className={clsx(
-                            "w-[90px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
+                            "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             toolbar.view === 'day' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
                         )}
@@ -74,59 +84,64 @@ const CustomToolbar = (toolbar) => {
                     </button>
                 </div>
 
-                {/* Right: Today & Manual Add */}
-                <div className="flex flex-col gap-2 items-end">
-                    <Button
-                        variant="secondary"
-                        size="md"
-                        onClick={goToToday}
-                        className="w-[90px] sm:w-[100px]"
-                    >
-                        Šiandien
-                    </Button>
-                    <Button
-                        variant="primary"
-                        size="md"
-                        icon={Plus}
-                        onClick={toolbar.onManualClick}
-                    >
-                        Pridėti rankiniu būdu
-                    </Button>
-                    {toolbar.onCopyLastWeek && (
-                        <Button
-                            variant="secondary"
-                            size="md"
-                            icon={Copy}
-                            onClick={toolbar.onCopyLastWeek}
-                            disabled={toolbar.copyDisabled}
-                            title={toolbar.copyDisabled
-                                ? 'Kopijuoti galima tik planavimo metu (penktadienį nuo 13:00 iki sekmadienio 21:00)'
-                                : 'Nukopijuoti praėjusios savaitės darbotvarkę į šią savaitę'}
-                        >
-                            Kopijuoti praeitą savaitę
-                        </Button>
-                    )}
+                {/* Primary create action — short label on phones, full label once there's room. */}
+                <Button
+                    variant="primary"
+                    size="md"
+                    icon={Plus}
+                    onClick={toolbar.onManualClick}
+                    className="shrink-0"
+                >
+                    <span className="sm:hidden">Pridėti</span>
+                    <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
+                </Button>
+            </div>
+
+            {/* Row 2 — one navigation cluster: jump-to-today + the period readout with step
+                arrows. Today is a navigation action, so it sits with the arrows, not stacked. */}
+            <div className="flex items-center gap-2">
+                <Button
+                    variant="secondary"
+                    size="md"
+                    onClick={goToToday}
+                    className="shrink-0"
+                >
+                    Šiandien
+                </Button>
+
+                <div className="flex flex-1 items-center justify-center gap-1 sm:gap-2 min-w-0">
+                    <IconButton
+                        icon={ChevronLeft}
+                        label="Ankstesnis laikotarpis"
+                        onClick={() => toolbar.onNavigate('PREV')}
+                        className="shrink-0"
+                    />
+                    <span className="min-w-0 truncate text-center text-body-lg sm:text-h3 font-bold text-ink-strong capitalize select-none">
+                        {toolbar.label}
+                    </span>
+                    <IconButton
+                        icon={ChevronRight}
+                        label="Kitas laikotarpis"
+                        onClick={() => toolbar.onNavigate('NEXT')}
+                        className="shrink-0"
+                    />
                 </div>
             </div>
 
-            {/* Date Label & Navigation */}
-            <div className="flex items-center justify-center gap-4 py-2">
-                <IconButton
-                    icon={ChevronLeft}
-                    label="Ankstesnis laikotarpis"
-                    onClick={() => toolbar.onNavigate('PREV')}
-                />
-
-                <span className="text-h3 font-bold text-ink-strong capitalize select-none min-w-[140px] text-center">
-                    {toolbar.label}
-                </span>
-
-                <IconButton
-                    icon={ChevronRight}
-                    label="Kitas laikotarpis"
-                    onClick={() => toolbar.onNavigate('NEXT')}
-                />
-            </div>
+            {/* Copy last week's plan — only rendered while it can actually run (planning window),
+                as a clear full-width CTA exactly when planning is open. */}
+            {showCopy && (
+                <Button
+                    variant="secondary"
+                    size="md"
+                    icon={Copy}
+                    fullWidth
+                    onClick={toolbar.onCopyLastWeek}
+                    title="Nukopijuoti praėjusios savaitės darbotvarkę į šią savaitę"
+                >
+                    Kopijuoti praeitą savaitę
+                </Button>
+            )}
         </div>
     );
 };

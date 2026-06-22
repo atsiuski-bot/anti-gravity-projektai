@@ -415,7 +415,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                                 setEditingCommentIndex(index);
                                                                 setEditCommentText(comment.text);
                                                             }}
-                                                            className="text-ink-muted hover:text-brand p-2 -my-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                                                            className="inline-flex items-center justify-center min-h-touch min-w-touch text-ink-muted hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
                                                         >
                                                             <Edit className="w-4 h-4" aria-hidden="true" />
                                                         </button>
@@ -425,7 +425,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                                 e.stopPropagation();
                                                                 setConfirmDeleteCommentIdx(index);
                                                             }}
-                                                            className="text-ink-muted hover:text-feedback-danger p-2 -my-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                                                            className="inline-flex items-center justify-center min-h-touch min-w-touch text-ink-muted hover:text-feedback-danger focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
                                                         >
                                                             <Trash2 className="w-4 h-4" aria-hidden="true" />
                                                         </button>
@@ -449,13 +449,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                                     <div className="flex justify-end gap-2 mt-1">
                                                         <button
                                                             onClick={() => { setCommentError(''); setEditingCommentIndex(null); }}
-                                                            className="text-caption text-ink-muted hover:text-ink px-2 py-1"
+                                                            className="min-h-touch text-caption text-ink-muted hover:text-ink px-3 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                                         >
                                                             Atšaukti
                                                         </button>
                                                         <button
                                                             onClick={() => handleUpdateComment(index, editCommentText)}
-                                                            className="text-caption bg-brand text-white px-2 py-1 rounded-control hover:bg-brand-hover"
+                                                            className="min-h-touch text-caption bg-brand text-white px-3 rounded-control hover:bg-brand-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                         >
                                                             Išsaugoti
                                                         </button>

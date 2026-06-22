@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { NavigationProvider } from './context/NavigationContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { UsersProvider } from './context/UsersContext';
+import { ToastProvider } from './context/ToastContext';
+import { NotificationsProvider } from './context/NotificationsContext';
 import Layout from './components/Layout';
 
 // Lazy load pages
@@ -11,7 +13,7 @@ const Dashboard = React.lazy(() => import('./pages/Dashboard'));
 
 const LoadingFallback = () => (
     <div className="flex h-screen items-center justify-center bg-surface-base">
-        <div className="text-center">
+        <div className="text-center" role="status">
             <div className="w-12 h-12 border-4 border-brand border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
             <p className="text-ink-muted font-medium">Kraunama…</p>
         </div>
@@ -21,7 +23,7 @@ const LoadingFallback = () => (
 const ProtectedRoute = ({ children }) => {
     const { currentUser, loading } = useAuth();
 
-    if (loading) return <div className="flex h-screen items-center justify-center">Kraunama…</div>;
+    if (loading) return <div className="flex h-screen items-center justify-center" role="status">Kraunama…</div>;
 
     if (!currentUser) {
         return <Navigate to="/login" />;
@@ -43,7 +45,12 @@ function App() {
         async function requestOnce() {
             events.forEach((ev) => window.removeEventListener(ev, requestOnce));
             try {
-                await Notification.requestPermission();
+                const result = await Notification.requestPermission();
+                // Tell NotificationsProvider to register this device's FCM token now that the
+                // user has granted permission (it owns currentUser + token persistence).
+                if (result === "granted") {
+                    window.dispatchEvent(new CustomEvent("notifications-granted"));
+                }
             } catch (e) {
                 console.error("Notification request failed", e);
             }
@@ -57,20 +64,24 @@ function App() {
         <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <AuthProvider>
                 <UsersProvider>
-                    <NavigationProvider>
-                        <React.Suspense fallback={<LoadingFallback />}>
-                            <Routes>
-                                <Route path="/login" element={<Login />} />
-                                <Route path="/" element={
-                                    <ProtectedRoute>
-                                        <Layout>
-                                            <Dashboard />
-                                        </Layout>
-                                    </ProtectedRoute>
-                                } />
-                            </Routes>
-                        </React.Suspense>
-                    </NavigationProvider>
+                    <ToastProvider>
+                        <NotificationsProvider>
+                            <NavigationProvider>
+                                <React.Suspense fallback={<LoadingFallback />}>
+                                    <Routes>
+                                        <Route path="/login" element={<Login />} />
+                                        <Route path="/" element={
+                                            <ProtectedRoute>
+                                                <Layout>
+                                                    <Dashboard />
+                                                </Layout>
+                                            </ProtectedRoute>
+                                        } />
+                                    </Routes>
+                                </React.Suspense>
+                            </NavigationProvider>
+                        </NotificationsProvider>
+                    </ToastProvider>
                 </UsersProvider>
             </AuthProvider>
         </BrowserRouter>

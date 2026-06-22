@@ -1,29 +1,17 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ListChecks, Plus, CheckSquare, Square } from 'lucide-react';
+import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
+import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import IconButton from './ui/IconButton';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
     const dialogRef = useRef(null);
-    const restoreFocusRef = useRef(null);
     const titleId = useId();
 
-    useEffect(() => {
-        if (!isOpen) return undefined;
-        restoreFocusRef.current = document.activeElement;
-        dialogRef.current?.focus?.();
-
-        const onKey = (e) => {
-            if (e.key === 'Escape') onClose?.();
-        };
-        document.addEventListener('keydown', onKey);
-        return () => {
-            document.removeEventListener('keydown', onKey);
-            restoreFocusRef.current?.focus?.();
-        };
-    }, [isOpen, onClose]);
+    // Focus-in, focus restore, Escape, and a Tab focus-trap (WCAG 2.4.3).
+    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
 
     if (!isOpen) return null;
 
@@ -153,13 +141,14 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
                         value={newComment}
                         onChange={(e) => setNewComment(e.target.value)}
                         placeholder="Rašyti komentarą..."
-                        className="flex-1 px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
+                        aria-label="Rašyti komentarą"
+                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
                         disabled={isSubmitting}
                     />
                     <button
                         type="submit"
                         disabled={!newComment.trim() || isSubmitting}
-                        className="bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="min-h-touch bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
                         {isSubmitting ? 'Saugoma...' : 'Skelbti'}
                     </button>
@@ -350,7 +339,8 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                             value={date}
                             onChange={(e) => setDate(e.target.value)}
                             max={new Date().toISOString().split('T')[0]}
-                            className="px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm flex-1 min-w-[120px]"
+                            aria-label="Data"
+                            className="min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm flex-1 min-w-[120px]"
                             required
                         />
                         <div className="flex items-center gap-1">
@@ -359,7 +349,8 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                                 value={hours}
                                 onChange={(e) => setHours(e.target.value)}
                                 placeholder="Valandos"
-                                className="w-20 px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
+                                aria-label="Valandos"
+                                className="w-20 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
                             />
                             <span className="text-sm text-ink-muted font-medium">h</span>
                             <input
@@ -367,7 +358,8 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                                 value={mins}
                                 onChange={(e) => setMins(e.target.value)}
                                 placeholder="Minutės"
-                                className="w-20 px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
+                                aria-label="Minutės"
+                                className="w-20 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
                             />
                             <span className="text-sm text-ink-muted font-medium">m</span>
                         </div>
@@ -378,12 +370,13 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, o
                             value={reason}
                             onChange={(e) => setReason(e.target.value)}
                             placeholder="Priežastis (pvz. 'Pamiršo įjungti taimerį')"
-                            className="flex-1 px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
+                            aria-label="Pakeitimo priežastis"
+                            className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
                         />
                         <button
                             type="submit"
                             disabled={isSubmitting || (parseInt(hours) === 0 && parseInt(mins) === 0)}
-                            className="bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                            className="min-h-touch bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             {isSubmitting ? 'Saugoma...' : 'Pridėti'}
                         </button>
@@ -406,6 +399,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     const [scrollLeft, setScrollLeft] = useState(0);
     const [scrollTop, setScrollTop] = useState(0);
     const containerRef = React.useRef(null);
+    const dialogRef = React.useRef(null);
     const isDragOccurred = React.useRef(false);
 
     const hasMultiple = imageUrls && imageUrls.length > 1;
@@ -413,9 +407,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     useEffect(() => {
         if (!isOpen) return undefined;
         const onKey = (e) => {
-            if (e.key === 'Escape') {
-                onClose?.();
-            } else if (e.key === 'ArrowRight' && hasMultiple) {
+            if (e.key === 'ArrowRight' && hasMultiple) {
                 setCurrentIndex((prev) => (prev + 1) % imageUrls.length);
                 setZoom(1);
             } else if (e.key === 'ArrowLeft' && hasMultiple) {
@@ -425,7 +417,10 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
         };
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
-    }, [isOpen, hasMultiple, imageUrls, onClose]);
+    }, [isOpen, hasMultiple, imageUrls]);
+
+    // Move focus into the viewer, restore on close, Escape closes, and trap Tab (WCAG 2.4.3).
+    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
 
     if (!isOpen || !imageUrls || imageUrls.length === 0) return null;
 
@@ -493,11 +488,13 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
 
     const modalContent = (
         <div
-            className="fixed inset-0 z-top flex items-center justify-center bg-black/95"
+            ref={dialogRef}
+            className="fixed inset-0 z-top flex items-center justify-center bg-black/95 focus:outline-none"
             onClick={onClose}
             role="dialog"
             aria-modal="true"
             aria-label="Nuotraukos peržiūra"
+            tabIndex={-1}
         >
             <div className={`relative w-full h-full flex items-center justify-center overflow-hidden`}>
                 {/* Controls - Only show when not zoomed or fix them to screen edges */}
@@ -508,6 +505,17 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                     className="absolute top-4 right-4 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                 >
                     <X className="w-8 h-8" aria-hidden="true" />
+                </button>
+
+                {/* Keyboard-operable zoom toggle (the image itself only zooms on click/touch). */}
+                <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setZoom((z) => (z > 1 ? 1 : 3.5)); }}
+                    aria-label={zoom > 1 ? 'Sumažinti nuotrauką' : 'Padidinti nuotrauką'}
+                    aria-pressed={zoom > 1}
+                    className="absolute top-4 left-4 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                >
+                    {zoom > 1 ? <ZoomOut className="w-7 h-7" aria-hidden="true" /> : <ZoomIn className="w-7 h-7" aria-hidden="true" />}
                 </button>
 
                 {imageUrls.length > 1 && (
@@ -580,23 +588,10 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
 
 export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error }) {
     const dialogRef = useRef(null);
-    const restoreFocusRef = useRef(null);
     const titleId = useId();
 
-    useEffect(() => {
-        if (!isOpen) return undefined;
-        restoreFocusRef.current = document.activeElement;
-        dialogRef.current?.focus?.();
-
-        const onKey = (e) => {
-            if (e.key === 'Escape') onClose?.();
-        };
-        document.addEventListener('keydown', onKey);
-        return () => {
-            document.removeEventListener('keydown', onKey);
-            restoreFocusRef.current?.focus?.();
-        };
-    }, [isOpen, onClose]);
+    // Focus-in, focus restore, Escape, and a Tab focus-trap (WCAG 2.4.3).
+    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
 
     if (!isOpen) return null;
 
@@ -636,27 +631,27 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                     <div className="flex flex-col gap-3">
                         <button
                             onClick={onClose}
-                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-gray-200 rounded-lg transition-colors text-left text-center"
+                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-gray-200 rounded-lg transition-colors text-left text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             Atšaukti{isTask ? ' trynimą' : ''}
                         </button>
-                        
+
                         {isTask && (
                             <button
                                 onClick={() => {
                                     onConfirm({ keepWorkHours: true });
                                 }}
-                                className="w-full px-4 py-3 bg-yellow-50 text-yellow-800 border border-yellow-200 text-sm font-medium rounded-lg hover:bg-yellow-100 transition-colors text-left"
+                                className="w-full px-4 py-3 bg-yellow-50 text-yellow-800 border border-yellow-200 text-sm font-medium rounded-lg hover:bg-yellow-100 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 Palikti darbo valandas, perbraukti užduotį ir ją užbaigti
                             </button>
                         )}
-                        
+
                         <button
                             onClick={() => {
                                 onConfirm({ keepWorkHours: false });
                             }}
-                            className={`w-full px-4 py-3 bg-red-50 text-red-700 border border-red-200 text-sm font-bold rounded-lg hover:bg-red-100 transition-colors flex items-center gap-3 ${isTask ? 'text-left' : 'justify-center'} leading-tight`}
+                            className={`w-full px-4 py-3 bg-red-50 text-red-700 border border-red-200 text-sm font-bold rounded-lg hover:bg-red-100 transition-colors flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-danger focus-visible:ring-offset-2 ${isTask ? 'text-left' : 'justify-center'} leading-tight`}
                         >
                             <Trash2 className="w-5 h-5 flex-shrink-0" />
                             <span>{isTask ? 'IŠTRINTI DARBO VALANDAS ir visą užduotį' : 'IŠTRINTI'}</span>

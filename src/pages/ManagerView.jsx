@@ -149,6 +149,7 @@ export default function ManagerView() {
                             <select
                                 value={filterUser}
                                 onChange={(e) => setFilterUser(e.target.value)}
+                                aria-label="Filtruoti pagal darbuotoją"
                                 className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 <option value="">Visi darbuotojai</option>
@@ -164,6 +165,7 @@ export default function ManagerView() {
                             <select
                                 value={filterPriority}
                                 onChange={(e) => setFilterPriority(e.target.value)}
+                                aria-label="Filtruoti pagal prioritetą"
                                 className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 <option value="">Visi prioritetai</option>
@@ -179,6 +181,7 @@ export default function ManagerView() {
                             <select
                                 value={filterTag}
                                 onChange={(e) => setFilterTag(e.target.value)}
+                                aria-label="Filtruoti pagal žymę"
                                 className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 <option value="">Visi Tagai</option>
@@ -195,6 +198,7 @@ export default function ManagerView() {
                         <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value)}
+                            aria-label="Rūšiuoti užduotis"
                             className="pl-10 pr-4 py-2 border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <option value="none">Numatyta tvarka</option>

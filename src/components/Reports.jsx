@@ -1384,7 +1384,15 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                                             )}
                                                         </td>
                                                         <td className="px-6 py-4 text-right text-ink-muted">
-                                                            {isExpanded ? <ChevronUp className="w-4 h-4" aria-hidden="true" /> : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
+                                                            <button
+                                                                type="button"
+                                                                onClick={(e) => { e.stopPropagation(); setExpandedUser(isExpanded ? null : userStats.userId); }}
+                                                                aria-expanded={isExpanded}
+                                                                aria-label={isExpanded ? `Slėpti ${workerName} dienas` : `Rodyti ${workerName} dienas`}
+                                                                className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+                                                            >
+                                                                {isExpanded ? <ChevronUp className="w-4 h-4" aria-hidden="true" /> : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
+                                                            </button>
                                                         </td>
                                                     </tr>
                                                     {isExpanded && (
@@ -1599,6 +1607,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             <select
                                 value={taskSort}
                                 onChange={(e) => setTaskSort(e.target.value)}
+                                aria-label="Rūšiuoti užduotis"
                                 className="border border-line rounded-control px-3 py-2 text-sm bg-surface-sunken"
                             >
                                 <option value="date_desc">Naujausi viršuje</option>

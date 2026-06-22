@@ -57,7 +57,7 @@ export default function InstallPrompt() {
             <button
                 onClick={handleInstallClick}
                 aria-label="Įdiegti programėlę"
-                className="inline-flex items-center gap-1 rounded-control border border-brand-soft bg-brand-soft px-2 py-1 text-caption font-medium text-brand-hover transition-colors hover:bg-brand-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                className="inline-flex items-center gap-1 min-h-touch rounded-control border border-brand-soft bg-brand-soft px-3 py-1 text-caption font-medium text-brand-hover transition-colors hover:bg-brand-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
             >
                 <Download className="h-3.5 w-3.5" aria-hidden="true" />
                 <span className="uppercase tracking-wide">Įdiegti</span>

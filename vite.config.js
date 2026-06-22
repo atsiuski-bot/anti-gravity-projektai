@@ -10,6 +10,11 @@ export default defineConfig({
     VitePWA({
       registerType: 'prompt',
       includeAssets: ['logo.jpg', 'pwa-192x192.png', 'pwa-512x512.png'],
+      // The FCM service worker is a SEPARATE worker (registered by the messaging SDK at its
+      // own scope). Keep Workbox from precaching/serving it so the two never collide.
+      workbox: {
+        globIgnores: ['**/firebase-messaging-sw.js']
+      },
       manifest: {
         name: 'WORKZ',
         short_name: 'WORKZ',

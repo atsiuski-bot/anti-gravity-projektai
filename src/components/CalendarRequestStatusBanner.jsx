@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { CheckCircle2, XCircle, X } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
+import IconButton from './ui/IconButton';
 
 export default function CalendarRequestStatusBanner() {
     const { currentUser } = useAuth();
@@ -62,13 +63,12 @@ export default function CalendarRequestStatusBanner() {
                                 : 'bg-red-50 border-red-200 text-red-900'
                         }`}
                     >
-                        <button
+                        <IconButton
+                            icon={X}
+                            label="Uždaryti pranešimą"
                             onClick={() => handleDismiss(notif.id)}
-                            className="absolute top-2 right-2 text-ink-muted hover:text-ink p-1 transition-colors"
-                            title="Uždaryti pranešimą"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
+                            className="absolute top-2 right-2"
+                        />
                         
                         <div className="w-10 h-10 flex items-center justify-center shrink-0 rounded-full bg-white/50">
                             {isApproved ? (
