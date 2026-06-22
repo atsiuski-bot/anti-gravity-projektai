@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
-import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban } from 'lucide-react';
+import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -116,6 +116,41 @@ function DisabledPill({ user }) {
     return isPendingUser(user)
         ? <StatusPill tone="pending" icon={Clock}>Laukia patvirtinimo</StatusPill>
         : <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>;
+}
+
+// Marks an account as a test/founder account so it can be excluded from payroll reports by
+// default (distinct from isDisabled — a test account often stays fully usable). The label and
+// variant flip with state so the current flag is legible without relying on color alone.
+function TestButton({ user, onToggle, fullWidth }) {
+    return (
+        <Button
+            variant={user.isTest ? 'primary' : 'secondary'}
+            size="md"
+            icon={FlaskConical}
+            fullWidth={fullWidth}
+            onClick={() => onToggle(user)}
+        >
+            {user.isTest ? 'Bandomasis ✓' : 'Žymėti bandomu'}
+        </Button>
+    );
+}
+
+// Days a worker may go silent before the roster flags them — lets a manager tell a churned
+// account from an active one. workStatus.lastUpdated is the worker's last timer action (set by
+// startSession / updateUserWorkStatus), so the signal needs no extra query.
+const STALE_AFTER_DAYS = 14;
+
+// Staleness badge for an active worker who has not changed work status recently. Managers/admins,
+// disabled, and test accounts are never flagged — they are not active field workers.
+function LastActiveBadge({ user }) {
+    if (user.role !== 'worker' || user.isDisabled || user.isTest) return null;
+    const ts = user.workStatus?.lastUpdated;
+    if (!ts) return null;
+    const last = new Date(ts).getTime();
+    if (!Number.isFinite(last)) return null;
+    const days = Math.floor((Date.now() - last) / (1000 * 60 * 60 * 24));
+    if (days < STALE_AFTER_DAYS) return null;
+    return <StatusPill tone="pending" icon={Clock}>{`Neaktyvus ${days} d.`}</StatusPill>;
 }
 
 function BlockButton({ user, isSelf, onRequest, fullWidth }) {
@@ -305,6 +340,19 @@ export default function UserManagement() {
         }
     };
 
+    // Toggle the test/founder flag. Excluded from payroll reports by default; the report has a
+    // manager opt-in to show them. A simple boolean flip on the user doc, mirroring the other
+    // per-user updates above.
+    const handleToggleTest = async (user) => {
+        setError('');
+        try {
+            await updateDoc(doc(db, 'users', user.id), { isTest: !user.isTest });
+        } catch (err) {
+            console.error("Error updating test flag:", err);
+            setError('Nepavyko pažymėti bandomojo vartotojo. Bandykite dar kartą.');
+        }
+    };
+
     const requestBlock = (user) => {
         if (user.id === currentUser?.uid) {
             setError('Negalite užblokuoti savęs.');
@@ -481,9 +529,10 @@ export default function UserManagement() {
                                     <div className="flex items-center gap-3">
                                         <UserAvatar user={user} />
                                         <div>
-                                            <div className="flex items-center gap-2 text-body font-medium text-ink-strong">
+                                            <div className="flex flex-wrap items-center gap-2 text-body font-medium text-ink-strong">
                                                 {formatDisplayName(user.displayName) || 'Be vardo'}
                                                 <DisabledPill user={user} />
+                                                <LastActiveBadge user={user} />
                                             </div>
                                             <div className="text-body text-ink-muted">{user.email}</div>
                                         </div>
@@ -506,6 +555,7 @@ export default function UserManagement() {
                                             isSelf={user.id === currentUser?.uid}
                                             onRequest={requestBlock}
                                         />
+                                        <TestButton user={user} onToggle={handleToggleTest} fullWidth />
                                     </div>
                                 </td>
                             </tr>

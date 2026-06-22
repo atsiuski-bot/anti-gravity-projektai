@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString } from '../utils/timeUtils';
+import { formatMinutesToTimeString, formatMinutesToHHMM, formatSignedMinutesToHHMM, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { addComment } from '../utils/commentActions';
 import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar } from 'lucide-react';
@@ -43,6 +43,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
         return { start: `${today.slice(0, 7)}-01`, end: today };
     });
     const [workData, setWorkData] = useState([]); // Array of { userId, name, totalMinutes, days: { date: minutes } }
+    // Test/founder accounts are excluded from the work report by default so payroll totals and
+    // the leaderboard aren't skewed by non-production data; a manager can opt to show them.
+    const [showTestUsers, setShowTestUsers] = useState(false);
 
     // Unified report period. 'day' renders DailyStatistics (its own day navigation); any other
     // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
@@ -200,8 +203,16 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     return;
                 }
 
-                userMap[uid].totalMinutes += (s.durationMinutes || 0);
-                userMap[uid].days[s.date].totalWork += (s.durationMinutes || 0);
+                // Read-side guard: a corrupt single session (pre-clamp orphan, fat-fingered
+                // edit) must not poison the total. Clamp before summing and flag the day so the
+                // manager sees it was capped rather than silently inflated.
+                const workMin = sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment });
+                if (isImplausibleSessionMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment })) {
+                    userMap[uid].days[s.date].flagged = true;
+                    userMap[uid].hasFlagged = true;
+                }
+                userMap[uid].totalMinutes += workMin;
+                userMap[uid].days[s.date].totalWork += workMin;
                 userMap[uid].days[s.date].sessions.push(s);
             });
 
@@ -226,8 +237,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     return;
                 }
 
-                userMap[uid].days[s.date].totalBreak += (s.durationMinutes || 0);
-                userMap[uid].totalBreakMinutes += (s.durationMinutes || 0);
+                const breakMin = sanitizeReportMinutes(s.durationMinutes);
+                if (isImplausibleSessionMinutes(s.durationMinutes)) {
+                    userMap[uid].days[s.date].flagged = true;
+                    userMap[uid].hasFlagged = true;
+                }
+                userMap[uid].days[s.date].totalBreak += breakMin;
+                userMap[uid].totalBreakMinutes += breakMin;
                 userMap[uid].days[s.date].sessions.push(s);
             });
 
@@ -650,22 +666,20 @@ export default function Reports({ users, canExport = false, viewRole }) {
             return s;
         };
 
-        const formatMinutesToHHMM = (totalMinutes) => {
-            if (!totalMinutes || isNaN(totalMinutes)) return '00:00';
-            const hours = Math.floor(Math.abs(totalMinutes) / 60);
-            const mins = Math.round(Math.abs(totalMinutes) % 60);
-            return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
-        };
-        const formatSignedHHMM = (mins) => {
-            const rounded = Math.round(mins);
-            const sign = rounded < 0 ? '-' : (rounded > 0 ? '+' : '');
-            return `${sign}${formatMinutesToHHMM(Math.abs(rounded))}`;
-        };
-
         const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
         const rows = [];
+        // Skirtumas (worked − planned) is meaningful only when the calendar plan plausibly
+        // covers the worked span. A token plan (one stray slot) against a full month of work
+        // produces a fake "+164:00 surplus"; require the plan to be at least this fraction of
+        // worked time before emitting a signed delta, otherwise label it "Nepakanka plano".
+        const PLAN_COVERAGE_FLOOR = 0.25;
 
-        workData.forEach(userStats => {
+        // Exclude test/founder accounts from the payroll export unless the manager opted in, so
+        // team totals and the per-worker list aren't skewed by non-production rows.
+        const testUserIds = new Set((users || []).filter(u => u.isTest).map(u => u.id));
+        const rowsSource = showTestUsers ? workData : workData.filter(u => !testUserIds.has(u.userId));
+
+        rowsSource.forEach(userStats => {
             const workerName = formatDisplayName(userStats.name);
             Object.entries(userStats.days)
                 .sort((a, b) => a[0].localeCompare(b[0]))
@@ -679,14 +693,34 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         '',
                     ].join(','));
                 });
+            // Export-time self-check: the Viso total and the per-day rows are built from one
+            // sanitized userMap, so they must agree; a divergence beyond rounding signals a
+            // malformed/merged dataset and is surfaced to the console rather than shipped silently.
+            const daySum = Object.values(userStats.days).reduce((a, d) => a + (d.totalWork || 0), 0);
+            if (Math.abs(daySum - userStats.totalMinutes) > 1) {
+                console.warn(`[Reports] Viso/detalės neatitikimas (${workerName}): viso ${Math.round(userStats.totalMinutes)} vs dienų suma ${Math.round(daySum)} min`);
+            }
             const hasPlan = userStats.plannedMinutes > 0;
+            // Worked == 0 with a plan is a genuine 100% shortfall (a planned-but-absent worker),
+            // so it is allowed through; only a non-trivial worked total against a tiny plan is
+            // treated as inadequate coverage.
+            const planCoversSpan = hasPlan && (
+                userStats.totalMinutes <= 0 ||
+                userStats.plannedMinutes >= PLAN_COVERAGE_FLOOR * userStats.totalMinutes
+            );
+            const plannedCell = hasPlan ? formatMinutesToHHMM(userStats.plannedMinutes) : '';
+            const skirtumasCell = !hasPlan
+                ? ''
+                : (planCoversSpan
+                    ? formatSignedMinutesToHHMM(userStats.totalMinutes - userStats.plannedMinutes)
+                    : 'Nepakanka plano');
             rows.push([
                 escapeCSV(workerName),
                 escapeCSV('Viso'),
                 escapeCSV(formatMinutesToHHMM(userStats.totalMinutes)),
                 escapeCSV(formatMinutesToHHMM(userStats.totalBreakMinutes)),
-                escapeCSV(hasPlan ? formatMinutesToHHMM(userStats.plannedMinutes) : ''),
-                escapeCSV(hasPlan ? formatSignedHHMM(userStats.totalMinutes - userStats.plannedMinutes) : ''),
+                escapeCSV(plannedCell),
+                escapeCSV(skirtumasCell),
             ].join(','));
         });
 
@@ -1048,7 +1082,15 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         />
                     ) : (
                         <>
-                            <div className="flex justify-end">
+                            <div className="flex flex-wrap items-center justify-end gap-3">
+                                {isManagerRole(userRole) && (
+                                    <Button
+                                        variant={showTestUsers ? 'primary' : 'secondary'}
+                                        onClick={() => setShowTestUsers((v) => !v)}
+                                    >
+                                        {showTestUsers ? 'Slėpti bandomuosius' : 'Rodyti bandomuosius'}
+                                    </Button>
+                                )}
                                 <Button
                                     variant="success"
                                     icon={Download}
@@ -1068,6 +1110,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 users={users}
                                 canExport={canExport}
                                 dateRange={dateRange}
+                                showTestUsers={showTestUsers}
                             />
 
                         </>

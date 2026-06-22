@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { TASK_TAGS } from '../utils/taskUtils';
-import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
 import { DeleteConfirmationModal, CommentsModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import SessionTypeIcon from './SessionTypeIcon';
@@ -294,14 +294,6 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                 return `"${s.replace(/"/g, '""')}"`;
             }
             return s;
-        };
-
-        const formatMinutesToHHMM = (totalMinutes) => {
-            if (!totalMinutes || isNaN(totalMinutes)) return "00:00";
-            const hours = Math.floor(Math.abs(totalMinutes) / 60);
-            const mins = Math.round(Math.abs(totalMinutes) % 60);
-            const sign = totalMinutes < 0 ? "-" : "";
-            return `${sign}${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
         };
 
         const headers = [

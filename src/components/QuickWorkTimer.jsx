@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { Zap, Square, Check, ShieldAlert } from 'lucide-react';
-import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
@@ -137,8 +137,8 @@ export default function QuickWorkTimer({ compact = false }) {
             sessionDuration = clampSessionMinutes((now - startTime) / (1000 * 60));
         }
 
-        // 10 second threshold
-        if (sessionDuration <= (10 / 60)) {
+        // Discard an accidental sub-minute tap rather than prompting to name/log it.
+        if (sessionDuration <= MIN_LOGGED_SESSION_MINUTES) {
             await endSession(currentUser.uid); // Auto discard/stop
             return;
         }

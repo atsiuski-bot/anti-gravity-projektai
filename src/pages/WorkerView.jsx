@@ -19,6 +19,7 @@ import Button from '../components/ui/Button';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
+import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
@@ -49,6 +50,10 @@ export default function WorkerView() {
     // Crash/reload recovery — auto-pause any task left "running" across a restart so
     // it cannot credit hours of ghost time on the next pause.
     useOrphanedTaskRecovery(tasks);
+
+    // Same crash/reload recovery for an orphaned break/call/quick-work session — ends it
+    // (clamped to 16h) so a forgotten secondary timer can't credit a multi-day "ghost" gap.
+    useOrphanedSessionRecovery(currentUser);
 
 
     useEffect(() => {

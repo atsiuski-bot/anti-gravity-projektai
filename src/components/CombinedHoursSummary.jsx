@@ -5,7 +5,7 @@ import { Users, ChevronDown, ChevronUp } from 'lucide-react';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
+import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 
 export default function CombinedHoursSummary() {
@@ -137,7 +137,7 @@ export default function CombinedHoursSummary() {
             // 1. From Sessions
             workSessions.forEach(session => {
                 if (session.userId === user.id) {
-                    workedMinutes += (session.durationMinutes || 0);
+                    workedMinutes += sanitizeReportMinutes(session.durationMinutes, { allowLarge: session.isManualAdjustment });
                 }
             });
 
@@ -148,7 +148,7 @@ export default function CombinedHoursSummary() {
                 if (t.assignedUserId === user.id && t.manualMinutes > 0 && !t.isSystemTask && !t.isQuickWork) {
                     const compDate = t.completedAt ? new Date(t.completedAt) : (t.archivedAt ? new Date(t.archivedAt) : null);
                     if (compDate && compDate >= wStart && compDate <= wEnd) {
-                        workedMinutes += t.manualMinutes;
+                        workedMinutes += sanitizeReportMinutes(t.manualMinutes, { allowLarge: true });
                     }
                 }
             });
@@ -159,14 +159,14 @@ export default function CombinedHoursSummary() {
             let breakMinutes = 0;
             breakSessions.forEach(session => {
                 if (session.userId === user.id) {
-                    breakMinutes += (session.durationMinutes || 0);
+                    breakMinutes += sanitizeReportMinutes(session.durationMinutes);
                 }
             });
 
             // Add current active break time if user is taking a break right now
             if (user.breakState?.isTakingBreak && user.breakState?.lastStartedAt) {
                 const bStart = new Date(user.breakState.lastStartedAt);
-                const currentDiff = (now - bStart) / (1000 * 60);
+                const currentDiff = clampSessionMinutes((now - bStart) / (1000 * 60));
                 if (currentDiff > 0) {
                     breakMinutes += currentDiff;
                 }

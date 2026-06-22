@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { collection, query, onSnapshot } from 'firebase/firestore';
 import { Calendar, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
-import { formatMinutesToTimeString, getLithuanianDateString } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, sanitizeReportMinutes } from '../utils/timeUtils';
 import Card from './ui/Card';
 import EmptyState from './ui/EmptyState';
 import { Spinner } from './ui/Loading';
@@ -70,8 +70,9 @@ export default function MonthlyHours({ users }) {
             }
 
             const uid = session.userId;
-            // Filter out invalid duration
-            const duration = Number(session.durationMinutes) || 0;
+            // Read-side guard: clamp a corrupt/oversized stored session before it enters the
+            // monthly totals (allowLarge preserves a manual-adjustment delta's sign/magnitude).
+            const duration = sanitizeReportMinutes(session.durationMinutes, { allowLarge: session.isManualAdjustment });
 
             stats[key].totalMinutes += duration;
 
