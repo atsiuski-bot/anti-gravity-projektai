@@ -15,6 +15,11 @@ import { useEffect } from 'react';
  * topmost one reacts to keys, so a globally-mounted timer alarm appearing over an open
  * details modal doesn't fight it for focus or close both on a single Escape.
  *
+ * Stack membership lives in its own effect keyed solely on `[open, dialogRef]`, so an
+ * unstable `onClose` identity (inline arrows that change on every parent re-render) re-binds
+ * only the cheap keydown listener and never reorders the stack — the genuinely-topmost
+ * dialog stays topmost.
+ *
  * The dialog container must be a real element with `tabIndex={-1}` so it can hold focus
  * when it has no focusable children.
  *
@@ -38,6 +43,9 @@ const FOCUSABLE_SELECTOR = [
 const dialogStack = [];
 
 export function useModalA11y(dialogRef, { open = true, onClose, dismissible = true, initialFocusRef } = {}) {
+    // Stack membership + focus, tied to actual open/close only. Keeping `onClose` out of these
+    // deps is deliberate: the stack must not reorder when a parent re-render hands a new
+    // onClose closure to a background dialog (which would displace the real topmost one).
     useEffect(() => {
         if (!open) return undefined;
 
@@ -48,6 +56,23 @@ export function useModalA11y(dialogRef, { open = true, onClose, dismissible = tr
         const initialTarget = initialFocusRef?.current || dialog;
         initialTarget?.focus?.();
 
+        return () => {
+            if (dialog) {
+                const idx = dialogStack.lastIndexOf(dialog);
+                if (idx !== -1) dialogStack.splice(idx, 1);
+            }
+            // Only restore if the trigger still exists — a destructive confirm may have
+            // unmounted it, and focusing a detached node silently drops focus to <body>.
+            if (previouslyFocused && previouslyFocused.isConnected) previouslyFocused.focus?.();
+        };
+    }, [open, dialogRef, initialFocusRef]);
+
+    // Keydown (Escape + Tab trap). May re-bind freely when onClose/dismissible change; it
+    // reads the live topmost from the module stack, so re-binding never affects ordering.
+    useEffect(() => {
+        if (!open) return undefined;
+
+        const dialog = dialogRef.current;
         const isTopmost = () => dialogStack[dialogStack.length - 1] === dialog;
 
         const getFocusable = () => {
@@ -97,17 +122,8 @@ export function useModalA11y(dialogRef, { open = true, onClose, dismissible = tr
         };
 
         document.addEventListener('keydown', onKeyDown);
-        return () => {
-            document.removeEventListener('keydown', onKeyDown);
-            if (dialog) {
-                const idx = dialogStack.lastIndexOf(dialog);
-                if (idx !== -1) dialogStack.splice(idx, 1);
-            }
-            // Only restore if the trigger still exists — a destructive confirm may have
-            // unmounted it, and focusing a detached node silently drops focus to <body>.
-            if (previouslyFocused && previouslyFocused.isConnected) previouslyFocused.focus?.();
-        };
-    }, [open, dismissible, onClose, dialogRef, initialFocusRef]);
+        return () => document.removeEventListener('keydown', onKeyDown);
+    }, [open, dismissible, onClose, dialogRef]);
 }
 
 export default useModalA11y;
