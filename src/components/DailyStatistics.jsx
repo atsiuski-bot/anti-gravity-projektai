@@ -18,6 +18,7 @@ import SessionTypeIcon from './SessionTypeIcon';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
+import TaskModal from './TaskModal';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null }) {
     // Managers see the whole team here; workers see only themselves. The per-member picker was
@@ -68,6 +69,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // modal listing everything that worker touched that day — both finished work and the
     // session still running — without forcing the manager to switch the user filter.
     const [workerDetail, setWorkerDetail] = useState(null); // { userId, name } | null
+
+    // Clicking a work card inside that drill-down opens the full task. We swap modals rather
+    // than stack them (two focus-trapped dialogs fight) — the worker modal closes, the task
+    // opens; closing the task returns to the day statistics.
+    const [openTaskDetail, setOpenTaskDetail] = useState(null); // task | null
 
     // Calculate previous/next day
     const handleDateChange = (offset) => {
@@ -1352,7 +1358,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     date={selectedDate}
                     items={combinedTimelineItems.filter(i => i.userId === workerDetail.userId)}
                     tasks={finishedTasks}
+                    onOpenTask={(task) => { setWorkerDetail(null); setOpenTaskDetail(task); }}
                     onClose={() => setWorkerDetail(null)}
+                />
+            )}
+
+            {/* Full task window opened from a worker's day-detail card. */}
+            {openTaskDetail && (
+                <TaskModal
+                    isOpen
+                    task={openTaskDetail}
+                    role={userRole}
+                    onClose={() => setOpenTaskDetail(null)}
                 />
             )}
         </div>
@@ -1363,95 +1380,114 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 // day: tasks and quick-work/calls (finished or still running) plus breaks. Opened from a row
 // in the team "Darbo valandos" summary so a manager never has to switch the user filter just
 // to inspect one person.
-function WorkerDayDetailModal({ worker, date, items, tasks = [], onClose }) {
-    const workItems = items.filter(i => i.type !== 'break' && i.type !== 'inactive');
-    const breakItems = items.filter(i => i.type === 'break');
-
-    // Map a timeline item back to its task so each row can show the same confirmation status
-    // (Patvirtinta / Nepatvirtinta / Ištrinta) the task carries everywhere else. Sessions key
-    // by taskId; manual-task items key by their own id (which IS the task id).
+function WorkerDayDetailModal({ worker, date, items, tasks = [], onOpenTask, onClose }) {
+    // Map a timeline item back to its task so each card can show the same confirmation status
+    // (Patvirtinta / Nepatvirtinta / Ištrinta) the task carries everywhere else, and so clicking
+    // it can open the full task. Sessions key by taskId; manual-task items key by their own id.
     const taskById = new Map(tasks.map(t => [t.id, t]));
     const taskForItem = (item) => taskById.get(item.taskId) || taskById.get(item.id) || null;
 
-    return (
-        <Modal
-            open
-            onClose={onClose}
-            size="lg"
-            title={worker.name}
-        >
-            <p className="-mt-2 mb-4 text-caption text-ink-muted">
-                {date} · {workItems.length} {workItems.length === 1 ? 'įrašas' : 'įrašai'}
-            </p>
+    // One chronological timeline — work segments and breaks interleaved in the order they
+    // happened (items arrive sorted by startTime); inactive gaps are not shown. The day's work
+    // and break totals sit in the header so the per-row breaks don't need a separate summary.
+    const timeline = items.filter(i => i.type !== 'inactive');
+    const dayWorkMinutes = timeline.filter(i => i.type !== 'break').reduce((a, i) => a + (i.duration || 0), 0);
+    const dayBreakMinutes = timeline.filter(i => i.type === 'break').reduce((a, i) => a + (i.duration || 0), 0);
 
-            {items.length === 0 ? (
+    return (
+        <Modal open onClose={onClose} size="lg" title={worker.name}>
+            {/* Day header: the date plus this worker's work and break totals for the day. */}
+            <div className="-mt-2 mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line pb-3 text-caption">
+                <span className="font-mono text-ink-muted">{date}</span>
+                <span className="text-ink-muted">Darbas <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
+                <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-amber-700">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
+            </div>
+
+            {timeline.length === 0 ? (
                 <p className="py-6 text-center text-ink-muted">Šią dieną įrašų nefiksuota.</p>
             ) : (
-                <div className="space-y-4">
-                    <ul className="divide-y divide-line rounded-control border border-line overflow-hidden">
-                        {workItems.map((item, idx) => {
-                            const task = taskForItem(item);
-                            const isDeleted = task && (task.isDeleted || task.status === 'deleted');
+                <ul className="space-y-2">
+                    {timeline.map((item, idx) => {
+                        if (item.type === 'break') {
                             return (
-                                <li key={item.id || idx} className="flex items-start justify-between gap-3 p-3">
-                                    <div className="min-w-0">
-                                        <div className="flex items-center gap-1.5 text-body text-ink-strong">
-                                            <SessionTypeIcon
-                                                type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')}
-                                                className="w-3.5 h-3.5 flex-shrink-0"
-                                                aria-hidden="true"
-                                            />
-                                            <span className="break-words font-medium">{item.title || 'Darbas'}</span>
+                                <li key={item.id || idx}>
+                                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-amber-50/40 p-3 text-amber-700">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-1.5 font-medium">
+                                                <Coffee className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                                                Pertrauka
+                                            </div>
+                                            <p className="mt-0.5 font-mono text-caption">
+                                                {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                                            </p>
                                         </div>
-                                        <p className="mt-0.5 font-mono text-caption text-ink-muted">
-                                            {formatTime(item.startTime)} – {formatTime(item.endTime)}
-                                        </p>
-                                        {/* Status: running work reads "Vykdoma"; finished work shows the same
-                                            Patvirtinta / Nepatvirtinta / Ištrinta the task carries elsewhere. */}
-                                        <div className="mt-1">
-                                            {item.isActive ? (
-                                                <span className="inline-block rounded bg-feedback-success/10 px-1.5 py-0.5 text-caption font-semibold text-feedback-success">
-                                                    Vykdoma
-                                                </span>
-                                            ) : isDeleted ? (
-                                                <DeletedBadge />
-                                            ) : task ? (
-                                                <TaskStatusPill task={task} />
-                                            ) : null}
-                                        </div>
-                                    </div>
-                                    <span className="font-mono text-body font-bold text-brand whitespace-nowrap">
-                                        {formatMinutesToTimeString(item.duration)}
-                                    </span>
-                                </li>
-                            );
-                        })}
-                        {workItems.length === 0 && (
-                            <li className="p-3 text-center text-caption text-ink-muted">Užduočių nefiksuota.</li>
-                        )}
-                    </ul>
-
-                    {breakItems.length > 0 && (
-                        <div>
-                            <h3 className="mb-1.5 flex items-center gap-1.5 text-caption font-semibold text-ink-muted">
-                                <Coffee className="w-3.5 h-3.5" aria-hidden="true" />
-                                Pertraukos
-                            </h3>
-                            <ul className="divide-y divide-line rounded-control border border-line overflow-hidden">
-                                {breakItems.map((item, idx) => (
-                                    <li key={item.id || idx} className="flex items-center justify-between gap-3 p-3 text-amber-700">
-                                        <span className="font-mono text-caption">
-                                            {formatTime(item.startTime)} – {formatTime(item.endTime)}
-                                        </span>
                                         <span className="font-mono text-body font-bold whitespace-nowrap">
                                             {formatMinutesToTimeString(item.duration)}
                                         </span>
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    )}
-                </div>
+                                    </div>
+                                </li>
+                            );
+                        }
+
+                        const task = taskForItem(item);
+                        const isDeleted = task && (task.isDeleted || task.status === 'deleted');
+
+                        // The same card body for clickable (task resolved) and static rows.
+                        const body = (
+                            <>
+                                <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-1.5 text-body text-ink-strong">
+                                        <SessionTypeIcon
+                                            type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')}
+                                            className="w-3.5 h-3.5 flex-shrink-0"
+                                            aria-hidden="true"
+                                        />
+                                        <span className="break-words font-medium">{item.title || 'Darbas'}</span>
+                                        {task?.priority && <PriorityBadge priority={task.priority} />}
+                                    </div>
+                                    <p className="mt-0.5 font-mono text-caption text-ink-muted">
+                                        {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                                    </p>
+                                    {/* Status: running work reads "Vykdoma"; finished work shows the same
+                                        Patvirtinta / Nepatvirtinta / Ištrinta the task carries elsewhere. */}
+                                    <div className="mt-1">
+                                        {item.isActive ? (
+                                            <span className="inline-block rounded bg-feedback-success/10 px-1.5 py-0.5 text-caption font-semibold text-feedback-success">
+                                                Vykdoma
+                                            </span>
+                                        ) : isDeleted ? (
+                                            <DeletedBadge />
+                                        ) : task ? (
+                                            <TaskStatusPill task={task} />
+                                        ) : null}
+                                    </div>
+                                </div>
+                                <span className="font-mono text-body font-bold text-brand whitespace-nowrap">
+                                    {formatMinutesToTimeString(item.duration)}
+                                </span>
+                            </>
+                        );
+
+                        return (
+                            <li key={item.id || idx}>
+                                {task ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => onOpenTask?.(task)}
+                                        aria-label={`Atidaryti užduotį: ${item.title || 'Darbas'}`}
+                                        className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                    >
+                                        {body}
+                                    </button>
+                                ) : (
+                                    <div className="flex items-start justify-between gap-3 rounded-control border border-line p-3">
+                                        {body}
+                                    </div>
+                                )}
+                            </li>
+                        );
+                    })}
+                </ul>
             )}
         </Modal>
     );
