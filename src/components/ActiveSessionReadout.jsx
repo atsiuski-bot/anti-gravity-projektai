@@ -1,0 +1,83 @@
+import { useEffect, useState } from 'react';
+import { Zap, Phone, Coffee } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
+import { getLithuanianNow, clampSessionMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { cn } from '../utils/cn';
+
+// Live readout for the active secondary session (quick work / call / break), surfaced as its
+// OWN floating pill ABOVE the controls bar. This keeps the controls pill itself as short as an
+// icon + label — no reserved timer row inside it. Renders nothing when nothing is running.
+const READOUT = {
+    quickWork: {
+        label: 'Greitas darbas',
+        icon: Zap,
+        stateKey: 'quickWorkState',
+        tone: 'border-session-quickWork-accent bg-session-quickWork-surface text-session-quickWork-accent',
+    },
+    call: {
+        label: 'Skambutis',
+        icon: Phone,
+        stateKey: 'callState',
+        tone: 'border-session-call-accent bg-session-call-surface text-session-call-accent',
+    },
+    break: {
+        label: 'Pertrauka',
+        icon: Coffee,
+        stateKey: 'breakState',
+        tone: 'border-session-break-accent bg-session-break-surface text-session-break-accent',
+    },
+};
+
+export default function ActiveSessionReadout() {
+    const { userData } = useAuth();
+    const { activeSessionType } = useActiveSessionStatus();
+    const cfg = READOUT[activeSessionType];
+
+    // activeSession is the authoritative start time; fall back to the legacy per-state
+    // lastStartedAt only when no activeSession object exists (mirrors useTimerState).
+    const activeSession = userData?.activeSession;
+    let startISO = null;
+    if (cfg) {
+        if (activeSession?.type === activeSessionType && activeSession.startTime) {
+            startISO = activeSession.startTime;
+        } else if (!activeSession) {
+            startISO = userData?.[cfg.stateKey]?.lastStartedAt || null;
+        }
+    }
+
+    const [minutes, setMinutes] = useState(0);
+    useEffect(() => {
+        if (!startISO) {
+            setMinutes(0);
+            return undefined;
+        }
+        const start = new Date(startISO);
+        // Sanitize the live delta through the shared clamp so a backward device clock can't
+        // render a negative time (same guard the in-card timers use).
+        const tick = () => setMinutes(clampSessionMinutes((getLithuanianNow() - start) / (1000 * 60)));
+        tick();
+        const interval = setInterval(tick, 1000);
+        return () => clearInterval(interval);
+    }, [startISO]);
+
+    if (!cfg || !startISO) return null;
+
+    const Icon = cfg.icon;
+    return (
+        <div
+            role="status"
+            aria-live="polite"
+            className={cn(
+                'flex items-center gap-2 rounded-full border px-3 py-1 shadow-md backdrop-blur-sm',
+                cfg.tone
+            )}
+        >
+            <Icon className="h-4 w-4" aria-hidden="true" />
+            <span className="text-caption font-medium">{cfg.label}</span>
+            <span className="font-mono text-body-lg font-bold leading-none tabular-nums">
+                {formatMinutesToTimeString(minutes)}
+            </span>
+        </div>
+    );
+}

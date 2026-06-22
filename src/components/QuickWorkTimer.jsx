@@ -195,22 +195,8 @@ export default function QuickWorkTimer({ compact = false }) {
     if (compact) {
         return (
             <div className="flex flex-col items-center">
-                {/* Timer Display — paired label + live readout (color is never the sole signal) */}
-                {isQuickWorking ? (
-                    <span
-                        role="timer"
-                        aria-label="Greito darbo laikas"
-                        className="text-body-lg font-bold text-session-quickWork-accent font-mono mb-1 leading-6 animate-pulse"
-                    >
-                        {formatMinutesToTimeString(currentSessionMinutes)}
-                    </span>
-                ) : (
-                    // Invisible placeholder to keep alignment (decorative spacer)
-                    <span className="text-body-lg font-bold text-transparent font-mono mb-1 leading-6 select-none" aria-hidden="true">
-                        00:00
-                    </span>
-                )}
-
+                {/* Live time is surfaced by ActiveSessionReadout above the bar, so the column
+                    itself stays as short as button + label (no reserved readout row). */}
                 <button
                     onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                     disabled={isDisabled}

@@ -5,11 +5,12 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Clock } from 'lucide-react';
+import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { getPriorityOptions, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
+import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { TASK_TAGS } from '../utils/taskUtils';
 import Button from './ui/Button';
@@ -20,6 +21,16 @@ import { useModalA11y } from '../hooks/useModalA11y';
 // Persistent field label — fields previously had only placeholders, which vanish on input
 // and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
 const fieldLabel = 'mt-4 mb-1 block text-body font-medium text-ink';
+
+// Human-readable file size — the "before upload" signal a field worker needs to judge
+// how much mobile data a batch of phone photos will cost.
+const formatBytes = (bytes) => {
+    if (!bytes || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+    const value = bytes / Math.pow(1024, i);
+    return `${value >= 10 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+};
 
 export default function TaskModal({ isOpen, onClose, task, role }) {
     const { currentUser, userRole, userData } = useAuth();
@@ -49,13 +60,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         deadline: '',
         tag: '',
         attachmentUrl: '',
-        attachmentUrls: [] // New field for multiple attachments
+        attachmentUrls: [], // New field for multiple attachments
+        checklist: []
     });
 
     const [newLink, setNewLink] = useState('');
     const [newComment, setNewComment] = useState('');
+    const [newChecklistItem, setNewChecklistItem] = useState('');
     const [selectedFiles, setSelectedFiles] = useState([]); // Changed to array
-    const [, setUploadProgress] = useState(0);
+    const [uploadProgress, setUploadProgress] = useState(0);
 
     // Template State
     const [templates, setTemplates] = useState([]);
@@ -122,7 +135,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 deadline: task.deadline || '',
                 tag: task.tag || '',
                 attachmentUrl: task.attachmentUrl || '', // Keep for legacy
-                attachmentUrls: existingUrls
+                attachmentUrls: existingUrls,
+                checklist: task.checklist || []
             });
         } else {
             // Reset for new task
@@ -154,7 +168,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     deadline: '',
                     tag: '',
                     attachmentUrl: '',
-                    attachmentUrls: []
+                    attachmentUrls: [],
+                    checklist: []
                 });
             })();
         }
@@ -319,7 +334,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }));
     };
 
-    const uploadFile = (file) => {
+    const uploadFile = (file, onProgress) => {
         return new Promise((resolve, reject) => {
             const fileId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
             // Store under a per-uploader folder so Storage rules can scope direct
@@ -330,8 +345,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             const uploadTask = uploadBytesResumable(storageRef, file, metadata);
 
             uploadTask.on('state_changed',
-                (_snapshot) => {
-                    /* progress events intentionally ignored */
+                (snapshot) => {
+                    // Report transferred bytes so the caller can aggregate a combined
+                    // progress bar across all parallel uploads (field workers on slow
+                    // mobile networks need to see that something is happening).
+                    onProgress?.(snapshot.bytesTransferred);
                 },
                 (error) => {
                     console.error("Upload failed:", error);
@@ -367,14 +385,24 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
             // 1. Upload all new selected files
             if (selectedFiles.length > 0) {
-
-
                 // Compress files first
                 const compressionPromises = selectedFiles.map(file => compressImage(file));
                 const compressedFiles = await Promise.all(compressionPromises);
 
+                // Aggregate a single combined progress percentage across the parallel
+                // uploads: track each file's transferred bytes and divide by the grand total.
+                const totalBytes = compressedFiles.reduce((sum, f) => sum + (f.size || 0), 0) || 1;
+                const transferred = new Array(compressedFiles.length).fill(0);
+                const reportProgress = (index, bytes) => {
+                    transferred[index] = bytes;
+                    const sum = transferred.reduce((a, b) => a + b, 0);
+                    setUploadProgress(Math.min(100, Math.round((sum / totalBytes) * 100)));
+                };
+
                 // Then upload compressed files
-                const uploadPromises = compressedFiles.map(file => uploadFile(file));
+                const uploadPromises = compressedFiles.map((file, index) =>
+                    uploadFile(file, (bytes) => reportProgress(index, bytes))
+                );
                 const newUrls = await Promise.all(uploadPromises);
 
                 currentAttachmentUrls = [...currentAttachmentUrls, ...newUrls];
@@ -409,15 +437,25 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             let docRef;
             if (task) {
                 docRef = doc(db, 'tasks', task.id);
-                
+
                 // If estimated time is altered by manager, lift any time blocking flags
                 if (task.estimatedTime !== formData.estimatedTime) {
                     taskData.timeLimitReached = false;
                     taskData.warningShown80 = false;
                     taskData.warningShown70 = false;
                 }
-                
-                await updateDoc(docRef, taskData);
+
+                // The whole-document save would clobber a worker's concurrent live
+                // checklist ticks (this form holds a snapshot from when it opened). Write
+                // every OTHER field here, then reconcile the checklist atomically (three-way
+                // merge: manager's items/text + worker's live done-state + worker's adds).
+                const { checklist: authoredChecklist, ...taskDataNoChecklist } = taskData;
+                await updateDoc(docRef, taskDataNoChecklist);
+                await reconcileChecklist(
+                    task.id,
+                    (task.checklist || []).map(item => item.id),
+                    authoredChecklist || []
+                );
             } else {
                 // Determine if user is a manager/admin based on Context OR Prop
                 const isManagerOrAdmin = isManagerRole(userRole) || isManagerRole(role);
@@ -501,6 +539,20 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             setFormData(prev => ({ ...prev, comments: [...prev.comments, comment] }));
             setNewComment('');
         }
+    };
+
+    // Checklist items are composed locally and persisted with the task on save
+    // (same array-on-the-doc pattern as links/comments). Live ticking happens on
+    // the card via checklistActions; this section is for authoring the item list.
+    const addChecklistItemLocal = () => {
+        const text = newChecklistItem.trim();
+        if (!text) return;
+        setFormData(prev => ({ ...prev, checklist: [...(prev.checklist || []), buildChecklistItem(text)] }));
+        setNewChecklistItem('');
+    };
+
+    const removeChecklistItemLocal = (id) => {
+        setFormData(prev => ({ ...prev, checklist: (prev.checklist || []).filter(item => item.id !== id) }));
     };
 
     if (!isOpen) return null;
@@ -799,18 +851,35 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     ))}
                                 </select>
 
-                                {/* File Upload */}
+                                {/* File Upload — a direct-camera button (field workers photograph
+                                    work on-site) alongside a gallery picker. capture="environment"
+                                    opens the rear camera on phones and is ignored on desktop. */}
                                 <div className="mt-4">
-                                    <label className="block w-full px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted">
-                                        <span className="text-base text-ink-muted">Prisegti nuotraukas (Maks. 8)</span>
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            multiple // Allow multiple files
-                                            onChange={handleFileSelect}
-                                            className="hidden"
-                                        />
-                                    </label>
+                                    <span className="mb-1 block text-body font-medium text-ink">Nuotraukos (maks. 8)</span>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand">
+                                            <Camera className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                                            <span className="text-base text-ink-muted">Fotografuoti</span>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                capture="environment"
+                                                onChange={handleFileSelect}
+                                                className="hidden"
+                                            />
+                                        </label>
+                                        <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand">
+                                            <Plus className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                                            <span className="text-base text-ink-muted">Iš galerijos</span>
+                                            <input
+                                                type="file"
+                                                accept="image/*"
+                                                multiple // Allow multiple files
+                                                onChange={handleFileSelect}
+                                                className="hidden"
+                                            />
+                                        </label>
+                                    </div>
 
                                     {/* Display Existing Attachments */}
                                     {formData.attachmentUrls && formData.attachmentUrls.length > 0 && (
@@ -833,19 +902,21 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         </div>
                                     )}
 
-                                    {/* Display Selected (Proposed) Attachments */}
+                                    {/* Display Selected (Proposed) Attachments — with original size
+                                        so the worker can judge the mobile-data cost before uploading. */}
                                     {selectedFiles.length > 0 && (
                                         <div className="mt-4">
                                             <p className="text-xs font-semibold text-ink-muted mb-2">Naujai pasirinktos:</p>
                                             <div className="space-y-2">
                                                 {selectedFiles.map((file, index) => (
-                                                    <div key={`selected-${index}`} className="flex items-center justify-between text-sm text-ink bg-surface-sunken p-2 rounded">
-                                                        <span className="truncate max-w-[80%]">{file.name}</span>
+                                                    <div key={`selected-${index}`} className="flex items-center justify-between gap-2 text-sm text-ink bg-surface-sunken p-2 rounded">
+                                                        <span className="truncate min-w-0 flex-1">{file.name}</span>
+                                                        <span className="shrink-0 text-caption text-ink-muted tabular-nums">{formatBytes(file.size)}</span>
                                                         <button
                                                             type="button"
                                                             onClick={() => removeSelectedFile(index)}
-                                                            aria-label="Pašalinti failą"
-                                                            className="inline-flex items-center justify-center min-h-touch min-w-touch text-ink-muted hover:text-red-500 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                            aria-label={`Pašalinti ${file.name}`}
+                                                            className="inline-flex items-center justify-center min-h-touch min-w-touch shrink-0 text-ink-muted hover:text-red-500 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                         >
                                                             <X className="w-4 h-4" aria-hidden="true" />
                                                         </button>
@@ -853,6 +924,63 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 ))}
                                             </div>
                                         </div>
+                                    )}
+
+                                    {/* Combined upload progress (slow mobile networks) */}
+                                    {loading && selectedFiles.length > 0 && (
+                                        <div className="mt-3" aria-live="polite">
+                                            <div className="mb-1 flex items-center justify-between text-caption text-ink-muted">
+                                                <span>Keliama…</span>
+                                                <span className="tabular-nums">{uploadProgress}%</span>
+                                            </div>
+                                            <div
+                                                className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
+                                                role="progressbar"
+                                                aria-valuenow={uploadProgress}
+                                                aria-valuemin={0}
+                                                aria-valuemax={100}
+                                                aria-label="Nuotraukų įkėlimo eiga"
+                                            >
+                                                <div className="h-full rounded-full bg-brand transition-all duration-base" style={{ width: `${uploadProgress}%` }} />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Checklist (sub-tasks) authoring. Stored on the task doc; workers
+                                    tick items live from the card. Editable here when creating, or by
+                                    a manager editing an existing task — otherwise shown read-only. */}
+                                <div className="mt-4">
+                                    <span className="mb-1 block text-body font-medium text-ink">Kontrolinis sąrašas</span>
+                                    {(isManager || !task) && (
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={newChecklistItem}
+                                                onChange={(e) => setNewChecklistItem(e.target.value)}
+                                                placeholder="Pridėti punktą..."
+                                                className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
+                                                onKeyPress={(e) => e.key === 'Enter' && (e.preventDefault(), addChecklistItemLocal())}
+                                            />
+                                            <IconButton icon={Plus} label="Pridėti punktą" variant="primary" onClick={addChecklistItemLocal} />
+                                        </div>
+                                    )}
+                                    {formData.checklist && formData.checklist.length > 0 && (
+                                        <ul className="mt-2 space-y-2">
+                                            {formData.checklist.map((item) => (
+                                                <li key={item.id} className="flex items-center justify-between gap-2 bg-surface-sunken p-2 rounded-lg">
+                                                    <span className="flex items-center gap-2 min-w-0 flex-1">
+                                                        {item.done
+                                                            ? <CheckSquare className="w-4 h-4 flex-shrink-0 text-brand" aria-hidden="true" />
+                                                            : <Square className="w-4 h-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
+                                                        <span className={`truncate text-sm ${item.done ? 'text-ink-muted line-through' : 'text-ink'}`}>{item.text}</span>
+                                                    </span>
+                                                    {(isManager || !task) && (
+                                                        <IconButton icon={Trash2} label="Pašalinti punktą" variant="danger" onClick={() => removeChecklistItemLocal(item.id)} />
+                                                    )}
+                                                </li>
+                                            ))}
+                                        </ul>
                                     )}
                                 </div>
 

@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, User, Pause } from 'lucide-react';
+import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, User, Pause, ListChecks } from 'lucide-react';
 import clsx from 'clsx';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
-import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirmationModal } from './TaskDetailsModals';
+import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal } from './TaskDetailsModals';
 import { InlineEditModal } from './InlineEditModal';
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
@@ -17,6 +17,7 @@ import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import StatusPill from './ui/StatusPill';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
+import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
 import { STATUS_LABELS, STATUS_STYLES } from '../utils/taskConstants';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
@@ -115,6 +116,40 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
             // Inline accessible error instead of the banned window.alert; also log durably.
             logError(err, { source: 'handler:addComment' });
             setActionError('Nepavyko pridėti komentaro. Bandykite dar kartą.');
+        }
+    };
+
+    // Checklist live mutations. The assigned worker (or a manager) ticks items
+    // straight from the card; each write rewrites the task's `checklist` array.
+    const checklistCollection = task.isArchived ? 'archived_tasks' : 'tasks';
+
+    const handleToggleChecklist = async (itemId) => {
+        try {
+            setActionError('');
+            await toggleChecklistItem(task.id, itemId, currentUser, task.checklist, checklistCollection);
+        } catch (err) {
+            logError(err, { source: 'handler:toggleChecklist' });
+            setActionError('Nepavyko atnaujinti sąrašo. Bandykite dar kartą.');
+        }
+    };
+
+    const handleAddChecklist = async (text) => {
+        try {
+            setActionError('');
+            await addChecklistItem(task.id, text, task.checklist, checklistCollection);
+        } catch (err) {
+            logError(err, { source: 'handler:addChecklist' });
+            setActionError('Nepavyko pridėti punkto. Bandykite dar kartą.');
+        }
+    };
+
+    const handleDeleteChecklist = async (itemId) => {
+        try {
+            setActionError('');
+            await deleteChecklistItem(task.id, itemId, task.checklist, checklistCollection);
+        } catch (err) {
+            logError(err, { source: 'handler:deleteChecklist' });
+            setActionError('Nepavyko ištrinti punkto. Bandykite dar kartą.');
         }
     };
 
@@ -485,6 +520,22 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 <MessageCircle className="w-4 h-4" aria-hidden="true" />
                                 <span className="text-caption font-bold">{task.comments?.length || 0}</span>
                             </button>
+                            {task.checklist && task.checklist.length > 0 && (() => {
+                                const { done, total, allDone } = getChecklistProgress(task.checklist);
+                                return (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setActiveModal('checklist'); }}
+                                        className={clsx(
+                                            "flex items-center justify-center gap-1.5 rounded-control transition-colors px-2 py-1.5 min-h-touch min-w-touch hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
+                                            allDone ? "text-feedback-success" : "text-ink-muted hover:text-ink-strong"
+                                        )}
+                                        aria-label={`Kontrolinis sąrašas: atlikta ${done} iš ${total}`}
+                                    >
+                                        <ListChecks className="w-4 h-4" aria-hidden="true" />
+                                        <span className="text-caption font-bold tabular-nums">{done}/{total}</span>
+                                    </button>
+                                );
+                            })()}
                             {onEdit && (
                                 <button
                                     onClick={(e) => {
@@ -562,6 +613,16 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 imageUrls={task.attachmentUrls && task.attachmentUrls.length > 0 ? task.attachmentUrls : (task.attachmentUrl ? [task.attachmentUrl] : [])}
             />
 
+            <ChecklistModal
+                isOpen={activeModal === 'checklist'}
+                onClose={() => setActiveModal(null)}
+                checklist={task.checklist}
+                canEdit={(isManager || isAssignedToMe) && !task.isDeleted}
+                onToggle={handleToggleChecklist}
+                onAdd={handleAddChecklist}
+                onDelete={handleDeleteChecklist}
+            />
+
             <InlineEditModal
                 isOpen={!!editingField}
                 onClose={() => setEditingField(null)}
@@ -629,6 +690,11 @@ export default React.memo(TaskCard, (prevProps, nextProps) => {
     if (prev.timerStatus !== next.timerStatus) return false;
     if (prev.timerStartedAt !== next.timerStartedAt) return false;
     if (prev.comments?.length !== next.comments?.length) return false;
+    if ((prev.checklist?.length || 0) !== (next.checklist?.length || 0)) return false;
+    {
+        const doneCount = (arr) => (arr || []).reduce((n, i) => n + (i && i.done ? 1 : 0), 0);
+        if (doneCount(prev.checklist) !== doneCount(next.checklist)) return false;
+    }
     if (prev.timeChanged !== next.timeChanged) return false;
     if (prev.timeLimitReached !== next.timeLimitReached) return false;
     if (prev.estimatedTime !== next.estimatedTime) return false;
