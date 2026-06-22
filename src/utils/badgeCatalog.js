@@ -1,4 +1,4 @@
-import { CheckCircle2, CalendarCheck } from 'lucide-react';
+import { CheckCircle2, CalendarCheck, Target, CalendarClock, ShieldCheck, ListChecks, Flame } from 'lucide-react';
 
 /**
  * Client-side badge presentation. The awarded doc (users/{uid}/achievements/{key}) carries the
@@ -8,6 +8,11 @@ import { CheckCircle2, CalendarCheck } from 'lucide-react';
 export const BADGE_ICONS = {
     follow_through: CheckCircle2, // R1 — finishes what they start
     steady_rhythm: CalendarCheck, // R2 — shows up across days
+    on_estimate: Target,          // R3 — lands within the estimate
+    plans_ahead: CalendarClock,   // R4 — plans the week ahead
+    approved_craft: ShieldCheck,  // Q1 — work a manager accepted
+    thorough: ListChecks,         // Q2 — completes the full checklist
+    hard_tasks: Flame,            // Q4 — takes the high-priority work
 };
 
 // Awarded docs store the tier as a number (1-4); <Badge> takes the tier KEY.

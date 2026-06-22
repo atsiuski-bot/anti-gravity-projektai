@@ -248,10 +248,15 @@ exports.cleanupAttachmentsOnArchivedDelete = onDocumentDeleted('archived_tasks/{
 const TIER_NAMES = { 1: 'Bronza', 2: 'Sidabras', 3: 'Auksas', 4: 'Platina' };
 
 const BADGES = {
-    // R1 — finishes what they start.
-    follow_through: { name: 'Pabaigiu, ką pradedu', thresholds: [1, 10, 40, 120] },
-    // R2 — shows up across days.
-    steady_rhythm: { name: 'Pastovus ritmas', thresholds: [5, 25, 75, 200] }
+    // Reliability
+    follow_through: { name: 'Pabaigiu, ką pradedu', stat: 'completedTasks', thresholds: [1, 10, 40, 120] }, // R1
+    steady_rhythm: { name: 'Pastovus ritmas', stat: 'workDays', thresholds: [5, 25, 75, 200] },             // R2 (high-water days)
+    on_estimate: { name: 'Telpa į planą', stat: 'onEstimate', thresholds: [5, 20, 60, 150] },               // R3
+    plans_ahead: { name: 'Planuoja iš anksto', stat: 'planAheadWeeks', thresholds: [2, 8, 20, 40] },        // R4 (high-water weeks)
+    // Quality
+    approved_craft: { name: 'Priimtas darbas', stat: 'confirmedTasks', thresholds: [3, 15, 50, 120] },      // Q1
+    thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [3, 15, 40, 100] },                        // Q2
+    hard_tasks: { name: 'Imasi sunkių', stat: 'hardTasks', thresholds: [3, 12, 30, 75] }                    // Q4
 };
 
 function tierForCount(count, thresholds) {
@@ -313,37 +318,96 @@ async function announceBadge(uid, key, tier) {
     }
 }
 
-// R1 — "Pabaigiu, ką pradedu": +1 per task that CROSSES into completed (false → true). The
-// completion edge is the trigger; archiving later DELETES the task doc, so the count is taken
-// once, at finish, and never lost. (A rare uncomplete→recomplete recounts — only ever positive.)
+// Simple counter badge: +1 to its stat field, then (re)grant the tier the new total reaches.
+async function bumpAndGrant(uid, key) {
+    const badge = BADGES[key];
+    const ref = statsRef(uid);
+    const count = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const next = ((snap.exists && snap.data()[badge.stat]) || 0) + 1;
+        tx.set(ref, { [badge.stat]: next }, { merge: true });
+        return next;
+    });
+    const reached = await grantTier(uid, key, tierForCount(count, badge.thresholds));
+    if (reached) await announceBadge(uid, key, reached);
+}
+
+// High-water counter badge (distinct days/weeks): advance only when `value` is strictly later
+// than the last one counted, so a repeat in the same bucket can't double-count and a missed
+// bucket never demotes (forgiving — W3).
+async function highWaterGrant(uid, statField, lastField, value, key) {
+    const badge = BADGES[key];
+    const ref = statsRef(uid);
+    const count = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const data = snap.exists ? snap.data() : {};
+        if (data[lastField] && value <= data[lastField]) return data[statField] || 0;
+        const next = (data[statField] || 0) + 1;
+        tx.set(ref, { [statField]: next, [lastField]: value }, { merge: true });
+        return next;
+    });
+    const reached = await grantTier(uid, key, tierForCount(count, badge.thresholds));
+    if (reached) await announceBadge(uid, key, reached);
+}
+
+// A task has a real time estimate (a non-empty string with a non-zero digit).
+function hasEstimate(task) {
+    return !!task.estimatedTime && /[1-9]/.test(String(task.estimatedTime));
+}
+
+// Mirrors the client's getChecklistProgress().allDone: at least one item, and every one done.
+function checklistAllDone(checklist) {
+    return Array.isArray(checklist) && checklist.length > 0 && checklist.every((i) => i && i.done === true);
+}
+
+function isHighPriority(priority) {
+    const p = String(priority || '').toUpperCase();
+    return p === 'HIGH' || p === 'URGENT';
+}
+
+// Monday (UTC) of the week containing an ISO date — the de-dupe key for "distinct weeks planned".
+function mondayKey(iso) {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    const dow = (d.getUTCDay() + 6) % 7; // 0 = Monday
+    d.setUTCDate(d.getUTCDate() - dow);
+    return d.toISOString().slice(0, 10);
+}
+
+// Task-finish badges. Two independent edges on a task update:
+//   • completed false→true  → R1 follow_through, R3 on_estimate, Q2 thorough, Q4 hard_tasks
+//   • status →'confirmed'    → Q1 approved_craft (a manager accepted the worker's work)
+// Both can fire on the same update (a manager finishing sets completed+confirmed at once); the
+// per-edge guards make each count exactly once even across separate complete-then-confirm steps.
 exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
     const before = event.data && event.data.before && event.data.before.data();
     const after = event.data && event.data.after && event.data.after.data();
     if (!before || !after) return;
-    if (before.completed === true || after.completed !== true) return; // only the false→true edge
     const uid = after.assignedUserId;
     if (!uid) return;
 
+    const justCompleted = before.completed !== true && after.completed === true;
+    const justConfirmed = before.status !== 'confirmed' && after.status === 'confirmed';
+    if (!justCompleted && !justConfirmed) return;
+
     try {
-        const ref = statsRef(uid);
-        const count = await db.runTransaction(async (tx) => {
-            const snap = await tx.get(ref);
-            const next = ((snap.exists && snap.data().completedTasks) || 0) + 1;
-            tx.set(ref, { completedTasks: next }, { merge: true });
-            return next;
-        });
-        const reached = await grantTier(uid, 'follow_through', tierForCount(count, BADGES.follow_through.thresholds));
-        if (reached) await announceBadge(uid, 'follow_through', reached);
+        if (justCompleted) {
+            await bumpAndGrant(uid, 'follow_through');
+            if (hasEstimate(after) && after.timeLimitReached !== true) await bumpAndGrant(uid, 'on_estimate');
+            if (checklistAllDone(after.checklist)) await bumpAndGrant(uid, 'thorough');
+            if (isHighPriority(after.priority)) await bumpAndGrant(uid, 'hard_tasks');
+        }
+        // Q1 counts a MANAGER sign-off — not a worker (in a manager role) confirming their own task.
+        if (justConfirmed && after.confirmedBy && after.confirmedBy !== uid) {
+            await bumpAndGrant(uid, 'approved_craft');
+        }
     } catch (err) {
         logger.error('onTaskFinishedBadge failed', { uid, err: err.message });
     }
 });
 
-// R2 — "Pastovus ritmas": cumulative distinct work-DAYS, counted O(1) by advancing a high-water
-// `lastWorkDate`. Forgiving (W3): only a strictly-later calendar day advances the count, so a
-// second session the same day — or a back-dated correction — can't double-count, and a missed
-// day never demotes. Quick-work/call sessions still count as a worked day; deletions and manual
-// time corrections do not.
+// R2 — "Pastovus ritmas": cumulative distinct work-DAYS. Quick-work/call sessions still count as
+// a worked day; deletions and manual time corrections do not.
 exports.onWorkSessionBadge = onDocumentCreated('work_sessions/{id}', async (event) => {
     const s = event.data && event.data.data();
     if (!s) return;
@@ -354,18 +418,26 @@ exports.onWorkSessionBadge = onDocumentCreated('work_sessions/{id}', async (even
     if (!uid || !date) return;
 
     try {
-        const ref = statsRef(uid);
-        const days = await db.runTransaction(async (tx) => {
-            const snap = await tx.get(ref);
-            const data = snap.exists ? snap.data() : {};
-            if (data.lastWorkDate && date <= data.lastWorkDate) return data.workDays || 0;
-            const next = (data.workDays || 0) + 1;
-            tx.set(ref, { workDays: next, lastWorkDate: date }, { merge: true });
-            return next;
-        });
-        const reached = await grantTier(uid, 'steady_rhythm', tierForCount(days, BADGES.steady_rhythm.thresholds));
-        if (reached) await announceBadge(uid, 'steady_rhythm', reached);
+        await highWaterGrant(uid, 'workDays', 'lastWorkDate', date, 'steady_rhythm');
     } catch (err) {
         logger.error('onWorkSessionBadge failed', { uid, err: err.message });
+    }
+});
+
+// R4 — "Planuoja iš anksto": distinct WEEKS the worker planned during the proper planning window
+// (calendar_requests stamped reason 'PlanningTime'). De-duped per planned week, so editing
+// several shifts for the same week counts once.
+exports.onCalendarPlanBadge = onDocumentCreated('calendar_requests/{id}', async (event) => {
+    const r = event.data && event.data.data();
+    if (!r || r.reason !== 'PlanningTime') return;
+    const uid = r.userId;
+    const startIso = (r.requestedEvent && r.requestedEvent.start) || r.createdAt;
+    const week = startIso ? mondayKey(startIso) : null;
+    if (!uid || !week) return;
+
+    try {
+        await highWaterGrant(uid, 'planAheadWeeks', 'lastPlanWeek', week, 'plans_ahead');
+    } catch (err) {
+        logger.error('onCalendarPlanBadge failed', { uid, err: err.message });
     }
 });
