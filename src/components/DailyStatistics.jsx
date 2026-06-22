@@ -12,7 +12,7 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, Zap, MessageSquare, Check, Filter, RotateCcw, X, Pencil } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Zap, MessageSquare, Check, Filter, RotateCcw, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
@@ -22,7 +22,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
 import TaskModal from './TaskModal';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full' }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
@@ -380,6 +380,29 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     }, [finishedTasks, rangeStart, rangeEnd, sortBy]);
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
+
+    // The "Patvirtinimas" surface (view='approval') shows a manager only the tasks they are
+    // responsible for: ones where they are the assigned vadovas (task.managerId), or where they
+    // manage the worker who did the task (the worker's managers include them). Admins are NOT
+    // narrowed — they oversee the whole company. "Managers of the doer" is read from the task's
+    // denormalized teamManagerIds (the same field the scoped-manager reads use, kept in sync by a
+    // Cloud Function), falling back to the worker's user doc so it still resolves for any legacy
+    // row written before that denormalization.
+    const applyApprovalFilter = view === 'approval' && userRole === 'manager';
+    const isApprovalRelevant = (task) => {
+        const uid = currentUser?.uid;
+        if (!uid) return false;
+        if (task.managerId && task.managerId === uid) return true;
+        if (Array.isArray(task.teamManagerIds) && task.teamManagerIds.includes(uid)) return true;
+        const doer = users.find(u => u.id === resolveUserId(task));
+        return !!doer && Array.isArray(doer.teamManagerIds) && doer.teamManagerIds.includes(uid);
+    };
+    const approvalTodayTasks = applyApprovalFilter ? todayTasks.filter(isApprovalRelevant) : todayTasks;
+    const approvalEarlierTasks = applyApprovalFilter ? earlierTasks.filter(isApprovalRelevant) : earlierTasks;
+    // The two task lists shown by this surface: full/hours surfaces use the raw split lists;
+    // the approval surface uses the manager-scoped ones.
+    const shownTodayTasks = view === 'approval' ? approvalTodayTasks : todayTasks;
+    const shownEarlierTasks = view === 'approval' ? approvalEarlierTasks : earlierTasks;
 
     // ALL sessions go into the timeline — Quick Work and Calls are regular work sessions,
     // they were previously excluded to avoid double-count with manualTasks but that caused them to vanish.
@@ -907,6 +930,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             )}
 
+            {/* Hours surface (work timeline + day summary). The "Patvirtinimas" tab
+                (view='approval') drops all of this and shows only the task-confirmation
+                sections below. */}
+            {view !== 'approval' && (
+              <>
             {/* Header Controls — kept to a single compact row on every viewport (no column
                 stacking on mobile) so the date stepper + filters take minimal vertical space. */}
             <div className="bg-surface-card p-2 rounded-card shadow-sm border border-line flex flex-row flex-wrap gap-2 items-center justify-between">
@@ -1292,11 +1320,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 */
                 null
             )}
+              </>
+            )}
 
 
-            {todayTasks.length > 0 && (
+            {/* Task-confirmation sections. Hidden entirely on the hours-only surface (they move to
+                the "Patvirtinimas" tab); shown plain on the full surface; and as collapsible,
+                manager-scoped sections on the approval surface (today + awaiting-confirmation open
+                by default, the history archive collapsed). */}
+            {view !== 'hours' && (
+              <>
+            {shownTodayTasks.length > 0 && (
                 <TaskListTable
-                    tasks={todayTasks}
+                    tasks={shownTodayTasks}
                     title={isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}`}
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
@@ -1309,12 +1345,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     expandedTasks={expandedTasks}
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
+                    collapsible={view === 'approval'}
+                    defaultOpen
                 />
             )}
 
-            {earlierTasks.length > 0 && (
+            {shownEarlierTasks.length > 0 && (
                 <TaskListTable
-                    tasks={earlierTasks}
+                    tasks={shownEarlierTasks}
                     title="Užduotys atliktos anksčiau, laukia patvirtinimo"
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
@@ -1328,21 +1366,36 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
                     highlight={true}
+                    collapsible={view === 'approval'}
+                    defaultOpen
                 />
             )}
 
             {/* Full task-history browser — omitted in the embedded calendar drill-down, which is a
-                focused single-day report, not the archive browser. */}
+                focused single-day report, not the archive browser. On the approval surface it is
+                scoped to this manager's tasks (matching the lists above). */}
             {!embedded && (
                 <div className="mt-8">
-                    <TaskHistory userId={selectedUserId} users={users} canExport={canExport} />
+                    <TaskHistory
+                        userId={selectedUserId}
+                        users={users}
+                        canExport={canExport}
+                        approvalManagerUid={applyApprovalFilter ? currentUser?.uid : null}
+                    />
                 </div>
             )}
 
-            {todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0 && (
+            {(view === 'approval'
+                ? (shownTodayTasks.length === 0 && shownEarlierTasks.length === 0)
+                : (todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0)
+            ) && (
                 <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
-                    {isRange ? 'Nėra atliktų užduočių šiam laikotarpiui.' : 'Nėra atliktų užduočių šiai dienai.'}
+                    {view === 'approval'
+                        ? 'Šiuo metu nėra užduočių, kurias turėtumėte patvirtinti.'
+                        : (isRange ? 'Nėra atliktų užduočių šiam laikotarpiui.' : 'Nėra atliktų užduočių šiai dienai.')}
                 </div>
+            )}
+              </>
             )}
 
             {/* Break log could be listed here if we stored individual breaks, 
@@ -1695,11 +1748,14 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
 }
 
 // Task List Helper Component
-function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, onTimeChange, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false }) {
+function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, onTimeChange, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false, collapsible = false, defaultOpen = true }) {
     const [editingTimeTaskId, setEditingTimeTaskId] = useState(null);
     const [editHours, setEditHours] = useState(0);
     const [editMins, setEditMins] = useState(0);
     const [editReason, setEditReason] = useState('');
+    // The header doubles as an accordion toggle on the approval surface (collapsible); elsewhere
+    // the body is always shown.
+    const [open, setOpen] = useState(defaultOpen);
     const canEditTime = (userRole === 'admin');
 
     const startTimeEdit = (task) => {
@@ -1724,10 +1780,29 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                 highlight ? "bg-brand text-white py-6" : "py-3 bg-surface-sunken text-ink",
                 viewMode === 'mobile' && "rounded-control mb-2 border"
             )}>
-                <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
+                {collapsible ? (
+                    <button
+                        type="button"
+                        onClick={() => setOpen((o) => !o)}
+                        aria-expanded={open}
+                        className={clsx(
+                            "w-full min-h-touch flex items-center justify-between gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2",
+                            // The highlighted (bg-brand) header needs a white focus ring — an indigo
+                            // ring-brand on the indigo fill is invisible (WCAG 2.4.7 Focus Visible).
+                            highlight ? "focus-visible:ring-white" : "focus-visible:ring-brand"
+                        )}
+                    >
+                        <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
+                        {open
+                            ? <ChevronUp className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />
+                            : <ChevronDown className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />}
+                    </button>
+                ) : (
+                    <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
+                )}
             </div>
 
-            {viewMode === 'mobile' ? (
+            {(!collapsible || open) && (viewMode === 'mobile' ? (
                 <div className="space-y-1">
                     {tasks.map(task => (
                         <MobileStatsCard
@@ -1898,7 +1973,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                         </tbody>
                     </table>
                 </div>
-            )}
+            ))}
         </div>
     );
 }
