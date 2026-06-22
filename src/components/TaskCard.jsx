@@ -16,6 +16,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
@@ -248,10 +249,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             <h3
                                 className={clsx(
                                     "flex-1 min-w-0 text-body font-bold leading-tight",
-                                    (task.completed || task.isDeleted) ? "line-through text-ink-muted" : "text-ink-strong",
+                                    task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong",
                                     taskStatus === 'unapproved' ? "rounded bg-surface-sunken px-2 py-1 text-ink" : ""
                                 )}
                             >
+                                {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                 {task.title}
                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                             </h3>
