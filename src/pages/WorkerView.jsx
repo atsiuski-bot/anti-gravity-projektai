@@ -320,25 +320,29 @@ export default function WorkerView() {
                 )}
             </div>
 
-            {/* Calendar Tab */}
-            <div className={activeTab === 'calendar' ? 'block' : 'hidden'}>
+            {/* Calendar Tab — rendered only while active. react-big-calendar measures its
+                grid geometry once at mount; mounting it inside a display:none tab yields zero
+                widths and a misaligned header/gutter that only a window resize would fix. Gating
+                on the active tab keeps it mounting into a laid-out container (and finally honours
+                the lazy-load intent: the chunk streams in on first visit, not eagerly while hidden). */}
+            {activeTab === 'calendar' && (
                 <div className="w-full">
-                    <ErrorBoundary boundaryName="worker:calendar" resetKeys={[activeTab]}>
+                    <ErrorBoundary boundaryName="worker:calendar">
                         <React.Suspense fallback={<Spinner />}>
                             <WorkPlanner />
                         </React.Suspense>
                     </ErrorBoundary>
                 </div>
-            </div>
+            )}
 
-            {/* Team Calendar Tab */}
-            <div className={activeTab === 'team-calendar' ? 'block' : 'hidden'}>
-                <ErrorBoundary boundaryName="worker:team-calendar" resetKeys={[activeTab]}>
+            {/* Team Calendar Tab — same react-big-calendar mount-measurement constraint. */}
+            {activeTab === 'team-calendar' && (
+                <ErrorBoundary boundaryName="worker:team-calendar">
                     <React.Suspense fallback={<Spinner />}>
                         <AllUsersCalendar />
                     </React.Suspense>
                 </ErrorBoundary>
-            </div>
+            )}
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="worker:reports" resetKeys={[activeTab]}>

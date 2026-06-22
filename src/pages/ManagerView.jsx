@@ -317,23 +317,28 @@ export default function ManagerView() {
                 })()}
             </div>
 
-            <div className={activeTab === 'my-calendar' ? 'block' : 'hidden'}>
+            {/* Calendar tabs render only while active. react-big-calendar measures its grid
+                geometry once at mount; mounting inside a display:none tab yields zero widths and a
+                misaligned header/gutter that only a window resize would fix. Gating on the active
+                tab keeps it mounting into a laid-out container (and honours the lazy-load intent:
+                the chunk streams in on first visit, not eagerly while hidden). */}
+            {activeTab === 'my-calendar' && (
                 <div className="w-full">
-                    <ErrorBoundary boundaryName="manager:my-calendar" resetKeys={[activeTab]}>
+                    <ErrorBoundary boundaryName="manager:my-calendar">
                         <React.Suspense fallback={<Spinner />}>
                             <WorkPlanner />
                         </React.Suspense>
                     </ErrorBoundary>
                 </div>
-            </div>
+            )}
 
-            <div className={activeTab === 'team-calendar' ? 'block' : 'hidden'}>
-                <ErrorBoundary boundaryName="manager:team-calendar" resetKeys={[activeTab]}>
+            {activeTab === 'team-calendar' && (
+                <ErrorBoundary boundaryName="manager:team-calendar">
                     <React.Suspense fallback={<Spinner />}>
                         <AllUsersCalendar />
                     </React.Suspense>
                 </ErrorBoundary>
-            </div>
+            )}
 
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="manager:reports" resetKeys={[activeTab]}>
