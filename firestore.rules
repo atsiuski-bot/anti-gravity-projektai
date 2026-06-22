@@ -158,6 +158,18 @@ service cloud.firestore {
                     && (isAdmin() ||
                         request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false));
       allow delete: if isAdmin();
+
+      // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------
+      // Earned badges live HERE, not on the user doc — a worker can freely write
+      // its OWN /users/{uid} doc (see the update rule above), so storing badges
+      // on it would let anyone forge their own. Read is team-wide so peer trophy
+      // shelves render for any active member (same broad-read pattern as tasks/
+      // sessions). Write is denied to ALL clients incl. the owner: only the Admin
+      // SDK (a Cloud Function), which bypasses rules, grants/upgrades a tier.
+      match /achievements/{achievementId} {
+        allow read: if isUserActive();
+        allow write: if false;
+      }
     }
 
     // ---- TASKS --------------------------------------------------------------

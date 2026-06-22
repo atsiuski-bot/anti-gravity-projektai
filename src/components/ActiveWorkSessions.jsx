@@ -8,6 +8,7 @@ import { useUsers } from '../context/UsersContext';
 import { useAuth } from '../context/AuthContext';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { getSessionColors } from '../utils/sessionColors';
+import UserChip from './UserChip';
 import { isScopedManager, scopeRoster } from '../utils/teamScope';
 
 export default function ActiveWorkSessions() {
@@ -217,9 +218,11 @@ const ActiveSessionRow = React.memo(({ session }) => {
             </div>
             <div className="min-w-0 flex-1 ml-3">
                 <div className="flex items-center gap-2">
-                    <span className="font-semibold text-sm truncate">
-                        {session.userName}
-                    </span>
+                    <UserChip
+                        userId={session.userId}
+                        name={session.userName}
+                        className="min-w-0 font-semibold text-sm"
+                    />
                     {isStale && (
                         <span className="inline-flex items-center whitespace-nowrap rounded-full border border-amber-200 bg-amber-100 px-1.5 py-0.5 text-caption font-semibold text-amber-800">
                             galimai pasenusi

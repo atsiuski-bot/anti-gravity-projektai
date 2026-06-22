@@ -6,7 +6,9 @@ import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStrin
 import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
 import { logError } from '../utils/errorLog';
+import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
@@ -15,6 +17,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 
 export default function TaskTimerControls({ task, onShowModal: _onShowModal, role }) {
     const { currentUser, userRole, userData, setOptimisticUserData } = useAuth();
+    const { showToast } = useToast();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
     const isAssignedToMe = currentUser?.uid === task.assignedUserId;
 
@@ -327,6 +330,18 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
 
             console.log(`Task ${task.id} finished and archived`);
             setConfirmFinish(false);
+
+            // C1 — celebrate the completion moment. Until now finishing produced only a silent
+            // card flash; the prime recognition beat deserves a warm, brief confirmation. The
+            // chime self-guards on user activation (the Finish tap satisfies it). Fanfare is
+            // reserved for the worker's OWN accomplishment; a manager closing someone else's
+            // task gets a plain confirmation, no celebration.
+            if (task.assignedUserId === currentUser.uid) {
+                showToast('Užduotis užbaigta.', { title: 'Puikus darbas!', tone: 'success' });
+                try { SoundManager.playQuickTaskSound(); } catch { /* audio is best-effort */ }
+            } else {
+                showToast('Užduotis užbaigta.', { tone: 'success' });
+            }
         } catch (err) {
             console.error("Error finishing task:", err);
             // Surface the failure inside the dialog (never raw err.message, never window.alert).

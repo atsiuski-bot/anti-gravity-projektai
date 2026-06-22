@@ -1,19 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Trophy, Download } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
+import { useAchievements } from '../hooks/useAchievements';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
+import { BADGE_ICONS, tierKey } from '../utils/badgeCatalog';
 import Card from '../components/ui/Card';
 import IconButton from '../components/ui/IconButton';
 import StatusPill from '../components/ui/StatusPill';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import Avatar from '../components/ui/Avatar';
+import Badge from '../components/ui/Badge';
+import EmptyState from '../components/ui/EmptyState';
 import InstallInstructions from '../components/InstallInstructions';
 
 // Role presentation — pair color with text so role is never color-only (DESIGN_SYSTEM §5).
@@ -32,6 +36,7 @@ const AVATAR_MAX_EDGE = 512;
 export default function ProfilePage() {
     const { currentUser, userData, userRole, logout } = useAuth();
     const { goToPreviousTab } = useNavigation();
+    const { achievements } = useAchievements(currentUser?.uid);
     const { canPromptNative, isIOS, isStandalone, promptInstall } = useInstallPrompt();
 
     const fileInputRef = useRef(null);
@@ -173,6 +178,30 @@ export default function ProfilePage() {
                     onChange={handlePhotoSelected}
                     className="hidden"
                 />
+            </Card>
+
+            {/* Achievements — the trophy shelf. Earned tiers only; an empty shelf reads as
+                "new here", never a deficit (guardrail W4). */}
+            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Pasiekimai</h2>
+            <Card className="mb-4 p-4">
+                {achievements.length > 0 ? (
+                    <div className="grid grid-cols-3 gap-4">
+                        {achievements.map((a) => (
+                            <Badge
+                                key={a.id}
+                                tier={tierKey(a.tier)}
+                                name={a.name}
+                                icon={BADGE_ICONS[a.key]}
+                            />
+                        ))}
+                    </div>
+                ) : (
+                    <EmptyState
+                        icon={Trophy}
+                        title="Pirmieji ženkliukai dar laukia"
+                        description="Užbaik darbus ir dirbk nuosekliai — pasiekimai atsiras čia."
+                    />
+                )}
             </Card>
 
             {/* Settings */}
