@@ -11,6 +11,7 @@ import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
 import Card from './ui/Card';
 import Button from './ui/Button';
+import IconButton from './ui/IconButton';
 import StatusPill from './ui/StatusPill';
 import Modal from './ui/Modal';
 import ConfirmDialog from './ui/ConfirmDialog';
@@ -191,7 +192,29 @@ function DisabledPill({ user }) {
 // Marks an account as a test/founder account so it can be excluded from payroll reports by
 // default (distinct from isDisabled — a test account often stays fully usable). The label and
 // variant flip with state so the current flag is legible without relying on color alone.
-function TestButton({ user, onToggle, fullWidth }) {
+function TestButton({ user, onToggle, fullWidth, iconOnly }) {
+    // Compact (desktop toolbar) form: a single 44px icon button. The "on" state is signalled by
+    // a check badge over the flask, not by color alone — color-blind-safe (§5). aria-pressed
+    // carries the toggle state to assistive tech.
+    if (iconOnly) {
+        return (
+            <IconButton
+                variant={user.isTest ? 'primary' : 'default'}
+                aria-pressed={user.isTest}
+                label={user.isTest ? 'Bandomasis vartotojas — paspauskite, kad nuimtumėte žymą' : 'Žymėti bandomu'}
+                onClick={() => onToggle(user)}
+            >
+                <span className="relative inline-flex">
+                    <FlaskConical className="h-5 w-5" aria-hidden="true" />
+                    {user.isTest && (
+                        <span className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white">
+                            <Check className="h-2.5 w-2.5 text-brand" strokeWidth={3} aria-hidden="true" />
+                        </span>
+                    )}
+                </span>
+            </IconButton>
+        );
+    }
     return (
         <Button
             variant={user.isTest ? 'primary' : 'secondary'}
@@ -223,11 +246,26 @@ function LastActiveBadge({ user }) {
     return <StatusPill tone="pending" icon={Clock}>{`Neaktyvus ${days} d.`}</StatusPill>;
 }
 
-function BlockButton({ user, isSelf, onRequest, fullWidth }) {
+function BlockButton({ user, isSelf, onRequest, fullWidth, iconOnly }) {
     const pending = isPendingUser(user);
     // The action only ever toggles isDisabled — nothing is deleted — so the enable side reads
     // "Patvirtinti" (pending) / "Atblokuoti" (blocked) and the disable side reads "Blokuoti",
     // not the misleading "Blokuoti / Ištrinti" with a trash icon.
+    const label = user.isDisabled ? (pending ? 'Patvirtinti' : 'Atblokuoti') : 'Blokuoti';
+    // Compact (desktop toolbar) form: a single 44px icon button. The glyph flips Ban <-> Check
+    // with the state, so the state never rides on color alone (§5). The destructive "block"
+    // side is filled red (dominant); the positive sides are filled brand / neutral.
+    if (iconOnly) {
+        return (
+            <IconButton
+                variant={user.isDisabled ? (pending ? 'primary' : 'default') : 'danger-solid'}
+                icon={user.isDisabled ? Check : Ban}
+                disabled={isSelf}
+                label={label}
+                onClick={() => onRequest(user)}
+            />
+        );
+    }
     return (
         <Button
             variant={user.isDisabled ? (pending ? 'primary' : 'secondary') : 'danger'}
@@ -237,7 +275,7 @@ function BlockButton({ user, isSelf, onRequest, fullWidth }) {
             fullWidth={fullWidth}
             onClick={() => onRequest(user)}
         >
-            {user.isDisabled ? (pending ? 'Patvirtinti' : 'Atblokuoti') : 'Blokuoti'}
+            {label}
         </Button>
     );
 }
@@ -245,7 +283,21 @@ function BlockButton({ user, isSelf, onRequest, fullWidth }) {
 // Permanent delete. Admin-only and kept visually subordinate to Block (the everyday action):
 // a quiet danger-toned ghost button so the reversible toggle stays dominant over the
 // irreversible one (§8). Self-deletion is disabled.
-function DeleteButton({ user, isSelf, onRequest, fullWidth }) {
+function DeleteButton({ user, isSelf, onRequest, fullWidth, iconOnly }) {
+    // Compact (desktop toolbar) form: outline-red icon button. Kept visually subordinate to the
+    // filled-red Block beside it, so the reversible toggle stays dominant over the irreversible
+    // delete (§8).
+    if (iconOnly) {
+        return (
+            <IconButton
+                variant="danger"
+                icon={Trash2}
+                disabled={isSelf}
+                label="Ištrinti"
+                onClick={() => onRequest(user)}
+            />
+        );
+    }
     return (
         <Button
             variant="ghost"
@@ -708,7 +760,7 @@ export default function UserManagement() {
                     <tbody className="divide-y divide-line bg-surface-card">
                         {users.map((user) => (
                             <tr key={user.id} className={user.isDisabled ? 'bg-surface-sunken/60' : ''}>
-                                <td className="whitespace-nowrap px-6 py-4">
+                                <td className="whitespace-nowrap px-6 py-3 align-top">
                                     <div className="flex items-center gap-3">
                                         <UserAvatar user={user} />
                                         <div>
@@ -721,13 +773,13 @@ export default function UserManagement() {
                                         </div>
                                     </div>
                                 </td>
-                                <td className="whitespace-nowrap px-6 py-4">
+                                <td className="whitespace-nowrap px-6 py-3 align-top">
                                     <RoleBadge role={user.role} />
                                 </td>
-                                <td className="whitespace-nowrap px-6 py-4">
+                                <td className="whitespace-nowrap px-6 py-3 align-top">
                                     <ColorSwatch user={user} onEdit={startEditingColor} />
                                 </td>
-                                <td className="px-6 py-4">
+                                <td className="px-6 py-3 align-top">
                                     <ManagerControl
                                         user={user}
                                         managers={managers}
@@ -736,22 +788,29 @@ export default function UserManagement() {
                                         onToggleScoped={handleToggleScoped}
                                     />
                                 </td>
-                                <td className="px-6 py-4">
+                                <td className="px-6 py-3 align-top">
+                                    {/* Actions grouped into a compact two-row block: the role
+                                        editor, then a horizontal toolbar of 44px icon buttons —
+                                        roughly halving the old four-tall vertical stack. */}
                                     <div className="flex flex-col gap-2">
                                         <RoleSelect user={user} onChange={handleRoleChange} />
-                                        <BlockButton
-                                            user={user}
-                                            isSelf={user.id === currentUser?.uid}
-                                            onRequest={requestBlock}
-                                        />
-                                        <TestButton user={user} onToggle={handleToggleTest} fullWidth />
-                                        {isAdmin && (
-                                            <DeleteButton
+                                        <div className="flex items-center gap-1.5">
+                                            <BlockButton
                                                 user={user}
                                                 isSelf={user.id === currentUser?.uid}
-                                                onRequest={requestDelete}
+                                                onRequest={requestBlock}
+                                                iconOnly
                                             />
-                                        )}
+                                            <TestButton user={user} onToggle={handleToggleTest} iconOnly />
+                                            {isAdmin && (
+                                                <DeleteButton
+                                                    user={user}
+                                                    isSelf={user.id === currentUser?.uid}
+                                                    onRequest={requestDelete}
+                                                    iconOnly
+                                                />
+                                            )}
+                                        </div>
                                     </div>
                                 </td>
                             </tr>
