@@ -7,12 +7,13 @@ import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
-import { Clock, Plus, Trash2, AlertCircle, Info, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
+import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import InfoPopover from './ui/InfoPopover';
 
 // Map raw / Firebase errors to friendly Lithuanian copy (DESIGN_SYSTEM §10).
 // Never surface raw err.message to the user.
@@ -113,16 +114,28 @@ const CustomToolbar = (toolbar) => {
     );
 
     const addButton = (
-        <Button
-            variant="primary"
-            size="md"
-            icon={Plus}
-            onClick={toolbar.onManualClick}
-            className="shrink-0"
-        >
-            <span className="sm:hidden">Pridėti</span>
-            <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+            {/* Usage tips tucked behind an info icon, left of the primary create action. */}
+            <InfoPopover label="Instrukcija" align="right">
+                <p className="mb-1.5 font-bold text-brand">Instrukcija:</p>
+                <ul className="list-inside list-disc space-y-1">
+                    <li>Tempkite kalendoriuje laikui žymėti</li>
+                    <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
+                    <li>Bakstelėkite įrašą trynimui</li>
+                    <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
+                </ul>
+            </InfoPopover>
+            <Button
+                variant="primary"
+                size="md"
+                icon={Plus}
+                onClick={toolbar.onManualClick}
+                className="shrink-0"
+            >
+                <span className="sm:hidden">Pridėti</span>
+                <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
+            </Button>
+        </div>
     );
 
     return (
@@ -1013,17 +1026,6 @@ export default function WorkPlanner() {
                 )
             }
 
-            <div className="mt-8 p-3 bg-brand-soft rounded-card border border-line">
-                <p className="text-body font-bold text-brand mb-2 flex items-center gap-1.5">
-                    <Info className="w-4 h-4" aria-hidden="true" /> Instrukcija:
-                </p>
-                <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 text-caption text-ink list-disc list-inside">
-                    <li>Tempkite kalendoriuje laikui žymėti</li>
-                    <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
-                    <li>Bakstelėkite įrašą trynimui</li>
-                    <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
-                </ul>
-            </div>
 
             {/* Approval Logic Confirmation Modal */}
             {showApprovalFeedback && (

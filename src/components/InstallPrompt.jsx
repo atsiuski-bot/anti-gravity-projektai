@@ -1,16 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Download, Share, X } from 'lucide-react';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 
-// Once the user dismisses the banner we remember it so it never nags again. A reinstall
-// signal (a fresh beforeinstallprompt after clearing storage) re-enables it naturally.
-const DISMISS_KEY = 'workz.installBannerDismissed';
+// We remember dismissal as a *snooze deadline* (epoch ms), not a permanent flag: one stray tap
+// must not silence the single most valuable nudge forever — installing is what unlocks push
+// notifications (see the iOS copy below). The banner returns by itself after the snooze window.
+const SNOOZE_KEY = 'workz.installPromptSnoozeUntil';
+const DAY_MS = 24 * 60 * 60 * 1000;
+const SNOOZE_DAYS = 14; // manual dismiss / declined OS dialog — back off, then ask again
+const INSTALLED_DAYS = 3650; // accepted/installed — effectively never ask again on this device
 
-// In-memory fallback so dismissal also sticks within a session when localStorage is
-// unavailable (private browsing), instead of re-nagging on every reload.
-let sessionDismissed = false;
+// In-memory fallback so a snooze also sticks within a session when localStorage is unavailable
+// (private browsing), instead of re-nagging on every reload.
+let sessionSnoozed = false;
 
 function StepNumber({ children }) {
     return (
@@ -23,22 +27,37 @@ function StepNumber({ children }) {
 /**
  * InstallPrompt — a slim, dismissible install banner (DESIGN_SYSTEM: calm canvas). It surfaces
  * only when installation is actually possible: a captured `beforeinstallprompt` (Android/
- * desktop Chrome), or iOS Safari where install is manual. Hidden when already installed or
- * once dismissed. Rendered once near the top of the app shell, not in the header.
+ * desktop Chrome), or iOS/iPadOS Safari where install is manual. Hidden when already installed
+ * or while snoozed. Rendered once near the top of the app shell, not in the header.
+ *
+ * Dismissal is a time-boxed snooze, never a permanent kill: declining the banner (or the OS
+ * install dialog) only quiets it for `SNOOZE_DAYS`; an actual install marks it done for good.
  */
 export default function InstallPrompt() {
     const [deferredPrompt, setDeferredPrompt] = useState(null);
     const [isIOS, setIsIOS] = useState(false);
     const [isStandalone, setIsStandalone] = useState(false);
     const [showInstructions, setShowInstructions] = useState(false);
-    const [dismissed, setDismissed] = useState(() => {
-        if (sessionDismissed) return true;
+    const [snoozed, setSnoozed] = useState(() => {
+        if (sessionSnoozed) return true;
         try {
-            return localStorage.getItem(DISMISS_KEY) === '1';
+            return Number(localStorage.getItem(SNOOZE_KEY) || 0) > Date.now();
         } catch {
             return false;
         }
     });
+
+    // Quiet the banner for `days`, surviving reloads where storage is available and the session
+    // otherwise. Used for manual dismissal, a declined OS dialog, and (long) a real install.
+    const snooze = useCallback((days) => {
+        sessionSnoozed = true;
+        setSnoozed(true);
+        try {
+            localStorage.setItem(SNOOZE_KEY, String(Date.now() + days * DAY_MS));
+        } catch {
+            // localStorage unavailable (private mode) — the in-memory flag covers this session.
+        }
+    }, []);
 
     useEffect(() => {
         const handleBeforeInstallPrompt = (e) => {
@@ -47,9 +66,22 @@ export default function InstallPrompt() {
             setDeferredPrompt(e);
         };
 
-        window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+        // Fired after a successful install (native prompt OR manual "Add to Home Screen").
+        // Stop offering install for good and drop the now-spent deferred event.
+        const handleAppInstalled = () => {
+            setDeferredPrompt(null);
+            snooze(INSTALLED_DAYS);
+        };
 
-        const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+        window.addEventListener('appinstalled', handleAppInstalled);
+
+        const ua = navigator.userAgent;
+        // iPadOS 13+ reports as desktop "Macintosh" Safari, so the classic UA test misses iPads;
+        // a touch-capable Mac is really an iPad. Catch both so manual steps still reach tablets.
+        const isIOSDevice =
+            (/iPad|iPhone|iPod/.test(ua) && !window.MSStream) ||
+            (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
         setIsIOS(isIOSDevice);
 
         const isInStandaloneMode = window.matchMedia('(display-mode: standalone)').matches ||
@@ -59,54 +91,53 @@ export default function InstallPrompt() {
 
         return () => {
             window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+            window.removeEventListener('appinstalled', handleAppInstalled);
         };
-    }, []);
-
-    const dismiss = () => {
-        sessionDismissed = true;
-        setDismissed(true);
-        try {
-            localStorage.setItem(DISMISS_KEY, '1');
-        } catch {
-            // localStorage unavailable (private mode) — the in-memory flag covers this session.
-        }
-    };
+    }, [snooze]);
 
     const handleInstallClick = async () => {
         if (deferredPrompt) {
             deferredPrompt.prompt();
-            await deferredPrompt.userChoice;
-            setDeferredPrompt(null);
-            dismiss();
+            const { outcome } = await deferredPrompt.userChoice;
+            setDeferredPrompt(null); // a beforeinstallprompt event can only be used once
+            if (outcome === 'accepted') {
+                snooze(INSTALLED_DAYS); // installing — appinstalled will also confirm
+            } else {
+                snooze(SNOOZE_DAYS); // declined the OS dialog — quiet briefly, don't kill forever
+            }
         } else {
             // No native prompt available (iOS, or already consumed) — show manual steps.
             setShowInstructions(true);
         }
     };
 
-    // Show only when installing is actually possible and the user hasn't opted out.
-    const canShow = !isStandalone && !dismissed && (deferredPrompt || isIOS);
+    // Show only when installing is actually possible and the user hasn't snoozed it.
+    const canShow = !isStandalone && !snoozed && (deferredPrompt || isIOS);
 
     return (
         <>
             {canShow && (
-                <div className="flex items-center gap-3 border-b border-line bg-brand-soft px-4 py-2">
+                <div
+                    role="region"
+                    aria-label="Programėlės įdiegimas"
+                    className="flex items-center gap-3 border-b border-line bg-brand-soft px-4 py-2"
+                >
                     <Download className="h-5 w-5 shrink-0 text-brand-hover" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
-                        <p className="text-caption font-semibold text-brand-hover">Įdiegti WORKZ</p>
+                        <p className="truncate text-caption font-semibold text-brand-hover">Įdiegti WORKZ</p>
                         <p className="truncate text-caption text-ink">
-                            Greitesnė prieiga iš pradžios ekrano
+                            Spartesnė prieiga ir pranešimai apie naujus prašymus
                         </p>
                     </div>
                     <Button
                         variant="primary"
                         size="md"
                         onClick={handleInstallClick}
-                        className="shrink-0 px-3 py-1.5"
+                        className="shrink-0"
                     >
                         {deferredPrompt ? 'Įdiegti' : 'Kaip įdiegti'}
                     </Button>
-                    <IconButton icon={X} label="Atmesti" onClick={dismiss} />
+                    <IconButton icon={X} label="Atmesti" onClick={() => snooze(SNOOZE_DAYS)} className="shrink-0" />
                 </div>
             )}
 
