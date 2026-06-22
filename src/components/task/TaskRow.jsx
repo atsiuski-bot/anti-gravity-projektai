@@ -70,7 +70,7 @@ export default function TaskRow({
             )}
             <td className="px-2 py-2 align-top">{titleCell}</td>
             <td className="px-1 py-2 whitespace-nowrap align-top">
-                {assigneeName && <AssigneeChip name={assigneeName} firstNameOnly showIcon={false} />}
+                {assigneeName && <AssigneeChip userId={task.assignedUserId} name={assigneeName} firstNameOnly showIcon={false} />}
             </td>
             <td className="px-1 py-2 whitespace-nowrap text-right align-top font-mono text-ink-strong">{timeCell}</td>
             {showCompletedAt && (

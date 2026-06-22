@@ -1,6 +1,6 @@
 import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setDoc, deleteDoc, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
-import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from './timeUtils';
+import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
 import { logError } from './errorLog';
 
@@ -105,7 +105,7 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
 
         // 1. Get current Timer Minutes
         const currentTimerMinutes = task.timerMinutes || 0;
-        const newTimerMinutes = (elapsedMinutes > (10 / 60))
+        const newTimerMinutes = (elapsedMinutes > MIN_LOGGED_SESSION_MINUTES)
             ? currentTimerMinutes + elapsedMinutes
             : currentTimerMinutes;
 
@@ -139,7 +139,7 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
         }
 
         // Log Work Session (fire alongside task update)
-        if (elapsedMinutes > (10 / 60)) {
+        if (elapsedMinutes > MIN_LOGGED_SESSION_MINUTES) {
             // Attribute the session to the date the work ENDED (now), matching every
             // other work_sessions writer (sessionActions, time-correction). Using the
             // start date previously mis-bucketed sessions that ran across midnight.

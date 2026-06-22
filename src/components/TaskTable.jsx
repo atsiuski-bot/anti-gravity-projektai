@@ -434,7 +434,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             {/* Metadata */}
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <AssigneeChip name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[160px]" />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[160px]" />
                                 )}
                                 <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
                                 {task.tag && (
@@ -793,7 +793,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
                                             {task.assignedUserName && (
-                                                <AssigneeChip name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[120px]" />
+                                                <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[120px]" />
                                             )}
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
