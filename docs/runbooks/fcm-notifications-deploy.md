@@ -33,11 +33,12 @@ app like this; set a budget alert if you want a safety cap.)
 
 ## 3. Deploy the Cloud Functions
 
-> **Node 20 → 22 migration — hard deadline 2026-10-30.** The deployed functions currently run on
-> **Node 20**, which Google decommissions for Cloud Functions after **2026-10-30**. Before then,
-> set `engines.node` to `"22"` in `functions/package.json`, bump `firebase-functions` (currently
-> `^6.1.0`) and `firebase-admin` to the current release (deploy-coupled — both ride one re-deploy),
-> and re-run the deploy below. See the decisions-log entry dated 2026-06-22.
+> **Runtime: re-deploy to move the running functions to Node 22 (deadline 2026-10-30).** The code
+> is already on Node 22 — `functions/package.json` declares `engines.node: "22"` and
+> `firebase-functions ^7.2.5` (`firebase-admin` held at `^13`; `firebase-functions@7` does not yet
+> peer-support admin 14). **But the deployed functions still run on Node 20** — the runtime only
+> changes when you re-deploy. Run the deploy below (use Node 22 locally to match) before Google
+> decommissions Node 20 after **2026-10-30**. See the decisions-log entry dated 2026-06-22.
 
 ```bash
 cd functions
