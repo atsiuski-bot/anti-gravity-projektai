@@ -7,6 +7,7 @@ import { ToastProvider } from './context/ToastContext';
 import { NotificationsProvider } from './context/NotificationsContext';
 import Layout from './components/Layout';
 import AchievementCelebrator from './components/AchievementCelebrator';
+import { ProfileViewerProvider } from './context/ProfileViewerContext';
 
 // Lazy load pages
 const Login = React.lazy(() => import('./pages/Login'));
@@ -73,14 +74,16 @@ function App() {
                                         <Route path="/login" element={<Login />} />
                                         <Route path="/" element={
                                             <ProtectedRoute>
-                                                <>
+                                                {/* ProfileViewer hosts the app-wide read-only peer-profile
+                                                    overlay any UserChip opens (P2). */}
+                                                <ProfileViewerProvider>
                                                     {/* Foreground badge celebration — app-wide, so it fires
                                                         no matter which tab earned the badge (C2). */}
                                                     <AchievementCelebrator />
                                                     <Layout>
                                                         <Dashboard />
                                                     </Layout>
-                                                </>
+                                                </ProfileViewerProvider>
                                             </ProtectedRoute>
                                         } />
                                     </Routes>
