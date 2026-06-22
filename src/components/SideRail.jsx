@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { getNavSections } from '../config/navTabs';
+import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 import Button from './ui/Button';
 import QuickWorkTimer from './QuickWorkTimer';
 import CallTimer from './CallTimer';
@@ -32,6 +33,7 @@ function SideRail() {
     const { currentUser, userRole } = useAuth();
     const { activeTab, setActiveTab } = useNavigation();
     const sections = useMemo(() => getNavSections(userRole), [userRole]);
+    const RoleIcon = ROLE_GLYPHS[userRole];
 
     if (!currentUser) return null;
 
@@ -41,7 +43,8 @@ function SideRail() {
             <div className="shrink-0 px-2.5 pt-3 pb-1.5">
                 <div className="flex items-center justify-between px-1 pb-1.5">
                     <span className="text-h3 font-extrabold tracking-tight text-ink-strong">WORKZ</span>
-                    <span className="rounded-full bg-brand-soft px-2 py-0.5 text-caption font-medium text-brand-hover">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-brand-soft px-2 py-0.5 text-caption font-medium text-brand-hover">
+                        {RoleIcon && <RoleIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
                         {ROLE_NAMES[userRole] || userRole}
                     </span>
                 </div>

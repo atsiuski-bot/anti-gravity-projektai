@@ -12,14 +12,18 @@ import Avatar from './ui/Avatar';
 import StatusPill from './ui/StatusPill';
 import Badge from './ui/Badge';
 import EmptyState from './ui/EmptyState';
+import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 
 // The day-report drill-down is heavy (its own Firestore listeners), so it only mounts when a
 // manager actually switches to the "Statistika" tab — never on the achievements view.
 const DailyStatistics = lazy(() => import('./DailyStatistics'));
 
-// Role presentation — color paired with text (DESIGN_SYSTEM §5).
+// Role presentation — color paired with text (DESIGN_SYSTEM §5), with the rank insignia
+// (ADR 0007). `seniorManager` must be present: without it a Vyr. vadovas peer profile fell back
+// to the worker entry and read "Vykdytojas".
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
+    seniorManager: { label: 'Vyr. vadovas', tone: 'info' },
     manager: { label: 'Vadovas', tone: 'info' },
     worker: { label: 'Vykdytojas', tone: 'neutral' },
 };
@@ -76,7 +80,7 @@ export default function UserProfileModal({ userId, onClose }) {
                 </div>
                 <p className="text-h3 font-semibold text-ink-strong">{name}</p>
                 <div className="mt-2 flex justify-center">
-                    <StatusPill tone={role.tone}>{role.label}</StatusPill>
+                    <StatusPill tone={role.tone} icon={ROLE_GLYPHS[user?.role]}>{role.label}</StatusPill>
                 </div>
                 {memberSince && <p className="mt-2 text-caption text-ink-muted">Narys nuo {memberSince}</p>}
             </div>
