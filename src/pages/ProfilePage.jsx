@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2 } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
+import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
@@ -13,6 +14,7 @@ import IconButton from '../components/ui/IconButton';
 import StatusPill from '../components/ui/StatusPill';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import Avatar from '../components/ui/Avatar';
+import InstallInstructions from '../components/InstallInstructions';
 
 // Role presentation — pair color with text so role is never color-only (DESIGN_SYSTEM §5).
 const ROLE_META = {
@@ -29,6 +31,7 @@ const AVATAR_MAX_EDGE = 512;
 export default function ProfilePage() {
     const { currentUser, userData, userRole, logout } = useAuth();
     const { goToPreviousTab } = useNavigation();
+    const { canPromptNative, isIOS, isStandalone, promptInstall } = useInstallPrompt();
 
     const fileInputRef = useRef(null);
     const [uploading, setUploading] = useState(false);
@@ -36,6 +39,7 @@ export default function ProfilePage() {
     const [savingNotif, setSavingNotif] = useState(false);
     const [notifError, setNotifError] = useState('');
     const [confirmLogout, setConfirmLogout] = useState(false);
+    const [showInstall, setShowInstall] = useState(false);
 
     // The upload/save writes SHOULD complete even if the user navigates away mid-flight (the
     // photo still saves); we only guard the local UI state so we never setState post-unmount.
@@ -99,6 +103,18 @@ export default function ProfilePage() {
             if (mountedRef.current) setNotifError('Nepavyko išsaugoti nustatymo.');
         } finally {
             if (mountedRef.current) setSavingNotif(false);
+        }
+    };
+
+    // Install entry: prefer the native OS dialog when Chrome has offered one; otherwise (iOS, or a
+    // prompt already consumed) fall back to the manual add-to-home-screen steps. Unlike the banner,
+    // this entry never snoozes — it is a deliberate user action, so it stays findable.
+    const handleInstall = async () => {
+        if (canPromptNative) {
+            const outcome = await promptInstall();
+            if (outcome === 'unavailable') setShowInstall(true);
+        } else {
+            setShowInstall(true);
         }
     };
 
@@ -200,6 +216,31 @@ export default function ProfilePage() {
                 )}
             </Card>
 
+            {/* App install — a persistent, always-findable entry point (the banner above the
+                workspace is snoozable and race-prone; this is the reliable fallback). Hidden once
+                the app is already running standalone, since there is nothing left to install. */}
+            {!isStandalone && (
+                <>
+                    <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Programėlė</h2>
+                    <Card className="mb-4 overflow-hidden">
+                        <button
+                            type="button"
+                            onClick={handleInstall}
+                            className="flex w-full items-center gap-3 p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                        >
+                            <Download className="h-5 w-5 shrink-0 text-brand" aria-hidden="true" />
+                            <div className="min-w-0 flex-1">
+                                <p className="text-body font-medium text-ink-strong">Įdiegti programėlę</p>
+                                <p className="text-caption text-ink-muted">
+                                    Spartesnė prieiga ir pranešimai telefono ekrane
+                                </p>
+                            </div>
+                            <ChevronRight className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
+                        </button>
+                    </Card>
+                </>
+            )}
+
             {/* Account */}
             <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Paskyra</h2>
             <Card className="overflow-hidden">
@@ -233,6 +274,10 @@ export default function ProfilePage() {
                     onConfirm={() => logout()}
                     onCancel={() => setConfirmLogout(false)}
                 />
+            )}
+
+            {showInstall && (
+                <InstallInstructions isIOS={isIOS} onClose={() => setShowInstall(false)} />
             )}
         </div>
     );
