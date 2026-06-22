@@ -1,7 +1,9 @@
 # ADR 0003: Notification strategy — in-app + foreground now, FCM background push deferred
 
 - **Date**: 2026-06-22
-- **Status**: Accepted
+- **Status**: Superseded by [ADR 0004](./0004-notification-infrastructure.md) — the founder
+  chose to build the full FCM/toast/badge/cleanup stack the same day. The analysis of the
+  *existing* surface below remains accurate; only the deferral disposition was reversed.
 - **Decision-maker**: Founder (Karol)
 - **AI assistant during decision**: claude-opus-4-8
 
