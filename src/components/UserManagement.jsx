@@ -91,54 +91,30 @@ function effectiveTeamIds(user) {
     return user.defaultManager ? [user.defaultManager] : [];
 }
 
-// Visibility control. Branches by role:
-//  • admin / senior manager — always global; shows a static "Mato visus" label (a senior
-//    manager (Vyr. vadovas) sees the whole company by rank and has no scope toggle).
-//  • manager — a per-manager scope toggle ("Tik sava komanda" vs "Visa įmonė"). Default
-//    (scopedManager absent/false) keeps today's behaviour: the manager sees the whole company.
-//    Only when an admin turns it on does the manager become restricted to their assigned people.
-//  • worker  — multi-select manager chips (their team), star marks the primary (defaultManager).
-// teamManagerIds is the visibility key the security rules read; it always contains the primary.
-function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped }) {
-    const name = formatDisplayName(user.displayName) || user.email || '';
-    if (user.role === 'admin' || user.role === 'seniorManager') {
-        return <span className="text-body italic text-ink-muted">Mato visus</span>;
+// A manager's senior managers (the Vyr. vadovas they answer to). Plain array, no legacy fallback —
+// this membership is new with the four-level hierarchy (ADR 0006).
+function effectiveSeniorIds(user) {
+    return Array.isArray(user.seniorManagerIds) ? user.seniorManagerIds : [];
+}
+
+// One reusable multi-select chip row: a candidate is toggled in/out of `selectedIds`, and (when
+// `onSetPrimary` is given) a selected chip can be starred as the primary. Used for BOTH a worker's
+// managers (with a primary star) and a manager's seniors (no primary).
+function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId, onSetPrimary, emptyLabel }) {
+    if (candidates.length === 0) {
+        return <span className="text-body italic text-ink-muted">{emptyLabel}</span>;
     }
-    if (user.role === 'manager') {
-        const scoped = user.scopedManager === true;
-        return (
-            <button
-                type="button"
-                aria-pressed={scoped}
-                onClick={() => onToggleScoped(user)}
-                title={scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
-                className={cn(
-                    'inline-flex min-h-touch items-center gap-2 rounded-full border px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
-                    scoped ? 'border-brand bg-brand/10 text-ink' : 'border-line bg-surface-card text-ink-muted'
-                )}
-            >
-                {scoped
-                    ? <Users className="h-4 w-4 text-brand" aria-hidden="true" />
-                    : <Globe className="h-4 w-4" aria-hidden="true" />}
-                {scoped ? 'Tik sava komanda' : 'Visa įmonė'}
-            </button>
-        );
-    }
-    if (managers.length === 0) {
-        return <span className="text-body italic text-ink-muted">Nėra vadovų</span>;
-    }
-    const teamIds = effectiveTeamIds(user);
     return (
         <fieldset>
-            <legend className="sr-only">{`${name} vadovai`}</legend>
+            <legend className="sr-only">{legend}</legend>
             <div className="flex flex-wrap gap-2">
-                {managers.map((m) => {
-                    const selected = teamIds.includes(m.id);
-                    const primary = selected && user.defaultManager === m.id;
-                    const mName = formatDisplayName(m.displayName) || m.email;
+                {candidates.map((c) => {
+                    const selected = selectedIds.includes(c.id);
+                    const primary = !!onSetPrimary && selected && primaryId === c.id;
+                    const cName = formatDisplayName(c.displayName) || c.email;
                     return (
                         <span
-                            key={m.id}
+                            key={c.id}
                             className={cn(
                                 'inline-flex items-center overflow-hidden rounded-full border',
                                 selected ? 'border-brand bg-brand/10' : 'border-line bg-surface-card'
@@ -147,19 +123,19 @@ function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped
                             <button
                                 type="button"
                                 aria-pressed={selected}
-                                onClick={() => onToggle(user, m.id)}
+                                onClick={() => onToggle(c.id)}
                                 className="inline-flex min-h-touch items-center gap-1 px-3 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                             >
                                 {selected && <Check className="h-4 w-4 text-brand" aria-hidden="true" />}
-                                {mName}
+                                {cName}
                             </button>
-                            {selected && (
+                            {onSetPrimary && selected && (
                                 <button
                                     type="button"
                                     aria-pressed={primary}
-                                    aria-label={primary ? `${mName} — pagrindinis vadovas` : `Padaryti ${mName} pagrindiniu vadovu`}
+                                    aria-label={primary ? `${cName} — pagrindinis vadovas` : `Padaryti ${cName} pagrindiniu vadovu`}
                                     title={primary ? 'Pagrindinis vadovas' : 'Padaryti pagrindiniu'}
-                                    onClick={() => onSetPrimary(user, m.id)}
+                                    onClick={() => onSetPrimary(c.id)}
                                     className="inline-flex min-h-touch min-w-touch items-center justify-center border-l border-brand/30 px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                                 >
                                     <Star className={cn('h-4 w-4', primary ? 'fill-current text-brand' : 'text-ink-muted')} aria-hidden="true" />
@@ -170,6 +146,92 @@ function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped
                 })}
             </div>
         </fieldset>
+    );
+}
+
+// Visibility / hierarchy control. Branches by role (four-level hierarchy, ADR 0006):
+//  • admin        — global; static "Mato visus".
+//  • seniorManager— scoped to their subtree (assigned managers + those managers' workers); the
+//    assignment is done on each MANAGER's row (adding this senior there), so here we show a static
+//    explainer rather than an editable control. No whole-company toggle — a senior is never global.
+//  • manager      — TWO controls: a scope toggle ("Tik sava komanda" vs "Visa įmonė" — what THIS
+//    manager sees) AND senior-manager chips (which Vyr. vadovas oversee this manager's team).
+//  • worker       — multi-select manager chips (their team), star marks the primary (defaultManager,
+//    the approval/notification route). teamManagerIds is the visibility key the rules read.
+function ManagerControl({ user, managerCandidates, seniorCandidates, onToggleManager, onSetPrimary, onToggleScoped, onToggleSenior }) {
+    const name = formatDisplayName(user.displayName) || user.email || '';
+    if (user.role === 'admin') {
+        return <span className="text-body italic text-ink-muted">Mato visus</span>;
+    }
+    if (user.role === 'seniorManager') {
+        // Inverse view: assign managers to THIS senior right here. The membership lives on each
+        // manager's doc (seniorManagerIds), so a toggle writes the MANAGER's doc, not the senior's
+        // — the same write the manager's own row would make, from the other side.
+        const myManagerIds = managerCandidates
+            .filter((m) => effectiveSeniorIds(m).includes(user.id))
+            .map((m) => m.id);
+        return (
+            <div className="space-y-2">
+                <span className="block text-body italic text-ink-muted">Mato priskirtų vadovų komandas</span>
+                <ChipMultiSelect
+                    legend={`${name} pavaldūs vadovai`}
+                    candidates={managerCandidates}
+                    selectedIds={myManagerIds}
+                    onToggle={(mid) => {
+                        const m = managerCandidates.find((c) => c.id === mid);
+                        if (m) onToggleSenior(m, user.id);
+                    }}
+                    emptyLabel="Nėra vadovų"
+                />
+            </div>
+        );
+    }
+    if (user.role === 'manager') {
+        const scoped = user.scopedManager === true;
+        return (
+            <div className="space-y-3">
+                <div>
+                    <span className="mb-1 block text-caption font-medium text-ink-muted">Šis vadovas mato</span>
+                    <button
+                        type="button"
+                        aria-pressed={scoped}
+                        onClick={() => onToggleScoped(user)}
+                        title={scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
+                        className={cn(
+                            'inline-flex min-h-touch items-center gap-2 rounded-full border px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                            scoped ? 'border-brand bg-brand/10 text-ink' : 'border-line bg-surface-card text-ink-muted'
+                        )}
+                    >
+                        {scoped
+                            ? <Users className="h-4 w-4 text-brand" aria-hidden="true" />
+                            : <Globe className="h-4 w-4" aria-hidden="true" />}
+                        {scoped ? 'Tik sava komanda' : 'Visa įmonė'}
+                    </button>
+                </div>
+                <div>
+                    <span className="mb-1 block text-caption font-medium text-ink-muted">Vyr. vadovai</span>
+                    <ChipMultiSelect
+                        legend={`${name} vyr. vadovai`}
+                        candidates={seniorCandidates}
+                        selectedIds={effectiveSeniorIds(user)}
+                        onToggle={(sid) => onToggleSenior(user, sid)}
+                        emptyLabel="Nėra vyr. vadovų"
+                    />
+                </div>
+            </div>
+        );
+    }
+    // worker
+    return (
+        <ChipMultiSelect
+            legend={`${name} vadovai`}
+            candidates={managerCandidates}
+            selectedIds={effectiveTeamIds(user)}
+            onToggle={(mid) => onToggleManager(user, mid)}
+            primaryId={user.defaultManager}
+            onSetPrimary={(mid) => onSetPrimary(user, mid)}
+            emptyLabel="Nėra vadovų"
+        />
     );
 }
 
@@ -308,9 +370,10 @@ export default function UserManagement() {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- subscribe once on mount; adding 'error' would tear down/re-create the listener on every error change
     }, []);
 
-    const managers = users.filter(
-        (u) => (u.role === 'manager' || u.role === 'admin' || u.role === 'seniorManager') && !u.isDisabled
-    );
+    // Assignment candidate pools, by rank (ADR 0006): a worker's overseers are MANAGERS; a
+    // manager's overseers are SENIOR managers. Disabled accounts can't oversee anyone.
+    const managerCandidates = users.filter((u) => u.role === 'manager' && !u.isDisabled);
+    const seniorCandidates = users.filter((u) => u.role === 'seniorManager' && !u.isDisabled);
 
     const countAdmins = () => {
         return users.filter(u => u.role === 'admin' && !u.isDisabled).length;
@@ -438,6 +501,26 @@ export default function UserManagement() {
         } catch (err) {
             console.error("Error updating manager scope:", err);
             setError('Nepavyko atnaujinti vadovo prieigos. Bandykite dar kartą.');
+        }
+    };
+
+    // Toggle a senior manager (Vyr. vadovas) in/out of a MANAGER's overseer set. Writes the
+    // manager's own doc (seniorManagerIds) — the security rules gate this field to admins, and the
+    // Cloud Function folds it into the subtree's overseer closure so the senior sees the manager's
+    // team (ADR 0006). Triggerable from either the manager's row or the senior's row (same write).
+    const handleToggleSenior = async (managerUser, seniorId) => {
+        setError('');
+        const current = Array.isArray(managerUser.seniorManagerIds) ? managerUser.seniorManagerIds : [];
+        const next = current.includes(seniorId)
+            ? current.filter((id) => id !== seniorId)
+            : [...current, seniorId];
+        try {
+            await updateDoc(doc(db, 'users', managerUser.id), {
+                seniorManagerIds: next,
+            });
+        } catch (err) {
+            console.error("Error updating senior managers:", err);
+            setError('Nepavyko atnaujinti vyr. vadovų. Bandykite dar kartą.');
         }
     };
 
@@ -627,10 +710,12 @@ export default function UserManagement() {
                                 </span>
                                 <ManagerControl
                                     user={user}
-                                    managers={managers}
-                                    onToggle={handleToggleManager}
+                                    managerCandidates={managerCandidates}
+                                    seniorCandidates={seniorCandidates}
+                                    onToggleManager={handleToggleManager}
                                     onSetPrimary={handleSetPrimary}
                                     onToggleScoped={handleToggleScoped}
+                                    onToggleSenior={handleToggleSenior}
                                 />
                             </div>
                             <BlockButton
@@ -691,10 +776,12 @@ export default function UserManagement() {
                                 <td className="px-6 py-4">
                                     <ManagerControl
                                         user={user}
-                                        managers={managers}
-                                        onToggle={handleToggleManager}
+                                        managerCandidates={managerCandidates}
+                                        seniorCandidates={seniorCandidates}
+                                        onToggleManager={handleToggleManager}
                                         onSetPrimary={handleSetPrimary}
                                         onToggleScoped={handleToggleScoped}
+                                        onToggleSenior={handleToggleSenior}
                                     />
                                 </td>
                                 <td className="px-6 py-4">

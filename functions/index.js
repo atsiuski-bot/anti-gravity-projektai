@@ -444,30 +444,60 @@ exports.onCalendarPlanBadge = onDocumentCreated('calendar_requests/{id}', async 
 });
 
 // ---------------------------------------------------------------------------
-// Scoped-manager hierarchy — team stamping (ADR 0005)
+// Scoped overseer hierarchy — team stamping (ADR 0005 + ADR 0006)
 //
 // Each private row (a task / archived task / work or break session) carries a denormalized
-// `teamManagerIds` array — a copy of its OWNER's current managers. The security rules read this
-// field to decide whether a scoped manager may see the row, and the client queries it with
-// `array-contains`. Stamping is done HERE (server-side) rather than at the ~13 scattered client
-// write-sites: one authoritative place, impossible to miss a site. The failure mode is
-// fail-closed — an unstamped row is hidden from managers (owner + admin still see it via their
-// own predicates), never leaked.
+// `teamManagerIds` array — the OVERSEER CLOSURE of its owner: every manager/senior uid who may
+// see the row. The security rules read this field to decide whether a scoped manager OR a senior
+// manager may see the row, and the client queries it with `array-contains`. Stamping is done HERE
+// (server-side) rather than at the ~13 scattered client write-sites: one authoritative place,
+// impossible to miss a site. The failure mode is fail-closed — an unstamped row is hidden from
+// overseers (owner + admin still see it via their own predicates), never leaked.
 //
 // Owner field per collection: tasks/archived_tasks/deleted_tasks use `assignedUserId`;
 // work_sessions/break_sessions use `userId`.
 // ---------------------------------------------------------------------------
 
-// The owner's current managers (the visibility key). Missing/!array => [].
-async function teamManagerIdsFor(uid) {
+// The denormalized OVERSEER CLOSURE for a user — every manager/senior uid who may see this user's
+// private rows (ADR 0006). This is the visibility key stamped onto each owned row:
+//   • worker  → their managers (teamManagerIds) PLUS each of those managers' seniors
+//               (seniorManagerIds) — the transitive senior-manager subtree.
+//   • manager → the seniors they answer to (seniorManagerIds).
+//   • senior / admin → [] (their own rows are visible only to themselves + whole-company admins).
+// Missing/!array fields default to []. A worker's branch costs 1 + N user reads (N = manager
+// count, typically 1-2) — on the stamp path only (create/reassign/membership change), never the
+// hot read path. Computed non-recursively (exactly one hop up: worker→manager→senior), so the
+// 4-level hierarchy can never recurse.
+async function overseersFor(uid) {
     if (!uid) return [];
     try {
         const snap = await db.collection('users').doc(uid).get();
         if (!snap.exists) return [];
-        const arr = snap.data().teamManagerIds;
-        return Array.isArray(arr) ? arr.filter(Boolean) : [];
+        const u = snap.data();
+        const role = u.role || 'worker';
+        if (role === 'manager') {
+            const seniors = u.seniorManagerIds;
+            return Array.isArray(seniors) ? seniors.filter(Boolean) : [];
+        }
+        if (role === 'seniorManager' || role === 'admin' || role === 'Administratorius') {
+            return [];
+        }
+        // worker (or legacy/absent role): direct managers + each manager's seniors.
+        const mgrs = Array.isArray(u.teamManagerIds) ? u.teamManagerIds.filter(Boolean) : [];
+        const result = new Set(mgrs);
+        await Promise.all(mgrs.map(async (m) => {
+            try {
+                const msnap = await db.collection('users').doc(m).get();
+                if (!msnap.exists) return;
+                const seniors = msnap.data().seniorManagerIds;
+                if (Array.isArray(seniors)) seniors.filter(Boolean).forEach((s) => result.add(s));
+            } catch (err) {
+                logger.warn('overseersFor manager read failed', { manager: m, err: err.message });
+            }
+        }));
+        return [...result];
     } catch (err) {
-        logger.warn('teamManagerIdsFor failed', { uid, err: err.message });
+        logger.warn('overseersFor failed', { uid, err: err.message });
         return [];
     }
 }
@@ -496,7 +526,7 @@ async function stampOwnedDoc(event, ownerField) {
     const hasStamp = Array.isArray(data.teamManagerIds);
     if (!ownerChanged && hasStamp) return; // routine edit, already stamped — no work
 
-    const desired = await teamManagerIdsFor(ownerUid);
+    const desired = await overseersFor(ownerUid);
     if (sameSet(hasStamp ? data.teamManagerIds : [], desired)) return; // already correct
     await after.ref.update({ teamManagerIds: desired });
 }
@@ -509,7 +539,7 @@ async function stampOwnedCreate(event, ownerField) {
     if (!snap) return;
     const ownerUid = snap.data()[ownerField];
     if (!ownerUid) return;
-    const desired = await teamManagerIdsFor(ownerUid);
+    const desired = await overseersFor(ownerUid);
     if (!desired.length) return;
     await snap.ref.update({ teamManagerIds: desired });
 }
@@ -547,20 +577,71 @@ async function restampUserRows(uid, desired) {
     return count;
 }
 
-// When an admin changes a worker's managers, rewrite that worker's whole history so the new
-// manager sees their PAST rows too (full-history decision, ADR 0005). Membership changes are
-// rare, so the fan-out (bounded by one worker's rows) is acceptable.
+// Maintain the user-doc overseer closure (`overseerIds`) that the CREATE/assign rule reads (the
+// rule reads the target USER doc, not a row, and that doc's editable teamManagerIds never carries
+// a senior). Loop-safe: written from inside the users onUpdate trigger below, the sameSet guard
+// makes a re-fire inert — and the trigger deliberately does NOT watch `overseerIds`.
+async function setOverseerIds(uid, desired) {
+    if (!uid) return false;
+    const ref = db.collection('users').doc(uid);
+    try {
+        const snap = await ref.get();
+        if (!snap.exists) return false;
+        const cur = Array.isArray(snap.data().overseerIds) ? snap.data().overseerIds : [];
+        if (sameSet(cur, desired)) return false; // already correct — no write, no loop
+        await ref.update({ overseerIds: desired });
+        return true;
+    } catch (err) {
+        logger.warn('setOverseerIds failed', { uid, err: err.message });
+        return false;
+    }
+}
+
+// When an admin changes a worker's managers OR a manager's seniors (OR anyone's role), rewrite the
+// affected closures so the right overseers see the right PAST rows (full-history decision, ADR
+// 0005/0006). A manager's senior change CASCADES: every worker under that manager folds the
+// manager's seniors into their own closure, so they must be re-stamped too. Membership changes are
+// rare and crews small, so the fan-out (one manager's workers × their rows) is acceptable.
 exports.restampTeamOnUserChange = onDocumentUpdated('users/{id}', async (event) => {
+    const uid = event.params.id;
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
-    const beforeIds = Array.isArray(before.teamManagerIds) ? before.teamManagerIds : [];
-    const afterIds = Array.isArray(after.teamManagerIds) ? after.teamManagerIds : [];
-    if (sameSet(beforeIds, afterIds)) return; // membership unchanged
+
+    // Watch only the SOURCE fields that can move a closure — NOT overseerIds, which THIS function
+    // writes back (watching it would loop).
+    const teamChanged = !sameSet(
+        Array.isArray(before.teamManagerIds) ? before.teamManagerIds : [],
+        Array.isArray(after.teamManagerIds) ? after.teamManagerIds : []
+    );
+    const seniorChanged = !sameSet(
+        Array.isArray(before.seniorManagerIds) ? before.seniorManagerIds : [],
+        Array.isArray(after.seniorManagerIds) ? after.seniorManagerIds : []
+    );
+    const roleChanged = (before.role || '') !== (after.role || '');
+    if (!teamChanged && !seniorChanged && !roleChanged) return; // nothing visibility-relevant
+
     try {
-        const count = await restampUserRows(event.params.id, afterIds);
-        logger.info('restampTeamOnUserChange done', { uid: event.params.id, count });
+        // (1) Re-stamp this user's own closure (user doc) + their own private rows.
+        const desiredSelf = await overseersFor(uid);
+        await setOverseerIds(uid, desiredSelf);
+        const selfRows = await restampUserRows(uid, desiredSelf);
+
+        // (2) Cascade: a manager's senior change (or any role flip) staled the closure of every
+        // worker under this user — re-stamp them. (For a worker whose own managers changed, there
+        // are no subordinates to cascade to; the query simply returns none.)
+        let cascaded = 0;
+        if (seniorChanged || roleChanged) {
+            const workersSnap = await db.collection('users')
+                .where('teamManagerIds', 'array-contains', uid).get();
+            for (const w of workersSnap.docs) {
+                const desiredW = await overseersFor(w.id);
+                await setOverseerIds(w.id, desiredW);
+                cascaded += await restampUserRows(w.id, desiredW);
+            }
+        }
+        logger.info('restampTeamOnUserChange done', { uid, selfRows, cascaded });
     } catch (err) {
-        logger.error('restampTeamOnUserChange failed', { uid: event.params.id, err: err.message });
+        logger.error('restampTeamOnUserChange failed', { uid, err: err.message });
     }
 });
 
@@ -579,8 +660,8 @@ exports.backfillTeamStamps = onCall(async (request) => {
     let users = 0;
     let rows = 0;
     for (const u of usersSnap.docs) {
-        const arr = u.data().teamManagerIds;
-        const desired = Array.isArray(arr) ? arr.filter(Boolean) : [];
+        const desired = await overseersFor(u.id);
+        await setOverseerIds(u.id, desired); // seed/refresh the user-doc closure too
         rows += await restampUserRows(u.id, desired);
         users += 1;
     }

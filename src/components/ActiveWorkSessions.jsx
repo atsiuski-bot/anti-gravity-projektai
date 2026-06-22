@@ -9,7 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { getSessionColors } from '../utils/sessionColors';
 import UserChip from './UserChip';
-import { isScopedManager, scopeRoster } from '../utils/teamScope';
+import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
 
 export default function ActiveWorkSessions() {
     const { users: allUsers, loading: usersLoading } = useUsers();
@@ -18,7 +18,7 @@ export default function ActiveWorkSessions() {
     const [isCollapsed, setIsCollapsed] = useState(false);
 
     // A scoped manager only sees their own team's live activity; admin/unscoped see everyone.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const uid = currentUser?.uid;
 
     // Active (non-disabled) users, narrowed to the viewer's team when scoped.

@@ -7,7 +7,7 @@ import { getPriorityLabel } from '../utils/priority';
 import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
-import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
+import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
@@ -37,7 +37,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     const isManagerOrAdmin = isManagerRole(userRole);
     // Scoped managers only ever read their team's archived tasks (array-contains); this surface
     // is manager/admin-only (rendered when "all" is selected), so the effective role is never 'worker'.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());

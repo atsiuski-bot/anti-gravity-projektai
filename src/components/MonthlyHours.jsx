@@ -5,7 +5,7 @@ import { Calendar, ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
 import { formatMinutesToTimeString, getLithuanianDateString } from '../utils/timeUtils';
 import { useAuth } from '../context/AuthContext';
-import { isScopedManager } from '../utils/teamScope';
+import { isScopedOverseer } from '../utils/teamScope';
 import Card from './ui/Card';
 import EmptyState from './ui/EmptyState';
 import { Spinner } from './ui/Loading';
@@ -27,7 +27,7 @@ export default function MonthlyHours({ users }) {
     const [isCollapsed, setIsCollapsed] = useState(true);
     const [expandedMonth, setExpandedMonth] = useState(null);
 
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const uid = currentUser?.uid;
 
     useEffect(() => {
