@@ -63,13 +63,16 @@ export const formatTime = (dateOrString) => {
 };
 
 /**
- * Checks if a role string represents a manager or admin.
+ * Checks if a role string represents a manager-or-above (manager, senior manager, or admin).
  * Eliminates repeated `role === 'manager' || role === 'admin'` checks.
- * 
+ * `seniorManager` (Vyr. vadovas) is a manager-shaped rank that always sees the whole company
+ * (ADR 0005 — `canSeeWholeTeam` in teamScope.js); account management stays admin-only.
+ *
  * @param {string} role - The role to check
  * @returns {boolean}
  */
-export const isManagerRole = (role) => role === 'manager' || role === 'admin';
+export const isManagerRole = (role) =>
+    role === 'manager' || role === 'admin' || role === 'seniorManager';
 
 /**
  * Resolves the user ID from a record that may use different field names

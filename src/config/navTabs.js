@@ -9,7 +9,7 @@ import { isManagerRole } from '../utils/formatters';
  * canonical way to do a thing). A section whose `label` is null renders without a heading
  * (the bottom bar shows a thin separator between sections instead).
  *
- * @param {string} userRole - 'worker' | 'manager' | 'admin'
+ * @param {string} userRole - 'worker' | 'manager' | 'seniorManager' | 'admin'
  * @returns {Array<{ id: string, label: string|null, items: Array<{id,label,icon}> }>}
  */
 export function getNavSections(userRole) {

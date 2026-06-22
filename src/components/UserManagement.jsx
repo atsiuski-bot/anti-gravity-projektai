@@ -20,6 +20,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 // is never the sole signal (§5).
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
+    seniorManager: { label: 'Vyr. vadovas', tone: 'neutral' },
     manager: { label: 'Vadovas', tone: 'neutral' },
     worker: { label: 'Vykdytojas', tone: 'running' },
 };
@@ -76,6 +77,7 @@ function RoleSelect({ user, onChange }) {
         >
             <option value="worker">Vykdytojas</option>
             <option value="manager">Vadovas</option>
+            <option value="seniorManager">Vyr. vadovas</option>
             <option value="admin">Administratorius</option>
         </select>
     );
@@ -90,7 +92,8 @@ function effectiveTeamIds(user) {
 }
 
 // Visibility control. Branches by role:
-//  • admin   — always global; shows a static "Mato visus" label.
+//  • admin / senior manager — always global; shows a static "Mato visus" label (a senior
+//    manager (Vyr. vadovas) sees the whole company by rank and has no scope toggle).
 //  • manager — a per-manager scope toggle ("Tik sava komanda" vs "Visa įmonė"). Default
 //    (scopedManager absent/false) keeps today's behaviour: the manager sees the whole company.
 //    Only when an admin turns it on does the manager become restricted to their assigned people.
@@ -98,7 +101,7 @@ function effectiveTeamIds(user) {
 // teamManagerIds is the visibility key the security rules read; it always contains the primary.
 function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped }) {
     const name = formatDisplayName(user.displayName) || user.email || '';
-    if (user.role === 'admin') {
+    if (user.role === 'admin' || user.role === 'seniorManager') {
         return <span className="text-body italic text-ink-muted">Mato visus</span>;
     }
     if (user.role === 'manager') {
@@ -306,7 +309,7 @@ export default function UserManagement() {
     }, []);
 
     const managers = users.filter(
-        (u) => (u.role === 'manager' || u.role === 'admin') && !u.isDisabled
+        (u) => (u.role === 'manager' || u.role === 'admin' || u.role === 'seniorManager') && !u.isDisabled
     );
 
     const countAdmins = () => {
