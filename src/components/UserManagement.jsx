@@ -9,6 +9,7 @@ import { formatDisplayName } from '../utils/formatters';
 import { getContrastingTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
+import UserChip from './UserChip';
 import Card from './ui/Card';
 import Button from './ui/Button';
 import StatusPill from './ui/StatusPill';
@@ -32,18 +33,6 @@ const SELECT_CLASS =
 function RoleBadge({ role }) {
     const meta = ROLE_META[role] || ROLE_META.worker;
     return <StatusPill tone={meta.tone}>{meta.label}</StatusPill>;
-}
-
-function UserAvatar({ user }) {
-    return user.photoURL ? (
-        <img className="h-10 w-10 rounded-full object-cover" src={user.photoURL} alt="" />
-    ) : (
-        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-sunken">
-            <span className="font-medium text-ink-muted">
-                {user.displayName?.charAt(0) || user.email?.charAt(0)}
-            </span>
-        </div>
-    );
 }
 
 function ColorSwatch({ user, onEdit }) {
@@ -638,12 +627,14 @@ export default function UserManagement() {
                         style={{ borderLeft: `4px solid ${user.color || WORKER_FALLBACK_COLOR}` }}
                     >
                         <div className="flex items-start gap-3">
-                            <UserAvatar user={user} />
                             <div className="min-w-0 flex-1">
                                 <div className="flex flex-wrap items-center gap-2">
-                                    <p className="truncate text-body font-semibold text-ink-strong">
-                                        {formatDisplayName(user.displayName) || 'Be vardo'}
-                                    </p>
+                                    <UserChip
+                                        userId={user.id}
+                                        name={user.displayName || 'Be vardo'}
+                                        size="md"
+                                        className="min-w-0 text-body font-semibold text-ink-strong"
+                                    />
                                     <DisabledPill user={user} />
                                 </div>
                                 <p className="truncate text-body text-ink-muted">{user.email}</p>
@@ -710,10 +701,13 @@ export default function UserManagement() {
                             <tr key={user.id} className={user.isDisabled ? 'bg-surface-sunken/60' : ''}>
                                 <td className="whitespace-nowrap px-6 py-4">
                                     <div className="flex items-center gap-3">
-                                        <UserAvatar user={user} />
                                         <div>
                                             <div className="flex flex-wrap items-center gap-2 text-body font-medium text-ink-strong">
-                                                {formatDisplayName(user.displayName) || 'Be vardo'}
+                                                <UserChip
+                                                    userId={user.id}
+                                                    name={user.displayName || 'Be vardo'}
+                                                    size="md"
+                                                />
                                                 <DisabledPill user={user} />
                                                 <LastActiveBadge user={user} />
                                             </div>
