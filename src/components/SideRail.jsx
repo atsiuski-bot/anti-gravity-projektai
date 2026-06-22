@@ -1,11 +1,11 @@
 import { memo, useMemo } from 'react';
-import { Plus, LogOut, User } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { formatDisplayName } from '../utils/formatters';
 import { getNavSections } from '../config/navTabs';
 import Button from './ui/Button';
-import IconButton from './ui/IconButton';
+import Avatar from './ui/Avatar';
 import QuickWorkTimer from './QuickWorkTimer';
 import CallTimer from './CallTimer';
 import BreakTimer from './BreakTimer';
@@ -31,7 +31,7 @@ const navItemBase =
  * why the session timers must not be duplicated in the DOM.
  */
 function SideRail() {
-    const { currentUser, userRole, logout } = useAuth();
+    const { currentUser, userData, userRole } = useAuth();
     const { activeTab, setActiveTab } = useNavigation();
     const sections = useMemo(() => getNavSections(userRole), [userRole]);
 
@@ -111,19 +111,30 @@ function SideRail() {
                 </div>
             </div>
 
-            {/* Account */}
-            <div className="mt-3 flex items-center gap-2 border-t border-line pt-3">
-                {currentUser?.photoURL ? (
-                    <img src={currentUser.photoURL} alt="" className="h-8 w-8 rounded-full" />
-                ) : (
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-sunken">
-                        <User className="h-5 w-5 text-ink-muted" aria-hidden="true" />
-                    </div>
-                )}
-                <span className="min-w-0 flex-1 truncate text-body font-medium text-ink">
-                    {formatDisplayName(currentUser?.displayName)}
-                </span>
-                <IconButton icon={LogOut} label="Atsijungti" onClick={() => logout()} />
+            {/* Account — opens the profile/settings page (role, install and logout all live
+                there now, per the 2026-06-22 decision), mirroring the off-desktop avatar header. */}
+            <div className="mt-3 border-t border-line pt-3">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('profile')}
+                    aria-label="Atidaryti profilį"
+                    aria-current={activeTab === 'profile' ? 'page' : undefined}
+                    className={cn(
+                        'flex min-h-touch w-full items-center gap-2 rounded-control px-2 py-1.5 text-left transition-colors',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset',
+                        activeTab === 'profile' ? 'bg-brand-soft text-brand-hover' : 'text-ink hover:bg-surface-sunken'
+                    )}
+                >
+                    <Avatar
+                        src={userData?.photoURL || currentUser?.photoURL}
+                        name={currentUser?.displayName}
+                        email={currentUser?.email}
+                        size="sm"
+                    />
+                    <span className="min-w-0 flex-1 truncate text-body font-medium">
+                        {formatDisplayName(currentUser?.displayName)}
+                    </span>
+                </button>
             </div>
         </div>
     );

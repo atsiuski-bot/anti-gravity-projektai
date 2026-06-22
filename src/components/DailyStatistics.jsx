@@ -14,7 +14,7 @@ import SessionTypeIcon from './SessionTypeIcon';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 
-export default function DailyStatistics({ currentUser, userRole, users = [] }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false }) {
     // Managers can see everyone, Workers only themselves
     const [selectedUserId, setSelectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
     const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
@@ -896,7 +896,55 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
             </div>
 
             {/* Summary Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {/* Mobile: one compact card — the three durations as hero numbers in a single row,
+                with the day span as a slim header. Replaces the four full-width stacked cards so
+                the whole day summary fits in the top half of the first screen (§9 dual density:
+                a tuned, denser mobile layout instead of one card per row). */}
+            <div className="md:hidden bg-surface-card rounded-card shadow-sm border border-line p-3">
+                {selectedUserId !== 'all' && (
+                    <div className="flex items-center justify-between gap-2 border-b border-line pb-2.5 mb-2.5">
+                        <span className="flex items-center gap-1.5 text-caption text-ink-muted">
+                            <Clock className="w-3.5 h-3.5" aria-hidden="true" />
+                            Dienos pradžia / pabaiga
+                        </span>
+                        <span className="text-body font-semibold text-ink-strong tabular-nums">
+                            {firstActivity ? formatTime(firstActivity) : '--:--'} - {lastActivity ? formatTime(lastActivity) : '--:--'}
+                        </span>
+                    </div>
+                )}
+                <div className="grid grid-cols-3 divide-x divide-line">
+                    <div className="flex flex-col items-center px-1 text-center">
+                        <span className="flex items-center gap-1 text-caption text-ink-muted">
+                            <Clock className="w-3.5 h-3.5" aria-hidden="true" />
+                            Darbas
+                        </span>
+                        <span className="mt-1 text-h3 font-bold text-ink-strong tabular-nums">
+                            {formatMinutesToTimeString(totalWorkedMinutes)}
+                        </span>
+                    </div>
+                    <div className="flex flex-col items-center px-1 text-center">
+                        <span className="flex items-center gap-1 text-caption text-ink-muted">
+                            <Coffee className="w-3.5 h-3.5" aria-hidden="true" />
+                            Pertraukos
+                        </span>
+                        <span className="mt-1 text-h3 font-bold text-session-break-accent tabular-nums">
+                            {formatMinutesToTimeString(totalBreakMinutes)}
+                        </span>
+                    </div>
+                    <div className="flex flex-col items-center px-1 text-center">
+                        <span className="flex items-center gap-1 text-caption text-brand">
+                            <Zap className="w-3.5 h-3.5" aria-hidden="true" />
+                            Viso
+                        </span>
+                        <span className="mt-1 text-h3 font-bold text-brand tabular-nums">
+                            {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            {/* Desktop: the spacious four-card grid (unchanged). */}
+            <div className="hidden md:grid grid-cols-4 gap-4">
                 {selectedUserId !== 'all' && (
                     <div className="bg-surface-card p-5 rounded-card shadow-sm border border-line">
                         <div className="flex items-center gap-3 mb-2 text-ink-muted text-body font-medium">
@@ -1205,7 +1253,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [] }) {
 
             {/* Replaced legacy archived table with full TaskHistory component */}
             <div className="mt-8">
-                <TaskHistory userId={selectedUserId} users={users} />
+                <TaskHistory userId={selectedUserId} users={users} canExport={canExport} />
             </div>
 
             {todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0 && (
