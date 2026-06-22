@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
-import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban } from 'lucide-react';
+import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -81,25 +81,92 @@ function RoleSelect({ user, onChange }) {
     );
 }
 
-function ManagerControl({ user, managers, onChange }) {
+// A worker's managers (visibility scope). The array is teamManagerIds; a legacy doc that only
+// has the single defaultManager is treated as a one-member team so it shows correctly until the
+// backfill normalises it.
+function effectiveTeamIds(user) {
+    if (Array.isArray(user.teamManagerIds)) return user.teamManagerIds;
+    return user.defaultManager ? [user.defaultManager] : [];
+}
+
+// Visibility control. Branches by role:
+//  • admin   — always global; shows a static "Mato visus" label.
+//  • manager — a per-manager scope toggle ("Tik sava komanda" vs "Visa įmonė"). Default
+//    (scopedManager absent/false) keeps today's behaviour: the manager sees the whole company.
+//    Only when an admin turns it on does the manager become restricted to their assigned people.
+//  • worker  — multi-select manager chips (their team), star marks the primary (defaultManager).
+// teamManagerIds is the visibility key the security rules read; it always contains the primary.
+function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped }) {
     const name = formatDisplayName(user.displayName) || user.email || '';
-    if (user.role === 'admin' || user.role === 'manager') {
-        return <span className="text-body italic text-ink-muted">Vadovas</span>;
+    if (user.role === 'admin') {
+        return <span className="text-body italic text-ink-muted">Mato visus</span>;
     }
+    if (user.role === 'manager') {
+        const scoped = user.scopedManager === true;
+        return (
+            <button
+                type="button"
+                aria-pressed={scoped}
+                onClick={() => onToggleScoped(user)}
+                title={scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
+                className={cn(
+                    'inline-flex min-h-touch items-center gap-2 rounded-full border px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                    scoped ? 'border-brand bg-brand/10 text-ink' : 'border-line bg-surface-card text-ink-muted'
+                )}
+            >
+                {scoped
+                    ? <Users className="h-4 w-4 text-brand" aria-hidden="true" />
+                    : <Globe className="h-4 w-4" aria-hidden="true" />}
+                {scoped ? 'Tik sava komanda' : 'Visa įmonė'}
+            </button>
+        );
+    }
+    if (managers.length === 0) {
+        return <span className="text-body italic text-ink-muted">Nėra vadovų</span>;
+    }
+    const teamIds = effectiveTeamIds(user);
     return (
-        <select
-            value={user.defaultManager || ''}
-            onChange={(e) => onChange(user.id, e.target.value)}
-            aria-label={`${name} numatytasis vadovas`}
-            className={SELECT_CLASS}
-        >
-            <option value="">Pasirinkti vadovą...</option>
-            {managers.map((m) => (
-                <option key={m.id} value={m.id}>
-                    {formatDisplayName(m.displayName) || m.email}
-                </option>
-            ))}
-        </select>
+        <fieldset>
+            <legend className="sr-only">{`${name} vadovai`}</legend>
+            <div className="flex flex-wrap gap-2">
+                {managers.map((m) => {
+                    const selected = teamIds.includes(m.id);
+                    const primary = selected && user.defaultManager === m.id;
+                    const mName = formatDisplayName(m.displayName) || m.email;
+                    return (
+                        <span
+                            key={m.id}
+                            className={cn(
+                                'inline-flex items-center overflow-hidden rounded-full border',
+                                selected ? 'border-brand bg-brand/10' : 'border-line bg-surface-card'
+                            )}
+                        >
+                            <button
+                                type="button"
+                                aria-pressed={selected}
+                                onClick={() => onToggle(user, m.id)}
+                                className="inline-flex min-h-touch items-center gap-1 px-3 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                            >
+                                {selected && <Check className="h-4 w-4 text-brand" aria-hidden="true" />}
+                                {mName}
+                            </button>
+                            {selected && (
+                                <button
+                                    type="button"
+                                    aria-pressed={primary}
+                                    aria-label={primary ? `${mName} — pagrindinis vadovas` : `Padaryti ${mName} pagrindiniu vadovu`}
+                                    title={primary ? 'Pagrindinis vadovas' : 'Padaryti pagrindiniu'}
+                                    onClick={() => onSetPrimary(user, m.id)}
+                                    className="inline-flex min-h-touch min-w-touch items-center justify-center border-l border-brand/30 px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                >
+                                    <Star className={cn('h-4 w-4', primary ? 'fill-current text-brand' : 'text-ink-muted')} aria-hidden="true" />
+                                </button>
+                            )}
+                        </span>
+                    );
+                })}
+            </div>
+        </fieldset>
     );
 }
 
@@ -133,6 +200,25 @@ function BlockButton({ user, isSelf, onRequest, fullWidth }) {
             onClick={() => onRequest(user)}
         >
             {user.isDisabled ? (pending ? 'Patvirtinti' : 'Atblokuoti') : 'Blokuoti'}
+        </Button>
+    );
+}
+
+// Permanent delete. Admin-only and kept visually subordinate to Block (the everyday action):
+// a quiet danger-toned ghost button so the reversible toggle stays dominant over the
+// irreversible one (§8). Self-deletion is disabled.
+function DeleteButton({ user, isSelf, onRequest, fullWidth }) {
+    return (
+        <Button
+            variant="ghost"
+            size="md"
+            icon={Trash2}
+            disabled={isSelf}
+            fullWidth={fullWidth}
+            className="text-feedback-danger"
+            onClick={() => onRequest(user)}
+        >
+            Ištrinti
         </Button>
     );
 }
@@ -186,6 +272,12 @@ export default function UserManagement() {
     // Block/unblock confirmation (replaces window.confirm — §8)
     const [blockTarget, setBlockTarget] = useState(null);
     const [blocking, setBlocking] = useState(false);
+
+    // Delete confirmation. Permanent removal of the user's Firestore record — admin-only and
+    // separate from the reversible block toggle, so it never sits on the same button (§8).
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [deleting, setDeleting] = useState(false);
+    const isAdmin = userRole === 'admin';
 
     useEffect(() => {
         let unsubscribe = () => { };
@@ -292,16 +384,57 @@ export default function UserManagement() {
         setEditingColorUser(null);
     };
 
-    const handleDefaultManagerChange = async (userId, newManagerId) => {
+    // Toggle a manager in/out of a worker's team. The primary (defaultManager) must always stay
+    // a member: when the current primary is removed (or the first manager is added and none is
+    // primary yet) it falls back to the first remaining manager. Both fields are written together
+    // so the invariant "teamManagerIds ⊇ {defaultManager}" can never break.
+    const handleToggleManager = async (user, managerId) => {
         setError('');
+        const current = effectiveTeamIds(user);
+        const next = current.includes(managerId)
+            ? current.filter((id) => id !== managerId)
+            : [...current, managerId];
+        let primary = user.defaultManager || '';
+        if (!next.includes(primary)) primary = next[0] || '';
         try {
-            const userRef = doc(db, 'users', userId);
-            await updateDoc(userRef, {
-                defaultManager: newManagerId
+            await updateDoc(doc(db, 'users', user.id), {
+                teamManagerIds: next,
+                defaultManager: primary,
             });
         } catch (err) {
-            console.error("Error updating default manager:", err);
-            setError('Nepavyko atnaujinti numatytojo vadovo. Bandykite dar kartą.');
+            console.error("Error updating managers:", err);
+            setError('Nepavyko atnaujinti vadovų. Bandykite dar kartą.');
+        }
+    };
+
+    // Mark a manager as primary (approval/notification routing). Adds them to the team first if
+    // somehow not already a member, preserving the invariant.
+    const handleSetPrimary = async (user, managerId) => {
+        setError('');
+        const current = effectiveTeamIds(user);
+        const next = current.includes(managerId) ? current : [...current, managerId];
+        try {
+            await updateDoc(doc(db, 'users', user.id), {
+                teamManagerIds: next,
+                defaultManager: managerId,
+            });
+        } catch (err) {
+            console.error("Error setting primary manager:", err);
+            setError('Nepavyko nustatyti pagrindinio vadovo. Bandykite dar kartą.');
+        }
+    };
+
+    // Toggle whether a manager is restricted to their assigned people. Default off = sees the
+    // whole company (today's behaviour); on = scoped to their team (ADR 0005).
+    const handleToggleScoped = async (user) => {
+        setError('');
+        try {
+            await updateDoc(doc(db, 'users', user.id), {
+                scopedManager: !(user.scopedManager === true),
+            });
+        } catch (err) {
+            console.error("Error updating manager scope:", err);
+            setError('Nepavyko atnaujinti vadovo prieigos. Bandykite dar kartą.');
         }
     };
 
@@ -386,6 +519,51 @@ export default function UserManagement() {
         }
     };
 
+    const requestDelete = (user) => {
+        if (user.id === currentUser?.uid) {
+            setError('Negalite ištrinti savęs.');
+            return;
+        }
+        // Same floor as block/demotion: never remove the last active admin.
+        if (user.role === 'admin' && !user.isDisabled && countAdmins() <= 1) {
+            setError('Negalima ištrinti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+            return;
+        }
+        setError('');
+        setDeleteTarget(user);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return;
+        const user = deleteTarget;
+        // Backstop the last-admin floor in case the count changed while the dialog was open.
+        if (user.role === 'admin' && !user.isDisabled && countAdmins() <= 1) {
+            setError('Negalima ištrinti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+            setDeleteTarget(null);
+            return;
+        }
+        setDeleting(true);
+        try {
+            // Settle any open session first so no work segment is lost and no ghost "working"
+            // flag is left on a now-deleted record (same reasoning as block).
+            if (hasOpenSession(user)) {
+                await closeActiveSessionForUser(user);
+            }
+            await deleteDoc(doc(db, 'users', user.id));
+            setDeleteTarget(null);
+        } catch (err) {
+            console.error("Error deleting user:", err);
+            if (err.code === 'permission-denied') {
+                setError(`Neturite teisių. Jūsų rolė: ${userRole}.`);
+            } else {
+                setError('Nepavyko ištrinti vartotojo. Bandykite dar kartą.');
+            }
+            setDeleteTarget(null);
+        } finally {
+            setDeleting(false);
+        }
+    };
+
     return (
         <Card as="section" className="mb-8 overflow-hidden">
             <div className="border-b border-line bg-surface-sunken p-6">
@@ -440,20 +618,32 @@ export default function UserManagement() {
                                 <span className="mb-1 block text-caption font-medium text-ink-muted">Rolė</span>
                                 <RoleSelect user={user} onChange={handleRoleChange} />
                             </label>
-                            {user.role === 'worker' && (
-                                <label className="block">
-                                    <span className="mb-1 block text-caption font-medium text-ink-muted">
-                                        Numatytasis vadovas
-                                    </span>
-                                    <ManagerControl user={user} managers={managers} onChange={handleDefaultManagerChange} />
-                                </label>
-                            )}
+                            <div>
+                                <span className="mb-1 block text-caption font-medium text-ink-muted">
+                                    Matomumas
+                                </span>
+                                <ManagerControl
+                                    user={user}
+                                    managers={managers}
+                                    onToggle={handleToggleManager}
+                                    onSetPrimary={handleSetPrimary}
+                                    onToggleScoped={handleToggleScoped}
+                                />
+                            </div>
                             <BlockButton
                                 user={user}
                                 isSelf={user.id === currentUser?.uid}
                                 onRequest={requestBlock}
                                 fullWidth
                             />
+                            {isAdmin && (
+                                <DeleteButton
+                                    user={user}
+                                    isSelf={user.id === currentUser?.uid}
+                                    onRequest={requestDelete}
+                                    fullWidth
+                                />
+                            )}
                         </div>
                     </li>
                 ))}
@@ -464,7 +654,7 @@ export default function UserManagement() {
                 <table className="min-w-full divide-y divide-line">
                     <thead className="bg-surface-sunken">
                         <tr>
-                            {['Vartotojas', 'Rolė', 'Spalva', 'Numatytasis vadovas', 'Veiksmai'].map((h) => (
+                            {['Vartotojas', 'Rolė', 'Spalva', 'Matomumas', 'Veiksmai'].map((h) => (
                                 <th
                                     key={h}
                                     className="px-6 py-3 text-left text-caption font-medium uppercase tracking-wider text-ink-muted"
@@ -496,7 +686,13 @@ export default function UserManagement() {
                                     <ColorSwatch user={user} onEdit={startEditingColor} />
                                 </td>
                                 <td className="px-6 py-4">
-                                    <ManagerControl user={user} managers={managers} onChange={handleDefaultManagerChange} />
+                                    <ManagerControl
+                                        user={user}
+                                        managers={managers}
+                                        onToggle={handleToggleManager}
+                                        onSetPrimary={handleSetPrimary}
+                                        onToggleScoped={handleToggleScoped}
+                                    />
                                 </td>
                                 <td className="px-6 py-4">
                                     <div className="flex flex-col gap-2">
@@ -506,6 +702,13 @@ export default function UserManagement() {
                                             isSelf={user.id === currentUser?.uid}
                                             onRequest={requestBlock}
                                         />
+                                        {isAdmin && (
+                                            <DeleteButton
+                                                user={user}
+                                                isSelf={user.id === currentUser?.uid}
+                                                onRequest={requestDelete}
+                                            />
+                                        )}
                                     </div>
                                 </td>
                             </tr>
@@ -593,6 +796,21 @@ export default function UserManagement() {
                     loading={blocking}
                     onConfirm={confirmBlock}
                     onCancel={() => setBlockTarget(null)}
+                />
+            )}
+
+            {/* Permanent delete confirmation (irreversible — admin-only) */}
+            {deleteTarget && (
+                <ConfirmDialog
+                    open
+                    title="Ištrinti vartotoją?"
+                    message={`Vartotojas: ${formatDisplayName(deleteTarget.displayName) || deleteTarget.email}.`}
+                    warning="Vartotojo įrašas bus visam laikui pašalintas. Šio veiksmo atšaukti negalima."
+                    confirmLabel="Ištrinti"
+                    variant="danger"
+                    loading={deleting}
+                    onConfirm={confirmDelete}
+                    onCancel={() => setDeleteTarget(null)}
                 />
             )}
         </Card>

@@ -5,21 +5,34 @@ import { ChevronDown, ChevronUp, Activity } from 'lucide-react';
 import SessionTypeIcon from './SessionTypeIcon';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { useUsers } from '../context/UsersContext';
+import { useAuth } from '../context/AuthContext';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { getSessionColors } from '../utils/sessionColors';
 import UserChip from './UserChip';
+import { isScopedManager, scopeRoster } from '../utils/teamScope';
 
 export default function ActiveWorkSessions() {
     const { users: allUsers, loading: usersLoading } = useUsers();
+    const { currentUser, userData } = useAuth();
     const [tasks, setTasks] = useState([]);
     const [isCollapsed, setIsCollapsed] = useState(false);
 
-    // Filter out disabled users
-    const users = useMemo(() => allUsers.filter(u => !u.isDisabled), [allUsers]);
+    // A scoped manager only sees their own team's live activity; admin/unscoped see everyone.
+    const scoped = isScopedManager(userData);
+    const uid = currentUser?.uid;
+
+    // Active (non-disabled) users, narrowed to the viewer's team when scoped.
+    const users = useMemo(
+        () => scopeRoster(allUsers.filter(u => !u.isDisabled), userData, uid),
+        [allUsers, scoped, uid] // eslint-disable-line react-hooks/exhaustive-deps -- userData read via the stable `scoped` flag
+    );
 
     useEffect(() => {
-        // Only need tasks listener for currently active or pending tasks to map titles
-        const tasksQuery = query(collection(db, 'tasks'), where('status', 'in', ['pending', 'in-progress']));
+        // Tasks listener only maps active task titles. A scoped manager must constrain it to their
+        // team (array-contains) — the broad status-'in' query would be denied once the rules tighten.
+        const tasksQuery = scoped && uid
+            ? query(collection(db, 'tasks'), where('teamManagerIds', 'array-contains', uid))
+            : query(collection(db, 'tasks'), where('status', 'in', ['pending', 'in-progress']));
         const unsubTasks = onSnapshot(tasksQuery, (snap) => {
             const tasksData = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setTasks(tasksData);
@@ -30,7 +43,7 @@ export default function ActiveWorkSessions() {
         return () => {
             unsubTasks();
         };
-    }, []);
+    }, [scoped, uid]);
 
     // Active Sessions Logic
     const activeSessions = useMemo(() => {

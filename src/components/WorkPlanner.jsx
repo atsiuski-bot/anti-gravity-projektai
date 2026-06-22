@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
 import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
+import { preventEnterSubmit } from '../utils/formUtils';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
@@ -778,7 +779,7 @@ export default function WorkPlanner() {
             )}
 
             {showManualInput && (
-                <form onSubmit={handleManualSubmit} className="mb-4 p-3 bg-surface-base rounded-card border border-line shadow-inner">
+                <form onSubmit={handleManualSubmit} onKeyDown={preventEnterSubmit} className="mb-4 p-3 bg-surface-base rounded-card border border-line shadow-inner">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
                             <label htmlFor="manualDate" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Data</label>
@@ -857,7 +858,13 @@ export default function WorkPlanner() {
             )
             }
 
-            <div className="h-[820px] sm:h-[650px] md:h-[750px]">
+            {/* Phones/tablets keep a fixed height (day view — vertical scroll is expected there).
+                On desktop (lg+, where the week grid + side rail live) the calendar instead fills the
+                viewport: an adaptive height (100vh minus the page chrome above/below it) means the
+                whole working day fits the real screen rather than a fixed 750px box that overflowed
+                and forced react-big-calendar's internal scrollbar. The min-height floor keeps it
+                usable on very short windows (it falls back to a small internal scroll only there). */}
+            <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[calc(100vh-11rem)] lg:min-h-[34rem]">
                 <Calendar
                     key={isPhone ? 'day' : 'week'}
                     localizer={localizer}
@@ -902,7 +909,7 @@ export default function WorkPlanner() {
                                 {editingEvent.id ? 'Redaguoti laiką' : 'Pridėti darbo laiką'}
                             </h3>
 
-                            <form onSubmit={handleUpdateEvent}>
+                            <form onSubmit={handleUpdateEvent} onKeyDown={preventEnterSubmit}>
                                 <div className="grid grid-cols-1 gap-4 mb-6">
                                     <div>
                                         <label htmlFor="editDate" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Data</label>

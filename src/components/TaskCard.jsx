@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, Pause, ListChecks, CheckCircle2 } from 'lucide-react';
+import { Clock, Link as LinkIcon, MessageCircle, FileText, Calendar, Trash2, ArrowUp, ArrowDown, ImageIcon, Edit, Undo2, ListChecks } from 'lucide-react';
 import clsx from 'clsx';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -10,17 +10,17 @@ import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
-import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
-import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
-import StatusPill from './ui/StatusPill';
-import UserChip from './UserChip';
+import TaskStatusPill from './task/TaskStatusPill';
+import PriorityBadge from './task/PriorityBadge';
+import DeletedBadge from './task/DeletedBadge';
+import AssigneeChip from './task/AssigneeChip';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
-import { STATUS_LABELS, STATUS_STYLES } from '../utils/taskConstants';
+import { STATUS_STYLES } from '../utils/taskConstants';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 
 
@@ -207,27 +207,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         ? (task.estimatedTime ? 'praleista / planas' : 'praleista')
         : (task.estimatedTime ? 'planas' : '');
 
-    // The status pill follows the live timer (the manual pending<->in-progress toggle was
-    // removed): running -> "Vyksta", started-but-paused -> "Pristabdyta", otherwise
-    // "Nepradėtas". Completed / confirmed / unapproved keep their canonical labels.
-    let statusTone = 'neutral';
-    let statusLabel = STATUS_LABELS[taskStatus] || taskStatus;
-    let StatusIcon = null;
-    if (taskStatus === 'completed' || taskStatus === 'confirmed') {
-        statusTone = 'done';
-    } else if (taskStatus === 'unapproved') {
-        statusTone = 'pending';
-    } else if (isRunning) {
-        statusTone = 'running';
-        statusLabel = 'Vyksta';
-    } else if (taskStatus === 'in-progress' || task.timerStatus === 'paused') {
-        statusTone = 'neutral';
-        statusLabel = 'Pristabdyta';
-        StatusIcon = Pause;
-    } else {
-        statusTone = 'neutral';
-        statusLabel = 'Nepradėtas';
-    }
+    // Status pill (Vyksta / Pristabdyta / Nepradėtas / Nepatvirtinta / Patvirtinta) is derived
+    // centrally by <TaskStatusPill> so every surface reads identically; the live timer feeds it
+    // via isRunning. `taskStatus` is still used below for the card shell + unapproved styling.
 
     return (
         <>
@@ -271,21 +253,16 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 )}
                             >
                                 {task.title}
-                                {task.isDeleted && (
-                                    <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-bold bg-feedback-danger/10 text-feedback-danger rounded border border-feedback-danger/20 align-middle no-underline">
-                                        Ištrintas
-                                    </span>
-                                )}
+                                {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                             </h3>
 
                             <div className="flex items-center gap-1.5 shrink-0">
-                                <StatusPill
-                                    tone={justCompleted ? 'success' : statusTone}
-                                    icon={justCompleted ? CheckCircle2 : StatusIcon}
+                                <TaskStatusPill
+                                    task={task}
+                                    isRunning={isRunning}
+                                    justCompleted={justCompleted}
                                     className={justCompleted ? 'wz-pop' : undefined}
-                                >
-                                    {statusLabel}
-                                </StatusPill>
+                                />
                                 {isManager && (
                                     <IconButton
                                         icon={Trash2}
@@ -336,17 +313,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             color as the single meaningful accent; the rest stays quiet. */}
                         {(task.priority || task.deadline || (task.assignedUserName && (isManager || !isAssignedToMe)) || task.tag || task.managerName || task.creatorName) && (
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mb-1.5 text-caption text-ink-muted">
-                                {task.priority && (
-                                    <span
-                                        className="px-1.5 py-0.5 font-bold rounded-full whitespace-nowrap border border-black/5"
-                                        style={{
-                                            backgroundColor: getPriorityColor(task.priority),
-                                            color: getPriorityTextColor(task.priority)
-                                        }}
-                                    >
-                                        {getPriorityLabel(task.priority)}
-                                    </span>
-                                )}
+                                {task.priority && <PriorityBadge priority={task.priority} pill />}
 
                                 {task.deadline && (
                                     <span className="inline-flex items-center gap-1 whitespace-nowrap">
@@ -356,16 +323,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 )}
 
                                 {task.assignedUserName && (isManager || !isAssignedToMe) && (
-                                    <span
-                                        className="inline-flex items-center justify-center p-[2px] rounded-full"
-                                        style={{ backgroundColor: displayColor || WORKER_FALLBACK_COLOR }}
-                                    >
-                                        <UserChip
-                                            userId={task.assignedUserId}
-                                            name={task.assignedUserName}
-                                            className="gap-1 rounded-full bg-surface-card px-1.5 py-0.5 font-bold text-ink"
-                                        />
-                                    </span>
+                                    <AssigneeChip name={task.assignedUserName} color={displayColor} ring />
                                 )}
 
                                 {task.tag && (

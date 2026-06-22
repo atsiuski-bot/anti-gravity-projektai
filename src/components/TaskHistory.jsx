@@ -3,10 +3,11 @@ import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, addDoc, getDocs, updateDoc } from 'firebase/firestore';
 import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Pencil, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
+import { getPriorityLabel } from '../utils/priority';
 import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
+import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
@@ -15,8 +16,12 @@ import SessionTypeIcon from './SessionTypeIcon';
 import { addComment } from '../utils/commentActions';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
-import StatusPill from './ui/StatusPill';
 import ConfirmDialog from './ui/ConfirmDialog';
+import TaskStatusPill from './task/TaskStatusPill';
+import PriorityBadge from './task/PriorityBadge';
+import DeletedBadge from './task/DeletedBadge';
+import TimeChangedWarning from './task/TimeChangedWarning';
+import AssigneeChip from './task/AssigneeChip';
 
 // Filter field label — shared by every filter control. 12px floor (§5): was text-[10px].
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
@@ -24,39 +29,15 @@ const SELECT_CLASS =
     'bg-surface-card border border-line text-ink text-body rounded-input block w-full px-2.5 py-1.5 ' +
     'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
 
-// Status → StatusPill tone, so color is never the sole signal and contrast meets AA (§5/§8).
-function TaskStatusPill({ task }) {
-    if (task.isDeleted || task.status === 'deleted') {
-        return <StatusPill tone="danger" icon={Trash2}>Ištrinta</StatusPill>;
-    }
-    if (task.status === 'confirmed') {
-        return <StatusPill tone="running" icon={UserCheck}>Patvirtinta</StatusPill>;
-    }
-    return <StatusPill tone="neutral">Nepatvirtinta</StatusPill>;
-}
-
-// Priority badge — keeps the grayscale priority ramp (inline style from utils/priority),
-// only the text is bumped to the 12px caption floor (§5).
-function PriorityBadge({ priority }) {
-    return (
-        <span
-            className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md border border-black/5 uppercase"
-            style={{
-                backgroundColor: getPriorityColor(priority),
-                color: getPriorityTextColor(priority)
-            }}
-        >
-            {getPriorityLabel(priority)}
-        </span>
-    );
-}
-
 // `canExport` gates the CSV / AI-JSON download buttons. It is OFF by default so personal
 // report views (a worker's own "Ataskaitos", and a manager's personal "Ataskaitos") never
 // expose a self-export. Only the manager team report ("Kom. ataskaitos") opts in.
-export default function TaskHistory({ userId, users = [], canExport = false }) {
-    const { userRole, currentUser } = useAuth();
+export default function TaskHistory({ userId, users = [], canExport = false, approvalManagerUid = null }) {
+    const { userRole, currentUser, userData } = useAuth();
     const isManagerOrAdmin = isManagerRole(userRole);
+    // Scoped managers only ever read their team's archived tasks (array-contains); this surface
+    // is manager/admin-only (rendered when "all" is selected), so the effective role is never 'worker'.
+    const scoped = isScopedManager(userData);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
@@ -149,11 +130,16 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
 
         let q;
 
-        // Base Query constraints
+        // Base Query constraints. A scoped manager constrains to their team (array-contains) so
+        // the read is allowed once the rules tighten; admins/unscoped managers read broadly.
+        const scope = privateScopeConstraints({
+            userData, uid: currentUser?.uid, effectiveRole: userData?.role, ownerField: 'assignedUserId'
+        });
         const constraints = [
             where('archivedAt', '>=', startIso),
             where('archivedAt', '<=', endIso),
-            orderBy('archivedAt', 'desc')
+            orderBy('archivedAt', 'desc'),
+            ...scope
         ];
 
         q = query(collection(db, 'archived_tasks'), ...constraints);
@@ -174,6 +160,19 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
             const filteredTasks = tasksData.filter(task => {
                 if (targetUserId !== 'all' && task.assignedUserId !== targetUserId) return false;
                 if (filterTag !== 'all' && task.tag !== filterTag) return false;
+                // Approval surface: restrict the archive to this manager's tasks — ones they own
+                // as vadovas (managerId), or whose worker they manage. "Managers of the doer" comes
+                // from the task's denormalized teamManagerIds, with the worker's user doc as a
+                // fallback for any legacy row written before that denormalization.
+                if (approvalManagerUid) {
+                    const ownsAsManager = task.managerId === approvalManagerUid;
+                    let managesDoer = Array.isArray(task.teamManagerIds) && task.teamManagerIds.includes(approvalManagerUid);
+                    if (!managesDoer) {
+                        const doer = users.find(u => u.id === task.assignedUserId);
+                        managesDoer = !!doer && Array.isArray(doer.teamManagerIds) && doer.teamManagerIds.includes(approvalManagerUid);
+                    }
+                    if (!ownsAsManager && !managesDoer) return false;
+                }
                 return true;
             });
 
@@ -211,7 +210,8 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
         });
 
         return () => unsubscribe();
-    }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag; depending on the whole object would re-subscribe on each live-session user-doc update
+    }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy, scoped, currentUser, approvalManagerUid]);
 
     const handleExport = async () => {
         try {
@@ -868,9 +868,7 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                             {/* Meta chips: worker + deadline + archive date */}
                             <div className="flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <span className="px-2 py-1 rounded-full text-caption font-medium bg-surface-sunken text-ink border border-line">
-                                        {formatDisplayName(task.assignedUserName).split(' ')[0]}
-                                    </span>
+                                    <AssigneeChip name={task.assignedUserName} firstNameOnly showIcon={false} />
                                 )}
                                 {task.deadline && (
                                     <span className="inline-flex items-center gap-1 text-caption text-ink-muted">
@@ -893,9 +891,7 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                                 </span>
                                 <TimeEditButton task={task} />
                             </div>
-                            {task.timeChanged && (
-                                <div className="text-feedback-danger font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</div>
-                            )}
+                            <TimeChangedWarning task={task} />
 
                             {/* Description */}
                             {task.description && (
@@ -933,7 +929,7 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
 
                             {/* Footer: status + always-visible action buttons */}
                             <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
-                                <TaskStatusPill task={task} />
+                                {deleted ? <DeletedBadge /> : <TaskStatusPill task={task} />}
                                 <TaskActions task={task} />
                             </div>
                         </li>
@@ -1025,9 +1021,7 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         {task.assignedUserName && (
-                                            <span className="px-2 py-1 rounded-full text-caption font-medium bg-surface-sunken text-ink border border-line">
-                                                {formatDisplayName(task.assignedUserName).split(' ')[0]}
-                                            </span>
+                                            <AssigneeChip name={task.assignedUserName} firstNameOnly showIcon={false} />
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium text-ink-strong align-top font-mono">
@@ -1039,15 +1033,13 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                                             </span>
                                             <TimeEditButton task={task} />
                                         </div>
-                                        {task.timeChanged && (
-                                            <div className="text-feedback-danger font-bold text-caption uppercase tracking-wide mt-0.5">⚠ Pakeistas laikas</div>
-                                        )}
+                                        <TimeChangedWarning task={task} alignEnd className="mt-0.5" />
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         <PriorityBadge priority={task.priority} />
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
-                                        <TaskStatusPill task={task} />
+                                        {(task.isDeleted || task.status === 'deleted') ? <DeletedBadge /> : <TaskStatusPill task={task} />}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap text-right align-top">
                                         <div className="flex items-center justify-end">

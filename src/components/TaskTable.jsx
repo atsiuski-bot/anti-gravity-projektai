@@ -9,16 +9,17 @@ import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Button from './ui/Button';
-import StatusPill from './ui/StatusPill';
+import TaskStatusPill from './task/TaskStatusPill';
+import PriorityBadge from './task/PriorityBadge';
+import DeletedBadge from './task/DeletedBadge';
+import AssigneeChip from './task/AssigneeChip';
+import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
-import { WORKER_FALLBACK_COLOR } from '../utils/colors';
-import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
-import { STATUS_LABELS, STATUS_COLORS } from '../utils/taskConstants';
 import { logError } from '../utils/errorLog';
 import SessionTypeIcon from './SessionTypeIcon';
 
@@ -405,11 +406,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         (task.completed || task.isDeleted) ? 'text-ink-muted line-through' : 'text-ink-strong'
                                     )}>
                                         {task.title}
-                                        {task.isDeleted && (
-                                            <span className="ml-2 inline-block no-underline px-1.5 py-0.5 text-caption font-bold bg-red-100 text-red-700 rounded border border-red-200 align-middle" style={{ textDecoration: 'none' }}>
-                                                Ištrintas
-                                            </span>
-                                        )}
+                                        {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                     </div>
                                     {(task.managerName || task.creatorName) && (
                                         <div className="text-caption text-purple-700 font-medium mt-0.5">
@@ -417,12 +414,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         </div>
                                     )}
                                 </div>
-                                <span
-                                    className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md border border-black/5 shrink-0"
-                                    style={{ backgroundColor: getPriorityColor(task.priority), color: getPriorityTextColor(task.priority) }}
-                                >
-                                    {getPriorityLabel(task.priority)}
-                                </span>
+                                <PriorityBadge priority={task.priority} className="shrink-0" />
                             </div>
 
                             {/* Description (opens modal) */}
@@ -442,21 +434,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             {/* Metadata */}
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <span
-                                        className="inline-flex items-center justify-center p-[3px] rounded-full"
-                                        style={{ backgroundColor: task.assignedWorkerColor || WORKER_FALLBACK_COLOR }}
-                                    >
-                                        <span className="px-1.5 py-0.5 rounded-full text-caption font-bold bg-surface-card text-ink-strong border border-white/50 max-w-[160px] truncate block">
-                                            👤 {formatDisplayName(task.assignedUserName)}
-                                        </span>
-                                    </span>
+                                    <AssigneeChip name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[160px]" />
                                 )}
-                                <span className={clsx(
-                                    'px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-full',
-                                    STATUS_COLORS[task.status || 'pending']
-                                )}>
-                                    {STATUS_LABELS[task.status || 'pending']}
-                                </span>
+                                <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
                                 {task.tag && (
                                     <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-purple-100 text-purple-800 border border-purple-200">
                                         {task.tag}
@@ -494,9 +474,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     />
                                 </div>
                             )}
-                            {task.timeChanged && (
-                                <div className="mt-1 text-caption text-red-600 font-bold uppercase tracking-wide">⚠ Pakeistas laikas</div>
-                            )}
+                            <TimeChangedWarning task={task} className="mt-1" />
 
                             {/* Links + attachments */}
                             {(links.length > 0 || hasImage) && (
@@ -601,9 +579,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     <Button variant="primary" size="md" onClick={() => handleApproveTask(task.id)}>
                                         Patvirtinti
                                     </Button>
-                                )}
-                                {task.status === 'confirmed' && (
-                                    <StatusPill tone="running" icon={CheckCircle2}>Patvirtinta</StatusPill>
                                 )}
                                 <IconButton
                                     icon={MessageSquare}
@@ -714,11 +689,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 task.status === 'unapproved' ? "bg-surface-sunken text-ink" : ""
                                             )}>
                                                 {task.title}
-                                                {task.isDeleted && (
-                                                    <span className="ml-2 inline-block no-underline px-1.5 py-0.5 text-caption font-bold bg-red-100 text-red-700 rounded border border-red-200 align-middle" style={{ textDecoration: 'none' }}>
-                                                        Ištrintas
-                                                    </span>
-                                                )}
+                                                {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                             </div>
                                             {(task.managerName || task.creatorName) && (
                                                 <div className="text-caption text-purple-700 font-medium mt-0.5">
@@ -822,14 +793,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
                                             {task.assignedUserName && (
-                                                <div
-                                                    className="inline-flex items-center justify-center p-[3px] rounded-full"
-                                                    style={{ backgroundColor: task.assignedWorkerColor || WORKER_FALLBACK_COLOR }}
-                                                >
-                                                    <span className="px-1.5 py-0.5 rounded-full text-caption font-bold bg-surface-card text-ink-strong border border-white/50 max-w-[120px] truncate block">
-                                                        👤 {formatDisplayName(task.assignedUserName)}
-                                                    </span>
-                                                </div>
+                                                <AssigneeChip name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[120px]" />
                                             )}
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
@@ -843,26 +807,11 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             {formatDeadline(task.deadline)}
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
-                                            <span
-                                                className={clsx(
-                                                    "px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md border border-black/5"
-                                                )}
-                                                style={{
-                                                    backgroundColor: getPriorityColor(task.priority),
-                                                    color: getPriorityTextColor(task.priority)
-                                                }}
-                                            >
-                                                {getPriorityLabel(task.priority)}
-                                            </span>
+                                            <PriorityBadge priority={task.priority} />
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
-                                            <div className="flex flex-col gap-0.5">
-                                                <span className={clsx(
-                                                    "px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-full max-w-[100px] truncate",
-                                                    STATUS_COLORS[task.status || 'pending']
-                                                )}>
-                                                    {STATUS_LABELS[task.status || 'pending']}
-                                                </span>
+                                            <div className="flex flex-col gap-0.5 items-start">
+                                                <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
                                                 {(() => {
                                                     const totalMinutes = calculateCurrentTotalMinutes(task);
                                                     const hasStarted = task.status && task.status !== 'pending';
@@ -896,9 +845,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     }
                                                     return null;
                                                 })()}
-                                                {task.timeChanged && (
-                                                    <span className="text-red-600 font-bold text-caption uppercase tracking-wide">⚠ Pakeistas laikas</span>
-                                                )}
+                                                <TimeChangedWarning task={task} />
                                             </div>
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap text-caption text-ink-muted">

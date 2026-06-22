@@ -1,25 +1,34 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { Zap, Square, Check, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes } from '../utils/timeUtils';
+import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
+import { useUsers } from '../context/UsersContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
 import Button from './ui/Button';
 import Modal from './ui/Modal';
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) => {
+const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '' }) => {
     const textareaRef = useRef(null);
+    // Which manager confirms this work. Primary pre-selected so the common case is one tap;
+    // the worker can switch before saving. Initialized once — by the time the prompt opens the
+    // roster and the worker's team are already loaded.
+    const [selectedManagerId, setSelectedManagerId] = useState(defaultManagerId || managers[0]?.id || '');
     const totalDisplay = formatMinutesToTimeString(currentSessionMinutes);
 
     const handleSubmit = (e) => {
         e.preventDefault();
         const titleFromTextarea = textareaRef.current?.value || '';
         if (titleFromTextarea.trim()) {
-            onSubmit(titleFromTextarea);
+            const auditorId = managers.length
+                ? (selectedManagerId || defaultManagerId || managers[0]?.id || null)
+                : null;
+            onSubmit(titleFromTextarea, auditorId);
         }
     };
 
@@ -65,6 +74,46 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                     />
                 </div>
 
+                {/* Who confirms this work. Several managers → pills (single-select radio group,
+                    primary pre-selected, per design: NOT a dropdown). Exactly one → a calm,
+                    read-only line for transparency. None → nothing to choose. */}
+                {managers.length >= 2 && (
+                    <div className="mt-5">
+                        <span id="quickWorkManagerLabel" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
+                            Kuriam vadovui pateikti?
+                        </span>
+                        <div role="radiogroup" aria-labelledby="quickWorkManagerLabel" className="flex flex-wrap gap-2">
+                            {managers.map((m) => {
+                                const selected = m.id === selectedManagerId;
+                                return (
+                                    <button
+                                        key={m.id}
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={selected}
+                                        onClick={() => setSelectedManagerId(m.id)}
+                                        className={clsx(
+                                            'inline-flex min-h-touch items-center gap-2 rounded-full border px-4 text-body font-medium transition-colors',
+                                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                            selected
+                                                ? 'border-brand bg-brand/10 text-ink-strong'
+                                                : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
+                                        )}
+                                    >
+                                        {selected && <Check className="h-4 w-4 text-brand" aria-hidden="true" />}
+                                        {m.name}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
+                {managers.length === 1 && (
+                    <p className="mt-5 text-caption text-ink-muted">
+                        Bus pateikta tvirtinti: <span className="font-semibold text-ink">{managers[0].name}</span>
+                    </p>
+                )}
+
                 <div className="mt-6 flex gap-3 justify-end">
                     <Button type="button" variant="secondary" onClick={onClose}>
                         Atšaukti
@@ -81,7 +130,29 @@ QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
 
 export default function QuickWorkTimer({ compact = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
+    const { usersMap } = useUsers();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
+
+    // The worker's managers, resolved to {id, name} for the finish prompt. Managers/admins
+    // self-confirm their own quick work, so they get no picker (empty list). Source of truth is
+    // the user's team (teamManagerIds), falling back to the single legacy defaultManager.
+    const isManager = isManagerRole(userData?.role);
+    const managers = useMemo(() => {
+        if (isManager) return [];
+        const ids = Array.isArray(userData?.teamManagerIds) && userData.teamManagerIds.length
+            ? userData.teamManagerIds
+            : (userData?.defaultManager ? [userData.defaultManager] : []);
+        return ids
+            .map((id) => usersMap?.[id])
+            .filter((m) => m && !m.isDisabled)
+            .map((m) => ({ id: m.id, name: formatDisplayName(m.displayName || m.email) || m.email }));
+    }, [isManager, userData?.teamManagerIds, userData?.defaultManager, usersMap]);
+    const defaultManagerId = useMemo(() => {
+        if (userData?.defaultManager && managers.some((m) => m.id === userData.defaultManager)) {
+            return userData.defaultManager;
+        }
+        return managers[0]?.id || '';
+    }, [managers, userData?.defaultManager]);
     // useTimerState now handles generic 'quickWork' type
     const {
         isActive: isQuickWorking,
@@ -147,7 +218,7 @@ export default function QuickWorkTimer({ compact = false }) {
         setShowTitleModal(true);
     };
 
-    const handleCompleteQuickWork = useCallback(async (taskTitle) => {
+    const handleCompleteQuickWork = useCallback(async (taskTitle, auditorManagerId) => {
         if (!taskTitle || !taskTitle.trim()) return;
 
         setIsSubmitting(true);
@@ -169,8 +240,9 @@ export default function QuickWorkTimer({ compact = false }) {
                 } : userData?.workStatus
             });
 
-            // End session with custom title overrides
-            await endSession(currentUser.uid, null, { customTitle: taskTitle });
+            // End session with custom title + the chosen confirming manager (null if the worker
+            // has no managers; endSession then leaves the auditor unset, today's behavior).
+            await endSession(currentUser.uid, null, { customTitle: taskTitle, auditorManagerId: auditorManagerId || null });
             setShowTitleModal(false);
         } catch (err) {
             console.error("Error completing quick work:", err);
@@ -188,6 +260,8 @@ export default function QuickWorkTimer({ compact = false }) {
             onClose={() => setShowTitleModal(false)}
             currentSessionMinutes={currentSessionMinutes}
             isSubmitting={isSubmitting}
+            managers={managers}
+            defaultManagerId={defaultManagerId}
         />
     );
 
