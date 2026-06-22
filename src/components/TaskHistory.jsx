@@ -23,6 +23,7 @@ import DeletedBadge from './task/DeletedBadge';
 import CompletedMarker from './task/CompletedMarker';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import AssigneeChip from './task/AssigneeChip';
+import UserChip from './UserChip';
 
 // Filter field label — shared by every filter control. 12px floor (§5): was text-[10px].
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
@@ -942,7 +943,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             {(task.managerName || task.creatorName) && (
                                 <div className="text-caption text-ink-muted flex items-center gap-1">
                                     <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                    <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                    <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                 </div>
                             )}
 
@@ -952,7 +953,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                     {task.comments.map((comment, idx) => (
                                         <div key={idx} className="text-caption text-ink mb-1">
-                                            <span className="font-medium">{comment.user}:</span> {comment.text}
+                                            <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
                                         </div>
                                     ))}
                                 </div>
@@ -1039,7 +1040,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                                 <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                                 {task.comments.map((comment, idx) => (
                                                     <div key={idx} className="text-caption text-ink mb-1">
-                                                        <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                        <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
                                                     </div>
                                                 ))}
                                             </div>
@@ -1047,7 +1048,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                         {(task.managerName || task.creatorName) && (
                                             <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                 <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                                <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                                <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                             </div>
                                         )}
                                     </td>
