@@ -12,6 +12,7 @@ import Button from './ui/Button';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
@@ -404,8 +405,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 <div className="min-w-0 flex-1">
                                     <div className={clsx(
                                         'text-body font-semibold break-words',
-                                        (task.completed || task.isDeleted) ? 'text-ink-muted line-through' : 'text-ink-strong'
+                                        task.isDeleted ? 'text-ink-muted line-through' : task.completed ? 'text-ink' : 'text-ink-strong'
                                     )}>
+                                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                         {task.title}
                                         {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                     </div>
@@ -686,9 +688,10 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         <td className="px-1 py-3">
                                             <div className={clsx(
                                                 "text-body font-medium break-words rounded px-2 py-1",
-                                                (task.completed || task.isDeleted) ? "text-ink-muted line-through" : "text-ink-strong",
+                                                task.isDeleted ? "text-ink-muted line-through" : task.completed ? "text-ink" : "text-ink-strong",
                                                 task.status === 'unapproved' ? "bg-surface-sunken text-ink" : ""
                                             )}>
+                                                {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                                 {task.title}
                                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                             </div>

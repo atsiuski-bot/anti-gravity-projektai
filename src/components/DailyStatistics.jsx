@@ -7,6 +7,7 @@ import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import TaskStatusPill from './task/TaskStatusPill';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
@@ -1765,8 +1766,9 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                 <div className="flex-1">
                     <div className={clsx(
                         "font-bold text-body",
-                        task.isDeleted && "line-through text-ink-muted"
+                        task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : ""
                     )}>
+                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                         {task.title}
                     </div>
                     {task.isDeleted && <DeletedBadge />}
@@ -2036,9 +2038,10 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
                                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                                         className={clsx(
-                                                        "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                                        (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                                        "text-sm font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                        (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                                     )}>
+                                                        {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                                         {task.title}
                                                     </div>
                                                     {task.deadline && (
