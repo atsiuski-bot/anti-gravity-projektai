@@ -858,13 +858,13 @@ export default function WorkPlanner() {
             )
             }
 
-            {/* Phones/tablets keep a fixed height (day view — vertical scroll is expected there).
-                On desktop (lg+, where the week grid + side rail live) the calendar instead fills the
-                viewport: an adaptive height (100vh minus the page chrome above/below it) means the
-                whole working day fits the real screen rather than a fixed 750px box that overflowed
-                and forced react-big-calendar's internal scrollbar. The min-height floor keeps it
-                usable on very short windows (it falls back to a small internal scroll only there). */}
-            <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[calc(100vh-11rem)] lg:min-h-[34rem]">
+            {/* The calendar is given a fixed pixel height tall enough to hold the entire working
+                day at a comfortable row height. Because react-big-calendar flexes its hour rows to
+                fill exactly this box, the grid renders in full with no internal scrollbar of its
+                own. On a screen too short to show the whole box, the *page* scrolls (the container
+                simply grows past the viewport) — the calendar no longer traps the scroll. Phones
+                use the day view, which is naturally shorter. */}
+            <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[880px]">
                 <Calendar
                     key={isPhone ? 'day' : 'week'}
                     localizer={localizer}
