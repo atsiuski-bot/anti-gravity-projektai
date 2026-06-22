@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock } from 'lucide-react';
+import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ListChecks, Plus, CheckSquare, Square } from 'lucide-react';
 import { formatDisplayName } from '../utils/formatters';
+import { getChecklistProgress } from '../utils/checklistActions';
 import IconButton from './ui/IconButton';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -163,6 +164,110 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
                         {isSubmitting ? 'Saugoma...' : 'Skelbti'}
                     </button>
                 </form>
+            </div>
+        </DetailsModal>
+    );
+}
+
+export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, onToggle, onAdd, onDelete }) {
+    const [newItem, setNewItem] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const items = Array.isArray(checklist) ? checklist : [];
+    const { total, done } = getChecklistProgress(items);
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+
+    const handleAdd = async (e) => {
+        e.preventDefault();
+        const text = newItem.trim();
+        if (!text || isSubmitting) return;
+        setIsSubmitting(true);
+        setNewItem('');
+        try {
+            await onAdd?.(text);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    return (
+        <DetailsModal isOpen={isOpen} onClose={onClose} title="Kontrolinis sąrašas" icon={ListChecks}>
+            <div className="flex flex-col h-full max-h-[60vh]">
+                {total > 0 && (
+                    <div className="mb-4">
+                        <div className="mb-1 flex items-center justify-between text-caption font-medium text-ink-muted">
+                            <span>Atlikta</span>
+                            <span className="tabular-nums">{done} / {total}</span>
+                        </div>
+                        <div
+                            className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
+                            role="progressbar"
+                            aria-valuenow={pct}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-label="Kontrolinio sąrašo eiga"
+                        >
+                            <div className="h-full rounded-full bg-brand transition-all duration-base" style={{ width: `${pct}%` }} />
+                        </div>
+                    </div>
+                )}
+
+                <ul className="flex-1 overflow-y-auto space-y-2 pr-1">
+                    {items.length > 0 ? (
+                        items.map((item) => (
+                            <li key={item.id} className="flex items-stretch gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => canEdit && onToggle?.(item.id)}
+                                    disabled={!canEdit}
+                                    aria-pressed={!!item.done}
+                                    className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-gray-200 disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                >
+                                    {item.done
+                                        ? <CheckSquare className="mt-0.5 h-5 w-5 flex-shrink-0 text-brand" aria-hidden="true" />
+                                        : <Square className="mt-0.5 h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
+                                    <span className="flex-1 min-w-0">
+                                        <span className={`block break-words ${item.done ? 'text-ink-muted line-through' : 'text-ink'}`}>
+                                            {item.text}
+                                        </span>
+                                        {item.done && item.doneByName && (
+                                            <span className="mt-0.5 block text-caption text-ink-muted">
+                                                Atliko {formatDisplayName(item.doneByName)}
+                                                {item.doneAt ? ` · ${new Date(item.doneAt).toLocaleDateString('lt-LT')}` : ''}
+                                            </span>
+                                        )}
+                                    </span>
+                                </button>
+                                {canEdit && (
+                                    <IconButton
+                                        icon={Trash2}
+                                        label="Ištrinti punktą"
+                                        variant="danger"
+                                        onClick={() => onDelete?.(item.id)}
+                                    />
+                                )}
+                            </li>
+                        ))
+                    ) : (
+                        <p className="py-4 text-center text-ink-muted">Nėra punktų</p>
+                    )}
+                </ul>
+
+                {canEdit && (
+                    <form onSubmit={handleAdd} className="mt-auto flex gap-2 border-t border-line pt-4">
+                        <input
+                            type="text"
+                            value={newItem}
+                            onChange={(e) => setNewItem(e.target.value)}
+                            placeholder="Pridėti punktą..."
+                            className="flex-1 rounded-lg border border-line px-3 py-2 text-sm focus:ring-2 focus:ring-brand"
+                            disabled={isSubmitting}
+                        />
+                        <IconButton icon={Plus} label="Pridėti punktą" variant="primary" type="submit" disabled={!newItem.trim() || isSubmitting} />
+                    </form>
+                )}
             </div>
         </DetailsModal>
     );

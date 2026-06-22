@@ -3,8 +3,8 @@ import clsx from 'clsx';
 import { db } from '../firebase';
 import { doc, updateDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle } from 'lucide-react';
-import { LinksModal, CommentsModal, DescriptionModal, ImageModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks } from 'lucide-react';
+import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
@@ -17,6 +17,7 @@ import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
+import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { STATUS_LABELS, STATUS_COLORS } from '../utils/taskConstants';
 import { logError } from '../utils/errorLog';
 import SessionTypeIcon from './SessionTypeIcon';
@@ -331,6 +332,38 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         }
     };
 
+    const checklistCollectionFor = (task) => (task?.isArchived ? 'archived_tasks' : 'tasks');
+
+    const handleToggleChecklist = async (taskId, itemId) => {
+        try {
+            const task = tasks.find(t => t.id === taskId);
+            await toggleChecklistItem(taskId, itemId, currentUser, task?.checklist, checklistCollectionFor(task));
+        } catch (err) {
+            logError(err, { source: 'TaskTable.toggleChecklist' });
+            setError('Nepavyko atnaujinti sąrašo.');
+        }
+    };
+
+    const handleAddChecklist = async (taskId, text) => {
+        try {
+            const task = tasks.find(t => t.id === taskId);
+            await addChecklistItem(taskId, text, task?.checklist, checklistCollectionFor(task));
+        } catch (err) {
+            logError(err, { source: 'TaskTable.addChecklist' });
+            setError('Nepavyko pridėti punkto.');
+        }
+    };
+
+    const handleDeleteChecklist = async (taskId, itemId) => {
+        try {
+            const task = tasks.find(t => t.id === taskId);
+            await deleteChecklistItem(taskId, itemId, task?.checklist, checklistCollectionFor(task));
+        } catch (err) {
+            logError(err, { source: 'TaskTable.deleteChecklist' });
+            setError('Nepavyko ištrinti punkto.');
+        }
+    };
+
     const isWorker = role === 'worker';
     const canManage = isManagerRole(userRole);
 
@@ -493,6 +526,24 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     )}
                                 </div>
                             )}
+
+                            {/* Checklist progress */}
+                            {task.checklist && task.checklist.length > 0 && (() => {
+                                const { done, total, allDone } = getChecklistProgress(task.checklist);
+                                return (
+                                    <button
+                                        onClick={() => setActiveModal({ type: 'checklist', taskId: task.id })}
+                                        className={clsx(
+                                            'mt-3 inline-flex items-center gap-1.5 rounded-control border border-line px-2 py-1.5 min-h-touch text-caption font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                            allDone ? 'text-feedback-success' : 'text-ink-muted'
+                                        )}
+                                        aria-label={`Kontrolinis sąrašas: atlikta ${done} iš ${total}`}
+                                    >
+                                        <ListChecks className="w-4 h-4" aria-hidden="true" />
+                                        <span className="tabular-nums">{done}/{total}</span>
+                                    </button>
+                                );
+                            })()}
 
                             {/* Comments preview (last 1) + open-modal control */}
                             {task.comments && task.comments.length > 0 && (
@@ -903,6 +954,23 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     <span className="text-caption font-bold">{task.comments.length}</span>
                                                 )}
                                             </IconButton>
+                                            {task.checklist && task.checklist.length > 0 && (() => {
+                                                const { done, total, allDone } = getChecklistProgress(task.checklist);
+                                                return (
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'checklist', taskId: task.id }); }}
+                                                        className={clsx(
+                                                            'mt-1 inline-flex items-center justify-center gap-1 rounded-control px-1.5 py-1 min-h-touch text-caption font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                                                            allDone ? 'text-feedback-success' : 'text-ink-muted hover:text-ink-strong'
+                                                        )}
+                                                        title={`Kontrolinis sąrašas: ${done}/${total}`}
+                                                        aria-label={`Kontrolinis sąrašas: atlikta ${done} iš ${total}`}
+                                                    >
+                                                        <ListChecks className="w-4 h-4" aria-hidden="true" />
+                                                        <span className="tabular-nums">{done}/{total}</span>
+                                                    </button>
+                                                );
+                                            })()}
                                         </td>
                                         {canManage && (
                                             <td className="px-1 py-3 text-center">
@@ -1006,6 +1074,15 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 isOpen={activeModal.type === 'image'}
                                 onClose={() => setActiveModal({ type: null, taskId: null })}
                                 imageUrls={task.attachmentUrls && task.attachmentUrls.length > 0 ? task.attachmentUrls : (task.attachmentUrl ? [task.attachmentUrl] : [])}
+                            />
+                            <ChecklistModal
+                                isOpen={activeModal.type === 'checklist'}
+                                onClose={() => setActiveModal({ type: null, taskId: null })}
+                                checklist={task.checklist}
+                                canEdit={(canManage || currentUser?.uid === task.assignedUserId) && !task.isDeleted}
+                                onToggle={(itemId) => handleToggleChecklist(task.id, itemId)}
+                                onAdd={(text) => handleAddChecklist(task.id, text)}
+                                onDelete={(itemId) => handleDeleteChecklist(task.id, itemId)}
                             />
                             <TimeAdjustmentsModal
                                 isOpen={activeModal.type === 'timeAdjustments'}

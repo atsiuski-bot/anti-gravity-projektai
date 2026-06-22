@@ -32,16 +32,25 @@ const ProtectedRoute = ({ children }) => {
 
 function App() {
     React.useEffect(() => {
-        const req = async () => {
-            if ("Notification" in window && Notification.permission === "default") {
-                try {
-                    await Notification.requestPermission();
-                } catch (e) {
-                    console.error("Notification request failed", e);
-                }
+        // Ask for notification permission on the FIRST user interaction, not on load.
+        // A cold prompt fired during app startup (no user gesture) is increasingly
+        // ignored or auto-dismissed by browsers — and Safari requires a gesture — which
+        // burns the one-time ask and inflates the deny rate. Deferring to the first
+        // pointer/key event asks once, while the user is engaged, then unbinds.
+        if (!("Notification" in window) || Notification.permission !== "default") return undefined;
+        const events = ["pointerdown", "keydown"];
+
+        async function requestOnce() {
+            events.forEach((ev) => window.removeEventListener(ev, requestOnce));
+            try {
+                await Notification.requestPermission();
+            } catch (e) {
+                console.error("Notification request failed", e);
             }
-        };
-        req();
+        }
+
+        events.forEach((ev) => window.addEventListener(ev, requestOnce));
+        return () => events.forEach((ev) => window.removeEventListener(ev, requestOnce));
     }, []);
 
     return (
