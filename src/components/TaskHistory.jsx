@@ -144,20 +144,34 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
         q = query(collection(db, 'archived_tasks'), ...constraints);
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const tasksData = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
-                    ...data,
-                    assignedUserId: resolveUserId(data),
-                    assignedUserName: resolveUserName(data)
-                };
-            });
+        const mapDoc = (docSnap) => {
+            const data = docSnap.data();
+            return {
+                id: docSnap.id,
+                ...data,
+                assignedUserId: resolveUserId(data),
+                assignedUserName: resolveUserName(data)
+            };
+        };
+
+        // Two result sets merged by id: the team-scoped base query, plus (scoped managers only) a
+        // supplement of tasks this manager owns as the named vadovas. See vadovasQ below.
+        let teamRows = [];
+        let vadovasRows = [];
+
+        const recompute = () => {
+            // Merge + dedupe by id (a task can match BOTH sets when the worker is on the team AND
+            // this manager is its vadovas).
+            const byId = new Map();
+            [...teamRows, ...vadovasRows].forEach(t => { if (t.id) byId.set(t.id, t); });
 
             // Client-side filtering for Tag (Firestore limitation on multiple inequality/array-contains with inequalities)
             // And any other refinement
-            const filteredTasks = tasksData.filter(task => {
+            const filteredTasks = Array.from(byId.values()).filter(task => {
+                // The vadovas supplement carries no archivedAt range (single-field equality, no
+                // composite index), so bound it to the selected window here; base rows are already
+                // server-bounded and pass trivially.
+                if (task.archivedAt && (task.archivedAt < startIso || task.archivedAt > endIso)) return false;
                 if (targetUserId !== 'all' && task.assignedUserId !== targetUserId) return false;
                 if (filterTag !== 'all' && task.tag !== filterTag) return false;
                 // Approval surface: restrict the archive to this manager's tasks — ones they own
@@ -204,12 +218,35 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
             setTasks(sortedTasks);
             setLoading(false);
+        };
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            teamRows = snapshot.docs.map(mapDoc);
+            recompute();
         }, (error) => {
             console.error("Error subscribing to archived tasks:", error);
             setLoading(false);
         });
 
-        return () => unsubscribe();
+        // Vadovas supplement (scoped managers only): the team array-contains query above misses
+        // archived tasks where this manager is the named vadovas (managerId) but the worker is NOT
+        // on their team. The rules already permit reading those (canReadOwnedTask's managerId
+        // clause), so this requests exactly them — no widening to the worker's other data. No
+        // archivedAt range / orderBy, so it stays on the automatic single-field index (no composite);
+        // the date window is applied client-side in recompute. Whole-team viewers already read these
+        // via their broad query, so this is skipped for them.
+        let unsubVadovas = () => { };
+        if (scoped && currentUser?.uid) {
+            const vadovasQ = query(collection(db, 'archived_tasks'), where('managerId', '==', currentUser.uid));
+            unsubVadovas = onSnapshot(vadovasQ, (snapshot) => {
+                vadovasRows = snapshot.docs.map(mapDoc);
+                recompute();
+            }, (error) => {
+                console.error("Error subscribing to vadovas archived tasks:", error);
+            });
+        }
+
+        return () => { unsubscribe(); unsubVadovas(); };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag; depending on the whole object would re-subscribe on each live-session user-doc update
     }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy, scoped, currentUser, approvalManagerUid]);
 

@@ -206,11 +206,19 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         let activeTasks = [];
         let archivedTasks = [];
         let deletedTasks = [];
+        // A scoped manager's team listeners above are array-contains(me) on the row's denormalized
+        // teamManagerIds (the WORKER's managers), so they MISS tasks where this manager is the named
+        // vadovas (managerId) but the worker is not on their team. The security rules already allow
+        // reading those rows (canReadOwnedTask's managerId clause, firestore.rules), so a supplemental
+        // managerId== listener requests exactly them — without widening to the worker's other data.
+        // Same merge idiom as useManagerData's "Mano" section. Merged into the dedupe map below.
+        let vadovasActiveTasks = [];
+        let vadovasArchivedTasks = [];
 
         const updateAggregatedTasks = () => {
             // deduplicate tasks by ID to avoid duplicate key warnings
             const taskMap = new Map();
-            [...activeTasks, ...archivedTasks, ...deletedTasks].forEach(t => {
+            [...activeTasks, ...archivedTasks, ...deletedTasks, ...vadovasActiveTasks, ...vadovasArchivedTasks].forEach(t => {
                 if (t.id) taskMap.set(t.id, t);
             });
             const allRelevantTasks = Array.from(taskMap.values()).filter(t => {
@@ -270,6 +278,34 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             console.error("Error fetching deleted tasks:", error);
         });
 
+        // Vadovas supplement (scoped managers only): pull the active/archived tasks this manager owns
+        // as the named vadovas (managerId==me), regardless of the worker's team. Whole-team viewers
+        // (admins / unscoped managers) already read these via their broad queries, so this is skipped
+        // for them. Single-field equality stays on the automatic index — no archivedAt range here, so
+        // no composite index is needed; the day-window bounding is done client-side in splitTasks just
+        // like the team archived rows. Feeds the same dedupe map, so a task matching both is not duped.
+        let unsubVadovasActive = () => { };
+        let unsubVadovasArchived = () => { };
+        if (scoped && scopeUid) {
+            const vadovasActiveQ = query(collection(db, 'tasks'), where('managerId', '==', scopeUid));
+            unsubVadovasActive = onSnapshot(vadovasActiveQ, (snap) => {
+                vadovasActiveTasks = snap.docs
+                    .map(d => ({ id: d.id, ...d.data() }))
+                    .filter(t => !t.isDeleted && t.status !== 'deleted');
+                updateAggregatedTasks();
+            }, (error) => {
+                logError(error, { source: 'onSnapshot:vadovasActiveTasks' });
+            });
+
+            const vadovasArchivedQ = query(collection(db, 'archived_tasks'), where('managerId', '==', scopeUid));
+            unsubVadovasArchived = onSnapshot(vadovasArchivedQ, (snap) => {
+                vadovasArchivedTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                updateAggregatedTasks();
+            }, (error) => {
+                logError(error, { source: 'onSnapshot:vadovasArchivedTasks' });
+            });
+        }
+
         return () => {
             unsubBreaks();
             unsubStats();
@@ -277,6 +313,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             unsubActive();
             unsubArchived();
             unsubDeleted();
+            unsubVadovasActive();
+            unsubVadovasArchived();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag + `userRole`; depending on the whole object would re-subscribe every listener on each live-session user-doc update
     }, [selectedUserId, rangeStart, rangeEnd, scoped, scopeUid, userRole]);
