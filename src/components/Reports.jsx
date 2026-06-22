@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
+import { privateScopeConstraints } from '../utils/teamScope';
 import { addComment } from '../utils/commentActions';
 import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar } from 'lucide-react';
 
@@ -27,7 +28,7 @@ const PERIOD_PRESETS = [
 ];
 
 export default function Reports({ users, canExport = false, viewRole }) {
-    const { currentUser, userRole: authUserRole } = useAuth();
+    const { currentUser, userRole: authUserRole, userData } = useAuth();
     // viewRole lets a caller scope the whole report to a role other than the signed-in one — a
     // manager opening their OWN "Ataskaitos" passes 'worker' so it shows only personal data
     // (no team aggregates, no user dropdown, no export), identical to a worker's view.
@@ -114,14 +115,18 @@ export default function Reports({ users, canExport = false, viewRole }) {
             const startStr = dateRange.start;
             const endStr = dateRange.end;
 
-            // NOTE: We are fetching ALL data for the date range and filtering client-side
-            // because adding 'where(userId == ...)' with 'where(date >= ...)' requires a composite index
-            // which we cannot easily create for the user right now.
+            // The query constrains itself to the rows this viewer may read (own / team /
+            // whole-company) so it never requests a denied document once the rules tighten. This
+            // introduces composite indexes (owner/team field + date) — listed in firestore.indexes.json.
+            const sessScope = privateScopeConstraints({
+                userData, uid: currentUser?.uid, effectiveRole: userRole, ownerField: 'userId'
+            });
 
             const workQ = query(
                 collection(db, 'work_sessions'),
                 where('date', '>=', startStr),
-                where('date', '<=', endStr)
+                where('date', '<=', endStr),
+                ...sessScope
             );
 
             // Query break_sessions by their canonical Lithuanian-local 'date' field too, so
@@ -131,7 +136,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
             const breakQ = query(
                 collection(db, 'break_sessions'),
                 where('date', '>=', startStr),
-                where('date', '<=', endStr)
+                where('date', '<=', endStr),
+                ...sessScope
             );
 
             // Planned hours come from the calendar (work_hours): start/end ISO timestamps, no
@@ -318,26 +324,35 @@ export default function Reports({ users, canExport = false, viewRole }) {
         try {
             const isManager = isManagerRole(userRole);
 
+            // Constrain every task query to the rows this viewer may read (own / team /
+            // whole-company), so nothing is denied once the rules tighten. Adds composite indexes
+            // (assignedUserId|teamManagerIds + the range/equality field) — see firestore.indexes.json.
+            const taskScope = privateScopeConstraints({
+                userData, uid: currentUser?.uid, effectiveRole: userRole, ownerField: 'assignedUserId'
+            });
+
             // Query 1: Archived - Respects date filter
             const archivedQ = query(
                 collection(db, 'archived_tasks'),
-                where('archivedAt', '>=', new Date(taskFilters.startDate).toISOString())
+                where('archivedAt', '>=', new Date(taskFilters.startDate).toISOString()),
+                ...taskScope
             );
 
             // Query 2: Active - Completed or Confirmed
             // We fetch ALL 'completed' (unconfirmed) tasks to ensure "Done Earlier" list is complete
             // And all recent tasks based on update time
-            // NOTE: Client-side filtering handles the 'assignedUserId' check for non-managers
 
             const activeUnconfirmedQ = query(
                 collection(db, 'tasks'),
-                where('status', '==', 'completed')
+                where('status', '==', 'completed'),
+                ...taskScope
             );
 
             // Also get confirmed ones that match date filter
             const activeRecentQ = query(
                 collection(db, 'tasks'),
-                where('updatedAt', '>=', new Date(taskFilters.startDate).toISOString())
+                where('updatedAt', '>=', new Date(taskFilters.startDate).toISOString()),
+                ...taskScope
             );
 
             const [archivedSnap, activeUnconfirmedSnap, activeRecentSnap] = await Promise.all([

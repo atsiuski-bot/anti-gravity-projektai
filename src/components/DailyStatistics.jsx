@@ -3,6 +3,8 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
+import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
+import { useAuth } from '../context/AuthContext';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
@@ -15,6 +17,11 @@ import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null }) {
+    // userData carries the auth identity (role + scopedManager) the listeners scope against;
+    // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
+    const { userData } = useAuth();
+    const scoped = isScopedManager(userData);
+    const scopeUid = currentUser?.uid;
     // Managers can see everyone, Workers only themselves
     const [selectedUserId, setSelectedUserId] = useState(isManagerRole(userRole) ? 'all' : currentUser?.uid);
     const [selectedDate, setSelectedDate] = useState(getLithuanianDateString());
@@ -101,9 +108,17 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // has no firestore.indexes.json to declare). A range query (>= start, <= end) on
         // the same single field stays within that automatic index, so the period view
         // needs no extra index either — single day is just rangeStart === rangeEnd.
+        // Constrain each private listener to the rows this viewer may read (own / team /
+        // whole-company), so nothing is denied once the rules tighten. work_hours/calendar stay
+        // public and are not read here. Composite indexes (owner|team field + date/archivedAt) are
+        // declared in firestore.indexes.json.
+        const sessScope = privateScopeConstraints({ userData, uid: scopeUid, effectiveRole: userRole, ownerField: 'userId' });
+        const taskScope = privateScopeConstraints({ userData, uid: scopeUid, effectiveRole: userRole, ownerField: 'assignedUserId' });
+
         const breaksQ = query(collection(db, 'break_sessions'),
             where('date', '>=', rangeStart),
-            where('date', '<=', rangeEnd));
+            where('date', '<=', rangeEnd),
+            ...sessScope);
 
         const unsubBreaks = onSnapshot(breaksQ, (snap) => {
             const breaksData = snap.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -130,7 +145,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // orderBy on a different field would force a composite index; startTime ordering is done
         // client-side wherever it matters, e.g. the timeline below).
         const sessionsBaseQ = collection(db, 'work_sessions');
-        const sessionsQ = query(sessionsBaseQ, where('date', '>=', rangeStart), where('date', '<=', rangeEnd));
+        const sessionsQ = query(sessionsBaseQ, where('date', '>=', rangeStart), where('date', '<=', rangeEnd), ...sessScope);
 
         const unsubSessions = onSnapshot(sessionsQ, (snap) => {
             const sessionsData = snap.docs
@@ -159,11 +174,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         rangeEndDate.setDate(rangeEndDate.getDate() + 2);
         const endIso = `${rangeEndDate.toISOString().split('T')[0]}T23:59:59`;
 
-        activeQ = collection(db, 'tasks');
+        activeQ = taskScope.length ? query(collection(db, 'tasks'), ...taskScope) : collection(db, 'tasks');
         archivedQ = query(
             collection(db, 'archived_tasks'),
             where('archivedAt', '>=', startIso),
-            where('archivedAt', '<=', endIso)
+            where('archivedAt', '<=', endIso),
+            ...taskScope
         );
 
         let activeTasks = [];
@@ -224,7 +240,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         });
 
         // Listen to Deleted Tasks
-        const deletedQ = collection(db, 'deleted_tasks');
+        const deletedQ = taskScope.length ? query(collection(db, 'deleted_tasks'), ...taskScope) : collection(db, 'deleted_tasks');
 
         const unsubDeleted = onSnapshot(deletedQ, (snap) => {
             deletedTasks = snap.docs.map(d => ({ id: d.id, ...d.data(), isDeleted: true }));
@@ -241,7 +257,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             unsubArchived();
             unsubDeleted();
         };
-    }, [selectedUserId, rangeStart, rangeEnd]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag + `userRole`; depending on the whole object would re-subscribe every listener on each live-session user-doc update
+    }, [selectedUserId, rangeStart, rangeEnd, scoped, scopeUid, userRole]);
 
     // 3AM work-day window for the selected span: opens at 03:00 on the first day and closes at
     // 03:00 the day AFTER the last day. For a single day these collapse to the original

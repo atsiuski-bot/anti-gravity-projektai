@@ -7,6 +7,7 @@ import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../uti
 import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
+import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
@@ -55,8 +56,11 @@ function PriorityBadge({ priority }) {
 // report views (a worker's own "Ataskaitos", and a manager's personal "Ataskaitos") never
 // expose a self-export. Only the manager team report ("Kom. ataskaitos") opts in.
 export default function TaskHistory({ userId, users = [], canExport = false }) {
-    const { userRole, currentUser } = useAuth();
+    const { userRole, currentUser, userData } = useAuth();
     const isManagerOrAdmin = isManagerRole(userRole);
+    // Scoped managers only ever read their team's archived tasks (array-contains); this surface
+    // is manager/admin-only (rendered when "all" is selected), so the effective role is never 'worker'.
+    const scoped = isScopedManager(userData);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
@@ -149,11 +153,16 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
 
         let q;
 
-        // Base Query constraints
+        // Base Query constraints. A scoped manager constrains to their team (array-contains) so
+        // the read is allowed once the rules tighten; admins/unscoped managers read broadly.
+        const scope = privateScopeConstraints({
+            userData, uid: currentUser?.uid, effectiveRole: userData?.role, ownerField: 'assignedUserId'
+        });
         const constraints = [
             where('archivedAt', '>=', startIso),
             where('archivedAt', '<=', endIso),
-            orderBy('archivedAt', 'desc')
+            orderBy('archivedAt', 'desc'),
+            ...scope
         ];
 
         q = query(collection(db, 'archived_tasks'), ...constraints);
@@ -211,7 +220,8 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
         });
 
         return () => unsubscribe();
-    }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag; depending on the whole object would re-subscribe on each live-session user-doc update
+    }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy, scoped, currentUser]);
 
     const handleExport = async () => {
         try {
