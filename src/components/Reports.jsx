@@ -915,7 +915,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                     </div>
                                 </button>
                                 {isDayExpanded && (
-                                    <div className="bg-surface-sunken px-4 py-2 border-t border-line shadow-inner">
+                                    <div className="bg-surface-sunken px-4 py-2 border-t border-line shadow-inner animate-in fade-in slide-in-from-top-2">
                                         <div className="space-y-1 pl-2 md:pl-10">
                                             {dayData.sessions.map((session, idx) => (
                                                 <div key={session.id || idx} className={`text-caption flex items-center gap-3 py-1.5 border-b border-line last:border-0 ${session._type === 'break' ? 'text-amber-700' : session._type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
@@ -1098,7 +1098,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         </button>
 
                         {periodOpen && (
-                            <div className="border-t border-line p-3 space-y-3">
+                            <div className="border-t border-line p-3 space-y-3 animate-in fade-in slide-in-from-top-2">
                                 <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                                     {PERIOD_PRESETS.map((p) => (
                                         <Button
@@ -1316,7 +1316,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                                 </div>
                                             </div>
                                             {isExpanded && (
-                                                <div className="bg-surface-sunken border-t border-line p-3">
+                                                <div className="bg-surface-sunken border-t border-line p-3 animate-in fade-in slide-in-from-top-2">
                                                     <DayBreakdown userStats={userStats} />
                                                 </div>
                                             )}
@@ -1396,7 +1396,11 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                                     {isExpanded && (
                                                         <tr className="bg-surface-sunken">
                                                             <td colSpan="9" className="px-6 py-4">
-                                                                <DayBreakdown userStats={userStats} />
+                                                                {/* Animate the inner div, not the <tr>/<td> — transforms on
+                                                                    table rows/cells are unreliable across browsers. */}
+                                                                <div className="animate-in fade-in slide-in-from-top-2">
+                                                                    <DayBreakdown userStats={userStats} />
+                                                                </div>
                                                             </td>
                                                         </tr>
                                                     )}

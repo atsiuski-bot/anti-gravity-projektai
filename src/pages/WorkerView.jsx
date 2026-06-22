@@ -211,7 +211,7 @@ export default function WorkerView() {
         <div className="pt-1">
             <div className="mb-2 sm:mb-6">
                 {error && (
-                    <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-red-50 p-4" role="alert">
+                    <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-red-50 p-4 wz-shake" role="alert">
                         <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
                         <p className="text-body text-feedback-danger">{error}</p>
                     </div>
@@ -292,15 +292,19 @@ export default function WorkerView() {
                     </div>
                 ) : (
                     <>
-                        {/* Mobile: card stack — actions always visible (no group-hover) */}
+                        {/* Mobile: card stack — actions always visible (no group-hover).
+                            Each card eases in on mount; the wrapper is keyed so a reused card
+                            (re-sort / per-second timer tick) never re-plays its entrance — only
+                            a genuinely new or filtered-in card animates. */}
                         <div className="space-y-4 md:hidden">
                             {sortedTasks.map(task => (
-                                <TaskCard
-                                    key={task.id}
-                                    task={task}
-                                    onEdit={() => handleEditTask(task)}
-                                    role="worker"
-                                />
+                                <div key={task.id} className="animate-in fade-in slide-in-from-bottom-2">
+                                    <TaskCard
+                                        task={task}
+                                        onEdit={() => handleEditTask(task)}
+                                        role="worker"
+                                    />
+                                </div>
                             ))}
                         </div>
                         {/* Desktop: denser table */}

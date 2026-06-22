@@ -410,7 +410,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 <div
                     role="alert"
                     aria-live="assertive"
-                    className="mt-2 text-caption font-medium text-feedback-danger"
+                    className="mt-2 text-caption font-medium text-feedback-danger wz-shake"
                 >
                     {actionError}
                 </div>

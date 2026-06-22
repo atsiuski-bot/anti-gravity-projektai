@@ -172,8 +172,9 @@ Every UI change is held to these. CI/review should reject regressions.
 - **Focus:** every interactive element has a **visible focus ring** (`focus-visible:ring`,
   brand color). Nav tabs, timer buttons, logout, and icon buttons currently have none.
 - **Color is never the sole signal** (§4-A): pair with text/icon.
-- **Motion:** honor `prefers-reduced-motion`. `index.css` must include a reduce-motion media
-  query that disables `animate-pulse` / `animate-in` etc.
+- **Motion:** honor `prefers-reduced-motion`. `index.css` includes a reduce-motion media query
+  that neutralises every animation (animation/transition duration → ~0). The full motion system
+  — what to animate, with which utility, and where — is **§12**.
 - **Accessible names:** icon-only buttons need an accessible name (`aria-label` or `sr-only`
   text), not just `title=` (which does not work on touch).
 - **Language:** `<html lang="lt">`; never render raw `err.message`; no English leakage in
@@ -290,3 +291,81 @@ Each replaces a cluster of today's copy-pasted variants (see
 - [ ] On a phone, data is cards — not a horizontally-scrolling table.
 - [ ] Copy is Lithuanian, formal "Jūs", no raw error text, no English leakage.
 - [ ] Reused the canonical component (§8) instead of a new bespoke shell.
+- [ ] Motion (if any) uses a §12 utility, animates only `transform`/`opacity`, and is covered by
+  the reduced-motion guard. No bounce/elastic, no animated layout properties, no new ambient loop
+  where one already exists in that region.
+
+---
+
+## 12. Motion
+
+> The catalog of class names, durations and easings lives in
+> [`tokens.md`](./tokens.md) §7. This section is the **why and the where**. The whole system is
+> hand-rolled in `src/index.css` — **no animation library** — so timings track the motion tokens
+> and stay under our control.
+
+### 12.1 Principles
+
+1. **Calm canvas, loud state — in motion too.** Motion is quiet by default and exists to
+   *convey state* (feedback, reveal, transition, "alive"), never to decorate. If an animation
+   doesn't help the user understand what just happened or where to look, it doesn't belong.
+2. **Product register: short and out of the way.** 150–250 ms on virtually everything; the one
+   slower beat is the 300 ms whole-screen shell crossfade (§4). No page-load choreography —
+   workers are mid-task and won't wait for a show.
+3. **Subtle over showy.** Small distances (≤ 0.5rem slides, 0.95 scales), gentle opacity. A
+   field worker in bright sun should *feel* the response, not be distracted by it.
+4. **GPU-only.** Animate `transform` and `opacity` (and, one-shot, `box-shadow`). **Never**
+   animate layout properties (width, height, top, left, margin) — they cause reflow and jank on
+   low-end phones. Use the bare `transition` utility, not `transition-all`.
+5. **Ease out, never bounce.** All entrances and the completion pop use ease-out-expo
+   (`cubic-bezier(0.16, 1, 0.3, 1)`). Bounce/elastic curves are banned (they draw attention to
+   the animation itself).
+6. **Reduced motion is a gate, not a setting.** The `prefers-reduced-motion` guard in
+   `index.css` zeroes every animation here; because each effect's resting state is its natural
+   state, nothing breaks when it's disabled. Never add motion that hides information with no
+   static equivalent — color is still never the sole signal (§5).
+
+### 12.2 The four layers (where motion is applied)
+
+**A. Signature / emotional moments** — the few places the tool should *feel* responsive:
+
+- **Session change.** The whole-screen shell crossfades (300 ms); the session label (`Layout`)
+  re-keys and slides in with it, and its icon carries a soft `wz-pulse-soft` "alive" breath.
+  The floating live-time pill (`ActiveSessionReadout`) slides in and pulses the same way.
+- **Task completion.** The single celebration in the app: the card flashes a soft green halo
+  (`wz-flash-success`) and the StatusPill pops (`wz-pop`) to a green check — once, only on a
+  live not-done → done transition (never when a finished card mounts in history). No confetti;
+  this is a work tool.
+
+**B. Feedback** — acknowledge an action:
+
+- **Press.** `Button` / `IconButton` scale down slightly on `:active`.
+- **Modal / sheet entry.** The canonical `Modal` fades its scrim and settles the card
+  (`fade-in zoom-in-95`); this covers every dialog and the bottom-nav "Daugiau" sheet.
+- **Toasts & inline alerts.** Slide in from the top (`animate-in fade-in slide-in-from-top-2`).
+- **Validation error.** A one-shot `wz-shake` points the eye at the failed field/alert.
+
+**C. State reveal** — smooth an otherwise abrupt change:
+
+- **Lists.** Cards ease up on mount (`fade-in slide-in-from-bottom-2`); the wrapper is keyed so a
+  reused card never re-plays (only a genuinely new/filtered-in card animates).
+- **Accordions / expanders.** Revealed content fades + slides (`slide-in-from-top-2`) — we
+  animate opacity/transform, **not** height. Used across the summaries (`MonthlyHours`,
+  `CombinedHoursSummary`, `ActiveWorkSessions`) and the `Reports` day/period expanders.
+- **Status changes.** `StatusPill` tweens its tone color (`transition-colors`).
+
+**D. Ambient** — the only *looping* motion, kept barely perceptible:
+
+- **"Alive" pulse** (`wz-pulse-soft`) on the active-session indicator while a timer runs.
+- **Idle float** (`wz-float`) on EmptyState icons so a dead-end screen breathes.
+- **Rule: at most one ambient loop per visible region**, and always low-amplitude.
+
+### 12.3 Adding new motion
+
+- Reach for an existing §12 / `tokens.md` §7 utility before inventing a keyframe. New keyframes
+  go in `src/index.css` (so the reduced-motion guard and token timings apply), never inline.
+- Match the layer: entrance → `animate-in …`; press → `:active` scale; reveal → `fade-in
+  slide-in-from-*`; one-shot acknowledgement → a `wz-*` one-shot. Don't add an ambient loop to a
+  region that already has one.
+- On a table, animate an inner `div`, not `<tr>`/`<td>` (cross-browser transform is unreliable).
+- Verify on a ~360 px viewport **and** with "reduce motion" enabled before declaring done.

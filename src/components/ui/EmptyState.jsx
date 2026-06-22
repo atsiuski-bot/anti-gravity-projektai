@@ -9,7 +9,7 @@ export default function EmptyState({ icon: Icon, title, description, action, cla
     return (
         <div className={cn('flex flex-col items-center justify-center px-6 py-12 text-center', className)}>
             {Icon && (
-                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-surface-sunken">
+                <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-surface-sunken wz-float">
                     <Icon className="h-6 w-6 text-ink-muted" aria-hidden="true" />
                 </div>
             )}

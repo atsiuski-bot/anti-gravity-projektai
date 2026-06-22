@@ -70,7 +70,7 @@ export function ToastProvider({ children }) {
                                 key={t.id}
                                 role="status"
                                 aria-live="polite"
-                                className={`pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-card border ${tone.ring} bg-surface-card p-3 shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2`}
+                                className={`pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-card border ${tone.ring} bg-surface-card p-3 shadow-lg animate-in fade-in slide-in-from-top-2`}
                             >
                                 <Icon className={`mt-0.5 h-5 w-5 flex-shrink-0 ${tone.accent}`} aria-hidden="true" />
                                 <button

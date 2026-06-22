@@ -59,7 +59,7 @@ export default function Modal({
     return createPortal(
         <div
             className={cn(
-                'fixed inset-0 flex items-center justify-center bg-feedback-scrim p-4',
+                'fixed inset-0 flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in',
                 level === 'top' ? 'z-top' : 'z-backdrop'
             )}
             onMouseDown={(e) => {
@@ -76,6 +76,8 @@ export default function Modal({
                 className={cn(
                     'relative z-modal flex w-full flex-col overflow-hidden rounded-modal bg-surface-card shadow-xl',
                     'max-h-[90vh] focus:outline-none',
+                    // Card settles in (fade + slight zoom) as the scrim fades behind it.
+                    'animate-in fade-in zoom-in-95',
                     SIZES[size] || SIZES.md,
                     className
                 )}
