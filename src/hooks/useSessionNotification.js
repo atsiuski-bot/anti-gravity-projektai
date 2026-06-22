@@ -1,112 +1,79 @@
 import { useEffect, useRef } from 'react';
+import { showLocalNotification, clearLocalNotification } from '../utils/localNotify';
 
 /**
- * Custom hook to manage system notifications for active work sessions
- * Creates persistent notifications that appear in the device's status bar
+ * Custom hook to manage system notifications for active work sessions.
+ * Shows a persistent status-bar notification reflecting the current session state.
+ *
+ * Notifications are raised via the shared helper (showLocalNotification), which routes through a
+ * service worker where the page `new Notification(...)` constructor is unavailable (Android /
+ * installed PWA) — the previous direct-constructor version threw and was silently swallowed on
+ * exactly the worker's primary device. A single stable `tag` ('work-session') means each new
+ * state replaces the prior one.
+ *
+ * `enabled` is the per-user profile toggle: when off, no session notification is shown and any
+ * live one is cleared.
  */
 export function useSessionNotification({ isQuickWorking, isCalling, isTakingBreak, isRunning, enabled = true }) {
-    const notificationRef = useRef(null);
     const previousStateRef = useRef(null);
 
     useEffect(() => {
-        // Check if notifications are supported and permitted
-        if (!('Notification' in window)) {
-            console.warn('This browser does not support notifications');
-            return;
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return undefined;
         }
 
-        if (Notification.permission !== 'granted') {
-            return; // Don't try to show notifications if not granted
-        }
-
-        // Respect the per-user profile toggle: tear down any live notification and show none.
+        // Respect the per-user profile toggle: clear any live notification and show none.
         if (!enabled) {
-            if (notificationRef.current) {
-                notificationRef.current.close();
-                notificationRef.current = null;
-            }
+            clearLocalNotification('work-session');
             previousStateRef.current = null;
-            return;
+            return undefined;
         }
 
-        // Determine current session state
+        // Determine current session state + copy (emoji stays in the TEXT, never the icon).
         let currentState = null;
         let title = '';
         let body = '';
-        let icon = '⚡'; // Default icon
 
         if (isQuickWorking) {
             currentState = 'quickWork';
-            title = 'Skubus Darbas Aktyvus';
-            body = 'Greitasis darbas vykdomas';
-            icon = '⚡';
+            title = 'Skubus darbas aktyvus';
+            body = '⚡ Greitasis darbas vykdomas';
         } else if (isCalling) {
             currentState = 'call';
-            title = 'Skambutis Aktyvus';
-            body = 'Skambinimo sesija vykdoma';
-            icon = '📞';
+            title = 'Skambutis aktyvus';
+            body = '📞 Skambinimo sesija vykdoma';
         } else if (isTakingBreak) {
             currentState = 'break';
             title = 'Pertrauka';
-            body = 'Dabar pertraukos metu';
-            icon = '☕';
+            body = '☕ Dabar pertraukos metu';
         } else if (isRunning) {
             currentState = 'working';
-            title = 'Darbas Vykdomas';
-            body = 'Darbo sesija aktyvi';
-            icon = '💼';
+            title = 'Darbas vykdomas';
+            body = '💼 Darbo sesija aktyvi';
         }
 
-        // If state changed
         if (currentState !== previousStateRef.current) {
-            // Close existing notification
-            if (notificationRef.current) {
-                notificationRef.current.close();
-                notificationRef.current = null;
-            }
-
-            // Create new notification if session is active
             if (currentState) {
-                try {
-                    const notification = new Notification(title, {
-                        body: body,
-                        icon: icon,
-                        tag: 'work-session', // Using tag ensures only one notification at a time
-                        requireInteraction: true, // Keep notification visible until dismissed
-                        silent: true, // Don't play sound on update
-                        badge: icon,
-                    });
-
-                    notificationRef.current = notification;
-
-                    // Handle notification click - focus the app
-                    notification.onclick = () => {
-                        window.focus();
-                        notification.close();
-                    };
-                } catch (error) {
-                    console.error('Failed to create notification:', error);
-                }
+                // Same tag replaces any prior session notification — no need to close first.
+                showLocalNotification(title, {
+                    body,
+                    tag: 'work-session',
+                    requireInteraction: true,
+                    silent: true,
+                    onClick: () => { try { window.focus(); } catch { /* ignore */ } }
+                });
+            } else {
+                // Session ended — clear the lingering notification.
+                clearLocalNotification('work-session');
             }
-
             previousStateRef.current = currentState;
         }
 
-        // Cleanup: close notification when component unmounts or all sessions end
-        return () => {
-            if (!currentState && notificationRef.current) {
-                notificationRef.current.close();
-                notificationRef.current = null;
-            }
-        };
+        return undefined;
     }, [isQuickWorking, isCalling, isTakingBreak, isRunning, enabled]);
 
-    // Cleanup on unmount
+    // Clear the session notification on unmount.
     useEffect(() => {
-        return () => {
-            if (notificationRef.current) {
-                notificationRef.current.close();
-            }
-        };
+        return () => { clearLocalNotification('work-session'); };
     }, []);
 }

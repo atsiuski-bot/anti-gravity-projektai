@@ -77,8 +77,10 @@ async function sendToUser(uid, notification, data) {
 
     // DATA-ONLY payload (title/body live in `data`, not a `notification` block). On web a
     // `notification` message is auto-displayed by the browser AND still wakes the SW, which
-    // double-fires. Data-only gives the SW (background) and onMessage (foreground) one
-    // deterministic place each to render, with no duplicate. All values must be strings.
+    // double-fires. Data-only gives the SW (firebase-messaging-sw.js) one deterministic place to
+    // render the BACKGROUND case. The FOREGROUND (tab-open) case is covered separately by the
+    // app's Firestore listeners (an in-app toast — see ADR 0004), not an FCM onMessage handler.
+    // All values must be strings.
     const resp = await getMessaging().sendEachForMulticast({
         tokens,
         data: {
@@ -87,7 +89,8 @@ async function sendToUser(uid, notification, data) {
             ...(data || {})
         },
         webpush: {
-            fcmOptions: { link: '/' }
+            // Honor the per-message deep link (the SW notificationclick reads data.link too).
+            fcmOptions: { link: (data && data.link) || '/' }
         }
     });
 
@@ -116,8 +119,14 @@ function copyForRequestNotification(n) {
             return { title: 'Užduotis atlikta', body: title };
         case 'task_approval':
             return { title: 'Nauja užduotis tvirtinimui', body: title };
-        case 'new_comment':
-            return { title: 'Naujas komentaras', body: n.commentText ? `${title}: ${n.commentText}` : title };
+        case 'new_comment': {
+            // User-authored text crosses the app boundary onto the lockscreen — collapse
+            // whitespace and clamp length so it can't be weaponised into a huge/multiline body.
+            const snippet = n.commentText
+                ? String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)
+                : '';
+            return { title: 'Naujas komentaras', body: snippet ? `${title}: ${snippet}` : title };
+        }
         default:
             return { title: 'WORKZ pranešimas', body: title };
     }
@@ -130,7 +139,11 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
     try {
         await sendToUser(n.recipientId, { title, body }, {
             type: String(n.type || ''),
-            taskId: String(n.taskId || '')
+            taskId: String(n.taskId || ''),
+            // Per-event id → unique notification tag (so distinct alerts don't collapse).
+            notifId: String(event.params.id),
+            // Manager approvals/alerts surface under the team-tasks tab.
+            link: '/?tab=tasks'
         });
     } catch (err) {
         logger.error('notifyOnRequestNotification failed', { err: err.message });
@@ -143,7 +156,10 @@ exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', as
     const who = r.userName || 'Darbuotojas';
     try {
         await sendToUser(r.managerId, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
-            type: 'calendar_request'
+            type: 'calendar_request',
+            // Per-event id → unique tag, so multiple pending requests don't collapse onto one slot.
+            notifId: String(event.params.id),
+            link: '/?tab=team-calendar'
         });
     } catch (err) {
         logger.error('notifyOnCalendarRequest failed', { err: err.message });

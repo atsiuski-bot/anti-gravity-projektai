@@ -129,18 +129,30 @@ export function NotificationsProvider({ children }) {
     }, [unreadCount, notificationsEnabled]);
 
     // Register this device's FCM token once permission is granted (now or when the user grants
-    // it via the first-interaction prompt, which dispatches 'notifications-granted'). Skip when
-    // the user has notifications off — no token means this device is not targeted for new push.
-    // (Already-registered tokens are also gated server-side in sendToUser, so push stops there
-    // too even if a token lingers from before the toggle was turned off.)
+    // it via the first-interaction prompt, which dispatches 'notifications-granted'). Also
+    // re-register on every return to the foreground: FCM tokens rotate, and registering only at
+    // login would let a rotated token silently go stale (it gets pruned server-side on the next
+    // send failure and never re-added). arrayUnion dedupes, so re-registration is cheap.
+    //
+    // Skipped entirely when the user has notifications off — no token means this device is not
+    // targeted for new push. (Already-registered tokens are also gated server-side in
+    // sendToUser, so push stops there too even if a token lingers from before the toggle.)
     useEffect(() => {
         if (!currentUser || !notificationsEnabled) return undefined;
-        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-            registerFcmToken(currentUser);
-        }
+        const tryRegister = () => {
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                registerFcmToken(currentUser);
+            }
+        };
+        tryRegister();
         const onGranted = () => registerFcmToken(currentUser);
+        const onVisible = () => { if (document.visibilityState === 'visible') tryRegister(); };
         window.addEventListener('notifications-granted', onGranted);
-        return () => window.removeEventListener('notifications-granted', onGranted);
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            window.removeEventListener('notifications-granted', onGranted);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
     }, [currentUser, notificationsEnabled]);
 
     return (

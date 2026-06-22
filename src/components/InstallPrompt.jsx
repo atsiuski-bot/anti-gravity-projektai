@@ -117,6 +117,13 @@ export default function InstallPrompt() {
                             Kad naudotumėtės programėle patogiau, pridėkite ją prie pagrindinio ekrano.
                         </p>
 
+                        {isIOS && (
+                            <p className="text-caption text-ink-muted">
+                                „iPhone“ ir „iPad“ pranešimai apie naujus prašymus bei laiko priminimus
+                                veikia tik įdiegus programėlę į pradžios ekraną.
+                            </p>
+                        )}
+
                         {isIOS ? (
                             <ol className="space-y-3 text-body font-medium text-ink-strong">
                                 <li className="flex items-center gap-3">
