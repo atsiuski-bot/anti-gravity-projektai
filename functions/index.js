@@ -12,7 +12,8 @@
  * plan (2nd-gen functions run on Cloud Run). Deploy: `firebase deploy --only functions`.
  */
 
-const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } = require('firebase-functions/v2/firestore');
+const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted, onDocumentWritten } = require('firebase-functions/v2/firestore');
+const { onCall, HttpsError } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const logger = require('firebase-functions/logger');
 const { initializeApp } = require('firebase-admin/app');
@@ -225,4 +226,149 @@ exports.cleanupAttachmentsOnArchivedDelete = onDocumentDeleted('archived_tasks/{
     const sibling = await db.collection('tasks').doc(event.params.id).get();
     if (sibling.exists) return;
     await deleteObjects(urlsOf(event.data && event.data.data()));
+});
+
+// ---------------------------------------------------------------------------
+// Scoped-manager hierarchy — team stamping (ADR 0005)
+//
+// Each private row (a task / archived task / work or break session) carries a denormalized
+// `teamManagerIds` array — a copy of its OWNER's current managers. The security rules read this
+// field to decide whether a scoped manager may see the row, and the client queries it with
+// `array-contains`. Stamping is done HERE (server-side) rather than at the ~13 scattered client
+// write-sites: one authoritative place, impossible to miss a site. The failure mode is
+// fail-closed — an unstamped row is hidden from managers (owner + admin still see it via their
+// own predicates), never leaked.
+//
+// Owner field per collection: tasks/archived_tasks/deleted_tasks use `assignedUserId`;
+// work_sessions/break_sessions use `userId`.
+// ---------------------------------------------------------------------------
+
+// The owner's current managers (the visibility key). Missing/!array => [].
+async function teamManagerIdsFor(uid) {
+    if (!uid) return [];
+    try {
+        const snap = await db.collection('users').doc(uid).get();
+        if (!snap.exists) return [];
+        const arr = snap.data().teamManagerIds;
+        return Array.isArray(arr) ? arr.filter(Boolean) : [];
+    } catch (err) {
+        logger.warn('teamManagerIdsFor failed', { uid, err: err.message });
+        return [];
+    }
+}
+
+// Order-insensitive equality — the array is a set, so reordering is not a change.
+function sameSet(a, b) {
+    if (a.length !== b.length) return false;
+    const sb = new Set(b);
+    return a.every((x) => sb.has(x));
+}
+
+// Ensure a written task/archived-task row carries its assignee's current team. Fires on
+// create AND update (so a REASSIGNMENT re-stamps), but skips the expensive user-doc read on a
+// routine edit whose owner is unchanged and that already has a stamp — keeping the hot path
+// (status/timer/checklist edits) free of extra reads. Idempotent: the write it makes re-fires
+// this trigger, but the second pass finds the stamp already correct and stops (no loop).
+async function stampOwnedDoc(event, ownerField) {
+    const after = event.data && event.data.after;
+    if (!after || !after.exists) return; // deleted — nothing to stamp
+    const data = after.data();
+    const ownerUid = data[ownerField];
+    if (!ownerUid) return;
+
+    const before = event.data.before && event.data.before.exists ? event.data.before.data() : null;
+    const ownerChanged = !before || before[ownerField] !== ownerUid;
+    const hasStamp = Array.isArray(data.teamManagerIds);
+    if (!ownerChanged && hasStamp) return; // routine edit, already stamped — no work
+
+    const desired = await teamManagerIdsFor(ownerUid);
+    if (sameSet(hasStamp ? data.teamManagerIds : [], desired)) return; // already correct
+    await after.ref.update({ teamManagerIds: desired });
+}
+
+// Stamp a freshly created session from its owner (userId). Owner never changes on a session,
+// so onCreate is enough. Skip the write when the worker has no managers (leave the field absent
+// — the rules' .get(...,[]) default treats absent as "no manager sees it").
+async function stampOwnedCreate(event, ownerField) {
+    const snap = event.data;
+    if (!snap) return;
+    const ownerUid = snap.data()[ownerField];
+    if (!ownerUid) return;
+    const desired = await teamManagerIdsFor(ownerUid);
+    if (!desired.length) return;
+    await snap.ref.update({ teamManagerIds: desired });
+}
+
+exports.stampTeamOnTaskWrite = onDocumentWritten('tasks/{id}', (event) => stampOwnedDoc(event, 'assignedUserId'));
+exports.stampTeamOnArchivedTaskWrite = onDocumentWritten('archived_tasks/{id}', (event) => stampOwnedDoc(event, 'assignedUserId'));
+exports.stampTeamOnWorkSessionCreate = onDocumentCreated('work_sessions/{id}', (event) => stampOwnedCreate(event, 'userId'));
+exports.stampTeamOnBreakSessionCreate = onDocumentCreated('break_sessions/{id}', (event) => stampOwnedCreate(event, 'userId'));
+
+// Re-stamp ALL of a user's private rows to a desired team set. Used by the membership-change
+// trigger and the one-time backfill. Chunked via BulkWriter; idempotent (skips rows already
+// correct), so it is safe to run repeatedly. Returns the number of rows actually rewritten.
+const OWNED_COLLECTIONS = [
+    { col: 'tasks', field: 'assignedUserId' },
+    { col: 'archived_tasks', field: 'assignedUserId' },
+    { col: 'deleted_tasks', field: 'assignedUserId' },
+    { col: 'work_sessions', field: 'userId' },
+    { col: 'break_sessions', field: 'userId' },
+];
+
+async function restampUserRows(uid, desired) {
+    if (!uid) return 0;
+    const writer = db.bulkWriter();
+    let count = 0;
+    for (const { col, field } of OWNED_COLLECTIONS) {
+        const snap = await db.collection(col).where(field, '==', uid).get();
+        snap.forEach((docSnap) => {
+            const cur = docSnap.data().teamManagerIds;
+            if (sameSet(Array.isArray(cur) ? cur : [], desired)) return; // already correct
+            writer.update(docSnap.ref, { teamManagerIds: desired });
+            count++;
+        });
+    }
+    await writer.close();
+    return count;
+}
+
+// When an admin changes a worker's managers, rewrite that worker's whole history so the new
+// manager sees their PAST rows too (full-history decision, ADR 0005). Membership changes are
+// rare, so the fan-out (bounded by one worker's rows) is acceptable.
+exports.restampTeamOnUserChange = onDocumentUpdated('users/{id}', async (event) => {
+    const before = event.data.before.data() || {};
+    const after = event.data.after.data() || {};
+    const beforeIds = Array.isArray(before.teamManagerIds) ? before.teamManagerIds : [];
+    const afterIds = Array.isArray(after.teamManagerIds) ? after.teamManagerIds : [];
+    if (sameSet(beforeIds, afterIds)) return; // membership unchanged
+    try {
+        const count = await restampUserRows(event.params.id, afterIds);
+        logger.info('restampTeamOnUserChange done', { uid: event.params.id, count });
+    } catch (err) {
+        logger.error('restampTeamOnUserChange failed', { uid: event.params.id, err: err.message });
+    }
+});
+
+// One-time (idempotent) migration: stamp every user's existing rows from their current
+// teamManagerIds. Admin-only callable — run once after deploying these functions and assigning
+// memberships. Safe to re-run.
+exports.backfillTeamStamps = onCall(async (request) => {
+    const callerUid = request.auth && request.auth.uid;
+    if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
+    const callerSnap = await db.collection('users').doc(callerUid).get();
+    const role = callerSnap.exists ? callerSnap.data().role : '';
+    if (role !== 'admin' && role !== 'Administratorius') {
+        throw new HttpsError('permission-denied', 'Admin only.');
+    }
+    const usersSnap = await db.collection('users').get();
+    let users = 0;
+    let rows = 0;
+    for (const u of usersSnap.docs) {
+        const arr = u.data().teamManagerIds;
+        const desired = Array.isArray(arr) ? arr.filter(Boolean) : [];
+        rows += await restampUserRows(u.id, desired);
+        users += 1;
+    }
+    logger.info('backfillTeamStamps done', { users, rows });
+    return { users, rows };
 });

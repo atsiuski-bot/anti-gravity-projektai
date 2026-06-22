@@ -1,12 +1,20 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, query, orderBy, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, where, doc, getDoc, setDoc } from 'firebase/firestore';
 import { useUsers } from '../context/UsersContext';
+import { useAuth } from '../context/AuthContext';
+import { isScopedManager } from '../utils/teamScope';
 import { logError } from '../utils/errorLog';
 
 export const useManagerData = (currentUser) => {
     const { users: usersList, usersMap, loading: usersLoading } = useUsers();
+    const { userData } = useAuth();
+    // A scoped manager only ever queries their team's tasks (array-contains on the denormalized
+    // teamManagerIds); admins and unscoped managers keep the broad team-wide read.
+    const scoped = isScopedManager(userData);
+    const uid = currentUser?.uid;
     const [tasks, setTasks] = useState([]);
+    const [ownTasks, setOwnTasks] = useState([]);
     const [manualTaskOrder, setManualTaskOrder] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -48,7 +56,10 @@ export const useManagerData = (currentUser) => {
         setLoading(true);
 
         try {
-            const q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
+            const scope = scoped && uid ? where('teamManagerIds', 'array-contains', uid) : null;
+            const q = scope
+                ? query(collection(db, 'tasks'), scope, orderBy('createdAt', 'desc'))
+                : query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
             unsubscribe = onSnapshot(q, (snapshot) => {
                 let tasksData = snapshot.docs.map(doc => ({
                     id: doc.id,
@@ -84,10 +95,25 @@ export const useManagerData = (currentUser) => {
         }
 
         return () => unsubscribe();
-    }, [usersLoading, usersMap]);
+    }, [usersLoading, usersMap, scoped, uid]);
+
+    // The manager's OWN tasks (the "Mano" section). A scoped manager's team listener above is
+    // array-contains(me), which by design does NOT include the manager's own rows (those carry
+    // the manager's OWN managers, not themselves) — so my-tasks needs its own owner-scoped query.
+    // Run it for everyone (cheap, and keeps my-tasks identical across scoped/unscoped managers).
+    useEffect(() => {
+        if (!uid) return;
+        const q = query(collection(db, 'tasks'), where('assignedUserId', '==', uid));
+        const unsub = onSnapshot(q, (snapshot) => {
+            setOwnTasks(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+        }, (err) => {
+            logError(err, { source: 'onSnapshot:managerOwnTasks' });
+        });
+        return () => unsub();
+    }, [uid]);
 
     // Filter out disabled users for the UI
     const users = usersList.filter(u => !u.isDisabled);
 
-    return { tasks, users, allUsers: usersList, manualTaskOrder, saveManualOrder, error, loading };
+    return { tasks, ownTasks, users, allUsers: usersList, manualTaskOrder, saveManualOrder, error, loading };
 };

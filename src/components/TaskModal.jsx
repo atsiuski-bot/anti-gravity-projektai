@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, Link2, Calendar, MessageSquare } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { getPriorityOptions, getPriorityLabel, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
@@ -164,6 +165,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     }, [templates, workers]);
 
     const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.id === currentUser.uid);
+
+    // The assignee picker is narrowed to a scoped manager's own team (plus themselves), so they
+    // can only assign work to their people — mirrored by the server-side write rule. Admins and
+    // unscoped managers keep the full roster. (Managers/templates list above stays full.)
+    const assignableWorkers = useMemo(
+        () => scopeRoster(workers, userData, currentUser?.uid),
+        [workers, userData, currentUser]
+    );
 
     useEffect(() => {
         if (task) {
@@ -877,7 +886,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
                                 >
                                     <option value="">Priskirti vykdytoją...</option>
-                                    {workers.map(worker => (
+                                    {assignableWorkers.map(worker => (
                                         <option key={worker.id} value={worker.id}>
                                             {formatDisplayName(worker.displayName || worker.email)}
                                         </option>
