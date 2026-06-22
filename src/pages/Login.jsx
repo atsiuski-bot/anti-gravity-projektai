@@ -73,7 +73,7 @@ export default function Login() {
                 <p className="mb-6 text-body text-ink-muted">Prisijunkite, kad matytumėte savo užduotis</p>
 
                 {error && (
-                    <div role="alert" className="mb-4 rounded-control bg-red-50 p-3 text-body text-red-700">
+                    <div role="alert" className="mb-4 rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">
                         {error}
                     </div>
                 )}

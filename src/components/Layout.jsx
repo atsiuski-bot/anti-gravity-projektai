@@ -73,6 +73,14 @@ export default function Layout({ children }) {
     const session = getSessionColors(effectiveSessionType);
     const bgColor = session?.shell || IDLE_SHELL;
 
+    // The session shells are theme-INVARIANT (a light tint, or saturated red), so text riding
+    // DIRECTLY on the shell (not on a card) must not use the themeable ink token — in dark mode
+    // ink inverts to near-white and would vanish on a still-light shell. We expose the active
+    // shell kind so `.wz-on-shell` text pins to a fixed color (dark on the light shells, white on
+    // the red quick-work shell). When idle there is no attribute, so themeable ink applies on the
+    // themed canvas. (ADR 0008; the bare page heading is the main consumer — DESIGN_SYSTEM §4-D.)
+    const onShellKind = session ? (effectiveSessionType === 'quickWork' ? 'red' : 'light') : undefined;
+
     // Use system notification hook to show notification in phone's status bar.
     // Honor the per-user toggle from the profile page (missing field => enabled).
     useSessionNotification({
@@ -84,7 +92,7 @@ export default function Layout({ children }) {
     });
 
     return (
-        <div className={cn('min-h-screen transition-colors duration-slow', bgColor, !isDesktop && 'pb-navclear sm:pb-navclear-lg')}>
+        <div data-session-shell={onShellKind} className={cn('min-h-screen transition-colors duration-slow', bgColor, !isDesktop && 'pb-navclear sm:pb-navclear-lg')}>
             {/* Offline banner — neutral slate, NOT red, so it never collides with the
                 quick-work shell (DESIGN_SYSTEM §4-C). Paired with a wifi-off icon. */}
             {!isOnline && (

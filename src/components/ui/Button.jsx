@@ -16,8 +16,8 @@ import { cn } from '../../utils/cn';
 const VARIANTS = {
     primary: 'bg-brand text-white hover:bg-brand-hover shadow-sm',
     secondary: 'bg-surface-card text-ink border border-line hover:bg-surface-sunken',
-    success: 'bg-feedback-success text-white hover:bg-green-700 shadow-sm',
-    danger: 'bg-feedback-danger text-white hover:bg-red-700 shadow-sm',
+    success: 'bg-feedback-success text-white hover:bg-feedback-success-hover shadow-sm',
+    danger: 'bg-feedback-danger text-white hover:bg-feedback-danger-hover shadow-sm',
     ghost: 'text-ink-muted hover:text-ink hover:bg-surface-sunken',
 };
 

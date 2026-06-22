@@ -136,9 +136,12 @@ export default function CombinedHoursSummary() {
             let plannedHours = 0;
             let workedMinutes = 0;
 
-            // Calculate weekly scheduled hours (Calendar)
+            // Calculate weekly scheduled hours (Calendar). Approved leave (any absence type, all of
+            // which keep isVacation true) is time OFF, not planned work — counting it would inflate
+            // the planned bar and make a holiday week read as planned hours, the same exclusion
+            // Reports and DailyWorkProgress already apply.
             workHours.forEach(wh => {
-                if (wh.userId === user.id) {
+                if (wh.userId === user.id && !wh.isVacation) {
                     const whStart = new Date(wh.start);
                     const whEnd = new Date(wh.end);
                     const duration = (whEnd - whStart) / (1000 * 60 * 60);

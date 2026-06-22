@@ -16,6 +16,7 @@ import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
+import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
 
 // Map raw / Firebase errors to friendly Lithuanian copy (DESIGN_SYSTEM §10).
@@ -960,31 +961,27 @@ export default function WorkPlanner() {
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label htmlFor="editStart" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Pradžia</label>
-                                            <select
+                                            <Select
                                                 id="editStart"
                                                 value={editingEvent.startStr}
-                                                onChange={(e) => setEditingEvent({ ...editingEvent, startStr: e.target.value })}
-                                                className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none bg-surface-card appearance-none"
-                                                required
-                                            >
-                                                {timeOptions.map(time => (
-                                                    <option key={`start-${time}`} value={time}>{time}</option>
-                                                ))}
-                                            </select>
+                                                onChange={(val) => setEditingEvent({ ...editingEvent, startStr: val })}
+                                                options={timeOptions.map((time) => ({ value: time, label: time }))}
+                                                label="Pradžia"
+                                                ariaLabel="Pradžia"
+                                                alwaysSheet
+                                            />
                                         </div>
                                         <div>
                                             <label htmlFor="editEnd" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Pabaiga</label>
-                                            <select
+                                            <Select
                                                 id="editEnd"
                                                 value={editingEvent.endStr}
-                                                onChange={(e) => setEditingEvent({ ...editingEvent, endStr: e.target.value })}
-                                                className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none bg-surface-card appearance-none"
-                                                required
-                                            >
-                                                {timeOptions.map(time => (
-                                                    <option key={`end-${time}`} value={time}>{time}</option>
-                                                ))}
-                                            </select>
+                                                onChange={(val) => setEditingEvent({ ...editingEvent, endStr: val })}
+                                                options={timeOptions.map((time) => ({ value: time, label: time }))}
+                                                label="Pabaiga"
+                                                ariaLabel="Pabaiga"
+                                                alwaysSheet
+                                            />
                                         </div>
                                     </div>
                                 </div>

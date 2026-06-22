@@ -217,7 +217,7 @@ export default function SessionEditModal({
                                 icon={Trash2}
                                 onClick={() => setConfirmingDelete(true)}
                                 disabled={busy}
-                                className="text-feedback-danger hover:bg-red-50 mr-auto"
+                                className="text-feedback-danger hover:bg-feedback-danger-soft mr-auto"
                             >
                                 Ištrinti
                             </Button>
@@ -320,7 +320,7 @@ export default function SessionEditModal({
                             </div>
                         )}
                         {dateChanged && (
-                            <div className="mt-2 flex items-start gap-2 text-caption text-amber-700">
+                            <div className="mt-2 flex items-start gap-2 text-caption text-feedback-warning-text">
                                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                                 <span>Ši sesija persikels į kitą dieną ({derived.date}).</span>
                             </div>
@@ -343,7 +343,7 @@ export default function SessionEditModal({
                     </div>
 
                     {(liveError || error) && (
-                        <div className="flex items-start gap-2 rounded-control bg-red-50 p-3 text-body text-red-700">
+                        <div className="flex items-start gap-2 rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">
                             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
                             <span>{error || liveError}</span>
                         </div>

@@ -4,12 +4,14 @@ import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'fire
 import { formatMinutesToTimeString, formatMinutesToHHMM, formatSignedMinutesToHHMM, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints } from '../utils/teamScope';
+import { absenceLabel } from '../utils/absence';
 import { addComment } from '../utils/commentActions';
 import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
+import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
@@ -33,6 +35,12 @@ const PERIOD_PRESETS = [
     { id: '3months', label: '3 mėnesiai' },
     { id: 'year', label: 'Šie metai' },
 ];
+
+// Skirtumas (worked − planned) is meaningful only when the plan plausibly covers the worked span;
+// a token plan against a full month produces a fake "+164:00 surplus". A worker counts as "planned"
+// only when their plan is at least this fraction of worked time. Shared by the CSV Skirtumas gate
+// and the on-screen coverage indicator so the two surfaces never disagree on who has a usable plan.
+const PLAN_COVERAGE_FLOOR = 0.25;
 
 export default function Reports({ users, canExport = false, viewRole }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
@@ -715,11 +723,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
         const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
         const rows = [];
-        // Skirtumas (worked − planned) is meaningful only when the calendar plan plausibly
-        // covers the worked span. A token plan (one stray slot) against a full month of work
-        // produces a fake "+164:00 surplus"; require the plan to be at least this fraction of
-        // worked time before emitting a signed delta, otherwise label it "Nepakanka plano".
-        const PLAN_COVERAGE_FLOOR = 0.25;
 
         // Exclude test/founder accounts from the payroll export unless the manager opted in, so
         // team totals and the per-worker list aren't skewed by non-production rows.
@@ -863,7 +866,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                         onChange={() => handleToggleConfirm(task)}
                                         disabled={task.isArchived}
                                         aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
-                                        className="w-5 h-5 rounded border-line text-green-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                        className="w-5 h-5 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                     />
                                     <span className="text-caption text-ink">{isConfirmed ? 'Patvirtinta' : 'Nepatvirtinta'}</span>
                                 </label>
@@ -930,7 +933,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             <TaskRow
                                 key={task.id}
                                 task={task}
-                                rowClassName={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-blue-50'}`}
+                                rowClassName={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-feedback-info-soft'}`}
                                 showConfirm
                                 confirmChecked={isConfirmed}
                                 confirmDisabled={task.isArchived}
@@ -961,7 +964,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 }
                                 timeCell={
                                     <>
-                                        <span className="text-blue-600">{task.estimatedTime || '-'}</span>
+                                        <span className="text-brand">{task.estimatedTime || '-'}</span>
                                         <span className="text-ink-muted mx-1">/</span>
                                         <span className="text-ink-strong">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
                                     </>
@@ -972,7 +975,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                             label="Grąžinti užduotį"
                                             variant="primary"
                                             onClick={() => handleRevert(task)}
-                                            className="ml-auto bg-transparent text-blue-600 hover:bg-blue-50"
+                                            className="ml-auto bg-transparent text-brand hover:bg-brand-soft"
                                         >
                                             <RotateCcw className="w-4 h-4" aria-hidden="true" />
                                         </IconButton>
@@ -1005,9 +1008,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
         const actionTimeLabel = new Date(item.createdAt).toLocaleString('lt-LT');
 
         const getActionColor = (action) => {
-            if (action === 'add') return 'text-green-600 bg-green-50 border-green-200';
-            if (action === 'delete') return 'text-red-600 bg-red-50 border-red-200';
-            return 'text-blue-600 bg-blue-50 border-blue-200';
+            if (action === 'add') return 'text-feedback-success bg-feedback-success-soft border-feedback-success-border';
+            if (action === 'delete') return 'text-feedback-danger bg-feedback-danger-soft border-feedback-danger-border';
+            return 'text-feedback-info bg-feedback-info-soft border-feedback-info-border';
         };
         const getActionText = (action) => {
             if (action === 'add') return 'Pridėjo';
@@ -1021,22 +1024,22 @@ export default function Reports({ users, canExport = false, viewRole }) {
         let typeColor = "text-ink-muted";
         if (evt.isVacation) {
             TypeIcon = null;
-            typeLabel = "Atostogos";
-            typeColor = "text-amber-500";
+            typeLabel = absenceLabel(evt) || "Atostogos";
+            typeColor = "text-feedback-warning";
         } else if (evt.isWorkFromHome) {
             TypeIcon = null;
             typeLabel = "Nuotolinis darbas";
-            typeColor = "text-blue-500";
+            typeColor = "text-feedback-info";
         }
 
         let statusLabel = "Laukiama";
-        let statusColor = "bg-yellow-100 text-yellow-800";
+        let statusColor = "bg-feedback-warning-soft text-feedback-warning-text";
         if (item.status === 'approved') {
             statusLabel = "Patvirtinta";
-            statusColor = "bg-green-100 text-green-800";
+            statusColor = "bg-feedback-success-soft text-feedback-success-text";
         } else if (item.status === 'declined') {
             statusLabel = "Atmesta";
-            statusColor = "bg-red-100 text-red-800";
+            statusColor = "bg-feedback-danger-soft text-feedback-danger-text";
         }
 
         const getManagerName = (sysId) => {
@@ -1066,21 +1069,21 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
                     <button
                         onClick={() => setActiveTab('report')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
                     >
                         Darbo ataskaita
                     </button>
                     <button
                         onClick={() => setActiveTab('approval')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
                     >
                         Patvirtinimas
                     </button>
                     <button
                         onClick={() => setActiveTab('calendar-history')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
                     >
                         Kalendoriaus pakeitimų istorija
@@ -1093,15 +1096,15 @@ export default function Reports({ users, canExport = false, viewRole }) {
             {error && (
                 <div
                     role="alert"
-                    className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-red-50 p-4"
+                    className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-4"
                 >
                     <AlertTriangle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                    <p className="text-body text-red-700">{error}</p>
+                    <p className="text-body text-feedback-danger-text">{error}</p>
                     <button
                         type="button"
                         onClick={() => setError('')}
                         aria-label="Uždaryti pranešimą"
-                        className="ml-auto text-caption font-semibold text-red-700 underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                     >
                         Uždaryti
                     </button>
@@ -1207,7 +1210,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         const testIds = new Set((users || []).filter((u) => u.isTest).map((u) => u.id));
                         const rows = showTestUsers ? workData : workData.filter((u) => !testIds.has(u.userId));
                         if (rows.length === 0) return null;
-                        const withPlan = rows.filter((u) => u.plannedMinutes > 0).length;
+                        // Count only workers whose plan actually covers the span — the same predicate
+                        // the CSV's Skirtumas gate uses — so the indicator and the export agree on
+                        // who has a usable plan (a thin real plan that the CSV blanks is NOT counted).
+                        const withPlan = rows.filter((u) =>
+                            u.plannedMinutes > 0 &&
+                            (u.totalMinutes <= 0 || u.plannedMinutes >= PLAN_COVERAGE_FLOOR * u.totalMinutes)
+                        ).length;
                         return (
                             <p className="mb-3 px-1 text-caption text-ink-muted">
                                 Planą turi {withPlan} iš {rows.length} darbuotojų
@@ -1465,44 +1474,46 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         </div>
                         <div>
                             <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Žymą</label>
-                            <select
+                            <Select
                                 value={taskFilters.tag}
-                                onChange={(e) => setTaskFilters(prev => ({ ...prev, tag: e.target.value }))}
-                                className="w-full border border-line rounded-control px-3 py-2 text-sm"
-                            >
-                                <option value="all">Visos Žymos</option>
-                                {TASK_TAGS.map(tag => (
-                                    <option key={tag} value={tag}>{tag}</option>
-                                ))}
-                            </select>
+                                onChange={(val) => setTaskFilters(prev => ({ ...prev, tag: val }))}
+                                options={[
+                                    { value: 'all', label: 'Visos Žymos' },
+                                    ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+                                ]}
+                                label="Žyma"
+                                ariaLabel="Filtruoti pagal žymą"
+                            />
                         </div>
                         {(isManagerRole(userRole)) && (
                             <div>
                                 <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Vykdytoją</label>
-                                <select
+                                <Select
                                     value={taskFilters.userId}
-                                    onChange={(e) => setTaskFilters(prev => ({ ...prev, userId: e.target.value }))}
-                                    className="w-full border border-line rounded-control px-3 py-2 text-sm"
-                                >
-                                    <option value="all">Visi Vykdytojai</option>
-                                    {users?.map(u => (
-                                        <option key={u.id} value={u.id}>{formatDisplayName(u.displayName || u.email)}</option>
-                                    ))}
-                                </select>
+                                    onChange={(val) => setTaskFilters(prev => ({ ...prev, userId: val }))}
+                                    options={[
+                                        { value: 'all', label: 'Visi Vykdytojai' },
+                                        ...(users?.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) })) || []),
+                                    ]}
+                                    label="Vykdytojas"
+                                    ariaLabel="Filtruoti pagal vykdytoją"
+                                />
                             </div>
                         )}
                         <div className="col-span-2 md:col-span-4 flex justify-end">
-                            <select
+                            <Select
                                 value={taskSort}
-                                onChange={(e) => setTaskSort(e.target.value)}
-                                aria-label="Rūšiuoti užduotis"
-                                className="border border-line rounded-control px-3 py-2 text-sm bg-surface-sunken"
-                            >
-                                <option value="date_desc">Naujausi viršuje</option>
-                                <option value="date_asc">Seniausi viršuje</option>
-                                <option value="time_desc">Ilgiausiai trukę viršuje</option>
-                                <option value="time_asc">Trumpiausiai trukę viršuje</option>
-                            </select>
+                                onChange={setTaskSort}
+                                options={[
+                                    { value: 'date_desc', label: 'Naujausi viršuje' },
+                                    { value: 'date_asc', label: 'Seniausi viršuje' },
+                                    { value: 'time_desc', label: 'Ilgiausiai trukę viršuje' },
+                                    { value: 'time_asc', label: 'Trumpiausiai trukę viršuje' },
+                                ]}
+                                label="Rūšiavimas"
+                                ariaLabel="Rūšiuoti užduotis"
+                                className="w-full sm:w-64"
+                            />
                         </div>
                     </div>
 

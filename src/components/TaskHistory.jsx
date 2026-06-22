@@ -16,6 +16,7 @@ import SessionTypeIcon from './SessionTypeIcon';
 import { addComment } from '../utils/commentActions';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
+import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
@@ -599,14 +600,14 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleExportCSV}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <FileText className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti (CSV)
                         </button>
                         <button
                             onClick={handleExport}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <Download className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti AI analizei (JSON)
@@ -700,36 +701,32 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 {(isManagerOrAdmin && userId === 'all') && (
                     <div className="flex flex-col gap-1 min-w-[150px]">
                         <label className={FILTER_LABEL_CLASS}>Vykdytojas</label>
-                        <select
+                        <Select
                             value={filterUser}
-                            onChange={(e) => setFilterUser(e.target.value)}
-                            aria-label="Vykdytojas"
-                            className={SELECT_CLASS}
-                        >
-                            <option value="all">Visi</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>
-                                    {formatDisplayName(u.displayName || u.email)}
-                                </option>
-                            ))}
-                        </select>
+                            onChange={setFilterUser}
+                            options={[
+                                { value: 'all', label: 'Visi' },
+                                ...users.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) })),
+                            ]}
+                            label="Vykdytojas"
+                            ariaLabel="Filtruoti pagal vykdytoją"
+                        />
                     </div>
                 )}
 
                 {/* Tag Filter */}
                 <div className="flex flex-col gap-1 min-w-[120px]">
                     <label className={FILTER_LABEL_CLASS}>Žyma</label>
-                    <select
+                    <Select
                         value={filterTag}
-                        onChange={(e) => setFilterTag(e.target.value)}
-                        aria-label="Žyma"
-                        className={SELECT_CLASS}
-                    >
-                        <option value="all">Visos</option>
-                        {TASK_TAGS.map(tag => (
-                            <option key={tag} value={tag}>{tag}</option>
-                        ))}
-                    </select>
+                        onChange={setFilterTag}
+                        options={[
+                            { value: 'all', label: 'Visos' },
+                            ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+                        ]}
+                        label="Žyma"
+                        ariaLabel="Filtruoti pagal žymą"
+                    />
                 </div>
 
                 {/* Sort — a segmented switch (Pagal datą / Pagal būseną) rather than a dropdown,

@@ -49,26 +49,26 @@ export default function AdminBootstrap() {
     if (loading || hasAdmins || userRole === 'admin') return null;
 
     return (
-        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6 mx-4 sm:mx-auto max-w-7xl mt-4">
+        <div className="bg-feedback-warning-soft border-l-4 border-feedback-warning-border p-4 mb-6 mx-4 sm:mx-auto max-w-7xl mt-4">
             <div className="flex items-center justify-between">
                 <div className="flex items-center">
-                    <ShieldCheck className="h-6 w-6 text-yellow-600 mr-3" />
+                    <ShieldCheck className="h-6 w-6 text-feedback-warning mr-3" />
                     <div>
-                        <h3 className="text-sm font-medium text-yellow-800">Nėra administratorių</h3>
-                        <p className="text-sm text-yellow-700">
+                        <h3 className="text-sm font-medium text-feedback-warning-text">Nėra administratorių</h3>
+                        <p className="text-sm text-feedback-warning-text">
                             Sistemoje šiuo metu nėra administratorių. Galite tapti administratoriumi.
                         </p>
                     </div>
                 </div>
                 <Button
                     onClick={handleBecomeAdmin}
-                    className="ml-4 bg-yellow-600 text-white hover:bg-yellow-700 shadow-sm"
+                    className="ml-4 bg-feedback-warning text-white hover:bg-feedback-warning-hover shadow-sm"
                 >
                     Tapti administratoriumi
                 </Button>
             </div>
             {error && (
-                <p role="alert" aria-live="assertive" className="mt-3 text-sm font-medium text-red-700">
+                <p role="alert" aria-live="assertive" className="mt-3 text-sm font-medium text-feedback-danger-text">
                     {error}
                 </p>
             )}

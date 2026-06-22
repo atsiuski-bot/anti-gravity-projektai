@@ -217,7 +217,7 @@ export default function AllUsersCalendar() {
             {error && (
                 <div
                     role="alert"
-                    className="mx-4 mt-4 flex items-start gap-2 rounded-card border border-red-200 bg-red-50 px-3 py-2.5 text-body text-feedback-danger"
+                    className="mx-4 mt-4 flex items-start gap-2 rounded-card border border-feedback-danger-border bg-feedback-danger-soft px-3 py-2.5 text-body text-feedback-danger"
                 >
                     <AlertTriangle className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                     <span>{error}</span>
@@ -386,7 +386,7 @@ export default function AllUsersCalendar() {
                                             {status && (
                                                 <span className={cn(
                                                     'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-caption font-medium flex-shrink-0',
-                                                    event.isVacation ? 'bg-brand-soft text-brand-hover' : 'bg-amber-100 text-amber-800'
+                                                    event.isVacation ? 'bg-brand-soft text-brand-hover' : 'bg-feedback-warning-soft text-feedback-warning-text'
                                                 )}>
                                                     <status.Icon className="w-3.5 h-3.5" aria-hidden="true" />
                                                     {status.label}
