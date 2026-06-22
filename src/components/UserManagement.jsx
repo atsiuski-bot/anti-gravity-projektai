@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { UserCog, ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
@@ -204,6 +204,25 @@ function BlockButton({ user, isSelf, onRequest, fullWidth }) {
     );
 }
 
+// Permanent delete. Admin-only and kept visually subordinate to Block (the everyday action):
+// a quiet danger-toned ghost button so the reversible toggle stays dominant over the
+// irreversible one (§8). Self-deletion is disabled.
+function DeleteButton({ user, isSelf, onRequest, fullWidth }) {
+    return (
+        <Button
+            variant="ghost"
+            size="md"
+            icon={Trash2}
+            disabled={isSelf}
+            fullWidth={fullWidth}
+            className="text-feedback-danger"
+            onClick={() => onRequest(user)}
+        >
+            Ištrinti
+        </Button>
+    );
+}
+
 function ColorSlider({ label, labelClass, value, onChange, track, accent }) {
     return (
         <div>
@@ -253,6 +272,12 @@ export default function UserManagement() {
     // Block/unblock confirmation (replaces window.confirm — §8)
     const [blockTarget, setBlockTarget] = useState(null);
     const [blocking, setBlocking] = useState(false);
+
+    // Delete confirmation. Permanent removal of the user's Firestore record — admin-only and
+    // separate from the reversible block toggle, so it never sits on the same button (§8).
+    const [deleteTarget, setDeleteTarget] = useState(null);
+    const [deleting, setDeleting] = useState(false);
+    const isAdmin = userRole === 'admin';
 
     useEffect(() => {
         let unsubscribe = () => { };
@@ -494,6 +519,51 @@ export default function UserManagement() {
         }
     };
 
+    const requestDelete = (user) => {
+        if (user.id === currentUser?.uid) {
+            setError('Negalite ištrinti savęs.');
+            return;
+        }
+        // Same floor as block/demotion: never remove the last active admin.
+        if (user.role === 'admin' && !user.isDisabled && countAdmins() <= 1) {
+            setError('Negalima ištrinti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+            return;
+        }
+        setError('');
+        setDeleteTarget(user);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return;
+        const user = deleteTarget;
+        // Backstop the last-admin floor in case the count changed while the dialog was open.
+        if (user.role === 'admin' && !user.isDisabled && countAdmins() <= 1) {
+            setError('Negalima ištrinti paskutinio administratoriaus. Pirma suteikite administratoriaus teises kitam vartotojui.');
+            setDeleteTarget(null);
+            return;
+        }
+        setDeleting(true);
+        try {
+            // Settle any open session first so no work segment is lost and no ghost "working"
+            // flag is left on a now-deleted record (same reasoning as block).
+            if (hasOpenSession(user)) {
+                await closeActiveSessionForUser(user);
+            }
+            await deleteDoc(doc(db, 'users', user.id));
+            setDeleteTarget(null);
+        } catch (err) {
+            console.error("Error deleting user:", err);
+            if (err.code === 'permission-denied') {
+                setError(`Neturite teisių. Jūsų rolė: ${userRole}.`);
+            } else {
+                setError('Nepavyko ištrinti vartotojo. Bandykite dar kartą.');
+            }
+            setDeleteTarget(null);
+        } finally {
+            setDeleting(false);
+        }
+    };
+
     return (
         <Card as="section" className="mb-8 overflow-hidden">
             <div className="border-b border-line bg-surface-sunken p-6">
@@ -566,6 +636,14 @@ export default function UserManagement() {
                                 onRequest={requestBlock}
                                 fullWidth
                             />
+                            {isAdmin && (
+                                <DeleteButton
+                                    user={user}
+                                    isSelf={user.id === currentUser?.uid}
+                                    onRequest={requestDelete}
+                                    fullWidth
+                                />
+                            )}
                         </div>
                     </li>
                 ))}
@@ -624,6 +702,13 @@ export default function UserManagement() {
                                             isSelf={user.id === currentUser?.uid}
                                             onRequest={requestBlock}
                                         />
+                                        {isAdmin && (
+                                            <DeleteButton
+                                                user={user}
+                                                isSelf={user.id === currentUser?.uid}
+                                                onRequest={requestDelete}
+                                            />
+                                        )}
                                     </div>
                                 </td>
                             </tr>
@@ -711,6 +796,21 @@ export default function UserManagement() {
                     loading={blocking}
                     onConfirm={confirmBlock}
                     onCancel={() => setBlockTarget(null)}
+                />
+            )}
+
+            {/* Permanent delete confirmation (irreversible — admin-only) */}
+            {deleteTarget && (
+                <ConfirmDialog
+                    open
+                    title="Ištrinti vartotoją?"
+                    message={`Vartotojas: ${formatDisplayName(deleteTarget.displayName) || deleteTarget.email}.`}
+                    warning="Vartotojo įrašas bus visam laikui pašalintas. Šio veiksmo atšaukti negalima."
+                    confirmLabel="Ištrinti"
+                    variant="danger"
+                    loading={deleting}
+                    onConfirm={confirmDelete}
+                    onCancel={() => setDeleteTarget(null)}
                 />
             )}
         </Card>
