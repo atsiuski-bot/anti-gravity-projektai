@@ -6,6 +6,7 @@ import { Clock, AlertTriangle } from 'lucide-react';
 import { formatDisplayName, parseTimeToHours } from '../utils/formatters';
 import { getLithuanianDateString, getLithuanianWeekday } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
+import UserChip from './UserChip';
 
 export default function DailyHoursSummary() {
     const [users, setUsers] = useState([]);
@@ -184,9 +185,7 @@ export default function DailyHoursSummary() {
                                 className="w-3 h-3 rounded-full flex-shrink-0"
                                 style={{ backgroundColor: userData.color }}
                             />
-                            <span className="text-sm font-medium text-ink-strong truncate" title={userData.name}>
-                                {userData.name}
-                            </span>
+                            <UserChip userId={userId} name={userData.name} className="text-sm font-medium text-ink-strong truncate" />
                         </div>
                         <dl className="mt-3 grid grid-cols-1 gap-1.5">
                             {dayNames.map((day) => {
@@ -247,9 +246,7 @@ export default function DailyHoursSummary() {
                                             className="w-3 h-3 rounded-full flex-shrink-0"
                                             style={{ backgroundColor: userData.color }}
                                         />
-                                        <span className="text-sm font-medium text-ink-strong truncate max-w-[120px]" title={userData.name}>
-                                            {userData.name}
-                                        </span>
+                                        <UserChip userId={userId} name={userData.name} className="text-sm font-medium text-ink-strong truncate max-w-[120px]" />
                                     </div>
                                 </th>
                                 {dayNames.map((day, idx) => {

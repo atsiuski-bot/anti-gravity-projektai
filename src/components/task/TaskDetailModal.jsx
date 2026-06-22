@@ -10,7 +10,7 @@ import DeletedBadge from './DeletedBadge';
 import AssigneeChip from './AssigneeChip';
 import TimeChangedWarning from './TimeChangedWarning';
 import SessionTypeIcon from '../SessionTypeIcon';
-import { formatDisplayName } from '../../utils/formatters';
+import UserChip from '../UserChip';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes } from '../../utils/timeUtils';
 import { getChecklistProgress } from '../../utils/checklistActions';
 
@@ -141,7 +141,7 @@ export default function TaskDetailModal({
                     </MetaRow>
                     {showManagerLine && managerName && (
                         <MetaRow icon={UserCog} label="Vadovas">
-                            <span className="font-medium text-purple-700">{formatDisplayName(managerName)}</span>
+                            <UserChip userId={task.managerId || task.creatorId} name={managerName} className="font-medium text-purple-700" />
                         </MetaRow>
                     )}
                     <MetaRow icon={Calendar} label="Atlikti iki">

@@ -12,13 +12,15 @@ import Button from './ui/Button';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import TaskDetailModal from './task/TaskDetailModal';
+import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
-import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { isManagerRole } from '../utils/formatters';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
@@ -427,14 +429,15 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 <div className="min-w-0 flex-1">
                                     <div className={clsx(
                                         'text-body font-semibold break-words',
-                                        (task.completed || task.isDeleted) ? 'text-ink-muted line-through' : 'text-ink-strong'
+                                        task.isDeleted ? 'text-ink-muted line-through' : task.completed ? 'text-ink' : 'text-ink-strong'
                                     )}>
+                                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                         {task.title}
                                         {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                     </div>
                                     {(task.managerName || task.creatorName) && (
                                         <div className="text-caption text-purple-700 font-medium mt-0.5">
-                                            Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
+                                            Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
                                         </div>
                                     )}
                                 </div>
@@ -556,7 +559,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             <div className="text-caption">
                                                 <div className="flex items-center gap-1.5">
                                                     <MessageCircle className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" aria-hidden="true" />
-                                                    <span className="font-semibold text-indigo-700">{formatDisplayName(last.user)}</span>
+                                                    <UserChip userId={last.userId} name={last.user} className="font-semibold text-indigo-700" />
                                                     <span className="text-ink-muted">{new Date(last.createdAt).toLocaleDateString()}</span>
                                                 </div>
                                                 <div className="text-ink leading-snug break-words pl-4 line-clamp-2">{last.text}</div>
@@ -721,15 +724,16 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             onClick={(e) => { e.stopPropagation(); openDetail(task); }}
                                             className={clsx(
                                                 "block w-full break-words rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                                (task.completed || task.isDeleted) ? "text-ink-muted line-through" : "text-ink-strong"
+                                                task.isDeleted ? "text-ink-muted line-through" : task.completed ? "text-ink" : "text-ink-strong"
                                             )}
                                         >
+                                            {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                             {task.title}
                                             {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                         </button>
                                         {showManagerLine && (task.managerName || task.creatorName) && (
                                             <div className="mt-0.5 text-caption font-medium text-purple-700">
-                                                Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
+                                                Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
                                             </div>
                                         )}
                                         <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">

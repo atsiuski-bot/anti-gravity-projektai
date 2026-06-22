@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
-import { formatDisplayName } from '../utils/formatters';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
+import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
     const dialogRef = useRef(null);
@@ -147,7 +147,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                                 <div key={idx} className={`bg-surface-sunken p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
                                     <div className="flex justify-between items-start mb-2 gap-2">
                                         <span className="font-medium text-ink-strong">
-                                            {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : formatDisplayName(comment.user)}
+                                            {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : <UserChip userId={comment.userId} name={comment.user} />}
                                         </span>
                                         <div className="flex items-center gap-1 flex-shrink-0">
                                             <span className="text-xs text-ink-muted">
@@ -279,7 +279,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                                         </span>
                                         {item.done && item.doneByName && (
                                             <span className="mt-0.5 block text-caption text-ink-muted">
-                                                Atliko {formatDisplayName(item.doneByName)}
+                                                Atliko <UserChip userId={item.doneBy} name={item.doneByName} />
                                                 {item.doneAt ? ` · ${new Date(item.doneAt).toLocaleDateString('lt-LT')}` : ''}
                                             </span>
                                         )}
