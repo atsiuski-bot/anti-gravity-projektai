@@ -674,7 +674,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
             return `${sign}${formatMinutesToHHMM(Math.abs(rounded))}`;
         };
 
-        const headers = ['Darbuotojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
+        const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
         const rows = [];
 
         workData.forEach(userStats => {
@@ -959,7 +959,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
     // Derive the display fields for one calendar-history entry. Computed once and shared by the
     // mobile card and the desktop table so both layouts stay in sync (ISSUE #17b).
     const deriveCalendarEntry = (item) => {
-        const workerLabel = item.userName || "Nežinomas darbuotojas";
+        const workerLabel = item.userName || "Nežinomas vykdytojas";
 
         const eventStart = item.requestedEvent?.start || item.originalEvent?.start || null;
         const eventEnd = item.requestedEvent?.end || item.originalEvent?.end || null;
@@ -1253,7 +1253,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                             <div className="p-4 space-y-3">
                                                 <div className="flex items-start justify-between gap-2">
                                                     <div className="min-w-0">
-                                                        <div className="text-caption uppercase font-bold tracking-wide text-ink-muted">Darbuotojas</div>
+                                                        <div className="text-caption uppercase font-bold tracking-wide text-ink-muted">Vykdytojas</div>
                                                         <div className="text-body font-bold text-ink-strong truncate">{workerName}</div>
                                                     </div>
                                                     <IconButton
@@ -1496,7 +1496,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 <table className="min-w-full divide-y divide-line">
                                     <thead className="bg-surface-sunken">
                                         <tr>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Darbuotojas</th>
+                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Vykdytojas</th>
                                             <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Data ir laikas (kalendoriuje)</th>
                                             <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Veiksmas / tipas</th>
                                             <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Keitimo laikas</th>
@@ -1592,13 +1592,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         </div>
                         {(isManagerRole(userRole)) && (
                             <div>
-                                <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Darbuotoją</label>
+                                <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Vykdytoją</label>
                                 <select
                                     value={taskFilters.userId}
                                     onChange={(e) => setTaskFilters(prev => ({ ...prev, userId: e.target.value }))}
                                     className="w-full border border-line rounded-control px-3 py-2 text-sm"
                                 >
-                                    <option value="all">Visi Darbuotojai</option>
+                                    <option value="all">Visi Vykdytojai</option>
                                     {users?.map(u => (
                                         <option key={u.id} value={u.id}>{formatDisplayName(u.displayName || u.email)}</option>
                                     ))}

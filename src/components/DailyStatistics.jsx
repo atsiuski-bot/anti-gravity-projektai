@@ -780,7 +780,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     taskTitle: `🕒 Laiko korekcija: ${task.title || 'Užduotis'}`,
                     reason: trimmedReason,
                     userId: task.assignedUserId || task.creatorId || 'unknown',
-                    userName: task.assignedUserName || task.creatorName || 'Nežinomas darbuotojas',
+                    userName: task.assignedUserName || task.creatorName || 'Nežinomas vykdytojas',
                     adjustedBy: currentUser?.uid || 'unknown',
                     startTime: completedDateDate.toISOString(),
                     endTime: new Date().toISOString(),
@@ -868,7 +868,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <select
                             value={selectedUserId}
                             onChange={(e) => setSelectedUserId(e.target.value)}
-                            aria-label="Darbuotojas"
+                            aria-label="Vykdytojas"
                             className="pl-8 pr-3 py-1.5 border border-line rounded-control focus:ring-2 focus:ring-brand text-caption bg-surface-card"
                         >
                             <option value="all">Už visą komandą</option>
@@ -1085,7 +1085,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <table className="w-full md:w-auto divide-y divide-line text-sm">
                             <thead className="bg-surface-sunken">
                                 <tr>
-                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-ink-muted">Darbuotojas</th>
+                                    <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-left font-medium text-ink-muted">Vykdytojas</th>
                                     <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-ink-muted">Pradžia</th>
                                     <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-center font-medium text-ink-muted">Pabaiga</th>
                                     <th scope="col" className="px-4 py-3 md:px-2 md:py-2 text-right font-medium text-ink-muted">Pertraukos</th>
