@@ -2,14 +2,11 @@ import { memo, useMemo } from 'react';
 import { Plus } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
-import { formatDisplayName } from '../utils/formatters';
 import { getNavSections } from '../config/navTabs';
 import Button from './ui/Button';
-import Avatar from './ui/Avatar';
 import QuickWorkTimer from './QuickWorkTimer';
 import CallTimer from './CallTimer';
 import BreakTimer from './BreakTimer';
-import ActiveSessionReadout from './ActiveSessionReadout';
 import { cn } from '../utils/cn';
 
 const ROLE_NAMES = {
@@ -32,7 +29,7 @@ const navItemBase =
  * why the session timers must not be duplicated in the DOM.
  */
 function SideRail() {
-    const { currentUser, userData, userRole } = useAuth();
+    const { currentUser, userRole } = useAuth();
     const { activeTab, setActiveTab } = useNavigation();
     const sections = useMemo(() => getNavSections(userRole), [userRole]);
 
@@ -92,44 +89,16 @@ function SideRail() {
                 ))}
             </nav>
 
-            {/* Fixed footer: session work-controls + account, pinned to the bottom. The
-                "Darbo valdikliai" heading is dropped — the icons + labels are self-explanatory. */}
+            {/* Fixed footer: session work-controls, pinned to the bottom. The active-session
+                readout and the account/avatar entry both moved to the top bar (AppHeader); the
+                "Darbo valdikliai" heading stays dropped — the icons + labels are self-explanatory. */}
             <div className="shrink-0 px-2.5 pb-2.5">
                 <div className="flex flex-col gap-1.5 border-t border-line pt-2">
-                    <div className="flex justify-center">
-                        <ActiveSessionReadout />
-                    </div>
                     <div className="flex items-start justify-around gap-1">
                         <QuickWorkTimer compact />
                         <CallTimer compact />
                         <BreakTimer currentUser={currentUser} compact />
                     </div>
-                </div>
-
-                {/* Account — opens the profile/settings page (role, install and logout all live
-                    there now, per the 2026-06-22 decision), mirroring the off-desktop avatar header. */}
-                <div className="mt-2 border-t border-line pt-2">
-                    <button
-                        type="button"
-                        onClick={() => setActiveTab('profile')}
-                        aria-label="Atidaryti profilį"
-                        aria-current={activeTab === 'profile' ? 'page' : undefined}
-                        className={cn(
-                            'flex min-h-touch w-full items-center gap-2 rounded-control px-2 py-1 text-left transition-colors',
-                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset',
-                            activeTab === 'profile' ? 'bg-brand-soft text-brand-hover' : 'text-ink hover:bg-surface-sunken'
-                        )}
-                    >
-                        <Avatar
-                            src={userData?.photoURL || currentUser?.photoURL}
-                            name={currentUser?.displayName}
-                            email={currentUser?.email}
-                            size="sm"
-                        />
-                        <span className="min-w-0 flex-1 truncate text-body font-medium">
-                            {formatDisplayName(currentUser?.displayName)}
-                        </span>
-                    </button>
                 </div>
             </div>
         </div>

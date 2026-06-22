@@ -1,7 +1,7 @@
 import { where } from 'firebase/firestore';
 
 /**
- * Scoped overseer hierarchy (ADR 0005 + ADR 0006).
+ * Scoped overseer hierarchy (ADR 0005 + ADR 0007).
  *
  * Four ranks: admin > seniorManager (Vyr. vadovas) > manager (Vadovas) > worker (Vykdytojas).
  *

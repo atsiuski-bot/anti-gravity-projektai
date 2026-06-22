@@ -9,7 +9,7 @@ import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
-import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
 import { DeleteConfirmationModal, CommentsModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import SessionTypeIcon from './SessionTypeIcon';
@@ -20,8 +20,10 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import AssigneeChip from './task/AssigneeChip';
+import UserChip from './UserChip';
 
 // Filter field label — shared by every filter control. 12px floor (§5): was text-[10px].
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
@@ -144,20 +146,34 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
         q = query(collection(db, 'archived_tasks'), ...constraints);
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            const tasksData = snapshot.docs.map(doc => {
-                const data = doc.data();
-                return {
-                    id: doc.id,
-                    ...data,
-                    assignedUserId: resolveUserId(data),
-                    assignedUserName: resolveUserName(data)
-                };
-            });
+        const mapDoc = (docSnap) => {
+            const data = docSnap.data();
+            return {
+                id: docSnap.id,
+                ...data,
+                assignedUserId: resolveUserId(data),
+                assignedUserName: resolveUserName(data)
+            };
+        };
+
+        // Two result sets merged by id: the team-scoped base query, plus (scoped managers only) a
+        // supplement of tasks this manager owns as the named vadovas. See vadovasQ below.
+        let teamRows = [];
+        let vadovasRows = [];
+
+        const recompute = () => {
+            // Merge + dedupe by id (a task can match BOTH sets when the worker is on the team AND
+            // this manager is its vadovas).
+            const byId = new Map();
+            [...teamRows, ...vadovasRows].forEach(t => { if (t.id) byId.set(t.id, t); });
 
             // Client-side filtering for Tag (Firestore limitation on multiple inequality/array-contains with inequalities)
             // And any other refinement
-            const filteredTasks = tasksData.filter(task => {
+            const filteredTasks = Array.from(byId.values()).filter(task => {
+                // The vadovas supplement carries no archivedAt range (single-field equality, no
+                // composite index), so bound it to the selected window here; base rows are already
+                // server-bounded and pass trivially.
+                if (task.archivedAt && (task.archivedAt < startIso || task.archivedAt > endIso)) return false;
                 if (targetUserId !== 'all' && task.assignedUserId !== targetUserId) return false;
                 if (filterTag !== 'all' && task.tag !== filterTag) return false;
                 // Approval surface: restrict the archive to this manager's tasks — ones they own
@@ -204,12 +220,35 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
             setTasks(sortedTasks);
             setLoading(false);
+        };
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            teamRows = snapshot.docs.map(mapDoc);
+            recompute();
         }, (error) => {
             console.error("Error subscribing to archived tasks:", error);
             setLoading(false);
         });
 
-        return () => unsubscribe();
+        // Vadovas supplement (scoped managers only): the team array-contains query above misses
+        // archived tasks where this manager is the named vadovas (managerId) but the worker is NOT
+        // on their team. The rules already permit reading those (canReadOwnedTask's managerId
+        // clause), so this requests exactly them — no widening to the worker's other data. No
+        // archivedAt range / orderBy, so it stays on the automatic single-field index (no composite);
+        // the date window is applied client-side in recompute. Whole-team viewers already read these
+        // via their broad query, so this is skipped for them.
+        let unsubVadovas = () => { };
+        if (scoped && currentUser?.uid) {
+            const vadovasQ = query(collection(db, 'archived_tasks'), where('managerId', '==', currentUser.uid));
+            unsubVadovas = onSnapshot(vadovasQ, (snapshot) => {
+                vadovasRows = snapshot.docs.map(mapDoc);
+                recompute();
+            }, (error) => {
+                console.error("Error subscribing to vadovas archived tasks:", error);
+            });
+        }
+
+        return () => { unsubscribe(); unsubVadovas(); };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag; depending on the whole object would re-subscribe on each live-session user-doc update
     }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy, scoped, currentUser, approvalManagerUid]);
 
@@ -294,14 +333,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 return `"${s.replace(/"/g, '""')}"`;
             }
             return s;
-        };
-
-        const formatMinutesToHHMM = (totalMinutes) => {
-            if (!totalMinutes || isNaN(totalMinutes)) return "00:00";
-            const hours = Math.floor(Math.abs(totalMinutes) / 60);
-            const mins = Math.round(Math.abs(totalMinutes) % 60);
-            const sign = totalMinutes < 0 ? "-" : "";
-            return `${sign}${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
         };
 
         const headers = [
@@ -851,9 +882,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     className="min-w-0 flex-1 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                 >
                                     <span className={clsx(
-                                        "text-body-lg font-bold text-ink-strong break-words",
-                                        deleted && "line-through text-ink-muted"
+                                        "text-body-lg font-bold break-words",
+                                        deleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                     )}>
+                                        {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
                                         {task.title}
                                     </span>
                                     {task.tag && (
@@ -868,7 +900,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             {/* Meta chips: worker + deadline + archive date */}
                             <div className="flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <AssigneeChip name={task.assignedUserName} firstNameOnly showIcon={false} />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} firstNameOnly showIcon={false} />
                                 )}
                                 {task.deadline && (
                                     <span className="inline-flex items-center gap-1 text-caption text-ink-muted">
@@ -911,7 +943,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             {(task.managerName || task.creatorName) && (
                                 <div className="text-caption text-ink-muted flex items-center gap-1">
                                     <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                    <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                    <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                 </div>
                             )}
 
@@ -921,7 +953,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                     {task.comments.map((comment, idx) => (
                                         <div key={idx} className="text-caption text-ink mb-1">
-                                            <span className="font-medium">{comment.user}:</span> {comment.text}
+                                            <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
                                         </div>
                                     ))}
                                 </div>
@@ -967,9 +999,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                             onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
                                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                             className={clsx(
-                                            "text-body font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                            (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                            "text-body font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                            (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                         )}>
+                                            {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                             {task.title}
                                             {task.tag && (
                                                 <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-medium bg-brand-soft text-brand-hover rounded align-middle">
@@ -1007,7 +1040,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                                 <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                                 {task.comments.map((comment, idx) => (
                                                     <div key={idx} className="text-caption text-ink mb-1">
-                                                        <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                        <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
                                                     </div>
                                                 ))}
                                             </div>
@@ -1015,13 +1048,13 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                         {(task.managerName || task.creatorName) && (
                                             <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                 <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                                <span>Vadovas: {formatDisplayName(task.managerName || task.creatorName)}</span>
+                                                <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                             </div>
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap align-top">
                                         {task.assignedUserName && (
-                                            <AssigneeChip name={task.assignedUserName} firstNameOnly showIcon={false} />
+                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} firstNameOnly showIcon={false} />
                                         )}
                                     </td>
                                     <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium text-ink-strong align-top font-mono">

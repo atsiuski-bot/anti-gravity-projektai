@@ -41,7 +41,7 @@ service cloud.firestore {
     }
 
     // Vyr. vadovas (senior manager): a manager-shaped rank SCOPED to its transitive subtree — its
-    // assigned managers plus those managers' workers (ADR 0006), NOT the whole company. Account
+    // assigned managers plus those managers' workers (ADR 0007), NOT the whole company. Account
     // management (role changes, membership) stays admin-only.
     // Four-level hierarchy: admin > seniorManager > manager > worker.
     function isSeniorManager() {
@@ -53,11 +53,11 @@ service cloud.firestore {
       return isAdmin() || isManager() || isSeniorManager();
     }
 
-    // ---- Scoped overseer hierarchy (ADR 0005 + ADR 0006) -------------------
+    // ---- Scoped overseer hierarchy (ADR 0005 + ADR 0007) -------------------
     // A manager is "scoped" when an admin set scopedManager=true on their user doc: they may only
     // SEE and ACT on their assigned people. A SENIOR manager (Vyr. vadovas) is ALWAYS scoped — to
     // its transitive subtree (its managers + those managers' workers), denormalized into each row's
-    // teamManagerIds closure by a Cloud Function (ADR 0006). Admins and managers left unscoped (the
+    // teamManagerIds closure by a Cloud Function (ADR 0007). Admins and managers left unscoped (the
     // default) keep whole-company access.
     function isScopedManager() {
       return isManager() && getUserData().get('scopedManager', false) == true;
@@ -71,7 +71,7 @@ service cloud.firestore {
       return isAdmin() || (isManager() && getUserData().get('scopedManager', false) != true);
     }
     // The caller is in the target user's OVERSEER CLOSURE (managers + their seniors), maintained on
-    // the user doc (overseerIds) by the re-stamp Cloud Function (ADR 0006). One get() on the target
+    // the user doc (overseerIds) by the re-stamp Cloud Function (ADR 0007). One get() on the target
     // doc — used on WRITES only (low volume), so the extra read is acceptable. Used at create/
     // reassign time, before the row's denormalized teamManagerIds has been stamped. Covers BOTH a
     // scoped manager (always in their own workers' closure) and a senior manager.
@@ -165,14 +165,14 @@ service cloud.firestore {
                     && (isAdmin() ||
                         request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false))
                     // Senior-manager membership (which seniors a manager answers to) is admin-only,
-                    // exactly like teamManagerIds/scopedManager. (ADR 0006)
+                    // exactly like teamManagerIds/scopedManager. (ADR 0007)
                     && (isAdmin() ||
                         request.resource.data.get('seniorManagerIds', []) == resource.data.get('seniorManagerIds', []))
                     && (isAdmin() ||
                         request.resource.data.get('defaultSeniorManager', '') == resource.data.get('defaultSeniorManager', ''))
                     // The overseer closure is written ONLY by the admin-SDK Cloud Function (which
                     // bypasses rules). No client — not even an admin — may hand-edit it, or the
-                    // confidentiality boundary could be silently desynced. (ADR 0006)
+                    // confidentiality boundary could be silently desynced. (ADR 0007)
                     && request.resource.data.get('overseerIds', []) == resource.data.get('overseerIds', []);
       allow delete: if isAdmin();
 

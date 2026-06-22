@@ -1,4 +1,4 @@
-# 0006 — Senior manager as a scoped subtree (four-level hierarchy)
+# 0007 — Senior manager as a scoped subtree (four-level hierarchy)
 
 - **Date:** 2026-06-23
 - **Status:** Accepted

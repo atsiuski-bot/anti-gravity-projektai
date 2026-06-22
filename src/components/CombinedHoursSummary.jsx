@@ -5,9 +5,10 @@ import { Users, ChevronDown, ChevronUp } from 'lucide-react';
 import { startOfWeek, endOfWeek } from 'date-fns';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { getLithuanianNow, getLithuanianDateString } from '../utils/timeUtils';
+import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
+import UserChip from './UserChip';
 
 export default function CombinedHoursSummary() {
     const { currentUser, userData } = useAuth();
@@ -149,7 +150,7 @@ export default function CombinedHoursSummary() {
             // 1. From Sessions
             workSessions.forEach(session => {
                 if (session.userId === user.id) {
-                    workedMinutes += (session.durationMinutes || 0);
+                    workedMinutes += sanitizeReportMinutes(session.durationMinutes, { allowLarge: session.isManualAdjustment });
                 }
             });
 
@@ -160,7 +161,7 @@ export default function CombinedHoursSummary() {
                 if (t.assignedUserId === user.id && t.manualMinutes > 0 && !t.isSystemTask && !t.isQuickWork) {
                     const compDate = t.completedAt ? new Date(t.completedAt) : (t.archivedAt ? new Date(t.archivedAt) : null);
                     if (compDate && compDate >= wStart && compDate <= wEnd) {
-                        workedMinutes += t.manualMinutes;
+                        workedMinutes += sanitizeReportMinutes(t.manualMinutes, { allowLarge: true });
                     }
                 }
             });
@@ -171,14 +172,14 @@ export default function CombinedHoursSummary() {
             let breakMinutes = 0;
             breakSessions.forEach(session => {
                 if (session.userId === user.id) {
-                    breakMinutes += (session.durationMinutes || 0);
+                    breakMinutes += sanitizeReportMinutes(session.durationMinutes);
                 }
             });
 
             // Add current active break time if user is taking a break right now
             if (user.breakState?.isTakingBreak && user.breakState?.lastStartedAt) {
                 const bStart = new Date(user.breakState.lastStartedAt);
-                const currentDiff = (now - bStart) / (1000 * 60);
+                const currentDiff = clampSessionMinutes((now - bStart) / (1000 * 60));
                 if (currentDiff > 0) {
                     breakMinutes += currentDiff;
                 }
@@ -249,9 +250,7 @@ export default function CombinedHoursSummary() {
                                             className="w-3 h-3 rounded-full flex-shrink-0"
                                             style={{ backgroundColor: user.color }}
                                         />
-                                        <span className="text-sm font-medium text-ink-strong truncate" title={user.name}>
-                                            {user.name}
-                                        </span>
+                                        <UserChip userId={user.id} name={user.name} className="text-sm font-medium text-ink-strong truncate" />
                                     </div>
 
                                     {/* Bars Area */}

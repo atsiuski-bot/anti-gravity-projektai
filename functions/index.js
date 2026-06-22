@@ -113,10 +113,12 @@ async function sendToUser(uid, notification, data) {
     if (bad.length) await pruneTokens(uid, bad);
 }
 
-// Friendly Lithuanian copy per request_notification type (UI strings are Lithuanian).
+// Friendly Lithuanian copy per request_notification type (UI strings are Lithuanian). This feed is
+// two-way, so it covers both the worker→manager requests and the manager→worker decision notices.
 function copyForRequestNotification(n) {
     const title = n.taskTitle || 'WORKZ';
     switch (n.type) {
+        // Worker → manager
         case 'time_extension_request':
             return { title: 'Laiko pratęsimo prašymas', body: title };
         case 'task_completion':
@@ -131,6 +133,24 @@ function copyForRequestNotification(n) {
                 : '';
             return { title: 'Naujas komentaras', body: snippet ? `${title}: ${snippet}` : title };
         }
+        // Manager → worker
+        case 'task_assigned':
+            return { title: 'Nauja užduotis', body: title };
+        case 'task_approved':
+            return { title: 'Užduotis patvirtinta', body: title };
+        case 'task_confirmed':
+            return { title: 'Užduotis užbaigta ir patvirtinta', body: title };
+        case 'task_reverted':
+            return { title: 'Užduotis grąžinta taisyti', body: title };
+        case 'extension_granted':
+            return { title: 'Laikas pratęstas', body: title };
+        case 'extension_denied':
+            return { title: 'Laikas nepratęstas', body: title };
+        case 'calendar_decision':
+            return {
+                title: n.decision === 'approved' ? 'Kalendoriaus pakeitimas patvirtintas' : 'Kalendoriaus pakeitimas atmestas',
+                body: 'Darbo kalendorius',
+            };
         default:
             return { title: 'WORKZ pranešimas', body: title };
     }
@@ -140,14 +160,15 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
     const n = event.data && event.data.data();
     if (!n || !n.recipientId) return;
     const { title, body } = copyForRequestNotification(n);
+    // Calendar decisions land the worker on their calendar; everything else on tasks.
+    const link = n.type === 'calendar_decision' ? '/?tab=calendar' : '/?tab=tasks';
     try {
         await sendToUser(n.recipientId, { title, body }, {
             type: String(n.type || ''),
             taskId: String(n.taskId || ''),
             // Per-event id → unique notification tag (so distinct alerts don't collapse).
             notifId: String(event.params.id),
-            // Manager approvals/alerts surface under the team-tasks tab.
-            link: '/?tab=tasks'
+            link
         });
     } catch (err) {
         logger.error('notifyOnRequestNotification failed', { err: err.message });
@@ -156,15 +177,23 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
 
 exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', async (event) => {
     const r = event.data && event.data.data();
-    if (!r || !r.managerId || r.status !== 'pending') return;
+    if (!r || r.status !== 'pending') return;
+    // Fan out to ALL of the worker's managers (any may approve). Fall back to the single managerId
+    // for legacy docs written before the managerIds array existed.
+    const recipients = Array.isArray(r.managerIds) && r.managerIds.length
+        ? r.managerIds
+        : (r.managerId ? [r.managerId] : []);
+    if (!recipients.length) return;
     const who = r.userName || 'Vykdytojas';
     try {
-        await sendToUser(r.managerId, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
-            type: 'calendar_request',
-            // Per-event id → unique tag, so multiple pending requests don't collapse onto one slot.
-            notifId: String(event.params.id),
-            link: '/?tab=team-calendar'
-        });
+        await Promise.all(recipients.map((uid) =>
+            sendToUser(uid, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
+                type: 'calendar_request',
+                // Per-event id → unique tag, so multiple pending requests don't collapse onto one slot.
+                notifId: String(event.params.id),
+                link: '/?tab=team-calendar'
+            })
+        ));
     } catch (err) {
         logger.error('notifyOnCalendarRequest failed', { err: err.message });
     }
@@ -254,6 +283,7 @@ const BADGES = {
     steady_rhythm: { name: 'Pastovus ritmas', stat: 'workDays', thresholds: [5, 25, 75, 200] },             // R2 (high-water days)
     on_estimate: { name: 'Telpa į planą', stat: 'onEstimate', thresholds: [5, 20, 60, 150] },               // R3
     plans_ahead: { name: 'Planuoja iš anksto', stat: 'planAheadWeeks', thresholds: [2, 8, 20, 40] },        // R4 (high-water weeks)
+    on_time_start: { name: 'Punktualus startas', stat: 'punctualDays', thresholds: [5, 20, 50, 120] },      // R6 (planned vs actual start)
     // Quality
     approved_craft: { name: 'Priimtas darbas', stat: 'confirmedTasks', thresholds: [3, 15, 50, 120] },      // Q1
     thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [3, 15, 40, 100] },                        // Q2
@@ -407,8 +437,70 @@ exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
     }
 });
 
+// On-time grace: starting within this many minutes of (or before) the planned shift start still
+// counts as punctual. Early arrival is never a violation. Tunable.
+const GRACE_MINUTES = 10;
+
+// Vilnius-local calendar day (YYYY-MM-DD), matching the client's getLithuanianDateString — so the
+// planned shift and the actual first work bucket into the SAME day across the Vilnius offset.
+function lithuanianDay(date) {
+    // en-CA renders as YYYY-MM-DD; the timeZone makes it the Vilnius calendar day.
+    return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Vilnius', year: 'numeric', month: '2-digit', day: '2-digit'
+    }).format(date);
+}
+
+// R6 — "Punktualus startas": did the worker begin REAL work near their planned shift start?
+//   plannedStart = MIN(work_hours.start) for this user/day, excluding vacation entries.
+//   actualStart  = this session's startTime — it is the day's FIRST real work, because the per-day
+//                  gate (lastPunctualDate high-water) only lets the first session of a day through.
+//   onTime       = (actualStart - plannedStart) <= GRACE_MINUTES (early counts as on-time).
+// No planned shift that day => not counted (W1: only positive accomplishment). Breaks are
+// irrelevant — they can't precede the first work. Each day is judged exactly once.
+async function evaluatePunctuality(uid, session) {
+    if (!session.startTime) return;
+    const startDate = new Date(session.startTime);
+    if (Number.isNaN(startDate.getTime())) return;
+    const day = lithuanianDay(startDate);
+
+    // Gate: judge a given day's punctuality exactly once (the day's first real session passes).
+    const ref = statsRef(uid);
+    const firstOfDay = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const last = snap.exists ? snap.data().lastPunctualDate : null;
+        if (last && day <= last) return false;
+        tx.set(ref, { lastPunctualDate: day }, { merge: true });
+        return true;
+    });
+    if (!firstOfDay) return;
+
+    // Earliest planned (non-vacation) shift start that buckets to this Vilnius day.
+    const planned = await db.collection('work_hours').where('userId', '==', uid).get();
+    let plannedStartMs = null;
+    planned.forEach((d) => {
+        const wh = d.data();
+        if (!wh || wh.isVacation === true || !wh.start) return;
+        const ws = new Date(wh.start);
+        if (Number.isNaN(ws.getTime()) || lithuanianDay(ws) !== day) return;
+        if (plannedStartMs === null || ws.getTime() < plannedStartMs) plannedStartMs = ws.getTime();
+    });
+    if (plannedStartMs === null) return; // no planned shift that day → not a punctuality day
+
+    const lateMinutes = (startDate.getTime() - plannedStartMs) / 60000;
+    if (lateMinutes > GRACE_MINUTES) return; // late → not counted (no negative badge, W1)
+
+    const count = await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const next = ((snap.exists && snap.data().punctualDays) || 0) + 1;
+        tx.set(ref, { punctualDays: next }, { merge: true });
+        return next;
+    });
+    const reached = await grantTier(uid, 'on_time_start', tierForCount(count, BADGES.on_time_start.thresholds));
+    if (reached) await announceBadge(uid, 'on_time_start', reached);
+}
+
 // R2 — "Pastovus ritmas": cumulative distinct work-DAYS. Quick-work/call sessions still count as
-// a worked day; deletions and manual time corrections do not.
+// a worked day; deletions and manual time corrections do not. R6 (punctuality) also evaluates here.
 exports.onWorkSessionBadge = onDocumentCreated('work_sessions/{id}', async (event) => {
     const s = event.data && event.data.data();
     if (!s) return;
@@ -420,6 +512,7 @@ exports.onWorkSessionBadge = onDocumentCreated('work_sessions/{id}', async (even
 
     try {
         await highWaterGrant(uid, 'workDays', 'lastWorkDate', date, 'steady_rhythm');
+        await evaluatePunctuality(uid, s); // R6 — on-time start (planned shift vs first real work)
     } catch (err) {
         logger.error('onWorkSessionBadge failed', { uid, err: err.message });
     }
@@ -444,7 +537,7 @@ exports.onCalendarPlanBadge = onDocumentCreated('calendar_requests/{id}', async 
 });
 
 // ---------------------------------------------------------------------------
-// Scoped overseer hierarchy — team stamping (ADR 0005 + ADR 0006)
+// Scoped overseer hierarchy — team stamping (ADR 0005 + ADR 0007)
 //
 // Each private row (a task / archived task / work or break session) carries a denormalized
 // `teamManagerIds` array — the OVERSEER CLOSURE of its owner: every manager/senior uid who may
@@ -459,7 +552,7 @@ exports.onCalendarPlanBadge = onDocumentCreated('calendar_requests/{id}', async 
 // ---------------------------------------------------------------------------
 
 // The denormalized OVERSEER CLOSURE for a user — every manager/senior uid who may see this user's
-// private rows (ADR 0006). This is the visibility key stamped onto each owned row:
+// private rows (ADR 0007). This is the visibility key stamped onto each owned row:
 //   • worker  → their managers (teamManagerIds) PLUS each of those managers' seniors
 //               (seniorManagerIds) — the transitive senior-manager subtree.
 //   • manager → the seniors they answer to (seniorManagerIds).
@@ -599,7 +692,7 @@ async function setOverseerIds(uid, desired) {
 
 // When an admin changes a worker's managers OR a manager's seniors (OR anyone's role), rewrite the
 // affected closures so the right overseers see the right PAST rows (full-history decision, ADR
-// 0005/0006). A manager's senior change CASCADES: every worker under that manager folds the
+// 0005/0007). A manager's senior change CASCADES: every worker under that manager folds the
 // manager's seniors into their own closure, so they must be re-stamped too. Membership changes are
 // rare and crews small, so the fan-out (one manager's workers × their rows) is acceptable.
 exports.restampTeamOnUserChange = onDocumentUpdated('users/{id}', async (event) => {

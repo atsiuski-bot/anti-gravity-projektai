@@ -67,7 +67,7 @@ export const formatTime = (dateOrString) => {
  * Eliminates repeated `role === 'manager' || role === 'admin'` checks. This gates manager-SHAPED
  * UI (team tabs, approval surfaces), NOT data breadth — visibility is scoped separately by
  * `teamScope.js`. `seniorManager` (Vyr. vadovas) is a manager-shaped rank but is SCOPED to its
- * subtree, not whole-company (ADR 0006 — `isScopedOverseer`); account management stays admin-only.
+ * subtree, not whole-company (ADR 0007 — `isScopedOverseer`); account management stays admin-only.
  *
  * @param {string} role - The role to check
  * @returns {boolean}

@@ -12,12 +12,14 @@ import Button from './ui/Button';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
+import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
-import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { isManagerRole } from '../utils/formatters';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
@@ -403,14 +405,15 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 <div className="min-w-0 flex-1">
                                     <div className={clsx(
                                         'text-body font-semibold break-words',
-                                        (task.completed || task.isDeleted) ? 'text-ink-muted line-through' : 'text-ink-strong'
+                                        task.isDeleted ? 'text-ink-muted line-through' : task.completed ? 'text-ink' : 'text-ink-strong'
                                     )}>
+                                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                         {task.title}
                                         {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                     </div>
                                     {(task.managerName || task.creatorName) && (
                                         <div className="text-caption text-purple-700 font-medium mt-0.5">
-                                            Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
+                                            Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
                                         </div>
                                     )}
                                 </div>
@@ -434,7 +437,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             {/* Metadata */}
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <AssigneeChip name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[160px]" />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[160px]" />
                                 )}
                                 <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
                                 {task.tag && (
@@ -532,7 +535,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             <div className="text-caption">
                                                 <div className="flex items-center gap-1.5">
                                                     <MessageCircle className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" aria-hidden="true" />
-                                                    <span className="font-semibold text-indigo-700">{formatDisplayName(last.user)}</span>
+                                                    <UserChip userId={last.userId} name={last.user} className="font-semibold text-indigo-700" />
                                                     <span className="text-ink-muted">{new Date(last.createdAt).toLocaleDateString()}</span>
                                                 </div>
                                                 <div className="text-ink leading-snug break-words pl-4 line-clamp-2">{last.text}</div>
@@ -685,15 +688,16 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         <td className="px-1 py-3">
                                             <div className={clsx(
                                                 "text-body font-medium break-words rounded px-2 py-1",
-                                                (task.completed || task.isDeleted) ? "text-ink-muted line-through" : "text-ink-strong",
+                                                task.isDeleted ? "text-ink-muted line-through" : task.completed ? "text-ink" : "text-ink-strong",
                                                 task.status === 'unapproved' ? "bg-surface-sunken text-ink" : ""
                                             )}>
+                                                {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                                 {task.title}
                                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                             </div>
                                             {(task.managerName || task.creatorName) && (
                                                 <div className="text-caption text-purple-700 font-medium mt-0.5">
-                                                    Vadovas: {formatDisplayName(task.managerName || task.creatorName)}
+                                                    Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
                                                 </div>
                                             )}
                                             {/* Deadline removed from here, moving to own column */}
@@ -723,7 +727,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                                 <div className="flex justify-between items-start mb-0.5">
                                                                     <div className="flex items-center gap-1.5 text-caption">
                                                                         <MessageCircle className="w-3.5 h-3.5 text-indigo-400 flex-shrink-0" aria-hidden="true" />
-                                                                        <span className="font-semibold text-indigo-700">{formatDisplayName(comment.user)}</span>
+                                                                        <UserChip userId={comment.userId} name={comment.user} className="font-semibold text-indigo-700" />
                                                                         <span className="text-ink-muted">{new Date(comment.createdAt).toLocaleDateString()}</span>
                                                                     </div>
                                                                     {canEdit && !isEditing && (
@@ -793,7 +797,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
                                             {task.assignedUserName && (
-                                                <AssigneeChip name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[120px]" />
+                                                <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[120px]" />
                                             )}
                                         </td>
                                         <td className="px-1 py-3 whitespace-nowrap">
