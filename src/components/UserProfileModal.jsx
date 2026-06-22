@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAchievements } from '../hooks/useAchievements';
 import { formatDisplayName } from '../utils/formatters';
 import { BADGE_ICONS, tierKey } from '../utils/badgeCatalog';
-import { canSeeWholeTeam, isScopedOverseer, isOnManagerTeam } from '../utils/teamScope';
+import { canSeeWholeTeam, isScopedOverseer, isOverseenBy } from '../utils/teamScope';
 import Modal from './ui/Modal';
 import Avatar from './ui/Avatar';
 import StatusPill from './ui/StatusPill';
@@ -57,7 +57,7 @@ export default function UserProfileModal({ userId, onClose }) {
         !isSelf &&
         !!user &&
         (canSeeWholeTeam(userData) ||
-            (isScopedOverseer(userData) && isOnManagerTeam(user, currentUser?.uid)));
+            (isScopedOverseer(userData) && isOverseenBy(user, currentUser?.uid)));
 
     const showStats = canViewStats && tab === 'stats';
 
