@@ -639,6 +639,7 @@ export default function TaskHistory({ userId, users = [] }) {
                             type="date"
                             value={dateFrom}
                             onChange={(e) => setDateFrom(e.target.value)}
+                            aria-label="Nuo"
                             className={SELECT_CLASS}
                         />
                     </div>
@@ -650,6 +651,7 @@ export default function TaskHistory({ userId, users = [] }) {
                             value={dateTo}
                             onChange={(e) => setDateTo(e.target.value)}
                             max={getLithuanianDateString()}
+                            aria-label="Iki"
                             className={SELECT_CLASS}
                         />
                     </div>
@@ -662,6 +664,7 @@ export default function TaskHistory({ userId, users = [] }) {
                         <select
                             value={filterUser}
                             onChange={(e) => setFilterUser(e.target.value)}
+                            aria-label="Darbuotojas"
                             className={SELECT_CLASS}
                         >
                             <option value="all">Visi</option>
@@ -680,6 +683,7 @@ export default function TaskHistory({ userId, users = [] }) {
                     <select
                         value={filterTag}
                         onChange={(e) => setFilterTag(e.target.value)}
+                        aria-label="Žyma"
                         className={SELECT_CLASS}
                     >
                         <option value="all">Visos</option>
@@ -696,6 +700,7 @@ export default function TaskHistory({ userId, users = [] }) {
                         <select
                             value={sortBy}
                             onChange={(e) => setSortBy(e.target.value)}
+                            aria-label="Rikiuoti"
                             className={clsx(SELECT_CLASS, 'pl-8')}
                         >
                             <option value="date">Pagal datą</option>
@@ -848,7 +853,14 @@ export default function TaskHistory({ userId, users = [] }) {
                         <tbody className="bg-surface-card divide-y divide-line">
                             {tasks.map((task) => (
                                 <tr key={task.id} className="hover:bg-surface-sunken transition-colors border-b border-line last:border-0">
-                                    <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
+                                    <td
+                                        className="px-2 py-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
+                                        onClick={() => toggleExpand(task.id)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-expanded={expandedTasks.has(task.id)}
+                                    >
                                         <div className={clsx(
                                             "text-body font-bold text-ink-strong whitespace-normal break-words",
                                             (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
