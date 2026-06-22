@@ -102,29 +102,24 @@ export default function Layout({ children }) {
                 {isDesktop && <SideRail />}
 
                 <div className={cn('min-w-0', isDesktop && 'flex-1')}>
-                    {/* Top bar — a single avatar that opens the profile page (role, name, install
-                        and logout all live there, per the 2026-06-22 decision). Off-desktop only;
-                        on lg+ the rail's account foot owns this entry point. */}
+                    {/* Profile entry — a free-floating avatar "bubble" pinned to the top-right
+                        corner. No header bar of its own, and fixed (not absolute) so it stays in
+                        the corner even as the page scrolls. Off-desktop only; on lg+ the rail's
+                        account foot owns this entry point. */}
                     {!isDesktop && (
-                        <nav className="bg-surface-card shadow-sm border-b border-line">
-                            <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
-                                <div className="flex h-14 sm:h-16 items-center justify-end">
-                                    <button
-                                        type="button"
-                                        onClick={() => setActiveTab('profile')}
-                                        aria-label="Atidaryti profilį"
-                                        className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                                    >
-                                        <Avatar
-                                            src={userData?.photoURL || currentUser?.photoURL}
-                                            name={currentUser?.displayName}
-                                            email={currentUser?.email}
-                                            size="sm"
-                                        />
-                                    </button>
-                                </div>
-                            </div>
-                        </nav>
+                        <button
+                            type="button"
+                            onClick={() => setActiveTab('profile')}
+                            aria-label="Atidaryti profilį"
+                            className="fixed top-2 right-2 z-toast inline-flex min-h-touch min-w-touch items-center justify-center rounded-full bg-surface-card shadow-md ring-1 ring-line/50 transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        >
+                            <Avatar
+                                src={userData?.photoURL || currentUser?.photoURL}
+                                name={currentUser?.displayName}
+                                email={currentUser?.email}
+                                size="sm"
+                            />
+                        </button>
                     )}
 
                     {/* PWA install — a slim, dismissible banner shown only when the browser offers

@@ -405,10 +405,19 @@ export default function UserManagement() {
                 </div>
             )}
 
-            {/* Mobile / touch: one card per user (never a horizontally-scrolling table — §9) */}
-            <ul className="divide-y divide-line md:hidden">
+            {/* Mobile / touch: one distinct card per user — laid on a sunken backdrop with gaps,
+                border, shadow and a left accent in the user's own color so each user reads as a
+                separate card, not a divider-separated row (never a horizontal table — §9). */}
+            <ul className="space-y-3 bg-surface-sunken/40 p-3 md:hidden">
                 {users.map((user) => (
-                    <li key={user.id} className={cn('p-4', user.isDisabled && 'bg-surface-sunken/60')}>
+                    <li
+                        key={user.id}
+                        className={cn(
+                            'rounded-card border border-line bg-surface-card p-4 shadow-sm',
+                            user.isDisabled && 'bg-surface-sunken/60 opacity-90'
+                        )}
+                        style={{ borderLeft: `4px solid ${user.color || WORKER_FALLBACK_COLOR}` }}
+                    >
                         <div className="flex items-start gap-3">
                             <UserAvatar user={user} />
                             <div className="min-w-0 flex-1">

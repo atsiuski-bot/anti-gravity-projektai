@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, addDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Pencil, AlertCircle } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Pencil, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
@@ -75,6 +75,11 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
     const [filterUser, setFilterUser] = useState('all');
     const [filterTag, setFilterTag] = useState('all');
     const [sortBy, setSortBy] = useState('date'); // 'date' | 'status'
+
+    // Two nested accordions: the whole history panel collapses, and inside it the filter
+    // controls collapse independently (kept closed by default so the panel opens compact).
+    const [historyOpen, setHistoryOpen] = useState(true);
+    const [filtersOpen, setFiltersOpen] = useState(false);
 
     const toggleExpand = (taskId) => {
         const newExpanded = new Set(expandedTasks);
@@ -587,21 +592,32 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
     return (
         <div className="space-y-4">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h2 className="text-h3 font-semibold text-ink-strong flex items-center gap-2">
-                        Užduočių istorija <span className="text-ink-muted text-body font-normal">({tasks.length})</span>
-                    </h2>
-                    {/* Scope clarity (audit #3): this panel is the ARCHIVE only. Just-finished tasks
-                        stay in the daily report above until the nightly automation archives them, so
-                        an absence here is expected, not a bug — say so instead of duplicating them. */}
-                    <p className="text-caption text-ink-muted mt-1 max-w-prose">
-                        Rodomos tik suarchyvuotos užduotys (archyvuojama automatiškai naktį). Ką tik
-                        užbaigtos užduotys matomos dienos ataskaitoje viršuje, kol nebus suarchyvuotos.
-                    </p>
-                </div>
+                {/* Whole-panel accordion toggle: the title + scope note is the clickable header. */}
+                <button
+                    type="button"
+                    onClick={() => setHistoryOpen((o) => !o)}
+                    aria-expanded={historyOpen}
+                    className="flex items-start gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                >
+                    {historyOpen
+                        ? <ChevronUp className="w-5 h-5 text-ink-muted shrink-0 mt-1" aria-hidden="true" />
+                        : <ChevronDown className="w-5 h-5 text-ink-muted shrink-0 mt-1" aria-hidden="true" />}
+                    <div>
+                        <h2 className="text-h3 font-semibold text-ink-strong flex items-center gap-2">
+                            Užduočių istorija <span className="text-ink-muted text-body font-normal">({tasks.length})</span>
+                        </h2>
+                        {/* Scope clarity (audit #3): this panel is the ARCHIVE only. Just-finished tasks
+                            stay in the daily report above until the nightly automation archives them, so
+                            an absence here is expected, not a bug — say so instead of duplicating them. */}
+                        <p className="text-caption text-ink-muted mt-1 max-w-prose">
+                            Rodomos tik suarchyvuotos užduotys (archyvuojama automatiškai naktį). Ką tik
+                            užbaigtos užduotys matomos dienos ataskaitoje viršuje, kol nebus suarchyvuotos.
+                        </p>
+                    </div>
+                </button>
                 {/* Export is manager-only (team report). Workers — and managers viewing their
                     own personal report — never get a self-export button (canExport=false). */}
-                {canExport && (
+                {canExport && historyOpen && (
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleExportCSV}
@@ -621,6 +637,8 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                 )}
             </div>
 
+            {historyOpen && (
+            <>
             {/* Friendly error banner — replaces the banned alert() with mapped LT copy (§10) */}
             {error && (
                 <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4" role="alert">
@@ -635,8 +653,26 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                 </div>
             )}
 
-            {/* Filters */}
-            <div className="bg-surface-sunken p-4 rounded-card border border-line flex flex-col md:flex-row gap-4 items-end md:items-center flex-wrap">
+            {/* Filters — a nested accordion inside the history panel. Collapsed by default so
+                the panel stays compact; the chevron reveals the date/user/tag/sort controls. */}
+            <div className="bg-surface-sunken rounded-card border border-line">
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((o) => !o)}
+                aria-expanded={filtersOpen}
+                className="w-full min-h-touch flex items-center justify-between gap-3 px-4 py-3 text-left rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                <span className="flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
+                    <Filter className="w-4 h-4" aria-hidden="true" />
+                    Filtravimas
+                </span>
+                {filtersOpen
+                    ? <ChevronUp className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                    : <ChevronDown className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />}
+              </button>
+
+              {filtersOpen && (
+              <div className="border-t border-line p-4 flex flex-col md:flex-row gap-4 items-end md:items-center flex-wrap">
 
                 {/* Date Range */}
                 <div className="flex items-center gap-2">
@@ -725,6 +761,8 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                         onClick={resetFilters}
                     />
                 </div>
+              </div>
+              )}
             </div>
 
             {/* Mobile / touch: one card per task — never a horizontally-scrolling table (§9).
@@ -964,6 +1002,8 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                     </table>
                 </div>
             </div>
+            </>
+            )}
             <DeleteConfirmationModal
                 isOpen={!!deleteModalTask}
                 onClose={() => setDeleteModalTask(null)}

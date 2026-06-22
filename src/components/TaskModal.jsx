@@ -648,21 +648,21 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // This excludes other 'regular' workers.
 
     return createPortal(
-        <div className="fixed inset-0 z-modal flex items-start justify-center bg-feedback-scrim p-4 pt-10 pb-20 overflow-y-auto">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4">
             <div
                 ref={panelRef}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="task-modal-title"
                 tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-xl w-full max-w-2xl flex flex-col my-auto relative focus:outline-none"
+                className="bg-surface-card rounded-modal shadow-xl w-full max-w-2xl max-h-[calc(100dvh-2rem)] flex flex-col relative focus:outline-none overflow-hidden"
             >
-                {/* Header - Fixed */}
-                <div className="flex justify-between items-center gap-3 p-6 border-b border-line flex-shrink-0">
-                    <h2 id="task-modal-title" className="text-xl font-bold text-ink-strong truncate min-w-0">
+                {/* Header - Fixed (vertically compact: tighter padding, X pinned hard right) */}
+                <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-b border-line flex-shrink-0">
+                    <h2 id="task-modal-title" className="text-lg font-bold text-ink-strong truncate min-w-0">
                         {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Naujas darbas')}
                     </h2>
-                    <div className="flex items-center gap-2 min-w-0">
+                    <div className="flex items-center gap-1 min-w-0">
                         {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
                             <select
                                 onChange={(e) => handleLoadTemplate(e.target.value)}
@@ -677,12 +677,13 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 ))}
                             </select>
                         )}
-                        <IconButton icon={X} label="Uždaryti" onClick={onClose} />
+                        <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-1.5" />
                     </div>
                 </div>
 
-                {/* Scrollable Content */}
-                <div className="flex-1 overflow-y-auto p-6">
+                {/* Scrollable Content — min-h-0 lets this flex child shrink below its content
+                    height so the inner scroll engages instead of pushing the footer off-screen. */}
+                <div className="flex-1 min-h-0 overflow-y-auto p-4">
                     {formError && (
                         <div
                             role="alert"
@@ -758,15 +759,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     ) : (
                         <form id="task-form" onSubmit={handleSubmit} className="space-y-5">
                             {/* ─────────────── Spine: the few fields set on every task ─────────────── */}
-                            {/* Title */}
+                            {/* Title — label removed; the word "Pavadinimas" now lives in the
+                                placeholder to save vertical space. aria-label keeps it accessible. */}
                             <div>
-                                <span className="mb-1 block text-body font-medium text-ink">Pavadinimas</span>
                                 <input
                                     type="text"
                                     value={formData.title}
                                     onChange={(e) => setFormData({ ...formData, title: e.target.value })}
                                     disabled={fieldsLocked}
-                                    placeholder="Ką reikia padaryti?"
+                                    placeholder="Pavadinimas"
                                     aria-label="Pavadinimas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand focus:border-brand disabled:bg-surface-sunken text-base"
                                     required

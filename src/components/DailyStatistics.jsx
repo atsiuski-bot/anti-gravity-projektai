@@ -842,17 +842,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             )}
 
-            {/* Header Controls */}
-            <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line flex flex-col md:flex-row gap-4 items-center justify-between">
+            {/* Header Controls — kept to a single compact row on every viewport (no column
+                stacking on mobile) so the date stepper + filters take minimal vertical space. */}
+            <div className="bg-surface-card p-2 rounded-card shadow-sm border border-line flex flex-row flex-wrap gap-2 items-center justify-between">
 
-                <div className="flex items-center gap-4 bg-surface-sunken p-1.5 rounded-control border border-line">
+                <div className="flex items-center gap-1 bg-surface-sunken p-1 rounded-control border border-line">
                     <IconButton
                         icon={ChevronLeft}
                         label="Ankstesnė diena"
                         onClick={() => handleDateChange(-1)}
                     />
-                    <div className="flex items-center gap-2 px-2 min-w-[140px] justify-center font-medium text-ink-strong">
-                        <Calendar className="w-4 h-4 text-ink-muted" />
+                    <div className="flex items-center gap-1.5 px-1.5 justify-center font-medium text-caption text-ink-strong whitespace-nowrap">
+                        <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" />
                         {selectedDate}
                     </div>
                     <IconButton
@@ -868,7 +869,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                             value={selectedUserId}
                             onChange={(e) => setSelectedUserId(e.target.value)}
                             aria-label="Darbuotojas"
-                            className="pl-9 pr-4 py-2 border border-line rounded-control focus:ring-2 focus:ring-brand text-body bg-surface-card min-w-[200px]"
+                            className="pl-8 pr-3 py-1.5 border border-line rounded-control focus:ring-2 focus:ring-brand text-caption bg-surface-card"
                         >
                             <option value="all">Už visą komandą</option>
                             {users.map(u => (
@@ -877,7 +878,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 </option>
                             ))}
                         </select>
-                        <User className="w-4 h-4 text-ink-muted absolute left-3 top-1/2 transform -translate-y-1/2" />
+                        <User className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" />
                     </div>
                 )}
 
@@ -886,12 +887,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         value={sortBy}
                         onChange={(e) => setSortBy(e.target.value)}
                         aria-label="Rūšiuoti"
-                        className="pl-9 pr-4 py-2 border border-line rounded-control focus:ring-2 focus:ring-brand text-body bg-surface-card"
+                        className="pl-8 pr-3 py-1.5 border border-line rounded-control focus:ring-2 focus:ring-brand text-caption bg-surface-card"
                     >
                         <option value="time">Pagal laiką</option>
                         <option value="status">Pagal būseną</option>
                     </select>
-                    <Filter className="w-4 h-4 text-ink-muted absolute left-3 top-1/2 transform -translate-y-1/2" />
+                    <Filter className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" />
                 </div>
             </div>
 
