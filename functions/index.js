@@ -113,10 +113,12 @@ async function sendToUser(uid, notification, data) {
     if (bad.length) await pruneTokens(uid, bad);
 }
 
-// Friendly Lithuanian copy per request_notification type (UI strings are Lithuanian).
+// Friendly Lithuanian copy per request_notification type (UI strings are Lithuanian). This feed is
+// two-way, so it covers both the worker→manager requests and the manager→worker decision notices.
 function copyForRequestNotification(n) {
     const title = n.taskTitle || 'WORKZ';
     switch (n.type) {
+        // Worker → manager
         case 'time_extension_request':
             return { title: 'Laiko pratęsimo prašymas', body: title };
         case 'task_completion':
@@ -131,6 +133,24 @@ function copyForRequestNotification(n) {
                 : '';
             return { title: 'Naujas komentaras', body: snippet ? `${title}: ${snippet}` : title };
         }
+        // Manager → worker
+        case 'task_assigned':
+            return { title: 'Nauja užduotis', body: title };
+        case 'task_approved':
+            return { title: 'Užduotis patvirtinta', body: title };
+        case 'task_confirmed':
+            return { title: 'Užduotis užbaigta ir patvirtinta', body: title };
+        case 'task_reverted':
+            return { title: 'Užduotis grąžinta taisyti', body: title };
+        case 'extension_granted':
+            return { title: 'Laikas pratęstas', body: title };
+        case 'extension_denied':
+            return { title: 'Laikas nepratęstas', body: title };
+        case 'calendar_decision':
+            return {
+                title: n.decision === 'approved' ? 'Kalendoriaus pakeitimas patvirtintas' : 'Kalendoriaus pakeitimas atmestas',
+                body: 'Darbo kalendorius',
+            };
         default:
             return { title: 'WORKZ pranešimas', body: title };
     }
@@ -140,14 +160,15 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
     const n = event.data && event.data.data();
     if (!n || !n.recipientId) return;
     const { title, body } = copyForRequestNotification(n);
+    // Calendar decisions land the worker on their calendar; everything else on tasks.
+    const link = n.type === 'calendar_decision' ? '/?tab=calendar' : '/?tab=tasks';
     try {
         await sendToUser(n.recipientId, { title, body }, {
             type: String(n.type || ''),
             taskId: String(n.taskId || ''),
             // Per-event id → unique notification tag (so distinct alerts don't collapse).
             notifId: String(event.params.id),
-            // Manager approvals/alerts surface under the team-tasks tab.
-            link: '/?tab=tasks'
+            link
         });
     } catch (err) {
         logger.error('notifyOnRequestNotification failed', { err: err.message });
@@ -156,15 +177,23 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
 
 exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', async (event) => {
     const r = event.data && event.data.data();
-    if (!r || !r.managerId || r.status !== 'pending') return;
+    if (!r || r.status !== 'pending') return;
+    // Fan out to ALL of the worker's managers (any may approve). Fall back to the single managerId
+    // for legacy docs written before the managerIds array existed.
+    const recipients = Array.isArray(r.managerIds) && r.managerIds.length
+        ? r.managerIds
+        : (r.managerId ? [r.managerId] : []);
+    if (!recipients.length) return;
     const who = r.userName || 'Vykdytojas';
     try {
-        await sendToUser(r.managerId, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
-            type: 'calendar_request',
-            // Per-event id → unique tag, so multiple pending requests don't collapse onto one slot.
-            notifId: String(event.params.id),
-            link: '/?tab=team-calendar'
-        });
+        await Promise.all(recipients.map((uid) =>
+            sendToUser(uid, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
+                type: 'calendar_request',
+                // Per-event id → unique tag, so multiple pending requests don't collapse onto one slot.
+                notifId: String(event.params.id),
+                link: '/?tab=team-calendar'
+            })
+        ));
     } catch (err) {
         logger.error('notifyOnCalendarRequest failed', { err: err.message });
     }
