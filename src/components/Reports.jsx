@@ -4,7 +4,7 @@ import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'fire
 import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { addComment } from '../utils/commentActions';
-import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, Coffee, Info, AlertTriangle, Download } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, Coffee, Info, AlertTriangle, Download, Calendar } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -16,9 +16,24 @@ import SessionTypeIcon from './SessionTypeIcon';
 import { useAuth } from '../context/AuthContext';
 import { TASK_TAGS } from '../utils/taskUtils';
 
-export default function Reports({ users }) {
-    const { currentUser, userRole } = useAuth();
-    const [activeTab, setActiveTab] = useState((isManagerRole(userRole)) ? 'daily-stats' : 'hours');
+// Period ladder for the unified report tab: a single day (default) up through the year, plus a
+// custom range driven by the date pickers. 'day' shows the daily timeline; the rest show the
+// detailed work summary for the resolved date range.
+const PERIOD_PRESETS = [
+    { id: 'day', label: 'Ši diena' },
+    { id: 'week', label: 'Ši savaitė' },
+    { id: 'month', label: 'Šis mėnuo' },
+    { id: '3months', label: '3 mėnesiai' },
+    { id: 'year', label: 'Šie metai' },
+];
+
+export default function Reports({ users, canExport = false, viewRole }) {
+    const { currentUser, userRole: authUserRole } = useAuth();
+    // viewRole lets a caller scope the whole report to a role other than the signed-in one — a
+    // manager opening their OWN "Ataskaitos" passes 'worker' so it shows only personal data
+    // (no team aggregates, no user dropdown, no export), identical to a worker's view.
+    const userRole = viewRole ?? authUserRole;
+    const [activeTab, setActiveTab] = useState('report');
     const [loading, setLoading] = useState(false);
 
     // --- HOURS REPORT STATE ---
@@ -30,6 +45,11 @@ export default function Reports({ users }) {
     });
     const [workData, setWorkData] = useState([]); // Array of { userId, name, totalMinutes, days: { date: minutes } }
     const [expandedUser, setExpandedUser] = useState(null);
+
+    // Unified report period. 'day' renders DailyStatistics (its own day navigation); any other
+    // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
+    const [reportPeriod, setReportPeriod] = useState('day'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
+    const [periodOpen, setPeriodOpen] = useState(false);
 
     // --- TASKS REPORT STATE ---
     const [taskFilters, setTaskFilters] = useState({
@@ -55,13 +75,13 @@ export default function Reports({ users }) {
     const [revertTarget, setRevertTarget] = useState(null);
     const [reverting, setReverting] = useState(false);
 
-    // Fetch Work Hours Data
+    // Fetch Work Hours Data — only when a multi-day range is selected (day mode uses DailyStatistics).
     useEffect(() => {
-        if (activeTab === 'hours') {
+        if (activeTab === 'report' && reportPeriod !== 'day') {
             fetchWorkHours();
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchWorkHours is recreated each render; intentionally refetch only on tab/range change
-    }, [activeTab, dateRange.start, dateRange.end]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchWorkHours is recreated each render; intentionally refetch only on tab/period/range change
+    }, [activeTab, reportPeriod, dateRange.start, dateRange.end]);
 
     // Auto-expand when there's only one user (worker viewing own data)
     useEffect(() => {
@@ -577,49 +597,56 @@ export default function Reports({ users }) {
         return `${sign}${formatMinutesToTimeString(Math.abs(rounded))}`;
     };
 
-    // Quick date-range presets for the hours tab. All math is pure date-string arithmetic
-    // (addDaysToDateString is DST-safe), and weeks are Monday-started per Lithuanian convention.
+    // Resolve a period preset to a from/to range. All math is pure date-string arithmetic
+    // (addDaysToDateString is DST-safe), weeks are Monday-started per Lithuanian convention, and
+    // every range ends "today" so the report always runs up to the current day.
     const applyPreset = (preset) => {
         const today = getLithuanianDateString();
+        const pad = (n) => String(n).padStart(2, '0');
         const dayOfWeek = (dateStr) => {
             const [y, m, d] = dateStr.split('-').map(Number);
             return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun … 6=Sat
         };
         const firstOfMonth = (dateStr) => `${dateStr.slice(0, 7)}-01`;
-        const lastOfMonth = (dateStr) => {
-            const [y, m] = dateStr.split('-').map(Number);
-            const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-            return `${dateStr.slice(0, 7)}-${String(last).padStart(2, '0')}`;
-        };
         const mondayOffset = (dayOfWeek(today) + 6) % 7; // days since this week's Monday
+        const [y, m] = today.split('-').map(Number);
 
-        let start, end;
+        let start;
+        const end = today;
         switch (preset) {
-            case 'thisWeek':
+            case 'week':
                 start = addDaysToDateString(today, -mondayOffset);
-                end = today;
                 break;
-            case 'lastWeek': {
-                const thisMonday = addDaysToDateString(today, -mondayOffset);
-                start = addDaysToDateString(thisMonday, -7);
-                end = addDaysToDateString(thisMonday, -1);
-                break;
-            }
-            case 'thisMonth':
+            case 'month':
                 start = firstOfMonth(today);
-                end = today;
                 break;
-            case 'lastMonth': {
-                const prev = addDaysToDateString(firstOfMonth(today), -1);
-                start = firstOfMonth(prev);
-                end = lastOfMonth(prev);
+            case '3months': {
+                // Current month plus the two preceding it = 3 calendar months through today.
+                const d = new Date(Date.UTC(y, m - 1 - 2, 1));
+                start = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-01`;
                 break;
             }
+            case 'year':
+                start = `${today.slice(0, 4)}-01-01`;
+                break;
             default:
                 return;
         }
         setDateRange({ start, end });
     };
+
+    // Period selector handler: 'day' falls through to the daily view; any preset resolves a range
+    // and switches to the detailed summary. Closes the picker panel either way.
+    const choosePeriod = (period) => {
+        setReportPeriod(period);
+        setPeriodOpen(false);
+        if (period !== 'day') applyPreset(period);
+    };
+
+    // Human label for the currently selected period (shown on the collapsed picker button).
+    const periodLabel = reportPeriod === 'custom'
+        ? `${dateRange.start} – ${dateRange.end}`
+        : (PERIOD_PRESETS.find((p) => p.id === reportPeriod)?.label ?? `${dateRange.start} – ${dateRange.end}`);
 
     // Export the already-computed hours summary to a CSV the manager can hand to payroll.
     // One row per worker-day (work + break, HH:MM), then a per-worker "Viso" total row.
@@ -1003,18 +1030,11 @@ export default function Reports({ users }) {
             <div className="flex border-b border-line overflow-x-auto">
 
                 <button
-                    onClick={() => setActiveTab('daily-stats')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'daily-stats' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                    onClick={() => setActiveTab('report')}
+                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
                         }`}
                 >
-                    Dienos Ataskaita
-                </button>
-                <button
-                    onClick={() => setActiveTab('hours')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'hours' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
-                        }`}
-                >
-                    Detali Darbo Suvestinė
+                    Darbo ataskaita
                 </button>
                 <button
                     onClick={() => setActiveTab('calendar-history')}
@@ -1054,61 +1074,93 @@ export default function Reports({ users }) {
 
 
 
-            {/* --- DAILY STATISTICS TAB CONTENT --- */}
-            {activeTab === 'daily-stats' && (
-                <DailyStatistics
-                    currentUser={currentUser}
-                    userRole={userRole}
-                    users={users}
-                />
-            )}
-
-            {/* --- HOURS TAB CONTENT --- */}
-            {activeTab === 'hours' && (
+            {/* --- WORK REPORT TAB (merged daily view + detailed range summary) --- */}
+            {activeTab === 'report' && (
                 <div className="space-y-4">
-                    {/* (MonthlyHours removed from here to separate tab) */}
+                    {/* Period selector — base view is a single day; the button reveals the range
+                        ladder (week → month → 3 months → year) and a custom date picker. 'day'
+                        renders the daily timeline; any range renders the detailed work summary. */}
+                    <div className="bg-surface-card rounded-card shadow-sm border border-line">
+                        <button
+                            type="button"
+                            onClick={() => setPeriodOpen((o) => !o)}
+                            aria-expanded={periodOpen}
+                            className="w-full min-h-touch flex items-center justify-between gap-3 px-4 py-3 text-left rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        >
+                            <span className="flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
+                                <Calendar className="w-4 h-4" aria-hidden="true" />
+                                Laikotarpis
+                            </span>
+                            <span className="flex items-center gap-2 min-w-0">
+                                <span className="text-body font-semibold text-ink-strong truncate">{periodLabel}</span>
+                                {periodOpen
+                                    ? <ChevronUp className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                                    : <ChevronDown className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />}
+                            </span>
+                        </button>
 
-                    <div className="bg-surface-card p-4 rounded-card shadow-sm border border-line space-y-3">
-                        <div className="flex flex-wrap items-end gap-4">
-                            <div>
-                                <label htmlFor="hours-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                                <input
-                                    id="hours-from"
-                                    type="date"
-                                    value={dateRange.start}
-                                    max={dateRange.end}
-                                    onChange={(e) => setDateRange(prev => ({ ...prev, start: e.target.value }))}
-                                    className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                />
+                        {periodOpen && (
+                            <div className="border-t border-line p-3 space-y-3">
+                                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                                    {PERIOD_PRESETS.map((p) => (
+                                        <Button
+                                            key={p.id}
+                                            variant={reportPeriod === p.id ? 'primary' : 'secondary'}
+                                            onClick={() => choosePeriod(p.id)}
+                                            className="justify-center"
+                                        >
+                                            {p.label}
+                                        </Button>
+                                    ))}
+                                </div>
+                                <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
+                                    <div className="flex-1">
+                                        <label htmlFor="report-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
+                                        <input
+                                            id="report-from"
+                                            type="date"
+                                            value={dateRange.start}
+                                            max={dateRange.end}
+                                            onChange={(e) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, start: e.target.value })); }}
+                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                        />
+                                    </div>
+                                    <div className="flex-1">
+                                        <label htmlFor="report-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
+                                        <input
+                                            id="report-to"
+                                            type="date"
+                                            value={dateRange.end}
+                                            min={dateRange.start}
+                                            max={getLithuanianDateString()}
+                                            onChange={(e) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, end: e.target.value })); }}
+                                            className="w-full border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                        />
+                                    </div>
+                                </div>
                             </div>
-                            <div>
-                                <label htmlFor="hours-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                                <input
-                                    id="hours-to"
-                                    type="date"
-                                    value={dateRange.end}
-                                    min={dateRange.start}
-                                    onChange={(e) => setDateRange(prev => ({ ...prev, end: e.target.value }))}
-                                    className="border border-line rounded-control px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                />
-                            </div>
-                            <Button
-                                variant="success"
-                                icon={Download}
-                                onClick={handleExportHoursCSV}
-                                disabled={loading || workData.length === 0}
-                                className="ml-auto self-end"
-                            >
-                                Eksportuoti CSV
-                            </Button>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            <Button variant="secondary" onClick={() => applyPreset('thisWeek')}>Ši savaitė</Button>
-                            <Button variant="secondary" onClick={() => applyPreset('lastWeek')}>Praėjusi savaitė</Button>
-                            <Button variant="secondary" onClick={() => applyPreset('thisMonth')}>Šis mėnuo</Button>
-                            <Button variant="secondary" onClick={() => applyPreset('lastMonth')}>Praėjęs mėnuo</Button>
-                        </div>
+                        )}
                     </div>
+
+                    {reportPeriod === 'day' ? (
+                        <DailyStatistics
+                            currentUser={currentUser}
+                            userRole={userRole}
+                            users={users}
+                            canExport={canExport}
+                        />
+                    ) : (
+                        <>
+                            <div className="flex justify-end">
+                                <Button
+                                    variant="success"
+                                    icon={Download}
+                                    onClick={handleExportHoursCSV}
+                                    disabled={loading || workData.length === 0}
+                                >
+                                    Eksportuoti CSV
+                                </Button>
+                            </div>
 
                     {loading && (
                         <div className="bg-surface-card p-8 rounded-card shadow-sm border border-line text-center text-ink-muted">Kraunami duomenys...</div>
@@ -1348,6 +1400,8 @@ export default function Reports({ users }) {
                                     </tbody>
                                 </table>
                             </div>
+                        </>
+                    )}
                         </>
                     )}
                 </div>

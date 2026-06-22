@@ -6,7 +6,6 @@ import TaskModal from '../components/TaskModal';
 import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
-import DailyStatistics from '../components/DailyStatistics';
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import ManagerNotifications from '../components/ManagerNotifications';
 import CalendarRequestStatusBanner from '../components/CalendarRequestStatusBanner';
@@ -300,7 +299,8 @@ export default function ManagerView() {
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="manager:reports" resetKeys={[activeTab]}>
                     <React.Suspense fallback={<Spinner />}>
-                        <Reports users={allUsers || users} />
+                        {/* Team report is the only place export is allowed (Kom. ataskaitos). */}
+                        <Reports users={allUsers || users} canExport />
                     </React.Suspense>
                 </ErrorBoundary>
             </div>
@@ -308,11 +308,12 @@ export default function ManagerView() {
             <div className={activeTab === 'my-reports' ? 'block' : 'hidden'}>
                 <div className="space-y-6">
                     <ErrorBoundary boundaryName="manager:my-reports" resetKeys={[activeTab]}>
-                        <DailyStatistics
-                            currentUser={currentUser}
-                            userRole="worker" // Force worker role to show only personal stats
-                            users={[]}
-                        />
+                        {/* A manager's own "Ataskaitos" is the full report, scoped to themselves
+                            (viewRole="worker": personal data only, no team aggregates/dropdown/export)
+                            so it is identical to a worker's "Ataskaitos". */}
+                        <React.Suspense fallback={<Spinner />}>
+                            <Reports users={[currentUser]} viewRole="worker" />
+                        </React.Suspense>
                     </ErrorBoundary>
                 </div>
             </div>
