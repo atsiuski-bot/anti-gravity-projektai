@@ -1,17 +1,9 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useMemo, useState, Fragment } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { isManagerRole } from '../utils/formatters';
-import {
-    ListTodo,
-    UserCheck,
-    Calendar as CalendarIcon,
-    Users as UsersIcon,
-    History,
-    UserCog,
-    Plus,
-    MoreHorizontal
-} from 'lucide-react';
+import { getNavSections } from '../config/navTabs';
+import { Plus, MoreHorizontal } from 'lucide-react';
 import BreakTimer from './BreakTimer';
 import CallTimer from './CallTimer';
 import QuickWorkTimer from './QuickWorkTimer';
@@ -27,33 +19,14 @@ const BottomNavigation = () => {
     const { activeTab, setActiveTab } = useNavigation();
     const [moreOpen, setMoreOpen] = useState(false);
 
-    // Memoize tabs configuration to prevent unnecessary recalculations
-    const tabs = useMemo(() => {
-        const managerTabs = [
-            { id: 'my-tasks', label: 'Darbai', icon: ListTodo },
-            { id: 'my-calendar', label: 'Kalendorius', icon: CalendarIcon },
-            { id: 'my-reports', label: 'Ataskaitos', icon: History },
-            { type: 'separator' },
-            { id: 'tasks', label: 'Kom. darbai', icon: UserCheck },
-            { id: 'team-calendar', label: 'Kom. kalendorius', icon: UsersIcon },
-            { id: 'reports', label: 'Kom. ataskaitos', icon: History },
-            ...(userRole === 'admin' ? [{ id: 'users', label: 'Vartotojai', icon: UserCog }] : [])
-        ];
+    // Tabs come from the shared nav config so the bottom bar and the desktop side rail can
+    // never drift (DESIGN_SYSTEM §3). Sections carry the personal/team/admin grouping.
+    const sections = useMemo(() => getNavSections(userRole), [userRole]);
 
-        const workerTabs = [
-            { id: 'tasks', label: 'Darbai', icon: ListTodo },
-            { id: 'calendar', label: 'Kalendorius', icon: CalendarIcon },
-            { id: 'reports', label: 'Ataskaitos', icon: History },
-            { id: 'team-calendar', label: 'Kom. kalendorius', icon: UsersIcon },
-        ];
-
-        return isManagerRole(userRole) ? managerTabs : workerTabs;
-    }, [userRole]);
-
-    // Flatten (drop the desktop-only visual separator) for the mobile bar, then cap it at five
-    // slots: up to four primary tabs + a "Daugiau" overflow sheet — never a 7-tab, 9px,
-    // horizontally-scrolling bar (DESIGN_SYSTEM §9).
-    const flatTabs = useMemo(() => tabs.filter((t) => t.type !== 'separator'), [tabs]);
+    // Flatten the sections for the mobile bar, then cap it at five slots: up to four primary
+    // tabs + a "Daugiau" overflow sheet — never a 7-tab, 9px, horizontally-scrolling bar
+    // (DESIGN_SYSTEM §9).
+    const flatTabs = useMemo(() => sections.flatMap((s) => s.items), [sections]);
     const needsOverflow = flatTabs.length > 5;
     const primaryTabs = needsOverflow ? flatTabs.slice(0, 4) : flatTabs;
     const overflowTabs = needsOverflow ? flatTabs.slice(4) : [];
@@ -108,31 +81,33 @@ const BottomNavigation = () => {
             {/* Main bottom bar */}
             <div className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-card pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)]">
                 <div className="relative mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-2">
-                    {/* Desktop: full tab set (centered, with the personal/team separator) */}
+                    {/* Tablet (sm..lg): full tab set, centered, a thin separator between groups */}
                     <div className="hidden flex-1 items-center justify-center gap-2 sm:flex">
-                        {tabs.map((tab, idx) => {
-                            if (tab.type === 'separator') {
-                                return <div key={`sep-${idx}`} className="mx-3 h-10 w-px bg-surface-sunken" />;
-                            }
-                            const active = activeTab === tab.id;
-                            return (
-                                <button
-                                    key={tab.id}
-                                    onClick={() => handleTab(tab.id)}
-                                    aria-current={active ? 'page' : undefined}
-                                    className={cn(
-                                        navItemBase,
-                                        'min-w-[90px] px-4 py-2.5 hover:bg-surface-sunken',
-                                        active ? 'bg-brand-soft text-brand' : 'text-ink-muted'
-                                    )}
-                                >
-                                    <tab.icon className="mb-1.5 h-6 w-6" aria-hidden="true" />
-                                    <span className="whitespace-nowrap text-caption font-medium leading-tight">
-                                        {tab.label}
-                                    </span>
-                                </button>
-                            );
-                        })}
+                        {sections.map((section, si) => (
+                            <Fragment key={section.id}>
+                                {si > 0 && <div className="mx-3 h-10 w-px bg-surface-sunken" />}
+                                {section.items.map((tab) => {
+                                    const active = activeTab === tab.id;
+                                    return (
+                                        <button
+                                            key={tab.id}
+                                            onClick={() => handleTab(tab.id)}
+                                            aria-current={active ? 'page' : undefined}
+                                            className={cn(
+                                                navItemBase,
+                                                'min-w-[90px] px-4 py-2.5 hover:bg-surface-sunken',
+                                                active ? 'bg-brand-soft text-brand' : 'text-ink-muted'
+                                            )}
+                                        >
+                                            <tab.icon className="mb-1.5 h-6 w-6" aria-hidden="true" />
+                                            <span className="whitespace-nowrap text-caption font-medium leading-tight">
+                                                {tab.label}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </Fragment>
+                        ))}
                     </div>
 
                     {/* Mobile: <= 5 equal slots, no horizontal scroll, 12px labels, 44px targets */}

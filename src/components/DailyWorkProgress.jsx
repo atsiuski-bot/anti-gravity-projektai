@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
 import { startOfWeek, endOfWeek, eachDayOfInterval, format, isSameDay } from 'date-fns';
+import { Sun, CalendarDays, CheckCircle2 } from 'lucide-react';
+import { cn } from '../utils/cn';
 
 export default function DailyWorkProgress({ currentUser, tasks = [] }) {
     const [dayPlanned, setDayPlanned] = useState(0);
@@ -199,34 +201,91 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
     const totalDayWorked = dayWorked + currentSessionHours;
     const totalWeekWorked = weekWorked + currentSessionHours;
 
-    const renderProgressBar = (label, current, total, colorClass = "bg-brand") => {
-        // When no shift hours are planned (total === 0) there is no goal to measure against, so
-        // showing "X / 0h 0m" with an empty bar reads as a broken tracker. Show the worked figure
-        // alone plus a hint to plan hours, and distinguish "no plan set" from "plan, zero worked".
+    // A dynamic, encouraging one-liner driven purely by how far along the goal is — turns a
+    // static "X / Y" readout into feedback the worker reacts to (DESIGN_SYSTEM: calm canvas,
+    // motivating signal). `live` marks an in-progress session so the copy nods to it.
+    const motivation = (percent, remainingLabel, live) => {
+        if (percent >= 100) return 'Tikslas pasiektas! Puikus darbas 🎉';
+        if (percent >= 75) return `Beveik! Liko tik ${remainingLabel}`;
+        if (percent >= 40) return `Geras tempas — liko ${remainingLabel}`;
+        if (percent > 0) return live ? 'Gera pradžia, tęsk!' : `Pirmi žingsniai — liko ${remainingLabel}`;
+        return 'Pradėk dieną — pirmas žingsnis svarbiausias';
+    };
+
+    const renderGoal = (label, current, total, opts) => {
+        const { Icon, fillClass, ringClass } = opts;
+        // When no shift hours are planned (total === 0) there is no goal to measure against, so a
+        // "X / 0h 0m" bar reads as a broken tracker. Show a distinct, friendly "plan your hours"
+        // state instead, still inside the same card frame so the layout stays consistent.
         const hasPlan = total > 0;
-        const percent = hasPlan ? (current / total) * 100 : 0; // bar capped at 100% below
+        const percent = hasPlan ? (current / total) * 100 : 0;
+        const reached = hasPlan && percent >= 100;
+        const remaining = Math.max(total - current, 0);
+        const live = currentSessionHours > 0 && label.includes('Dienos');
 
         return (
-            <div className="relative">
-                <div className="flex justify-between text-caption font-medium text-ink-muted mb-1">
-                    <span>{label}</span>
-                    <span className="text-ink-strong">
-                        {formatTime(current)}
-                        {hasPlan && <span className="text-ink-muted"> / {formatTime(total)}</span>}
-                        {currentSessionHours > 0 && label.includes('Dienos') && (
-                            <span className="text-caption text-session-task-accent ml-1">(+vyksta)</span>
-                        )}
-                    </span>
+            <div className={cn(
+                'rounded-control border p-3 transition-colors',
+                reached
+                    ? 'border-feedback-success/40 bg-feedback-success/10'
+                    : 'border-line bg-surface-sunken/40'
+            )}>
+                <div className="flex items-center gap-3">
+                    {/* Icon medallion — green check once the goal is reached */}
+                    <div className={cn(
+                        'flex h-11 w-11 shrink-0 items-center justify-center rounded-full',
+                        reached ? 'bg-feedback-success/20 text-feedback-success' : ringClass
+                    )}>
+                        {reached
+                            ? <CheckCircle2 className="h-6 w-6" aria-hidden="true" />
+                            : <Icon className="h-6 w-6" aria-hidden="true" />}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline justify-between gap-2">
+                            <span className="text-body font-semibold text-ink-strong">{label}</span>
+                            {hasPlan && (
+                                <span className={cn(
+                                    'text-h3 font-extrabold leading-none tabular-nums',
+                                    reached ? 'text-feedback-success' : 'text-ink-strong'
+                                )}>
+                                    {Math.round(percent)}%
+                                </span>
+                            )}
+                        </div>
+                        <div className="mt-0.5 flex items-center justify-between gap-2 text-caption">
+                            <span className="text-ink-muted">
+                                {hasPlan ? motivation(percent, formatTime(remaining), live) : 'Nesuplanuota darbo laiko'}
+                            </span>
+                            {hasPlan && (
+                                <span className="shrink-0 font-medium tabular-nums text-ink-muted">
+                                    {formatTime(current)}<span className="text-ink-muted/70"> / {formatTime(total)}</span>
+                                    {live && <span className="ml-1 text-session-task-accent">•vyksta</span>}
+                                </span>
+                            )}
+                        </div>
+                    </div>
                 </div>
+
                 {hasPlan ? (
-                    <div className="h-4 w-full bg-surface-sunken rounded-full overflow-hidden">
+                    <div className="relative mt-3 h-3 w-full overflow-hidden rounded-full bg-surface-sunken">
                         <div
-                            className={`h-full ${colorClass} rounded-full transition-all duration-500 ease-in-out`}
-                            style={{ width: `${Math.min(percent, 100)}%` }}
-                        ></div>
+                            className={cn(
+                                'h-full rounded-full transition-all duration-700 ease-out',
+                                reached ? 'bg-feedback-success' : fillClass
+                            )}
+                            style={{ width: `${Math.max(Math.min(percent, 100), current > 0 ? 4 : 0)}%` }}
+                            role="progressbar"
+                            aria-valuenow={Math.round(percent)}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                            aria-label={`${label}: ${Math.round(percent)}%`}
+                        />
                     </div>
                 ) : (
-                    <p className="text-caption text-ink-muted">Nesuplanuota darbo laiko. Susiplanuokite valandas kalendoriuje.</p>
+                    <p className="mt-2 text-caption text-ink-muted">
+                        Susiplanuokite valandas kalendoriuje, kad matytumėte savo pažangą.
+                    </p>
                 )}
             </div>
         );
@@ -241,21 +300,21 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                 Darbo Progresas
             </h3>
 
-            <div className="space-y-6">
+            <div className="space-y-3">
                 {/* Day Progress */}
-                {renderProgressBar(
+                {renderGoal(
                     "Dienos tikslas",
                     totalDayWorked,
                     dayPlanned,
-                    "bg-brand"
+                    { Icon: Sun, fillClass: 'bg-brand', ringClass: 'bg-brand-soft text-brand' }
                 )}
 
                 {/* Week Progress */}
-                {renderProgressBar(
+                {renderGoal(
                     "Savaitės tikslas",
                     totalWeekWorked,
                     weekPlanned,
-                    "bg-session-task-accent" // Slightly different color for distinction
+                    { Icon: CalendarDays, fillClass: 'bg-session-task-accent', ringClass: 'bg-session-task-surface text-session-task-accent' }
                 )}
             </div>
 

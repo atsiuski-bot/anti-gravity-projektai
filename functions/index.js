@@ -29,6 +29,22 @@ const db = getFirestore();
 // FCM push
 // ---------------------------------------------------------------------------
 
+// Honor the recipient's per-user notification toggle (users/{uid}.notificationsEnabled). A
+// missing field means notifications were never turned off (default on). This is the
+// authoritative gate for background push: a device that registered its token BEFORE the user
+// disabled would otherwise keep receiving push, since the client only skips re-registration.
+async function notificationsEnabledFor(uid) {
+    if (!uid) return false;
+    try {
+        const snap = await db.collection('users').doc(uid).get();
+        return snap.exists ? snap.data().notificationsEnabled !== false : true;
+    } catch (err) {
+        // Fail open: a transient read error should not silently drop a recipient's alerts.
+        logger.warn('notificationsEnabledFor failed', { uid, err: err.message });
+        return true;
+    }
+}
+
 // Per-user device tokens live at fcm_tokens/{uid} = { tokens: string[], updatedAt }.
 async function getTokensFor(uid) {
     if (!uid) return [];
@@ -55,6 +71,7 @@ async function pruneTokens(uid, badTokens) {
 }
 
 async function sendToUser(uid, notification, data) {
+    if (!(await notificationsEnabledFor(uid))) return; // recipient turned notifications off
     const tokens = await getTokensFor(uid);
     if (!tokens.length) return;
 

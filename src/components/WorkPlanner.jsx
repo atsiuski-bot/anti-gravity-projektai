@@ -7,12 +7,13 @@ import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
-import { Clock, Plus, Trash2, AlertCircle, Info, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
+import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import InfoPopover from './ui/InfoPopover';
 
 // Map raw / Firebase errors to friendly Lithuanian copy (DESIGN_SYSTEM §10).
 // Never surface raw err.message to the user.
@@ -39,53 +40,6 @@ const localizer = dateFnsLocalizer({
     locales,
 });
 
-// Compact, dismissible planner help. The four usage tips live behind an info icon (placed left
-// of the primary "Pridėti" action) instead of a permanent box that ate vertical space on a
-// phone. Controlled (open state lives in the parent) so a toolbar remount never loses it.
-function InstructionsPopover({ open, onToggle, onClose }) {
-    // Escape closes; outside clicks are caught by the transparent backdrop below.
-    useEffect(() => {
-        if (!open) return undefined;
-        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-        document.addEventListener('keydown', onKey);
-        return () => document.removeEventListener('keydown', onKey);
-    }, [open, onClose]);
-
-    return (
-        <div className="relative">
-            <IconButton
-                icon={Info}
-                label="Instrukcija"
-                onClick={onToggle}
-                aria-expanded={open}
-                aria-controls="workplanner-instructions"
-                className="relative z-50 border border-line bg-surface-card shadow-sm"
-            />
-            {open && (
-                <>
-                    <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden="true" />
-                    <div
-                        id="workplanner-instructions"
-                        role="region"
-                        aria-label="Instrukcija"
-                        className="absolute right-0 top-full z-50 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-card border border-line bg-surface-card p-3 text-left shadow-lg motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95"
-                    >
-                        <p className="mb-2 flex items-center gap-1.5 text-body font-bold text-brand">
-                            <Info className="h-4 w-4" aria-hidden="true" /> Instrukcija:
-                        </p>
-                        <ul className="list-inside list-disc space-y-1 text-caption text-ink">
-                            <li>Tempkite kalendoriuje laikui žymėti</li>
-                            <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
-                            <li>Bakstelėkite įrašą trynimui</li>
-                            <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
-                        </ul>
-                    </div>
-                </>
-            )}
-        </div>
-    );
-}
-
 const CustomToolbar = (toolbar) => {
     const goToToday = () => { toolbar.onNavigate('TODAY'); };
     const toggleView = (view) => { toolbar.onView(view); };
@@ -98,88 +52,116 @@ const CustomToolbar = (toolbar) => {
     // two compact rows.
     const showCopy = Boolean(toolbar.onCopyLastWeek) && !toolbar.copyDisabled;
 
+    // Each control is defined once and reused by both layouts below, so the two
+    // arrangements (stacked on phones, single row on desktop) never drift apart.
+    const todayButton = (
+        <Button
+            variant="secondary"
+            size="md"
+            onClick={goToToday}
+            className="shrink-0"
+        >
+            Šiandien
+        </Button>
+    );
+
+    const viewToggle = (
+        <div className="flex items-center bg-surface-sunken rounded-control overflow-hidden border border-line shadow-sm shrink-0" role="group" aria-label="Rodinio pasirinkimas">
+            <button
+                onClick={() => toggleView('week')}
+                aria-pressed={toolbar.view === 'week'}
+                className={clsx(
+                    "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                    toolbar.view === 'week' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                )}
+            >
+                Savaitė
+            </button>
+            <div className="w-[1px] self-stretch bg-line"></div>
+            <button
+                onClick={() => toggleView('day')}
+                aria-pressed={toolbar.view === 'day'}
+                className={clsx(
+                    "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                    toolbar.view === 'day' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                )}
+            >
+                Diena
+            </button>
+        </div>
+    );
+
+    const periodNav = (
+        <div className="flex flex-1 items-center justify-center gap-1 sm:gap-2 min-w-0">
+            <IconButton
+                icon={ChevronLeft}
+                label="Ankstesnis laikotarpis"
+                onClick={() => toolbar.onNavigate('PREV')}
+                className="shrink-0"
+            />
+            <span className="min-w-0 truncate text-center text-body-lg sm:text-h3 font-bold text-ink-strong capitalize select-none">
+                {toolbar.label}
+            </span>
+            <IconButton
+                icon={ChevronRight}
+                label="Kitas laikotarpis"
+                onClick={() => toolbar.onNavigate('NEXT')}
+                className="shrink-0"
+            />
+        </div>
+    );
+
+    const addButton = (
+        <div className="flex items-center gap-2 shrink-0">
+            {/* Usage tips tucked behind an info icon, left of the primary create action. */}
+            <InfoPopover label="Instrukcija" align="right">
+                <p className="mb-1.5 font-bold text-brand">Instrukcija:</p>
+                <ul className="list-inside list-disc space-y-1">
+                    <li>Tempkite kalendoriuje laikui žymėti</li>
+                    <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
+                    <li>Bakstelėkite įrašą trynimui</li>
+                    <li>Braukite aukštyn/žemyn laiko pasirinkimui</li>
+                </ul>
+            </InfoPopover>
+            <Button
+                variant="primary"
+                size="md"
+                icon={Plus}
+                onClick={toolbar.onManualClick}
+                className="shrink-0"
+            >
+                <span className="sm:hidden">Pridėti</span>
+                <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
+            </Button>
+        </div>
+    );
+
     return (
         <div className="flex flex-col gap-2 mb-2">
-            {/* Row 1 — global controls: view mode (left) + the single dominant create action
-                (right). The right side previously stacked Today + Add + Copy vertically, eating
-                ~150px of height before the grid appeared on a phone. */}
-            <div className="flex items-center justify-between gap-2">
-                {/* View: Week / Day */}
-                <div className="flex items-center bg-surface-sunken rounded-control overflow-hidden border border-line shadow-sm" role="group" aria-label="Rodinio pasirinkimas">
-                    <button
-                        onClick={() => toggleView('week')}
-                        aria-pressed={toolbar.view === 'week'}
-                        className={clsx(
-                            "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                            toolbar.view === 'week' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
-                        )}
-                    >
-                        Savaitė
-                    </button>
-                    <div className="w-[1px] self-stretch bg-line"></div>
-                    <button
-                        onClick={() => toggleView('day')}
-                        aria-pressed={toolbar.view === 'day'}
-                        className={clsx(
-                            "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                            toolbar.view === 'day' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
-                        )}
-                    >
-                        Diena
-                    </button>
+            {/* Phone / tablet (<lg): two compact rows — view + create on top, then the
+                navigation cluster — so nothing gets squeezed on a ~360px viewport. */}
+            <div className="flex flex-col gap-2 lg:hidden">
+                {/* pr-12 keeps the create action clear of the fixed profile-avatar bubble
+                    pinned to the top-right corner (Layout) — without it they overlap on phones. */}
+                <div className="flex items-center justify-between gap-2 pr-12">
+                    {viewToggle}
+                    {addButton}
                 </div>
-
-                {/* Right cluster: usage-help info icon + the single dominant create action. */}
-                <div className="flex items-center gap-2 shrink-0">
-                    <InstructionsPopover
-                        open={toolbar.helpOpen}
-                        onToggle={toolbar.onToggleHelp}
-                        onClose={toolbar.onCloseHelp}
-                    />
-                    {/* Primary create action — short label on phones, full label once there's room. */}
-                    <Button
-                        variant="primary"
-                        size="md"
-                        icon={Plus}
-                        onClick={toolbar.onManualClick}
-                    >
-                        <span className="sm:hidden">Pridėti</span>
-                        <span className="hidden sm:inline">Pridėti rankiniu būdu</span>
-                    </Button>
+                <div className="flex items-center gap-2">
+                    {todayButton}
+                    {periodNav}
                 </div>
             </div>
 
-            {/* Row 2 — one navigation cluster: jump-to-today + the period readout with step
-                arrows. Today is a navigation action, so it sits with the arrows, not stacked. */}
-            <div className="flex items-center gap-2">
-                <Button
-                    variant="secondary"
-                    size="md"
-                    onClick={goToToday}
-                    className="shrink-0"
-                >
-                    Šiandien
-                </Button>
-
-                <div className="flex flex-1 items-center justify-center gap-1 sm:gap-2 min-w-0">
-                    <IconButton
-                        icon={ChevronLeft}
-                        label="Ankstesnis laikotarpis"
-                        onClick={() => toolbar.onNavigate('PREV')}
-                        className="shrink-0"
-                    />
-                    <span className="min-w-0 truncate text-center text-body-lg sm:text-h3 font-bold text-ink-strong capitalize select-none">
-                        {toolbar.label}
-                    </span>
-                    <IconButton
-                        icon={ChevronRight}
-                        label="Kitas laikotarpis"
-                        onClick={() => toolbar.onNavigate('NEXT')}
-                        className="shrink-0"
-                    />
-                </div>
+            {/* Desktop (lg+): everything fits one row — Today, the Week/Day toggle, the
+                period readout with arrows (centered, flex-1), then the create action far right. */}
+            <div className="hidden lg:flex lg:items-center lg:gap-3">
+                {todayButton}
+                {viewToggle}
+                {periodNav}
+                {addButton}
             </div>
 
             {/* Copy last week's plan — only rendered while it can actually run (planning window),
@@ -204,9 +186,6 @@ export default function WorkPlanner() {
     const { currentUser, userData, userRole } = useAuth();
     const [events, setEvents] = useState([]);
     const [showManualInput, setShowManualInput] = useState(false);
-    // Planner usage-help popover (the four tips behind the toolbar info icon). Held here, not in
-    // the toolbar, so a react-big-calendar toolbar remount doesn't dismiss it.
-    const [showHelp, setShowHelp] = useState(false);
     const [manualDate, setManualDate] = useState('');
     const [manualStart, setManualStart] = useState('');
     const [manualEnd, setManualEnd] = useState('');
@@ -781,9 +760,6 @@ export default function WorkPlanner() {
                 onManualClick={() => setShowManualInput(!showManualInput)}
                 onCopyLastWeek={handleCopyLastWeek}
                 copyDisabled={approvalActive}
-                helpOpen={showHelp}
-                onToggleHelp={() => setShowHelp((v) => !v)}
-                onCloseHelp={() => setShowHelp(false)}
             />
         )
     };

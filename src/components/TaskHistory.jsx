@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, addDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Pencil, AlertCircle } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Pencil, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../utils/priority';
 import clsx from 'clsx';
@@ -14,6 +14,7 @@ import { DeleteConfirmationModal, CommentsModal, TimeAdjustmentsModal } from './
 import SessionTypeIcon from './SessionTypeIcon';
 import { addComment } from '../utils/commentActions';
 import IconButton from './ui/IconButton';
+import InfoPopover from './ui/InfoPopover';
 import StatusPill from './ui/StatusPill';
 import ConfirmDialog from './ui/ConfirmDialog';
 
@@ -75,6 +76,31 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
     const [filterUser, setFilterUser] = useState('all');
     const [filterTag, setFilterTag] = useState('all');
     const [sortBy, setSortBy] = useState('date'); // 'date' | 'status'
+
+    // Two nested accordions: the whole history panel collapses (closed by default — it is an
+    // archive, secondary to the live daily report above it), and inside it the filter controls
+    // collapse independently (also closed by default so the panel opens compact).
+    const [historyOpen, setHistoryOpen] = useState(false);
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    // Date range lives behind a single field; tapping it opens the from/to pickers in a popover.
+    const [dateRangeOpen, setDateRangeOpen] = useState(false);
+    const dateRangeRef = useRef(null);
+
+    useEffect(() => {
+        if (!dateRangeOpen) return undefined;
+        const onPointerDown = (e) => {
+            if (dateRangeRef.current && !dateRangeRef.current.contains(e.target)) {
+                setDateRangeOpen(false);
+            }
+        };
+        const onKeyDown = (e) => { if (e.key === 'Escape') setDateRangeOpen(false); };
+        document.addEventListener('pointerdown', onPointerDown);
+        document.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.removeEventListener('pointerdown', onPointerDown);
+            document.removeEventListener('keydown', onKeyDown);
+        };
+    }, [dateRangeOpen]);
 
     const toggleExpand = (taskId) => {
         const newExpanded = new Set(expandedTasks);
@@ -587,21 +613,34 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
     return (
         <div className="space-y-4">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <h2 className="text-h3 font-semibold text-ink-strong flex items-center gap-2">
-                        Užduočių istorija <span className="text-ink-muted text-body font-normal">({tasks.length})</span>
-                    </h2>
+                {/* Accordion toggle: the chevron + title is the clickable header. The scope note
+                    now lives behind an info popover beside the title (sibling, not nested — an
+                    interactive trigger can't sit inside another button). */}
+                <div className="flex items-center gap-1">
+                    <button
+                        type="button"
+                        onClick={() => setHistoryOpen((o) => !o)}
+                        aria-expanded={historyOpen}
+                        className="flex items-center gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    >
+                        {historyOpen
+                            ? <ChevronUp className="w-5 h-5 text-ink-muted shrink-0" aria-hidden="true" />
+                            : <ChevronDown className="w-5 h-5 text-ink-muted shrink-0" aria-hidden="true" />}
+                        <h2 className="text-h3 font-semibold text-ink-strong flex items-center gap-2">
+                            Užduočių istorija <span className="text-ink-muted text-body font-normal">({tasks.length})</span>
+                        </h2>
+                    </button>
                     {/* Scope clarity (audit #3): this panel is the ARCHIVE only. Just-finished tasks
                         stay in the daily report above until the nightly automation archives them, so
                         an absence here is expected, not a bug — say so instead of duplicating them. */}
-                    <p className="text-caption text-ink-muted mt-1 max-w-prose">
+                    <InfoPopover label="Apie užduočių istoriją">
                         Rodomos tik suarchyvuotos užduotys (archyvuojama automatiškai naktį). Ką tik
                         užbaigtos užduotys matomos dienos ataskaitoje viršuje, kol nebus suarchyvuotos.
-                    </p>
+                    </InfoPopover>
                 </div>
                 {/* Export is manager-only (team report). Workers — and managers viewing their
                     own personal report — never get a self-export button (canExport=false). */}
-                {canExport && (
+                {canExport && historyOpen && (
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleExportCSV}
@@ -621,6 +660,8 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                 )}
             </div>
 
+            {historyOpen && (
+            <>
             {/* Friendly error banner — replaces the banned alert() with mapped LT copy (§10) */}
             {error && (
                 <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4" role="alert">
@@ -635,33 +676,73 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                 </div>
             )}
 
-            {/* Filters */}
-            <div className="bg-surface-sunken p-4 rounded-card border border-line flex flex-col md:flex-row gap-4 items-end md:items-center flex-wrap">
+            {/* Filters — a nested accordion inside the history panel. Collapsed by default so
+                the panel stays compact; the chevron reveals the date/user/tag/sort controls. */}
+            <div className="bg-surface-sunken rounded-card border border-line">
+              <button
+                type="button"
+                onClick={() => setFiltersOpen((o) => !o)}
+                aria-expanded={filtersOpen}
+                className="w-full min-h-touch flex items-center justify-between gap-3 px-4 py-3 text-left rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+              >
+                <span className="flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
+                    <Filter className="w-4 h-4" aria-hidden="true" />
+                    Filtravimas
+                </span>
+                {filtersOpen
+                    ? <ChevronUp className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                    : <ChevronDown className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />}
+              </button>
 
-                {/* Date Range */}
-                <div className="flex items-center gap-2">
-                    <div className="flex flex-col gap-1">
-                        <label className={FILTER_LABEL_CLASS}>Nuo</label>
-                        <input
-                            type="date"
-                            value={dateFrom}
-                            onChange={(e) => setDateFrom(e.target.value)}
-                            aria-label="Nuo"
-                            className={SELECT_CLASS}
-                        />
-                    </div>
-                    <span className="text-ink-muted mt-5">-</span>
-                    <div className="flex flex-col gap-1">
-                        <label className={FILTER_LABEL_CLASS}>Iki</label>
-                        <input
-                            type="date"
-                            value={dateTo}
-                            onChange={(e) => setDateTo(e.target.value)}
-                            max={getLithuanianDateString()}
-                            aria-label="Iki"
-                            className={SELECT_CLASS}
-                        />
-                    </div>
+              {filtersOpen && (
+              <div className="border-t border-line p-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+
+                {/* Date range — a single field; tapping it opens the from/to pickers in a popover,
+                    so the two date inputs no longer eat a whole row each. */}
+                <div className="relative flex flex-col gap-1 min-w-[200px]" ref={dateRangeRef}>
+                    <label className={FILTER_LABEL_CLASS}>Laikotarpis</label>
+                    <button
+                        type="button"
+                        onClick={() => setDateRangeOpen((o) => !o)}
+                        aria-expanded={dateRangeOpen}
+                        aria-label="Pasirinkti laikotarpį"
+                        className={clsx(SELECT_CLASS, 'flex items-center gap-2 text-left')}
+                    >
+                        <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" aria-hidden="true" />
+                        <span className="truncate">{dateFrom} – {dateTo}</span>
+                        <ChevronDown className="w-3.5 h-3.5 text-ink-muted shrink-0 ml-auto" aria-hidden="true" />
+                    </button>
+                    {dateRangeOpen && (
+                        <div
+                            role="dialog"
+                            aria-label="Laikotarpis"
+                            className="absolute top-full left-0 z-toast mt-1 w-72 max-w-[80vw] rounded-card border border-line bg-surface-card p-3 shadow-lg space-y-3"
+                        >
+                            <div className="flex flex-col gap-1">
+                                <label htmlFor="hist-date-from" className={FILTER_LABEL_CLASS}>Nuo</label>
+                                <input
+                                    id="hist-date-from"
+                                    type="date"
+                                    value={dateFrom}
+                                    max={dateTo}
+                                    onChange={(e) => setDateFrom(e.target.value)}
+                                    className={SELECT_CLASS}
+                                />
+                            </div>
+                            <div className="flex flex-col gap-1">
+                                <label htmlFor="hist-date-to" className={FILTER_LABEL_CLASS}>Iki</label>
+                                <input
+                                    id="hist-date-to"
+                                    type="date"
+                                    value={dateTo}
+                                    min={dateFrom}
+                                    max={getLithuanianDateString()}
+                                    onChange={(e) => setDateTo(e.target.value)}
+                                    className={SELECT_CLASS}
+                                />
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {/* User Filter (Manager Only) */}
@@ -700,31 +781,53 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                     </select>
                 </div>
 
-                {/* Sort By */}
-                <div className="flex flex-col gap-1 min-w-[120px]">
+                {/* Sort — a segmented switch (Pagal datą / Pagal būseną) rather than a dropdown,
+                    so both choices are visible at once and it reads at a glance. */}
+                <div className="flex flex-col gap-1">
                     <label className={FILTER_LABEL_CLASS}>Rūšiuoti</label>
-                    <div className="relative">
-                        <select
-                            value={sortBy}
-                            onChange={(e) => setSortBy(e.target.value)}
-                            aria-label="Rūšiuoti"
-                            className={clsx(SELECT_CLASS, 'pl-8')}
+                    <div
+                        className="flex w-fit items-center bg-surface-card rounded-input overflow-hidden border border-line"
+                        role="group"
+                        aria-label="Rūšiuoti"
+                    >
+                        <button
+                            type="button"
+                            onClick={() => setSortBy('date')}
+                            aria-pressed={sortBy === 'date'}
+                            className={clsx(
+                                "px-3 py-1.5 text-body font-semibold transition-colors",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                                sortBy === 'date' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                            )}
                         >
-                            <option value="date">Pagal datą</option>
-                            <option value="status">Pagal būseną</option>
-                        </select>
-                        <Filter className="w-3.5 h-3.5 text-ink-muted absolute left-2.5 top-1/2 transform -translate-y-1/2" aria-hidden="true" />
+                            Pagal datą
+                        </button>
+                        <div className="w-px self-stretch bg-line" aria-hidden="true" />
+                        <button
+                            type="button"
+                            onClick={() => setSortBy('status')}
+                            aria-pressed={sortBy === 'status'}
+                            className={clsx(
+                                "px-3 py-1.5 text-body font-semibold transition-colors",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
+                                sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                            )}
+                        >
+                            Pagal būseną
+                        </button>
                     </div>
                 </div>
 
                 {/* Reset Button */}
-                <div className="md:ml-auto">
+                <div className="sm:ml-auto">
                     <IconButton
                         icon={RotateCcw}
                         label="Išvalyti filtrus"
                         onClick={resetFilters}
                     />
                 </div>
+              </div>
+              )}
             </div>
 
             {/* Mobile / touch: one card per task — never a horizontally-scrolling table (§9).
@@ -964,6 +1067,8 @@ export default function TaskHistory({ userId, users = [], canExport = false }) {
                     </table>
                 </div>
             </div>
+            </>
+            )}
             <DeleteConfirmationModal
                 isOpen={!!deleteModalTask}
                 onClose={() => setDeleteModalTask(null)}

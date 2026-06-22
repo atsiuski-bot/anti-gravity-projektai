@@ -159,29 +159,31 @@ export default function AllUsersCalendar() {
 
     return (
         <div className="w-full bg-surface-card rounded-card shadow-lg border border-line overflow-hidden flex flex-col h-[70vh] min-h-[480px] max-h-[850px]">
-            {/* Toolbar */}
-            <div className="p-4 border-b border-line flex flex-col gap-4">
-                <div className="flex justify-end items-center">
-                    <Button
-                        variant="secondary"
-                        onClick={() => setCurrentDate(new Date())}
-                    >
-                        Šiandien
-                    </Button>
-                </div>
+            {/* Toolbar — single row on every viewport: the day stepper sits centered while the
+                "Šiandien" reset is pinned to the right edge, vertically aligned with the day name
+                (no longer a separate top row). Proportions are tuned down (smaller title/date,
+                tighter padding) so the header no longer dominates the card. */}
+            <div className="relative p-3 sm:p-4 border-b border-line">
+                <Button
+                    variant="secondary"
+                    onClick={() => setCurrentDate(new Date())}
+                    className="absolute right-3 sm:right-4 top-1/2 -translate-y-1/2 px-3 py-1.5 text-caption sm:text-body"
+                >
+                    Šiandien
+                </Button>
 
                 {/* Date Navigation */}
-                <div className="flex items-center justify-center gap-6">
+                <div className="flex items-center justify-center gap-3 sm:gap-6">
                     <IconButton
                         icon={ChevronLeft}
                         label="Ankstesnė diena"
                         onClick={() => setCurrentDate(addDays(currentDate, -1))}
                     />
-                    <div className="text-center">
-                        <h2 className="text-h2 font-bold text-ink-strong capitalize">
+                    <div className="text-center min-w-0">
+                        <h2 className="text-h3 sm:text-h2 font-bold text-ink-strong capitalize leading-tight">
                             {WEEKDAYS[getDay(currentDate)]}
                         </h2>
-                        <p className="text-body-lg text-ink-muted capitalize">
+                        <p className="text-caption sm:text-body text-ink-muted capitalize">
                             {format(currentDate, 'MMMM d', { locale: lt })}d.
                         </p>
                     </div>
@@ -336,30 +338,47 @@ export default function AllUsersCalendar() {
                             <ul className="divide-y divide-line">
                                 {user.events.map((event) => {
                                     const status = eventStatus(event);
+                                    const barColor = event.isVacation ? VACATION_COLOR : (event.color || WORKER_FALLBACK_COLOR);
+                                    // Same proportional placement math as the desktop bars, but the
+                                    // track is the card width (7:00–22:00 span) — no horizontal scroll (§9).
+                                    const barStyle = getEventStyle(event.start, event.end);
                                     return (
                                         <li
                                             key={event.id}
-                                            className="flex items-start gap-3 px-4 py-3"
-                                            style={{
-                                                borderLeft: `4px solid ${event.isVacation ? VACATION_COLOR : (event.color || WORKER_FALLBACK_COLOR)}`
-                                            }}
+                                            className="px-4 py-3"
+                                            style={{ borderLeft: `4px solid ${barColor}` }}
                                         >
-                                            <div className="min-w-0 flex-1">
-                                                <p className="text-body font-semibold text-ink-strong truncate">
-                                                    {event.title}
-                                                </p>
-                                                <p className="text-caption text-ink-muted font-medium tabular-nums">
-                                                    {format(event.start, 'HH:mm')}–{format(event.end, 'HH:mm')}
-                                                </p>
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0 flex-1">
+                                                    <p className="text-body font-semibold text-ink-strong truncate">
+                                                        {event.title}
+                                                    </p>
+                                                    <p className="text-caption text-ink-muted font-medium tabular-nums">
+                                                        {format(event.start, 'HH:mm')}–{format(event.end, 'HH:mm')}
+                                                    </p>
+                                                </div>
+                                                {status && (
+                                                    <span className={cn(
+                                                        'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-caption font-medium flex-shrink-0',
+                                                        event.isVacation ? 'bg-brand-soft text-brand-hover' : 'bg-amber-100 text-amber-800'
+                                                    )}>
+                                                        <status.Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                                                        {status.label}
+                                                    </span>
+                                                )}
                                             </div>
-                                            {status && (
-                                                <span className={cn(
-                                                    'inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-caption font-medium flex-shrink-0',
-                                                    event.isVacation ? 'bg-brand-soft text-brand-hover' : 'bg-amber-100 text-amber-800'
-                                                )}>
-                                                    <status.Icon className="w-3.5 h-3.5" aria-hidden="true" />
-                                                    {status.label}
-                                                </span>
+
+                                            {/* Proportional shift bar across the 7:00–22:00 day */}
+                                            {barStyle && (
+                                                <div
+                                                    className="relative mt-2.5 h-2.5 rounded-full bg-surface-sunken overflow-hidden"
+                                                    role="presentation"
+                                                >
+                                                    <div
+                                                        className="absolute inset-y-0 rounded-full"
+                                                        style={{ ...barStyle, backgroundColor: barColor }}
+                                                    />
+                                                </div>
                                             )}
                                         </li>
                                     );

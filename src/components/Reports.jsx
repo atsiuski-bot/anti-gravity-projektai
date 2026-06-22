@@ -1026,32 +1026,30 @@ export default function Reports({ users, canExport = false, viewRole }) {
         <div className="space-y-6">
             <h2 className="text-h2 font-bold text-ink-strong">Ataskaitos ir Duomenys</h2>
 
-            {/* TABS */}
-            <div className="flex border-b border-line overflow-x-auto">
+            {/* TABS — the calendar-change-history tab is a team/oversight feature, so it only
+                appears in the manager team view. In a personal report (worker, or a manager
+                viewing their OWN data via viewRole="worker") there is just one view, so the
+                whole switcher is dropped. */}
+            {isManagerRole(userRole) && (
+                <div className="flex border-b border-line overflow-x-auto">
 
-                <button
-                    onClick={() => setActiveTab('report')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
-                        }`}
-                >
-                    Darbo ataskaita
-                </button>
-                <button
-                    onClick={() => setActiveTab('calendar-history')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
-                        }`}
-                >
-                    Kalendoriaus pakeitimų istorija
-                </button>
-                {/* <button
-                    onClick={() => setActiveTab('tasks')}
-                    className={`px-4 py-2 font-medium text-sm transition-colors border-b-2 ${activeTab === 'tasks' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
-                        }`}
-                >
-                    Užduočių Analizė
-                </button> */}
+                    <button
+                        onClick={() => setActiveTab('report')}
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                            }`}
+                    >
+                        Darbo ataskaita
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('calendar-history')}
+                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-blue-600 text-blue-600' : 'border-transparent text-ink-muted hover:text-ink'
+                            }`}
+                    >
+                        Kalendoriaus pakeitimų istorija
+                    </button>
 
-            </div>
+                </div>
+            )}
 
             {/* Friendly error banner — replaces banned window.alert (§8); never raw err.message (§10) */}
             {error && (
