@@ -5,6 +5,12 @@
 @layer base {
   body {
     @apply bg-surface-base text-ink-strong;
+    /* Disable the browser's native pull-to-refresh / overscroll chaining (Chrome
+       Android triggers a full reload on a downward swipe at the top of the page).
+       As an installed PWA the app inherits that page gesture, and field users on
+       phones hit it accidentally. `contain` stops the overscroll from propagating
+       to the browser viewport while leaving normal in-app scrolling untouched. */
+    overscroll-behavior-y: contain;
   }
 }
 

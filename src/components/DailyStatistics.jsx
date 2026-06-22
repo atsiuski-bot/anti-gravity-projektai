@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, MAX_MANUAL_TASK_MINUTES } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
@@ -12,17 +12,18 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Zap, MessageSquare, Check, Filter, RotateCcw, X, Pencil } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Zap, MessageSquare, Check, CheckCircle2, Filter, RotateCcw, X, Pencil } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
 import SessionTypeIcon from './SessionTypeIcon';
 import IconButton from './ui/IconButton';
+import StatusPill from './ui/StatusPill';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
 import TaskModal from './TaskModal';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full' }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full', showTestUsers = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
@@ -53,6 +54,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const [sessions, setSessions] = useState([]); // From work_sessions collection
     const [, setScheduledTasks] = useState([]); // Tasks planned for this weekday
     const [finishedTasks, setFinishedTasks] = useState([]); // Tasks finished on this specific date
+    // Every task the listeners loaded this span (active + archived + deleted, all users in
+    // scope), deduped by id. The worker drill-down resolves each timeline row to its task
+    // through this so a still-running task — absent from finishedTasks — still shows its status
+    // and opens on click. A superset of finishedTasks; never narrower.
+    const [allLoadedTasks, setAllLoadedTasks] = useState([]);
 
     // Ticker for active sessions
     const [currentTime, setCurrentTime] = useState(new Date());
@@ -115,6 +121,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         setSessions([]);
         setScheduledTasks([]);
         setFinishedTasks([]);
+        setAllLoadedTasks([]);
 
 
 
@@ -206,13 +213,24 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         let activeTasks = [];
         let archivedTasks = [];
         let deletedTasks = [];
+        // A scoped manager's team listeners above are array-contains(me) on the row's denormalized
+        // teamManagerIds (the WORKER's managers), so they MISS tasks where this manager is the named
+        // vadovas (managerId) but the worker is not on their team. The security rules already allow
+        // reading those rows (canReadOwnedTask's managerId clause, firestore.rules), so a supplemental
+        // managerId== listener requests exactly them — without widening to the worker's other data.
+        // Same merge idiom as useManagerData's "Mano" section. Merged into the dedupe map below.
+        let vadovasActiveTasks = [];
+        let vadovasArchivedTasks = [];
 
         const updateAggregatedTasks = () => {
             // deduplicate tasks by ID to avoid duplicate key warnings
             const taskMap = new Map();
-            [...activeTasks, ...archivedTasks, ...deletedTasks].forEach(t => {
+            [...activeTasks, ...archivedTasks, ...deletedTasks, ...vadovasActiveTasks, ...vadovasArchivedTasks].forEach(t => {
                 if (t.id) taskMap.set(t.id, t);
             });
+            // Expose the full loaded set (pre user-filter) so the worker drill-down can resolve
+            // any row's task — including still-running ones the finished-task split omits.
+            setAllLoadedTasks(Array.from(taskMap.values()));
             const allRelevantTasks = Array.from(taskMap.values()).filter(t => {
                 const taskUserId = resolveUserId(t);
                 if (selectedUserId !== 'all' && taskUserId !== selectedUserId) return false;
@@ -270,6 +288,34 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             console.error("Error fetching deleted tasks:", error);
         });
 
+        // Vadovas supplement (scoped managers only): pull the active/archived tasks this manager owns
+        // as the named vadovas (managerId==me), regardless of the worker's team. Whole-team viewers
+        // (admins / unscoped managers) already read these via their broad queries, so this is skipped
+        // for them. Single-field equality stays on the automatic index — no archivedAt range here, so
+        // no composite index is needed; the day-window bounding is done client-side in splitTasks just
+        // like the team archived rows. Feeds the same dedupe map, so a task matching both is not duped.
+        let unsubVadovasActive = () => { };
+        let unsubVadovasArchived = () => { };
+        if (scoped && scopeUid) {
+            const vadovasActiveQ = query(collection(db, 'tasks'), where('managerId', '==', scopeUid));
+            unsubVadovasActive = onSnapshot(vadovasActiveQ, (snap) => {
+                vadovasActiveTasks = snap.docs
+                    .map(d => ({ id: d.id, ...d.data() }))
+                    .filter(t => !t.isDeleted && t.status !== 'deleted');
+                updateAggregatedTasks();
+            }, (error) => {
+                logError(error, { source: 'onSnapshot:vadovasActiveTasks' });
+            });
+
+            const vadovasArchivedQ = query(collection(db, 'archived_tasks'), where('managerId', '==', scopeUid));
+            unsubVadovasArchived = onSnapshot(vadovasArchivedQ, (snap) => {
+                vadovasArchivedTasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                updateAggregatedTasks();
+            }, (error) => {
+                logError(error, { source: 'onSnapshot:vadovasArchivedTasks' });
+            });
+        }
+
         return () => {
             unsubBreaks();
             unsubStats();
@@ -277,6 +323,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             unsubActive();
             unsubArchived();
             unsubDeleted();
+            unsubVadovasActive();
+            unsubVadovasArchived();
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag + `userRole`; depending on the whole object would re-subscribe every listener on each live-session user-doc update
     }, [selectedUserId, rangeStart, rangeEnd, scoped, scopeUid, userRole]);
@@ -404,9 +452,16 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const shownTodayTasks = view === 'approval' ? approvalTodayTasks : todayTasks;
     const shownEarlierTasks = view === 'approval' ? approvalEarlierTasks : earlierTasks;
 
+    // Test/founder accounts are kept out of the report unless the manager opted in (showTestUsers),
+    // resolved against each user's isTest flag — applied to every session/timeline source below.
+    const testUserIds = useMemo(() => new Set((users || []).filter(u => u.isTest).map(u => u.id)), [users]);
+
     // ALL sessions go into the timeline — Quick Work and Calls are regular work sessions,
     // they were previously excluded to avoid double-count with manualTasks but that caused them to vanish.
-    const validSessions = sessions;
+    const validSessions = useMemo(
+        () => sessions.filter(s => showTestUsers || !testUserIds.has(resolveUserId(s))),
+        [sessions, showTestUsers, testUserIds]
+    );
 
     // Active Sessions Integration
     const activeTaskSessionsForToday = useMemo(() => {
@@ -415,10 +470,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // sessions in range mode. In day mode, only the current day shows live progress.
         if (isRange || selectedDate !== getLithuanianDateString()) return active;
 
-        users.forEach(u => {
+        users.filter(u => showTestUsers || !testUserIds.has(u.id)).forEach(u => {
             if (u.activeSession && u.activeSession.type === 'task') {
                 const start = new Date(u.activeSession.startTime);
-                const durationMinutes = (currentTime - start) / (1000 * 60);
+                // Clamp the live (now - start) delta so an orphaned active session can never
+                // momentarily render an impossible duration on the manager's live dashboard.
+                const durationMinutes = clampSessionMinutes((currentTime - start) / (1000 * 60));
                 if (durationMinutes > 0) {
                     active.push({
                         id: `active_${u.id}`,
@@ -440,17 +497,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return active.filter(s => s.userId === selectedUserId);
         }
         return active;
-    }, [users, isRange, selectedDate, selectedUserId, currentTime]);
+    }, [users, isRange, selectedDate, selectedUserId, currentTime, showTestUsers, testUserIds]);
 
     const activeBreaksForToday = useMemo(() => {
         const active = [];
         if (isRange || selectedDate !== getLithuanianDateString()) return active;
 
 
-        users.forEach(u => {
+        users.filter(u => showTestUsers || !testUserIds.has(u.id)).forEach(u => {
             if (u.activeSession && u.activeSession.type === 'break') {
                 const start = new Date(u.activeSession.startTime);
-                const durationMinutes = (currentTime - start) / (1000 * 60);
+                // Clamp the live (now - start) delta (see active-task note above).
+                const durationMinutes = clampSessionMinutes((currentTime - start) / (1000 * 60));
                 if (durationMinutes > 0) {
                     active.push({
                         id: `active_break_${u.id}`,
@@ -470,14 +528,23 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return active.filter(s => s.userId === selectedUserId);
         }
         return active;
-    }, [users, isRange, selectedDate, selectedUserId, currentTime]);
+    }, [users, isRange, selectedDate, selectedUserId, currentTime, showTestUsers, testUserIds]);
 
     const allValidSessions = useMemo(() => [...validSessions, ...activeTaskSessionsForToday], [validSessions, activeTaskSessionsForToday]);
-    const allBreakSessions = useMemo(() => [...breakSessions, ...activeBreaksForToday], [breakSessions, activeBreaksForToday]);
+    const allBreakSessions = useMemo(() => [...breakSessions.filter(s => showTestUsers || !testUserIds.has(resolveUserId(s))), ...activeBreaksForToday], [breakSessions, activeBreaksForToday, showTestUsers, testUserIds]);
+
+    // Flagged when any session was clamped by the read-side guard — surfaces a "⚠ patikrinti"
+    // banner so a manager can spot a corrupt row instead of trusting a quiet (capped) sum.
+    const hasAnomaly = useMemo(
+        () =>
+            allValidSessions.some(s => isImplausibleSessionMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment })) ||
+            allBreakSessions.some(s => isImplausibleSessionMinutes(s.durationMinutes)),
+        [allValidSessions, allBreakSessions]
+    );
 
     // Aggregations
-    const totalTimerMinutes = allValidSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
-    const totalBreakMinutes = allBreakSessions.reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
+    const totalTimerMinutes = allValidSessions.reduce((acc, s) => acc + sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment }), 0);
+    const totalBreakMinutes = allBreakSessions.reduce((acc, s) => acc + sanitizeReportMinutes(s.durationMinutes), 0);
 
     // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
     // AND belong to the selected date's work day (3AM - 3AM)
@@ -497,6 +564,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         );
 
         return finishedTasks.filter(t => {
+            if (!(showTestUsers || !testUserIds.has(resolveUserId(t)))) return false;
             if (!t.manualMinutes) return false;
 
             // Call tasks (isSystemTask) and Quick Work tasks (isQuickWork) always have
@@ -521,9 +589,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return finishedDate >= cutoff && finishedDate < nextDayCutoff;
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
-    }, [finishedTasks, sessions, rangeStart, rangeEnd]);
+    }, [finishedTasks, sessions, rangeStart, rangeEnd, showTestUsers, testUserIds]);
 
-    const totalManualMinutes = manualTasks.reduce((acc, t) => acc + (t.manualMinutes || 0), 0);
+    const totalManualMinutes = manualTasks.reduce((acc, t) => acc + sanitizeReportMinutes(t.manualMinutes, { allowLarge: true }), 0);
 
     // Sum from actualTime in tasks (including manual entries)
     // We strictly use calculated values now to ensure consistency
@@ -547,8 +615,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 type: 'session',
                 startTime: s.startTime,
                 endTime: s.endTime,
+                // Canonical work-day (resolves the 03:00 boundary at write time); the drill-down
+                // groups rows by this so a multi-day period report breaks into day sections.
+                date: s.date || getLithuanianDateString(s.startTime),
                 title: title,
-                duration: s.durationMinutes,
+                duration: sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment }),
                 userId: resolveUserId(s),
                 userName: resolveUserName(s) || 'Nežinomas',
                 isActive: !!s.isActive,
@@ -572,8 +643,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 type: 'task',
                 startTime: start.toISOString(),
                 endTime: end.toISOString(),
+                date: getLithuanianDateString(end),
                 title: title,
-                duration: t.manualMinutes,
+                duration: sanitizeReportMinutes(t.manualMinutes, { allowLarge: true }),
                 userId: resolveUserId(t),
                 userName: resolveUserName(t),
                 isSystemTask: t.isSystemTask,
@@ -590,8 +662,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 type: 'break',
                 startTime: brk.startTime,
                 endTime: brk.endTime,
+                date: brk.date || getLithuanianDateString(brk.startTime),
                 title: 'Pertrauka',
-                duration: brk.durationMinutes,
+                duration: sanitizeReportMinutes(brk.durationMinutes),
                 userId: userId,
                 userName: userName
             });
@@ -654,13 +727,20 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 latestEnd: s.endTime,
                 taskTimeMinutes: 0,
                 breakMinutes: 0,
-                // We'll sum breaks later
+                workDays: new Set(),
+                breakDays: new Set(),
             };
         }
+        // Track distinct work/break DAYS per worker so the table can show a break-logging rate
+        // (days-with-break / worked-days) — a coaching signal that turns invisible non-loggers
+        // into a visible number, independent of how much time was logged.
+        const dayKey = s.startTime ? getLithuanianDateString(s.startTime) : null;
         if (s.type === 'break') {
             acc[s.userId].breakMinutes += (s.duration || 0);
+            if (dayKey) acc[s.userId].breakDays.add(dayKey);
         } else {
             acc[s.userId].taskTimeMinutes += (s.duration || 0);
+            if (dayKey && (s.duration || 0) > 0) acc[s.userId].workDays.add(dayKey);
         }
         if (s.startTime && (!acc[s.userId].earliestStart || s.startTime < acc[s.userId].earliestStart)) acc[s.userId].earliestStart = s.startTime;
         if (s.endTime && (!acc[s.userId].latestEnd || s.endTime > acc[s.userId].latestEnd)) acc[s.userId].latestEnd = s.endTime;
@@ -816,6 +896,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         const trimmedReason = (reason || '').trim();
         if (!trimmedReason) {
             setActionError("Nurodykite laiko keitimo priežastį.");
+            return;
+        }
+        // Fat-finger guard: a manual time edit writes straight into the payable total, so reject
+        // a non-finite / negative / absurd value (a mistyped hours field) before it persists,
+        // rather than silently capping it — the editor sees the message and re-enters.
+        if (!Number.isFinite(newTotalMinutes) || newTotalMinutes < 0 || newTotalMinutes > MAX_MANUAL_TASK_MINUTES) {
+            setActionError(`Įvesta per didelė arba neteisinga laiko reikšmė. Įveskite ne daugiau nei ${MAX_MANUAL_TASK_MINUTES / 60} val.`);
             return;
         }
         try {
@@ -1037,6 +1124,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             </div>
 
+            {hasAnomaly && (
+                <div role="alert" className="mb-3 flex items-start gap-2 rounded-card border border-amber-300 bg-amber-50 p-3 text-caption text-amber-800">
+                    <span aria-hidden="true">⚠</span>
+                    <span>Kai kurios šio laikotarpio reikšmės atrodo neįprastos ir buvo apribotos iki 16 val. vienai sesijai. Patikrinkite šiuos įrašus rankiniu būdu.</span>
+                </div>
+            )}
+
             {/* Summary Cards */}
             {/* Mobile: one compact card — the three durations as hero numbers in a single row,
                 with the day span as a slim header. Replaces the four full-width stacked cards so
@@ -1164,6 +1258,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Pertraukos</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Užduotims</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted" title="Dienų su pažymėta pertrauka dalis nuo darbo dienų — kaip nuosekliai vykdytojas žymi pertraukas.">Pertraukų žym.</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
@@ -1198,6 +1293,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         <td className="px-4 py-3 text-right text-ink-strong font-mono font-bold bg-blue-50/10">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes + summary.breakMinutes)}
                                         </td>
+                                        <td className="px-4 py-3 text-right text-ink-muted font-mono">
+                                            {summary.workDays.size > 0 ? `${Math.round(100 * summary.breakDays.size / summary.workDays.size)}%` : '—'}
+                                        </td>
                                     </tr>
                                 ))}
                                 <tr className="bg-surface-sunken font-bold">
@@ -1213,6 +1311,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <td className="px-4 py-3 text-right text-ink-strong font-bold bg-blue-50/30">
                                         {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
                                     </td>
+                                    <td className="px-4 py-3 text-right text-ink-muted">—</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -1431,9 +1530,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {workerDetail && (
                 <WorkerDayDetailModal
                     worker={workerDetail}
+                    isRange={isRange}
+                    rangeStart={rangeStart}
+                    rangeEnd={rangeEnd}
                     date={selectedDate}
                     items={combinedTimelineItems.filter(i => i.userId === workerDetail.userId)}
-                    tasks={finishedTasks}
+                    tasks={allLoadedTasks}
                     onOpenTask={(task) => { setWorkerDetail(null); setOpenTaskDetail(task); }}
                     onClose={() => setWorkerDetail(null)}
                 />
@@ -1452,119 +1554,177 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     );
 }
 
-// Worker day drill-down — chronological list of everything one worker did on the selected
-// day: tasks and quick-work/calls (finished or still running) plus breaks. Opened from a row
-// in the team "Darbo valandos" summary so a manager never has to switch the user filter just
-// to inspect one person.
-function WorkerDayDetailModal({ worker, date, items, tasks = [], onOpenTask, onClose }) {
-    // Map a timeline item back to its task so each card can show the same confirmation status
-    // (Patvirtinta / Nepatvirtinta / Ištrinta) the task carries everywhere else, and so clicking
-    // it can open the full task. Sessions key by taskId; manual-task items key by their own id.
-    const taskById = new Map(tasks.map(t => [t.id, t]));
-    const taskForItem = (item) => taskById.get(item.taskId) || taskById.get(item.id) || null;
+// Worker day drill-down — chronological list of everything one worker did over the shown span
+// (a single day, or the whole range in the period report): tasks and quick-work/calls (finished
+// or still running) plus breaks. Opened from a row in the team "Darbo valandos" summary so a
+// manager never has to switch the user filter just to inspect one person. Each work row carries
+// the same status the task shows everywhere else and, when resolvable, opens the full task on
+// click — editable only for a viewer with the rights (TaskModal gates that itself).
+function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, date, items, tasks = [], onOpenTask, onClose }) {
+    // Resolve each timeline row back to its task so the card shows the task's real status and
+    // clicking it opens the task. Regular sessions join by their real taskId; quick-work/call
+    // sessions carry a SYNTHETIC taskId, so they join on the durable workSessionId link instead
+    // (quick work stores it on the task); manual-only task rows key by their own id.
+    const byId = new Map();
+    const bySessionId = new Map();
+    for (const t of tasks) {
+        if (t?.id) byId.set(t.id, t);
+        if (t?.workSessionId) bySessionId.set(t.workSessionId, t);
+    }
+    const taskForItem = (item) => {
+        if (item.type === 'task') return byId.get(item.id) || null;
+        return byId.get(item.taskId) || bySessionId.get(item.id) || null;
+    };
 
     // One chronological timeline — work segments and breaks interleaved in the order they
-    // happened (items arrive sorted by startTime); inactive gaps are not shown. The day's work
-    // and break totals sit in the header so the per-row breaks don't need a separate summary.
+    // happened (items arrive sorted by startTime); inactive gaps are not shown. The header
+    // totals cover the whole shown span, so the per-row breaks need no separate summary.
     const timeline = items.filter(i => i.type !== 'inactive');
-    const dayWorkMinutes = timeline.filter(i => i.type !== 'break').reduce((a, i) => a + (i.duration || 0), 0);
+    const workMinutes = (rows) => rows.filter(i => i.type !== 'break').reduce((a, i) => a + (i.duration || 0), 0);
+    const dayWorkMinutes = workMinutes(timeline);
     const dayBreakMinutes = timeline.filter(i => i.type === 'break').reduce((a, i) => a + (i.duration || 0), 0);
 
+    // Group rows by work-day so a multi-day period report reads as a stack of days, each opened
+    // by its own "begins here" divider. Items are already start-time sorted, so days come out
+    // chronological too. Dividers only earn their space when the list spans more than one day.
+    const groups = [];
+    const groupIndex = new Map();
+    for (const item of timeline) {
+        const key = item.date || getLithuanianDateString(item.startTime);
+        if (!groupIndex.has(key)) {
+            groupIndex.set(key, groups.length);
+            groups.push({ key, items: [] });
+        }
+        groups[groupIndex.get(key)].items.push(item);
+    }
+    const showDayHeaders = groups.length > 1;
+
+    // Header span label: the full range in the period report, otherwise the single day.
+    const headerSpan = isRange && rangeStart && rangeEnd && rangeStart !== rangeEnd
+        ? `${rangeStart} – ${rangeEnd}`
+        : (date || (groups[0] && groups[0].key) || '');
+
+    // Status block — same affordance every surface uses: running -> "Vyksta"; deleted ->
+    // DeletedBadge; resolved task -> its pill with a persistent completion check on finished
+    // work; an unresolvable quick-work/call (after-the-fact log) -> a generic "Atlikta".
+    const renderStatus = (item, task) => {
+        if (item.isActive) return <StatusPill tone="running">Vyksta</StatusPill>;
+        if (task && (task.isDeleted || task.status === 'deleted')) return <DeletedBadge />;
+        if (task) return <TaskStatusPill task={task} doneIcon />;
+        return <StatusPill tone="done" icon={CheckCircle2}>Atlikta</StatusPill>;
+    };
+
+    const renderRow = (item, idx) => {
+        if (item.type === 'break') {
+            return (
+                <li key={item.id || idx}>
+                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-amber-50/40 p-3 text-amber-700">
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 font-medium">
+                                <Coffee className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+                                Pertrauka
+                            </div>
+                            <p className="mt-0.5 font-mono text-caption">
+                                {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                            </p>
+                        </div>
+                        <span className="font-mono text-body font-bold whitespace-nowrap">
+                            {formatMinutesToTimeString(item.duration)}
+                        </span>
+                    </div>
+                </li>
+            );
+        }
+
+        const task = taskForItem(item);
+
+        // The same card body for clickable (task resolved) and static rows.
+        const body = (
+            <>
+                <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5 text-body text-ink-strong">
+                        <SessionTypeIcon
+                            type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')}
+                            className="w-3.5 h-3.5 flex-shrink-0"
+                            aria-hidden="true"
+                        />
+                        <span className="break-words font-medium">{item.title || 'Darbas'}</span>
+                        {task?.priority && <PriorityBadge priority={task.priority} />}
+                    </div>
+                    <p className="mt-0.5 font-mono text-caption text-ink-muted">
+                        {formatTime(item.startTime)} – {formatTime(item.endTime)}
+                    </p>
+                    <div className="mt-1">{renderStatus(item, task)}</div>
+                </div>
+                <span className="font-mono text-body font-bold text-brand whitespace-nowrap">
+                    {formatMinutesToTimeString(item.duration)}
+                </span>
+            </>
+        );
+
+        return (
+            <li key={item.id || idx}>
+                {task ? (
+                    <button
+                        type="button"
+                        onClick={() => onOpenTask?.(task)}
+                        aria-label={`Atidaryti užduotį: ${item.title || 'Darbas'}`}
+                        className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                    >
+                        {body}
+                    </button>
+                ) : (
+                    <div className="flex items-start justify-between gap-3 rounded-control border border-line p-3">
+                        {body}
+                    </div>
+                )}
+            </li>
+        );
+    };
+
     return (
-        <Modal open onClose={onClose} size="lg" title={worker.name}>
-            {/* Day header: the date plus this worker's work and break totals for the day. */}
-            <div className="-mt-2 mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line pb-3 text-caption">
-                <span className="font-mono text-ink-muted">{date}</span>
-                <span className="text-ink-muted">Darbas <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
-                <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-amber-700">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
+        <Modal open onClose={onClose} size="lg" ariaLabelledby="worker-detail-title" bare>
+            {/* Pinned header — name + the span's work/break totals, lifted out of the scroll area
+                so they never scroll out of view the way the old in-body row did. */}
+            <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-line p-6 pb-4">
+                <div className="min-w-0">
+                    <h2 id="worker-detail-title" className="text-h2 text-ink-strong">{worker.name}</h2>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption">
+                        <span className="font-mono text-ink-muted">{headerSpan}</span>
+                        <span className="text-ink-muted">Darbas <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
+                        <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-amber-700">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
+                    </div>
+                </div>
+                <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2 -mt-2" />
             </div>
 
-            {timeline.length === 0 ? (
-                <p className="py-6 text-center text-ink-muted">Šią dieną įrašų nefiksuota.</p>
-            ) : (
-                <ul className="space-y-2">
-                    {timeline.map((item, idx) => {
-                        if (item.type === 'break') {
-                            return (
-                                <li key={item.id || idx}>
-                                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-amber-50/40 p-3 text-amber-700">
-                                        <div className="min-w-0">
-                                            <div className="flex items-center gap-1.5 font-medium">
-                                                <Coffee className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
-                                                Pertrauka
-                                            </div>
-                                            <p className="mt-0.5 font-mono text-caption">
-                                                {formatTime(item.startTime)} – {formatTime(item.endTime)}
-                                            </p>
-                                        </div>
-                                        <span className="font-mono text-body font-bold whitespace-nowrap">
-                                            {formatMinutesToTimeString(item.duration)}
+            {/* Scrolling body */}
+            <div className="flex-1 overflow-y-auto px-6 py-4">
+                {timeline.length === 0 ? (
+                    <p className="py-6 text-center text-ink-muted">Įrašų nefiksuota.</p>
+                ) : (
+                    <div className="space-y-5">
+                        {groups.map((group) => (
+                            <div key={group.key}>
+                                {showDayHeaders && (
+                                    <div className="mb-2 flex items-center gap-2">
+                                        <span className="text-caption font-semibold text-ink-strong whitespace-nowrap">
+                                            {getLithuanianWeekday(group.key)}, {group.key}
+                                        </span>
+                                        <span className="h-px flex-1 bg-line" aria-hidden="true" />
+                                        <span className="font-mono text-caption text-ink-muted whitespace-nowrap">
+                                            {formatMinutesToTimeString(workMinutes(group.items))}
                                         </span>
                                     </div>
-                                </li>
-                            );
-                        }
-
-                        const task = taskForItem(item);
-                        const isDeleted = task && (task.isDeleted || task.status === 'deleted');
-
-                        // The same card body for clickable (task resolved) and static rows.
-                        const body = (
-                            <>
-                                <div className="min-w-0">
-                                    <div className="flex flex-wrap items-center gap-1.5 text-body text-ink-strong">
-                                        <SessionTypeIcon
-                                            type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')}
-                                            className="w-3.5 h-3.5 flex-shrink-0"
-                                            aria-hidden="true"
-                                        />
-                                        <span className="break-words font-medium">{item.title || 'Darbas'}</span>
-                                        {task?.priority && <PriorityBadge priority={task.priority} />}
-                                    </div>
-                                    <p className="mt-0.5 font-mono text-caption text-ink-muted">
-                                        {formatTime(item.startTime)} – {formatTime(item.endTime)}
-                                    </p>
-                                    {/* Status: running work reads "Vykdoma"; finished work shows the same
-                                        Patvirtinta / Nepatvirtinta / Ištrinta the task carries elsewhere. */}
-                                    <div className="mt-1">
-                                        {item.isActive ? (
-                                            <span className="inline-block rounded bg-feedback-success/10 px-1.5 py-0.5 text-caption font-semibold text-feedback-success">
-                                                Vykdoma
-                                            </span>
-                                        ) : isDeleted ? (
-                                            <DeletedBadge />
-                                        ) : task ? (
-                                            <TaskStatusPill task={task} />
-                                        ) : null}
-                                    </div>
-                                </div>
-                                <span className="font-mono text-body font-bold text-brand whitespace-nowrap">
-                                    {formatMinutesToTimeString(item.duration)}
-                                </span>
-                            </>
-                        );
-
-                        return (
-                            <li key={item.id || idx}>
-                                {task ? (
-                                    <button
-                                        type="button"
-                                        onClick={() => onOpenTask?.(task)}
-                                        aria-label={`Atidaryti užduotį: ${item.title || 'Darbas'}`}
-                                        className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
-                                    >
-                                        {body}
-                                    </button>
-                                ) : (
-                                    <div className="flex items-start justify-between gap-3 rounded-control border border-line p-3">
-                                        {body}
-                                    </div>
                                 )}
-                            </li>
-                        );
-                    })}
-                </ul>
-            )}
+                                <ul className="space-y-2">
+                                    {group.items.map((item, idx) => renderRow(item, idx))}
+                                </ul>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
         </Modal>
     );
 }

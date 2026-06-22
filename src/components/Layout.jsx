@@ -108,7 +108,8 @@ export default function Layout({ children }) {
                     <AppHeader sessionType={effectiveSessionType} session={session} />
 
                     {/* PWA install — a slim, dismissible banner shown only when the browser offers
-                        an install (or on iOS, manual steps). On desktop it heads the workspace. */}
+                        an install (or on iOS, manual steps). Mobile-only: it self-suppresses on
+                        desktop (lg+), where the nudge is noise. */}
                     <InstallPrompt />
 
                     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 relative">
