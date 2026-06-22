@@ -251,6 +251,14 @@ service cloud.firestore {
       allow read, write: if isAuthenticated() && request.auth.uid == userId;
     }
 
+    // ---- FCM TOKENS (doc id == owner uid) -----------------------------------
+    // Each user stores their own device push tokens (fcm_tokens/{uid} = { tokens: [] }).
+    // Only the owner reads/writes; the Cloud Functions sender reads via the admin SDK
+    // (which bypasses rules), so no cross-user read is ever needed here.
+    match /fcm_tokens/{userId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
+    }
+
     // ---- ERROR LOGS (durable crash log) -------------------------------------
     // Any authenticated user may APPEND a crash report (kept permissive so a broken
     // session can still record its failure); only managers/admins may read them.
