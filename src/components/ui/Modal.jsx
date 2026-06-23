@@ -15,8 +15,14 @@ import IconButton from './IconButton';
  *    body scrolling; it is not stretched edge-to-edge.
  *  - `role="dialog"` + `aria-modal` + `aria-labelledby` (from `title`/`ariaLabelledby`), with
  *    `aria-label` as the fallback accessible name.
- *  - Escape closes; tapping the backdrop closes — both gated by `dismissible`
- *    (pass `dismissible={false}` for a destructive / forced-acknowledge dialog).
+ *  - `dismissible` (default true) is the master switch: it gates Escape, the header close `X`,
+ *    AND the backdrop tap. Pass `dismissible={false}` for a destructive / forced-acknowledge
+ *    dialog (no Escape, no `X`, no backdrop close).
+ *  - `closeOnBackdrop` (default true) decouples the backdrop tap from Escape so a form that
+ *    holds unsaved input can stay Escape-dismissible while a stray backdrop tap can no longer
+ *    discard it. Backdrop closes only when `dismissible && closeOnBackdrop`; Escape and the `X`
+ *    stay governed by `dismissible` alone. A non-destructive content dialog keeps the default
+ *    (tap-to-dismiss); a form passes `closeOnBackdrop={false}`.
  *  - Focus moves into the dialog (or `initialFocusRef`) on open and is restored on close.
  *  - `bare` strips the default header + body padding so a caller can supply its own full-bleed
  *    chrome (e.g. the coloured time-warning / time-limit headers) while still inheriting the
@@ -39,6 +45,7 @@ export default function Modal({
     footer,
     size = 'md',
     dismissible = true,
+    closeOnBackdrop = true,
     bare = false,
     level = 'modal',
     className,
@@ -63,7 +70,7 @@ export default function Modal({
                 level === 'top' ? 'z-top' : 'z-backdrop'
             )}
             onMouseDown={(e) => {
-                if (dismissible && e.target === e.currentTarget) onClose?.();
+                if (dismissible && closeOnBackdrop && e.target === e.currentTarget) onClose?.();
             }}
         >
             <div

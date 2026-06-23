@@ -5,6 +5,7 @@ import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
+import Modal from './ui/Modal';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -567,25 +568,15 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
 }
 
 export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error }) {
-    const dialogRef = useRef(null);
     const titleId = useId();
 
-    // Focus-in, focus restore, Escape, and a Tab focus-trap (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
-
-    if (!isOpen) return null;
-
+    // Destructive confirm on the canonical Modal (bare): it supplies the scrim, focus-trap,
+    // Escape and portal, while this keeps its bespoke danger-header + multi-button body.
+    // closeOnBackdrop={false} so a stray backdrop tap can't cancel — the choice is made via the
+    // explicit buttons (or Escape).
     return (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in">
-            <div
-                ref={dialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={titleId}
-                tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 focus:outline-none"
-            >
-                <div className="p-6">
+        <Modal open={isOpen} bare size="md" closeOnBackdrop={false} ariaLabelledby={titleId} onClose={onClose}>
+            <div className="flex-1 min-h-0 overflow-y-auto p-6">
                     <div className="flex items-center gap-3 mb-4 text-feedback-danger">
                         <div className="p-2 bg-feedback-danger-soft rounded-full">
                             <AlertTriangle className="w-6 h-6" />
@@ -638,7 +629,6 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                         </button>
                     </div>
                 </div>
-            </div>
-        </div>
+        </Modal>
     );
 }
