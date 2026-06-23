@@ -20,10 +20,21 @@ import {
     ON_TIME_GRACE_MIN,
 } from './workerStats';
 import { marginalNetEarnings, netToGross, EFFECTIVE_TAX_RATE, hasPayRate } from './payRate';
-import { sanitizeReportMinutes, isImplausibleSessionMinutes } from './timeUtils';
+import {
+    sanitizeReportMinutes,
+    isImplausibleSessionMinutes,
+    formatMinutesToHHMM,
+    formatSignedMinutesToHHMM,
+    getLithuanianDateString,
+} from './timeUtils';
 
 // Bumped whenever the serialized shape changes in a way a downstream consumer must notice.
 export const REPORT_SCHEMA_VERSION = 1;
+
+// Skirtumas (worked − planned) is meaningful only when the plan plausibly covers the worked span;
+// below this fraction the timesheet prints "Nepakanka plano" instead of a fake surplus. Mirrors the
+// gate the on-screen plan-coverage indicator uses.
+const TIMESHEET_PLAN_FLOOR = 0.25;
 
 // Lifetime recognition counters worth surfacing (subset of users/{uid}/achievements/_stats).
 const RECOGNITION_FIELDS = [
@@ -118,11 +129,56 @@ function computeDataTrust(workSessions, breakSessions, window) {
     return { editedSessions: edited, implausibleSessions: implausible };
 }
 
+// Per-day work/break minutes for one worker, bucketed by Vilnius 'date' within the window.
+// `allowLarge` honors manual-adjustment magnitudes (payroll/timesheet convention); leave it false
+// for the analysis daily-log so it matches the report's 16h-clamped metrics.
+function aggregateDaily(workSessions, breakSessions, window, { allowLarge = false } = {}) {
+    const { startStr, endStr } = window;
+    const inWin = (d) => d && d >= startStr && d <= endStr;
+    const days = {};
+    const bump = (date, key, mins) => {
+        if (!days[date]) days[date] = { work: 0, break: 0 };
+        days[date][key] += mins;
+    };
+    for (const s of workSessions || []) {
+        if (!inWin(s.date)) continue;
+        bump(s.date, 'work', sanitizeReportMinutes(s.durationMinutes, { allowLarge: allowLarge && s.isManualAdjustment }));
+    }
+    for (const s of breakSessions || []) {
+        if (!inWin(s.date)) continue;
+        bump(s.date, 'break', sanitizeReportMinutes(s.durationMinutes));
+    }
+    return days;
+}
+
+// Planned minutes for one worker over the window: calendar shifts (excluding approved leave),
+// falling back to the weeklyExpectedHours baseline × weeks when no calendar plan exists. Mirrors
+// Reports.fetchWorkHours so the timesheet's Planuota/Skirtumas match the on-screen figures.
+function computePlannedMinutes(plannedShifts, window, expectedWeeklyHours) {
+    const { startStr, endStr } = window;
+    let planned = 0;
+    for (const wh of plannedShifts || []) {
+        if (!wh || !wh.start || !wh.end || wh.isVacation) continue;
+        const dayStr = getLithuanianDateString(new Date(wh.start));
+        if (dayStr < startStr || dayStr > endStr) continue;
+        const mins = (new Date(wh.end).getTime() - new Date(wh.start).getTime()) / 60000;
+        if (Number.isFinite(mins) && mins > 0) planned += mins;
+    }
+    planned = Math.round(planned);
+    if (planned <= 0 && Number.isFinite(expectedWeeklyHours) && expectedWeeklyHours > 0) {
+        const spanDays = Math.max(1, Math.round((Date.parse(`${endStr}T00:00:00Z`) - Date.parse(`${startStr}T00:00:00Z`)) / 86400000) + 1);
+        planned = Math.round(expectedWeeklyHours * 60 * (spanDays / 7));
+    }
+    return planned;
+}
+
 // Build the full report object from already-fetched, per-worker-sliced raw data.
 //
 // input.workers[]: { userId, name, expectedWeeklyHours?, payRate?, recognition?,
 //                    workSessions, breakSessions, plannedShifts, tasks, calendarRequests }
-export function buildReport({ generatedAt, window, prevWindow, scopeLabel, includeEarnings, workers }) {
+// `includeDaily` appends a per-worker daily work/break log (the "evidence" behind the metrics) —
+// off by default to keep the analysis lean; turn on for a focused single-worker / short-span pull.
+export function buildReport({ generatedAt, window, prevWindow, scopeLabel, includeEarnings, includeDaily = false, workers }) {
     const opts = (w) => ({ expectedWeeklyHours: w.expectedWeeklyHours });
 
     const builtWorkers = workers.map((w) => {
@@ -165,6 +221,18 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
                   .filter((f) => Number.isFinite(f.value))
             : null;
 
+        let daily = null;
+        if (includeDaily) {
+            const days = aggregateDaily(raw.workSessions, raw.breakSessions, window, { allowLarge: false });
+            daily = Object.keys(days)
+                .sort()
+                .map((date) => ({
+                    date,
+                    workMinutes: Math.round(days[date].work),
+                    breakMinutes: Math.round(days[date].break),
+                }));
+        }
+
         return {
             userId: w.userId,
             name: w.name,
@@ -172,6 +240,7 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
             metricsByKey,
             earnings,
             recognition,
+            daily,
             dataTrust: computeDataTrust(raw.workSessions, raw.breakSessions, window),
         };
     });
@@ -221,6 +290,7 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
             earnings: w.earnings,
             recognition: w.recognition,
             dataTrust: w.dataTrust,
+            ...(w.daily ? { daily: w.daily } : {}),
         })),
     };
 }
@@ -293,6 +363,16 @@ export function renderReportMarkdown(report) {
         L.push(`- Redaguotų sesijų: ${w.dataTrust.editedSessions} · Įtartinų trukmių: ${w.dataTrust.implausibleSessions}`);
         if (w.dataTrust.implausibleSessions > 0) L.push('  - Įspėjimas: skaičiai gali būti apkarpyti — patikrinkite šias sesijas.');
         L.push('');
+
+        // Optional raw evidence — kept clearly separate from the metrics above so the model treats
+        // it as the daily log behind the conclusion, not as numbers to re-total.
+        if (w.daily && w.daily.length) {
+            L.push('### Dienų išklotinė (faktai, ne išvada)');
+            w.daily.forEach((d) =>
+                L.push(`- ${d.date}: darbas ${formatStatValue(d.workMinutes, 'minutes')} · pertraukos ${formatStatValue(d.breakMinutes, 'minutes')}`)
+            );
+            L.push('');
+        }
     }
 
     return L.join('\n');
@@ -303,34 +383,41 @@ export function renderReportJSON(report) {
     return JSON.stringify(report, null, 2);
 }
 
-// CSV — a flat per-worker summary for a spreadsheet. One row per worker, headline metrics + earnings.
-// Values are the human-formatted strings (this CSV is a readable suvestinė, not a math sheet).
-export function renderReportCSV(report) {
-    const cols = [
-        { header: 'Vykdytojas', get: (w) => w.name },
-        { header: 'userId', get: (w) => w.userId },
-        { header: 'Viso dirbta', get: (w) => w.metrics.totalHours?.formatted ?? '' },
-        { header: 'Aktyvios dienos', get: (w) => w.metrics.activeDays?.formatted ?? '' },
-        { header: 'Vid. per dieną', get: (w) => w.metrics.avgPerDay?.formatted ?? '' },
-        { header: 'Punktualus startas', get: (w) => w.metrics.onTimePct?.formatted ?? '' },
-        { header: 'Plano padengimas', get: (w) => w.metrics.planCoveragePct?.formatted ?? '' },
-        { header: 'Užbaigta užduočių', get: (w) => w.metrics.completedCount?.formatted ?? '' },
-        { header: 'Telpa į planą', get: (w) => w.metrics.onEstimatePct?.formatted ?? '' },
-        { header: 'Pertraukų dalis', get: (w) => w.metrics.breakSharePct?.formatted ?? '' },
-        { header: 'Neatvykimai', get: (w) => w.metrics.absenceDays?.formatted ?? '' },
-        { header: 'Uždarbis (neto)', get: (w) => (w.earnings ? `${w.earnings.netEur} €` : '') },
-    ];
-
+// CSV — a per-worker-per-DAY timesheet for payroll / Excel (replaces the old standalone export).
+// One row per worked day (work + break, HH:MM), then a per-worker "Viso" total carrying Planuota +
+// Skirtumas (gated by the plan-coverage floor). Operates on the RAW fetched slice (`workers`), not
+// the aggregated report object. Honors manual-adjustment magnitudes (payroll convention) — distinct
+// from the analysis metrics, which clamp every session at 16h for outlier resistance.
+export function renderTimesheetCSV(workers, window) {
     const escape = (str) => {
         if (str === null || str === undefined) return '';
         const s = String(str);
         return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
+    const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
+    const rows = [];
 
-    const lines = [cols.map((c) => escape(c.header)).join(',')];
-    for (const w of report.workers) {
-        lines.push(cols.map((c) => escape(c.get(w))).join(','));
+    for (const w of workers) {
+        const days = aggregateDaily(w.workSessions, w.breakSessions, window, { allowLarge: true });
+        let totalWork = 0;
+        let totalBreak = 0;
+        Object.keys(days)
+            .sort()
+            .forEach((date) => {
+                const d = days[date];
+                totalWork += d.work;
+                totalBreak += d.break;
+                rows.push([escape(w.name), escape(date), escape(formatMinutesToHHMM(d.work)), escape(formatMinutesToHHMM(d.break)), '', ''].join(','));
+            });
+
+        const planned = computePlannedMinutes(w.plannedShifts, window, w.expectedWeeklyHours);
+        const hasPlan = planned > 0;
+        const planCovers = hasPlan && (totalWork <= 0 || planned >= TIMESHEET_PLAN_FLOOR * totalWork);
+        const plannedCell = hasPlan ? formatMinutesToHHMM(planned) : '';
+        const skirtumasCell = !hasPlan ? '' : planCovers ? formatSignedMinutesToHHMM(totalWork - planned) : 'Nepakanka plano';
+        rows.push([escape(w.name), escape('Viso'), escape(formatMinutesToHHMM(totalWork)), escape(formatMinutesToHHMM(totalBreak)), escape(plannedCell), escape(skirtumasCell)].join(','));
     }
+
     // BOM so Excel reads the Lithuanian diacritics as UTF-8.
-    return '﻿' + lines.join('\n');
+    return '﻿' + [headers.join(','), ...rows].join('\n');
 }
