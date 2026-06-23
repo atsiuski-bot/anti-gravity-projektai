@@ -182,17 +182,26 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                     </p>
                 </div>
                 {!isRecurring && (
-                    <Button variant="secondary" size="md" icon={Play} loading={busyAction === 'create-once'} onClick={handleCreateOnce}>
-                        Sukurti darbą
+                    <Button
+                        variant="secondary"
+                        size="md"
+                        icon={Play}
+                        loading={busyAction === 'create-once'}
+                        onClick={handleCreateOnce}
+                        aria-label="Sukurti darbą"
+                        className="shrink-0 px-3 sm:px-4"
+                    >
+                        <span className="hidden sm:inline">Sukurti darbą</span>
                     </Button>
                 )}
                 <button
                     type="button"
                     onClick={openEditor}
                     aria-expanded={expanded}
-                    className="inline-flex min-h-touch items-center gap-1 rounded-control px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    aria-label="Tvarkyti"
+                    className="inline-flex min-h-touch min-w-touch shrink-0 items-center justify-center gap-1 rounded-control px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 >
-                    Tvarkyti
+                    <span className="hidden sm:inline">Tvarkyti</span>
                     <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
                 </button>
             </div>

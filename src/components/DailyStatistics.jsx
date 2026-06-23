@@ -1032,8 +1032,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {view !== 'approval' && (
               <>
             {/* Header Controls — kept to a single compact row on every viewport (no column
-                stacking on mobile) so the date stepper + filters take minimal vertical space. */}
-            <div className="bg-surface-card p-2 rounded-card shadow-sm border border-line flex flex-row flex-wrap gap-2 items-center justify-between">
+                stacking on mobile) so the date stepper + filters take minimal vertical space.
+                In range mode the toolbar's only mobile content is the static date span, which is
+                merged into the summary card below on phones — so hide the whole toolbar on mobile
+                (md+ keeps it, where the totals also live inline). Day mode keeps the stepper here. */}
+            <div className={`bg-surface-card p-2 rounded-card shadow-sm border border-line flex-row flex-wrap gap-2 items-center justify-between ${isRange ? 'hidden md:flex' : 'flex'}`}>
 
                 {/* Left group — date control plus, on desktop, the day's totals inline, so on
                     md+ the whole summary collapses into this single toolbar row. */}
@@ -1110,6 +1113,17 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 the whole day summary fits in the top half of the first screen (§9 dual density:
                 a tuned, denser mobile layout instead of one card per row). */}
             <div className="md:hidden bg-surface-card rounded-card shadow-sm border border-line p-3">
+                {/* Range mode: the period span lives in this same card on mobile (the toolbar that
+                    holds it on desktop is hidden on phones), centred and a notch larger than the
+                    desktop caption so the date and its totals read as one merged block. */}
+                {isRange && (
+                    <div className="flex items-center justify-center gap-2 border-b border-line pb-2.5 mb-2.5 text-center">
+                        <Calendar className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                        <span className="text-body font-semibold text-ink-strong tabular-nums">
+                            {rangeStart} – {rangeEnd}
+                        </span>
+                    </div>
+                )}
                 {selectedUserId !== 'all' && !isRange && (
                     <div className="flex items-center justify-between gap-2 border-b border-line pb-2.5 mb-2.5">
                         <span className="flex items-center gap-1.5 text-caption text-ink-muted">
@@ -1485,9 +1499,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             )}
 
+            {/* Empty-state notice. On the normal report surface the TaskHistory browser rendered
+                just above already shows its own "Istorija tuščia…" message, so a second "Nėra atliktų
+                užduočių…" box here is redundant — suppress it there. Keep it only where TaskHistory is
+                absent (the embedded calendar drill-down) or where the message is distinct (approval). */}
             {(view === 'approval'
                 ? (shownTodayTasks.length === 0 && shownEarlierTasks.length === 0)
-                : (todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0)
+                : (embedded && todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0)
             ) && (
                 <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                     {view === 'approval'

@@ -8,9 +8,10 @@ import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
+import { parseTaskText } from '../utils/aiActions';
 import { notify } from '../utils/notify';
 import { logError } from '../utils/errorLog';
-import { assignTask, humanActor, MODES } from '../domain';
+import { assignTask, createTask, humanActor, MODES } from '../domain';
 import { getPriorityOptions, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
@@ -120,6 +121,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     // Inline accessible error region (replaces banned window.alert popups).
     const [formError, setFormError] = useState('');
+    // AI draft-fill: "✨ AI" beside the title turns the typed natural-language line into the
+    // structured fields (server callable → OpenRouter/gemini-2.5-flash returns a DRAFT only; it
+    // never creates the task). aiMsg is the inline status/result note.
+    const [aiBusy, setAiBusy] = useState(false);
+    const [aiMsg, setAiMsg] = useState(null); // { text, tone: 'ok' | 'err' }
     // State-gated confirmations (replace banned window.confirm).
     const [templateToDelete, setTemplateToDelete] = useState(null); // { id, name }
     const [overwriteTemplate, setOverwriteTemplate] = useState(null); // existing template pending overwrite
@@ -875,14 +881,19 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
                 }
 
-                docRef = await addDoc(collection(db, 'tasks'), {
-                    ...taskData,
-                    status: initialStatus,
-                    taskAuditor: activeAuditorId, // Store activeAuditorId as taskAuditor for approval/confirmation visibility
-                    createdAt: new Date().toISOString(),
-                    createdBy: currentUser.uid,
-                    creatorName: currentUser.displayName || currentUser.email
-                });
+                // Create through the audited createTask command (ADR 0015, increment 3): it
+                // canonicalizes, stamps provenance from the actor, writes the tasks doc, and records
+                // one decision_log entry — replacing the inline addDoc so creation has a single,
+                // audited path. The caller still owns the role-derived status + auditor.
+                const createResult = await createTask(
+                    { fields: { ...taskData, status: initialStatus, taskAuditor: activeAuditorId } },
+                    {
+                        actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }),
+                        mode: MODES.COMMIT,
+                        reason: 'created via task editor',
+                    },
+                );
+                docRef = { id: createResult.targetId };
 
                 // Create notification if task needs approval
                 // Use activeAuditorId here to ensure the notification goes to the CORRECT person (Default Manager)
@@ -981,6 +992,38 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 ? { ...prev, title: item.value, estimatedTime: item.time }
                 : { ...prev, title: item.value };
         });
+    };
+
+    // "✨ AI" — parse the typed natural-language title into the structured spine fields for review.
+    // The server callable returns a DRAFT (title/priority/estimatedTime/assignedUserId/deadline);
+    // it never creates the task. Filled values are merged into the form so the manager can verify
+    // and adjust before pressing Sukurti. Available on create only (the assignee roster is scoped).
+    const handleAiParse = async () => {
+        const text = (formData.title || '').trim();
+        if (!text) { setAiMsg({ text: 'Įrašykite tekstą, kurį AI pavers darbu.', tone: 'err' }); return; }
+        setAiBusy(true);
+        setAiMsg(null);
+        try {
+            const roster = assignableWorkers.map((u) => ({ id: u.id, name: formatDisplayName(u.displayName || u.email) }));
+            const d = await parseTaskText(text, roster);
+            setFormData((prev) => ({
+                ...prev,
+                ...(d.title ? { title: d.title } : {}),
+                ...(d.priority ? { priority: normalizePriority(d.priority) } : {}),
+                ...(d.estimatedTime ? { estimatedTime: d.estimatedTime } : {}),
+                assignedUserId: d.assignedUserId || prev.assignedUserId,
+                ...(d.deadline ? { deadline: d.deadline } : {}),
+            }));
+            if (d.assignedUserId) setShowAssigneePicker(true);
+            setAiMsg({
+                text: d.assignedUserId ? 'Užpildyta — peržiūrėkite ir sukurkite.' : 'Užpildyta — patikslinkite vykdytoją.',
+                tone: d.assignedUserId ? 'ok' : 'err',
+            });
+        } catch {
+            setAiMsg({ text: 'AI nepavyko (ar funkcija/raktas įdiegti?).', tone: 'err' });
+        } finally {
+            setAiBusy(false);
+        }
     };
 
     const toggleSection = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
@@ -1167,7 +1210,22 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 job's typical time; picking it fills both name and (if unset) the time. Free
                                 text is always allowed for a brand-new job. */}
                             <div>
-                                <span className="mb-1 block text-body font-medium text-ink">Ką reikia padaryti?</span>
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                    <span className="block text-body font-medium text-ink">Ką reikia padaryti?</span>
+                                    {!task && (
+                                        <Button
+                                            type="button"
+                                            variant="secondary"
+                                            icon={Sparkles}
+                                            loading={aiBusy}
+                                            disabled={fieldsLocked}
+                                            onClick={handleAiParse}
+                                            title="AI: paversti tekstą darbu"
+                                        >
+                                            AI
+                                        </Button>
+                                    )}
+                                </div>
                                 <TitleSuggestInput
                                     value={formData.title}
                                     onChange={(val) => setFormData((prev) => ({ ...prev, title: val }))}
@@ -1177,6 +1235,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     placeholder="Pavadinimas"
                                     ariaLabel="Pavadinimas"
                                 />
+                                {aiMsg && (
+                                    <p className={`mt-1 text-caption ${aiMsg.tone === 'err' ? 'text-feedback-danger' : 'text-feedback-success'}`} role="status">
+                                        {aiMsg.text}
+                                    </p>
+                                )}
                             </div>
 
                             {/* Estimated time — a per-title suggestion (when history has one) leads as a

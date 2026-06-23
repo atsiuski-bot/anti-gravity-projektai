@@ -130,8 +130,17 @@ raised 15 findings; **7 were confirmed and fixed**, 8 dismissed as out-of-scope/
    notification, and keeps the modal open for a retry. A focused adversarial review (1 finding) drove
    that handling. **Deploy the `decision_log` rule to activate the audit** (until then the reassign
    still works, the audit append is silently denied).
-2. **Migrate the other consequential writes** (createTask, complete/approve, reprioritize,
-   reschedule, reopen) through the kernel — consolidating the scattered write paths.
+2. **Migrate the other consequential writes** through the kernel — consolidating the scattered write
+   paths. **`createTask` DONE (increment 3, same worktree):** a `createTask` command is now the single
+   audited create path — it mints the new id locally (so the audit names it), canonicalizes, stamps
+   provenance from the actor, writes the doc, and records one decision. **Both** create sites route
+   through it: `createManagerTask` (the template/recurring/quick-add util) delegates to it, and
+   `TaskModal`'s create branch calls it instead of an inline `addDoc` — killing the dual-create drift
+   the analysis flagged. The kernel result gained `targetId` for a clean new-id accessor. Verified
+   live in prod (real auth): the created doc is field-equivalent to the prior path and a matching
+   `createTask` decision entry (before: null) is written. STILL TODO: complete/approve, reprioritize,
+   reschedule, reopen, and routing the EDIT path through one command (which retires increment 2's
+   non-atomic split).
 3. **Formalize the task lifecycle as an explicit state machine** enforced by the commands.
 4. **Promote perception (E):** make `workerStats`/`reportAggregate` callable server-side so an agent
    can read "decision context" without a browser.
