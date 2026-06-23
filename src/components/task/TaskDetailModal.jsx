@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useId, useMemo } from 'react';
 import {
     Pencil, Trash2, Undo2, CheckCircle2, Check, Clock, MessageSquare, ListChecks,
-    Link as LinkIcon, ImageIcon, ImagePlus, Send, X, ChevronDown,
+    Link as LinkIcon, ImageIcon, ImagePlus, Camera, Send, X, ChevronDown,
     Calendar, Timer, Hourglass, UserCog,
 } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -18,6 +18,7 @@ import AssigneeChip from './AssigneeChip';
 import TimeChangedWarning from './TimeChangedWarning';
 import SessionTypeIcon from '../SessionTypeIcon';
 import UserChip from '../UserChip';
+import { deriveTaskStatus } from '../../utils/taskStatus';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes } from '../../utils/timeUtils';
 import { getChecklistProgress } from '../../utils/checklistActions';
 import { addComment, updateComment, deleteComment, getCommentKey } from '../../utils/commentActions';
@@ -129,6 +130,10 @@ export default function TaskDetailModal({
 
     const isDeleted = task.isDeleted || task.status === 'deleted';
     const deadline = formatDeadline(task.deadline);
+    // Session-type glyph for a call / quick-work task (null for a plain task — no icon shown).
+    const typeIcon = task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : null);
+    // The status shape repeated next to the title in the header, so the state reads at a glance.
+    const { Icon: StatusGlyph } = deriveTaskStatus(task, { isRunning });
     const totalMinutes = calculateCurrentTotalMinutes(task);
     const hasStarted = task.status && task.status !== 'pending';
     const showSpent = totalMinutes > 0 || hasStarted;
@@ -218,15 +223,19 @@ export default function TaskDetailModal({
         <Modal open={isOpen} onClose={onClose} ariaLabelledby={titleId} size="xl" bare>
             {/* Header — fixed */}
             <div className="flex flex-shrink-0 items-start justify-between gap-4 border-b border-line px-5 py-4">
-                <h2 id={titleId} className="text-h3 font-bold leading-snug text-ink-strong">{task.title}</h2>
+                <div className="flex min-w-0 items-start gap-2">
+                    {StatusGlyph && <StatusGlyph className="mt-0.5 h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
+                    <h2 id={titleId} className="text-h3 font-bold leading-snug text-ink-strong">{task.title}</h2>
+                </div>
                 <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2 -mt-1" />
             </div>
 
             {/* Body — scrolls; fade signals more content toward the sticky footer */}
             <div className="relative min-h-0 flex-1">
                 <div ref={bodyRef} className="h-full space-y-4 overflow-y-auto px-5 py-4">
-                    {/* Badges */}
+                    {/* Row 1 — type glyph (call / quick work), status, priority, deadline */}
                     <div className="flex flex-wrap items-center gap-2">
+                        {typeIcon && <SessionTypeIcon type={typeIcon} className="h-5 w-5" />}
                         <TaskStatusPill task={task} isRunning={isRunning} doneIcon />
                         <PriorityBadge priority={task.priority} size="md" pill />
                         {isDeleted && <DeletedBadge />}
@@ -235,48 +244,19 @@ export default function TaskDetailModal({
                                 {task.tag}
                             </span>
                         )}
+                        {deadline && (
+                            <span className="inline-flex items-center gap-1.5 text-body text-ink">
+                                <Calendar className="h-4 w-4 text-ink-muted" aria-hidden="true" />
+                                Atlikti iki <span className="font-medium">{deadline}</span>
+                            </span>
+                        )}
                     </div>
 
                     <TimeChangedWarning task={task} />
 
-                    {/* Description */}
-                    {task.description && (
-                        <div className="flex items-start gap-2 rounded-card bg-surface-sunken p-3">
-                            <SessionTypeIcon
-                                type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
-                                className="mt-0.5 h-4 w-4 flex-shrink-0"
-                            />
-                            <p className="whitespace-pre-wrap text-body leading-relaxed text-ink">{task.description}</p>
-                        </div>
-                    )}
-
-                    {/* Identity — one chip when assignee and manager are the same person */}
-                    {(task.assignedUserName || (showManagerLine && managerName)) && (
-                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                            {task.assignedUserName && (
-                                <span className="inline-flex items-center gap-1.5">
-                                    <UserCog className="h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
-                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring />
-                                </span>
-                            )}
-                            {showManagerLine && managerName && !samePerson && (
-                                <span className="inline-flex items-center gap-1.5 text-caption text-ink-muted">
-                                    Vad.
-                                    <UserChip userId={managerId} name={managerName} className="font-medium text-feedback-info-text" />
-                                </span>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Facts — only the ones with a value; time-adjust sits next to the spent time */}
-                    {(deadline || task.estimatedTime || showSpent) && (
+                    {/* Row 2 — planned vs spent time; time-adjust shown only to managers who can edit */}
+                    {(task.estimatedTime || showSpent) && (
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-line py-2.5 text-body text-ink">
-                            {deadline && (
-                                <span className="inline-flex items-center gap-1.5">
-                                    <Calendar className="h-4 w-4 text-ink-muted" aria-hidden="true" />
-                                    Atlikti iki <span className="font-medium">{deadline}</span>
-                                </span>
-                            )}
                             {task.estimatedTime && (
                                 <span className="inline-flex items-center gap-1.5">
                                     <Hourglass className="h-4 w-4 text-ink-muted" aria-hidden="true" />
@@ -301,7 +281,36 @@ export default function TaskDetailModal({
                         </div>
                     )}
 
-                    {/* Checklist launcher (the rich editor stays its own modal) */}
+                    {/* Row 3 — who does the work and who manages it (one chip when they're the same) */}
+                    {(task.assignedUserName || (showManagerLine && managerName)) && (
+                        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                            {task.assignedUserName && (
+                                <span className="inline-flex items-center gap-1.5">
+                                    <UserCog className="h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring />
+                                </span>
+                            )}
+                            {showManagerLine && managerName && !samePerson && (
+                                <span className="inline-flex items-center gap-1.5 text-caption text-ink-muted">
+                                    Vad.
+                                    <UserChip userId={managerId} name={managerName} className="font-medium text-feedback-info-text" />
+                                </span>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Row 4 — description */}
+                    {task.description && (
+                        <div className="flex items-start gap-2 rounded-card bg-surface-sunken p-3">
+                            <SessionTypeIcon
+                                type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
+                                className="mt-0.5 h-4 w-4 flex-shrink-0"
+                            />
+                            <p className="whitespace-pre-wrap text-body leading-relaxed text-ink">{task.description}</p>
+                        </div>
+                    )}
+
+                    {/* Row 5 — checklist launcher (the rich editor stays its own modal) */}
                     {checklist && onOpenChecklist && (
                         <div>
                             <Button variant="secondary" size="md" icon={ListChecks} onClick={() => onOpenChecklist(task)}>
@@ -339,42 +348,7 @@ export default function TaskDetailModal({
                         </p>
                     )}
 
-                    {/* Photos — thumbnails open the lightbox; viewers with access can add more */}
-                    {(imageUrls.length > 0 || canAddPhoto) && (
-                        <div>
-                            <div className="mb-2 flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5 text-caption font-medium uppercase tracking-wide text-ink-muted">
-                                    <ImageIcon className="h-4 w-4" aria-hidden="true" /> Nuotraukos{imageUrls.length ? ` · ${imageUrls.length}` : ''}
-                                </div>
-                                {canAddPhoto && (
-                                    <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
-                                        <ImagePlus className="h-4 w-4" aria-hidden="true" />
-                                        {uploading ? 'Įkeliama…' : 'Pridėti'}
-                                        <input type="file" accept="image/*" multiple className="sr-only" onChange={onPickPhotos} disabled={uploading} />
-                                    </label>
-                                )}
-                            </div>
-                            {imageUrls.length > 0 ? (
-                                <div className="flex flex-wrap gap-2">
-                                    {imageUrls.map((url, idx) => (
-                                        <button
-                                            key={idx}
-                                            type="button"
-                                            onClick={() => setLightboxIndex(idx)}
-                                            className="h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-                                            aria-label={`Peržiūrėti nuotrauką ${idx + 1}`}
-                                        >
-                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-cover" />
-                                        </button>
-                                    ))}
-                                </div>
-                            ) : (
-                                <p className="text-caption text-ink-muted">Nuotraukų dar nėra.</p>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Comments — loaded inline; add straight from the preview */}
+                    {/* Row 6 — comments; loaded inline, add straight from the preview */}
                     <div>
                         <div className="mb-2 flex items-center gap-1.5 text-caption font-medium uppercase tracking-wide text-ink-muted">
                             <MessageSquare className="h-4 w-4" aria-hidden="true" /> Komentarai{commentCount ? ` · ${commentCount}` : ''}
@@ -447,6 +421,49 @@ export default function TaskDetailModal({
                             </Button>
                         </form>
                     </div>
+
+                    {/* Row 7 — photos; thumbnails open the lightbox, viewers with access can add more
+                        (camera capture sits to the LEFT of the gallery picker). */}
+                    {(imageUrls.length > 0 || canAddPhoto) && (
+                        <div>
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 text-caption font-medium uppercase tracking-wide text-ink-muted">
+                                    <ImageIcon className="h-4 w-4" aria-hidden="true" /> Nuotraukos{imageUrls.length ? ` · ${imageUrls.length}` : ''}
+                                </div>
+                                {canAddPhoto && (
+                                    <div className="flex items-center gap-2">
+                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
+                                            <Camera className="h-4 w-4" aria-hidden="true" />
+                                            Fotografuoti
+                                            <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={onPickPhotos} disabled={uploading} />
+                                        </label>
+                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
+                                            <ImagePlus className="h-4 w-4" aria-hidden="true" />
+                                            {uploading ? 'Įkeliama…' : 'Pridėti'}
+                                            <input type="file" accept="image/*" multiple className="sr-only" onChange={onPickPhotos} disabled={uploading} />
+                                        </label>
+                                    </div>
+                                )}
+                            </div>
+                            {imageUrls.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                    {imageUrls.map((url, idx) => (
+                                        <button
+                                            key={idx}
+                                            type="button"
+                                            onClick={() => setLightboxIndex(idx)}
+                                            className="h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                            aria-label={`Peržiūrėti nuotrauką ${idx + 1}`}
+                                        >
+                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-cover" />
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-caption text-ink-muted">Nuotraukų dar nėra.</p>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {showFade && (

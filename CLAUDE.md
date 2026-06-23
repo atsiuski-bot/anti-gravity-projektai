@@ -90,9 +90,26 @@ everything, then hand the founder **one** clearly-labelled step — never a wall
 
 - **Production deploys** — Firestore/Storage **rules** and **Cloud Functions** deploys, and any
   hosting promote. The permission classifier blocks these by design; surface the exact one-liner
-  and let the founder run it. (Rules deploy reads the **CWD's** `firestore.rules` — deploy from
-  the worktree holding the intended rules, then re-verify the *live* ruleset, don't trust
-  "Deploy complete" alone.)
+  and let the founder run it.
+
+  **Deploy is a *post-ship* step, never a pre-ship one — and agents must not suggest otherwise.**
+  `firebase deploy` is a blind disk→cloud overwrite of the *one* shared project
+  (`darbo-planavimas`): it ignores git entirely and uploads whatever bytes sit in the **CWD's**
+  `functions/` + `firestore.rules` right now, replacing the live set wholesale, last-write-wins,
+  with **no version guard**. So deploying from an unmerged feature worktree either pushes
+  unreviewed code live **or** silently regresses production to whatever that branch is missing —
+  because a worktree only ever holds one branch's partial view of truth. Therefore:
+  - **NEVER propose deploying rules/functions before the change has merged to main.** Finish the
+    `/ship` first; deploy is the step *after*, not a substitute for it.
+  - **NEVER say "deploy from this worktree."** The canonical deploy source is an **up-to-date
+    `main` checkout, post-merge** — that is the only state that equals the released truth.
+  - The order is always: `/ship` → main merge → fully update the `main` checkout → deploy from
+    there → **re-verify the *live* ruleset/runtime via the Firebase MCP** (`firebase_get_security_rules`
+    / `functions_list_functions`), not the deploy log. Both "Deploy complete" and
+    "No changes detected" can lie about what is actually live.
+
+  (The only time a worktree is the right CWD to deploy from is when that worktree *is* the
+  fully-merged, up-to-date state — i.e. it has nothing main doesn't. When unsure, deploy from main.)
 - **Secret creation/rotation** and writing real secrets to a hosting provider's env settings.
 - **Destructive data operations** — bulk Firestore writes/deletes against production.
 
