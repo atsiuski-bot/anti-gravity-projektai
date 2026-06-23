@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor, BarChart3 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
@@ -7,11 +7,14 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useNavigation } from '../context/NavigationContext';
 import { useAchievements } from '../hooks/useAchievements';
+import { useWorkerStats } from '../hooks/useWorkerStats';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
 import { BADGE_ICONS, BADGE_CATALOG, tierKey } from '../utils/badgeCatalog';
+import { formatStatValue } from '../utils/workerStats';
+import { rangeForPreset } from '../utils/statsPeriods';
 import BadgeDetailModal from '../components/BadgeDetailModal';
 import Card from '../components/ui/Card';
 import IconButton from '../components/ui/IconButton';
@@ -19,6 +22,8 @@ import StatusPill from '../components/ui/StatusPill';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
 import Avatar from '../components/ui/Avatar';
 import Badge from '../components/ui/Badge';
+import EmptyState from '../components/ui/EmptyState';
+import { Spinner } from '../components/ui/Loading';
 import InstallInstructions from '../components/InstallInstructions';
 import { ROLE_GLYPHS } from '../components/icons/roleInsigniaMap';
 
@@ -43,12 +48,90 @@ const THEME_OPTIONS = [
 // the old one (no orphaned avatar files accumulate, unlike multi-file task attachments).
 const AVATAR_MAX_EDGE = 512;
 
+// Headline self-metrics shown on the owner's profile: three plain, motivating numbers drawn from
+// the SAME compute engine the manager panel uses, but scoped to the owner's own data. Deliberately
+// a SHORT list — this is self-insight, not the manager's full analytics. `kind` maps to
+// formatStatValue; `key` indexes into the computeWorkerStats result. (No peer comparison, no delta.)
+const SELF_METRICS = [
+    { key: 'onTimePct', label: 'Punktualus startas', kind: 'pct' },
+    { key: 'approvalPct', label: 'Patvirtinta vadovo', kind: 'pct' },
+    { key: 'onEstimatePct', label: 'Telpa į planą', kind: 'pct' },
+];
+
+// The self-metrics card looks back over a rolling window long enough to gather a stable read for a
+// field worker who does not work every day. A quarter balances "recent" against "enough samples".
+const SELF_METRICS_PERIOD = 'quarter';
+
+// BadgeProgress — the slim "progress to next tier" bar under a badge tile on the OWNER's profile.
+// It reads the running count against the next catalog threshold and shows BOTH a bar and a
+// "count / target" caption, so the progress is never conveyed by the bar's width alone (a screen
+// reader and a colour-blind user both get the number; DESIGN_SYSTEM §5). A maxed-out badge shows a
+// calm "Maks." instead of a target it can never exceed. Renders nothing until counters have loaded.
+function BadgeProgress({ badge, progress }) {
+    if (!progress) return null;
+    const { count, nextThreshold, nextTier, atMax } = progress;
+
+    if (atMax) {
+        return (
+            <p className="mt-1.5 text-center text-caption font-medium text-feedback-success-text">
+                Maks.
+            </p>
+        );
+    }
+
+    // Progress WITHIN the current-to-next tier band: how far between the tier just earned and the
+    // next threshold. A brand-new badge (count 0) reads as an honest, near-empty bar.
+    const span = Math.max(1, nextThreshold - progress.prevThreshold);
+    const within = Math.min(span, Math.max(0, count - progress.prevThreshold));
+    const pct = Math.round((within / span) * 100);
+
+    return (
+        <div className="mt-1.5">
+            <div
+                role="progressbar"
+                aria-label={`${badge.name}: pažanga iki kitos pakopos`}
+                aria-valuemin={0}
+                aria-valuemax={nextThreshold}
+                aria-valuenow={Math.min(count, nextThreshold)}
+                className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
+            >
+                <div className="h-full rounded-full bg-brand transition-all duration-base" style={{ width: `${pct}%` }} />
+            </div>
+            <p className="mt-1 text-center text-caption tabular-nums text-ink-muted">
+                {count} / {nextThreshold}
+                <span className="sr-only"> {badge.unit}, {nextTier} pakopa</span>
+            </p>
+        </div>
+    );
+}
+
 export default function ProfilePage() {
     const { currentUser, userData, userRole, logout } = useAuth();
     const { preference: themePreference, setPreference: setThemePreference } = useTheme();
     const { goToPreviousTab } = useNavigation();
-    const { achievements } = useAchievements(currentUser?.uid);
+    const { achievements, progress } = useAchievements(currentUser?.uid);
     const { canPromptNative, isIOS, isStandalone, promptInstall } = useInstallPrompt();
+
+    // Self-insight metrics: the same compute engine the manager panel uses, but the viewer IS the
+    // target (strictly own data — owner-scoped reads, no peer comparison). `useWorkerStats` keys its
+    // queries off the viewer's team scope and then filters to `userId`; with viewer == owner that
+    // collapses to the owner's own sessions/tasks. A fixed rolling window (no picker) keeps this a
+    // calm headline, not the manager's full period-over-period surface.
+    const selfPeriod = rangeForPreset(SELF_METRICS_PERIOD);
+    const { loading: statsLoading, error: statsError, current: selfStats } = useWorkerStats({
+        userId: currentUser?.uid,
+        viewerData: userData,
+        viewerUid: currentUser?.uid,
+        viewerRole: userRole,
+        expectedWeeklyHours: Number(userData?.weeklyExpectedHours) || 0,
+        period: selfPeriod ? { key: SELF_METRICS_PERIOD, ...selfPeriod } : null,
+        enabled: !!currentUser?.uid,
+    });
+
+    // Enough data to be worth showing? Each headline metric is null until the worker has the
+    // underlying samples (a planned start to compare, a manager sign-off, an estimate to land
+    // within). If every one is still null, show a calm "keep working" note instead of three dashes.
+    const hasSelfMetrics = !!selfStats && SELF_METRICS.some((m) => selfStats[m.key] != null);
 
     const fileInputRef = useRef(null);
     const [uploading, setUploading] = useState(false);
@@ -241,7 +324,7 @@ export default function ProfilePage() {
                             type="button"
                             onClick={() => setSelectedBadge(b)}
                             aria-label={`${b.name} — peržiūrėti, už ką skiriamas`}
-                            className="flex min-h-touch items-stretch rounded-control p-1 transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            className="flex min-h-touch flex-col items-stretch rounded-control p-1 transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                         >
                             <Badge
                                 className="w-full"
@@ -250,9 +333,46 @@ export default function ProfilePage() {
                                 icon={BADGE_ICONS[b.key]}
                                 locked={b.tier === 0}
                             />
+                            <BadgeProgress badge={b} progress={progress[b.key]} />
                         </button>
                     ))}
                 </div>
+            </Card>
+
+            {/* Self-insight — a few plain headline numbers from the owner's OWN data (the same
+                compute engine the manager panel uses, scoped to the worker). No comparison to
+                anyone else; a calm note stands in until there is enough data to read. */}
+            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Mano rodikliai</h2>
+            <Card className="mb-4 p-4">
+                {statsError ? (
+                    <EmptyState
+                        icon={BarChart3}
+                        title="Nepavyko įkelti rodiklių"
+                        description="Bandykite vėliau."
+                    />
+                ) : statsLoading ? (
+                    <Spinner label="Skaičiuojama…" />
+                ) : hasSelfMetrics ? (
+                    <>
+                        <p className="mb-3 text-caption text-ink-muted">Per paskutinius 3 mėnesius.</p>
+                        <dl className="grid grid-cols-3 gap-3 text-center">
+                            {SELF_METRICS.map((m) => (
+                                <div key={m.key} className="rounded-control bg-surface-sunken p-3">
+                                    <dt className="text-caption text-ink-muted">{m.label}</dt>
+                                    <dd className="mt-1 text-h3 font-bold tabular-nums text-ink-strong">
+                                        {formatStatValue(selfStats?.[m.key], m.kind)}
+                                    </dd>
+                                </div>
+                            ))}
+                        </dl>
+                    </>
+                ) : (
+                    <EmptyState
+                        icon={BarChart3}
+                        title="Rodikliai dar renkasi"
+                        description="Padirbėkite kelias suplanuotas pamainas — netrukus čia matysite savo punktualumą ir kokybę."
+                    />
+                )}
             </Card>
 
             {/* Actions — everything the user can do here, as one flat list with no section
