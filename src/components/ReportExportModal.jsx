@@ -201,7 +201,8 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
             let mime;
             if (format === 'csv') {
                 // Per-day timesheet straight from the raw slice — no aggregated report needed.
-                content = renderTimesheetCSV(workers, window);
+                // Money columns ride along on the per-worker "Viso" row when earnings are opted in.
+                content = renderTimesheetCSV(workers, window, { includeEarnings });
                 mime = 'text/csv;charset=utf-8;';
             } else {
                 const generatedAt = new Date().toLocaleString('lt-LT', { timeZone: 'Europe/Vilnius' });
@@ -365,21 +366,20 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                     </div>
                 )}
 
-                {/* OPTIONS. Earnings + daily-log shape the analysis artifacts (MD/JSON) only — the CSV
-                    is a per-day timesheet that ignores both — so they hide when CSV is selected. The
+                {/* OPTIONS. Earnings now applies to EVERY format — MD/JSON carry it in the analysis
+                    body, the CSV timesheet appends Neto/Bruto columns on each worker's "Viso" row.
+                    The daily-log toggle stays MD/JSON-only (the CSV is already a per-day log). The
                     test-account toggle gates the worker roster, so it applies to every format. */}
                 <div className="flex flex-wrap gap-x-6 gap-y-2">
-                    {format !== 'csv' && (
-                        <label className="flex cursor-pointer items-center gap-2 min-h-touch">
-                            <input
-                                type="checkbox"
-                                checked={includeEarnings}
-                                onChange={(e) => setIncludeEarnings(e.target.checked)}
-                                className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-                            />
-                            <span className="text-body text-ink">Įtraukti uždarbį</span>
-                        </label>
-                    )}
+                    <label className="flex cursor-pointer items-center gap-2 min-h-touch">
+                        <input
+                            type="checkbox"
+                            checked={includeEarnings}
+                            onChange={(e) => setIncludeEarnings(e.target.checked)}
+                            className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                        />
+                        <span className="text-body text-ink">Įtraukti uždarbį</span>
+                    </label>
                     {format !== 'csv' && (
                         <label className="flex cursor-pointer items-center gap-2 min-h-touch">
                             <input
