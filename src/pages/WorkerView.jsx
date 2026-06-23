@@ -30,6 +30,7 @@ import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
+import EarningsModal from '../components/EarningsModal';
 
 import { useNavigation } from '../context/NavigationContext';
 
@@ -48,6 +49,9 @@ export default function WorkerView() {
     const [tasks, setTasks] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
+    // Post-completion earnings popup payload ({ task, totalMinutes }), set by the 'task-earnings'
+    // event dispatched from TaskTimerControls when the worker finishes their own task.
+    const [earnings, setEarnings] = useState(null);
 
     const [error, setError] = useState(null);
 
@@ -131,6 +135,13 @@ export default function WorkerView() {
         };
         window.addEventListener('open-task-modal', handleOpenTaskModal);
 
+        // The earnings popup is fired by TaskTimerControls.performFinish (worker's own task only)
+        // once payRate is set; it carries the finished task + its total minutes for the breakdown.
+        const handleEarnings = (e) => {
+            if (e?.detail?.task) setEarnings({ task: e.detail.task, totalMinutes: e.detail.totalMinutes });
+        };
+        window.addEventListener('task-earnings', handleEarnings);
+
         const filterInterval = setInterval(() => {
             setTasks(currentTasks => {
                 const filtered = filterTasksByVisibility(currentTasks);
@@ -148,6 +159,7 @@ export default function WorkerView() {
         return () => {
             unsubscribe();
             window.removeEventListener('open-task-modal', handleOpenTaskModal);
+            window.removeEventListener('task-earnings', handleEarnings);
             clearInterval(filterInterval);
         };
     }, [currentUser, usersLoading, usersMap]);
@@ -392,6 +404,16 @@ export default function WorkerView() {
                     estimatedTime={limitPopup.estimatedTime}
                     actualMinutes={limitPopup.actualMinutes}
                     onDismiss={dismissLimit}
+                />
+            )}
+
+            {/* Post-completion earnings popup — gross (with tax) first, net (take-home) beside it */}
+            {earnings && (
+                <EarningsModal
+                    open
+                    onClose={() => setEarnings(null)}
+                    task={earnings.task}
+                    totalMinutes={earnings.totalMinutes}
                 />
             )}
         </div>

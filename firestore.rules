@@ -173,7 +173,11 @@ service cloud.firestore {
                     // The overseer closure is written ONLY by the admin-SDK Cloud Function (which
                     // bypasses rules). No client — not even an admin — may hand-edit it, or the
                     // confidentiality boundary could be silently desynced. (ADR 0007)
-                    && request.resource.data.get('overseerIds', []) == resource.data.get('overseerIds', []);
+                    && request.resource.data.get('overseerIds', []) == resource.data.get('overseerIds', [])
+                    // Pay rate (tiered NET hourly rates) is admin-only, like team membership — a
+                    // worker must never be able to set their own rate. (ADR 0012)
+                    && (isAdmin() ||
+                        request.resource.data.get('payRate', {}) == resource.data.get('payRate', {}));
       allow delete: if isAdmin();
 
       // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------

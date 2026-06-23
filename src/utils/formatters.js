@@ -62,6 +62,34 @@ export const formatTime = (dateOrString) => {
     });
 };
 
+// EUR formatting in the Lithuanian locale: comma decimal, the "€" glyph AFTER the number
+// (e.g. "12,50 €"), per lt-LT. One Intl instance, reused. Always 2 decimals so an amount never
+// renders as "12,5 €". The display layer owns formatting — Firestore stores plain numbers.
+const eurFormatter = new Intl.NumberFormat('lt-LT', {
+    style: 'currency',
+    currency: 'EUR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+});
+
+/**
+ * Formats a number as a Lithuanian-locale EUR amount (e.g. 12.5 -> "12,50 €").
+ * @param {number} amount
+ * @returns {string}
+ */
+export const formatEur = (amount) => {
+    const n = Number(amount);
+    return eurFormatter.format(Number.isFinite(n) ? n : 0);
+};
+
+/**
+ * Formats an hourly rate (e.g. 12.5 -> "12,50 €/val."). The unit is appended outside Intl so it
+ * reads in Lithuanian.
+ * @param {number} amount
+ * @returns {string}
+ */
+export const formatEurPerHour = (amount) => `${formatEur(amount)}/val.`;
+
 /**
  * Checks if a role string represents a manager-or-above (manager, senior manager, or admin).
  * Eliminates repeated `role === 'manager' || role === 'admin'` checks. This gates manager-SHAPED
