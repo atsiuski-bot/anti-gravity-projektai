@@ -37,6 +37,7 @@ export const NOTIFICATION_CATEGORY = {
     calendar_decision: 'info',          // the manager approved/declined a calendar request
     // ── System → manager ─────────────────────────────────────────────────────
     recurring_reassign: 'action',       // a recurring job's usual assignee is away — reassign it
+    session_correction_request: 'action', // worker flagged a logged time row as wrong → manager corrects it
 };
 
 /** The bell tier for a notification type. Unknown/legacy types fall back to 'info'. */

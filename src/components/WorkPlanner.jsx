@@ -11,6 +11,7 @@ import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palm
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { absenceLabel, absenceTypeForWrite, ABSENCE_GENERIC_LABEL } from '../utils/absence';
+import { workLocationLabel, defaultIsWorkFromHome } from '../utils/workLocation';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
@@ -197,7 +198,7 @@ export default function WorkPlanner() {
     const [manualEnd, setManualEnd] = useState('');
     const [error, setError] = useState('');
     const [editingEvent, setEditingEvent] = useState(null);
-    const [manualIsWorkFromHome, setManualIsWorkFromHome] = useState(false);
+    const [manualIsWorkFromHome, setManualIsWorkFromHome] = useState(() => defaultIsWorkFromHome(userData?.defaultWorkLocation));
     const [manualIsVacation, setManualIsVacation] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
 
@@ -282,7 +283,8 @@ export default function WorkPlanner() {
             dateStr: format(start, 'yyyy-MM-dd'),
             startStr: format(start, 'HH:mm'),
             endStr: format(end, 'HH:mm'),
-            isWorkFromHome: false,
+            // New entries start on the user's chosen default location; still freely toggled below.
+            isWorkFromHome: defaultIsWorkFromHome(userData?.defaultWorkLocation),
             isVacation: false,
             absenceType: 'vacation'
         });
@@ -350,7 +352,7 @@ export default function WorkPlanner() {
     // Name the entry an action collides with, so the overlap error points at the real culprit
     // instead of a generic "something overlaps" the worker then has to hunt for.
     const describeEvent = (ev) => {
-        const typeLabel = ev.isVacation ? (absenceLabel(ev) || ABSENCE_GENERIC_LABEL) : (ev.isWorkFromHome ? 'Darbas iš namų' : 'Darbas');
+        const typeLabel = ev.isVacation ? (absenceLabel(ev) || ABSENCE_GENERIC_LABEL) : workLocationLabel(ev.isWorkFromHome);
         return `${typeLabel} ${format(ev.start, 'MM-dd HH:mm')}–${format(ev.end, 'HH:mm')}`;
     };
     const overlapMessage = (ev) => `Pasirinktas laikas persidengia su įrašu: ${describeEvent(ev)}.`;
@@ -486,7 +488,7 @@ export default function WorkPlanner() {
 
             const title = editingEvent.isVacation
                 ? absenceLabel({ isVacation: true, absenceType: editingEvent.absenceType })
-                : 'Darbas';
+                : workLocationLabel(editingEvent.isWorkFromHome);
 
             const actionDetails = {
                 type: editingEvent.id ? 'edit' : 'add',
@@ -649,6 +651,13 @@ export default function WorkPlanner() {
                 await executeDirectCalendarUpdate({ type: 'add', data: d.data });
             }
             setShowManualInput(false);
+            // A fully-future span is saved directly with no approval round-trip. Mirror every other
+            // direct-write path (single add, copy-last-week, batch self-approve) and surface the same
+            // success confirmation, so the worker sees their day(s) off were booked rather than getting
+            // a silent no-op.
+            setError('');
+            setFeedbackVariant('approved');
+            setShowApprovalFeedback(true);
         }
     };
 
@@ -698,13 +707,16 @@ export default function WorkPlanner() {
                 return;
             }
 
+            // Work-only path: absences are routed to handleAbsenceSubmit above and return early, so
+            // every entry reaching here is worked time. Name it via the unified work-location label
+            // (main's Veikla / Veikla namuose vocabulary) sourced from the home toggle.
             const actionDetails = {
                 type: 'add',
                 data: {
                     id: null,
                     start: startDateTime.toISOString(),
                     end: endDateTime.toISOString(),
-                    title: 'Darbas',
+                    title: workLocationLabel(manualIsWorkFromHome),
                     isWorkFromHome: manualIsWorkFromHome || false,
                     isVacation: false,
                     absenceType: null
@@ -726,7 +738,7 @@ export default function WorkPlanner() {
             setManualStart('');
             setManualEnd('');
             setManualAllDay(true);
-            setManualIsWorkFromHome(false);
+            setManualIsWorkFromHome(defaultIsWorkFromHome(userData?.defaultWorkLocation));
             setManualIsVacation(false);
             setError('');
         } catch (err) {
@@ -925,7 +937,7 @@ export default function WorkPlanner() {
             const isVacation = event.isVacation;
             const isWfh = !isVacation && event.isWorkFromHome;
             const absLabel = absenceLabel(event) || ABSENCE_GENERIC_LABEL;
-            const stateLabel = isVacation ? absLabel : isWfh ? 'Iš namų' : 'Dirbtuvėse';
+            const stateLabel = isVacation ? absLabel : workLocationLabel(isWfh);
             const eventAriaLabel = `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, redaguoti`;
             return (
                 <div
@@ -961,10 +973,10 @@ export default function WorkPlanner() {
                         ) : isWfh ? (
                             <>
                                 <Home className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                                <span>Iš namų</span>
+                                <span>{workLocationLabel(true)}</span>
                             </>
                         ) : (
-                            <span>Dirbtuvėse</span>
+                            <span>{workLocationLabel(false)}</span>
                         )}
                     </span>
                 </div>
@@ -973,7 +985,12 @@ export default function WorkPlanner() {
         toolbar: (props) => (
             <CustomToolbar
                 {...props}
-                onManualClick={() => setShowManualInput(!showManualInput)}
+                onManualClick={() => {
+                    const next = !showManualInput;
+                    // Seed the toggle from the saved default each time the manual panel opens.
+                    if (next) setManualIsWorkFromHome(defaultIsWorkFromHome(userData?.defaultWorkLocation));
+                    setShowManualInput(next);
+                }}
                 onCopyLastWeek={handleCopyLastWeek}
                 copyDisabled={approvalActive}
             />
@@ -1063,7 +1080,7 @@ export default function WorkPlanner() {
                                 }}
                                 className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
                             />
-                            <span className="text-body font-medium text-ink">Darbas iš namų</span>
+                            <span className="text-body font-medium text-ink">Veikla namuose</span>
                         </label>
                         {/* Reason-agnostic absence: one neutral "I'm not working" toggle — the worker
                             never has to declare WHY (vacation / sick / …), only THAT they are off. */}
@@ -1222,7 +1239,7 @@ export default function WorkPlanner() {
                                             })}
                                             className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
                                         />
-                                        <span className="text-body font-medium text-ink">Darbas iš namų</span>
+                                        <span className="text-body font-medium text-ink">Veikla namuose</span>
                                     </label>
                                     {/* Reason-agnostic: one neutral "not working" toggle, no kind picker.
                                         Editing a legacy typed absence preserves its original absenceType

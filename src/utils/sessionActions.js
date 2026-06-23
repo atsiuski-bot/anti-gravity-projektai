@@ -5,6 +5,7 @@ import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOG
 import { logError } from './errorLog';
 import { isManagerRole } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
+import { buildCallTitle } from './callContacts';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
@@ -462,12 +463,19 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         });
     } else if (session.type === 'call') {
         const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
-        const callTitle = session.customTitle || "Skambutis";
+        // The title is derived from who was on the call ("Skambutis – Klientas"); the optional
+        // free-text notes go into the description alongside the recorded time. contactType is
+        // also stored as a structured field so reports can group calls by audience.
+        const contactType = session.contactType || null;
+        const callTitle = buildCallTitle(contactType);
+        const callNotes = (session.callNotes || '').trim();
+        const callDescription = callNotes ? `${callNotes}\n${timeString}` : timeString;
         // Log task + work session in PARALLEL
         const callPromises = [
             addDoc(collection(db, 'tasks'), {
                 title: callTitle,
-                description: timeString,
+                description: callDescription,
+                contactType,
                 status: "confirmed",
                 priority: DEFAULT_PRIORITY,
                 assignedUserId: userId,
@@ -485,6 +493,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
             addDoc(collection(db, 'work_sessions'), {
                 taskId: "call_" + now.getTime(),
                 taskTitle: callTitle,
+                contactType,
                 userId: userId,
                 userName: userData.displayName || 'Nežinomas',
                 startTime: session.startTime,
@@ -496,11 +505,13 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
             })
         ];
 
-        // Retroactively rename the partial work_session that was logged when this call was interrupted
-        if (session.partialDocId && session.customTitle) {
+        // Retroactively rename the partial work_session that was logged when this call was
+        // interrupted, so it reflects the final counterpart-typed title.
+        if (session.partialDocId && contactType) {
             callPromises.push(
                 updateDoc(doc(db, 'work_sessions', session.partialDocId), {
-                    taskTitle: session.customTitle
+                    taskTitle: callTitle,
+                    contactType
                 }).catch(e => console.warn('Failed to rename partial call session:', e))
             );
         }
