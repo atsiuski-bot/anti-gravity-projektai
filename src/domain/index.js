@@ -22,3 +22,4 @@ export { DECISION_LOG_COLLECTION, appendDecision } from './decisionLog';
 
 // Commands
 export { assignTask } from './commands/assignTask';
+export { createTask } from './commands/createTask';

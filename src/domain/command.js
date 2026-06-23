@@ -56,8 +56,9 @@ export const defineCommand = ({ name, targetType, authorize, plan, apply }) => {
    * @param {Object} ctx   - { actor (required), mode, idempotencyKey, reason, correlationId }.
    * @returns {Promise<Object>} a result envelope:
    *   refused → { ok:false, refused:true, reason, command, mode }
-   *   propose → { ok:true, mode:'propose', command, proposal, idempotencyKey }
-   *   commit  → { ok:true, mode:'commit',  command, effect, idempotencyKey, decisionId }
+   *   propose → { ok:true, mode:'propose', command, proposal, targetId, idempotencyKey }
+   *   commit  → { ok:true, mode:'commit',  command, effect, targetId, idempotencyKey, decisionId }
+   * (targetId is the plan's targetId — for createTask, the newly-minted task id.)
    */
   const run = async (input, ctx = {}) => {
     const { actor } = ctx;
@@ -85,7 +86,7 @@ export const defineCommand = ({ name, targetType, authorize, plan, apply }) => {
 
     // 3. Propose stops here: return the plan, write nothing.
     if (mode === MODES.PROPOSE) {
-      return { ok: true, mode, command: name, proposal: planned, idempotencyKey };
+      return { ok: true, mode, command: name, proposal: planned, targetId: planned.targetId, idempotencyKey };
     }
 
     // 4. Commit — apply the effect FIRST, then append the audit entry. (Ordering matters: if the
@@ -117,6 +118,7 @@ export const defineCommand = ({ name, targetType, authorize, plan, apply }) => {
       mode,
       command: name,
       effect: planned,
+      targetId: planned.targetId,
       idempotencyKey,
       decisionId: decision?.id || null,
     };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { Clock, Calendar, Trash2, ArrowUp, ArrowDown, Undo2, Edit, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -12,27 +12,89 @@ import { isManagerRole } from '../utils/formatters';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
-import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
-import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import UserChip from './UserChip';
 import TaskDetailModal from './task/TaskDetailModal';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
 import { STATUS_STYLES } from '../utils/taskConstants';
+import { deriveTaskStatus } from '../utils/taskStatus';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 
 /**
- * TaskCard — the spacious mobile list card. It is now a compact summary that OPENS the shared
- * task preview (TaskDetailModal) on tap: title, live status, the time hero, and one calm
- * assignee · Vadovas line, plus a footer with the timer (left) and the contextual
- * approve / revert + an icon-only edit (right). The heavy detail — description, comments,
- * photos, links — lives in the preview, so the card stays short instead of sprawling.
+ * STATUS_ICON_TONE — color for the standalone leading status glyph, mirroring StatusPill's
+ * tone→text-color map (the pill itself is gone from the card; the glyph alone now carries the
+ * state to the left of the title). The finished/running/awaiting glyphs are self-colored
+ * (green/amber baked in), so the tone here only actually paints the monochrome pending/paused
+ * shapes — but keeping the full map means a tone change can never silently fall back to ink.
+ */
+const STATUS_ICON_TONE = {
+    neutral: 'text-ink',
+    pending: 'text-feedback-warning-text',
+    running: 'text-feedback-success-text',
+    done: 'text-ink-muted',
+    success: 'text-feedback-success-text',
+    info: 'text-feedback-info-text',
+    danger: 'text-feedback-danger-text',
+};
+
+/**
+ * useOneLineActions — keeps the footer action buttons on a SINGLE row, full-width-adaptive, and
+ * collapses every label to icon-only the moment the labelled set no longer fits.
  *
- * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the
- * pencil opens the create/edit form directly, bypassing the preview.
+ * It measures fit instead of guessing a viewport breakpoint: an invisible mirror row holds the
+ * SAME buttons at their natural (labelled) width; we compare that needed width to the real row's
+ * available width. Because the mirror always carries labels, the measurement is independent of
+ * the current compact state — so the decision can't oscillate.
+ *
+ * Re-measurement is belt-and-suspenders: a cheap pass after every render (one reflow per commit;
+ * the card already re-renders on its time ticker) covers becoming-visible — e.g. mounting inside
+ * an inactive tab, where clientWidth is 0 and any decision would be wrong — plus a ResizeObserver
+ * for instant response to width changes that don't trigger a render (dragging a desktop window
+ * edge, orientation change).
+ */
+function useOneLineActions() {
+    const rowRef = useRef(null);
+    const mirrorRef = useRef(null);
+    const [compact, setCompact] = useState(false);
+
+    const measure = useCallback(() => {
+        const row = rowRef.current;
+        const mirror = mirrorRef.current;
+        if (!row || !mirror) return;
+        // Skip while hidden (clientWidth 0): a later render/resize re-measures once visible.
+        // mirror is overflow-hidden, so scrollWidth is the full labelled width even when wider
+        // than the card. setCompact bails on an unchanged value, so this can never loop.
+        if (row.clientWidth === 0) return;
+        setCompact(mirror.scrollWidth > row.clientWidth + 0.5);
+    }, []);
+
+    useLayoutEffect(() => { measure(); });
+
+    useLayoutEffect(() => {
+        const row = rowRef.current;
+        if (!row || typeof ResizeObserver === 'undefined') return undefined;
+        const ro = new ResizeObserver(() => measure());
+        ro.observe(row);
+        return () => ro.disconnect();
+    }, [measure]);
+
+    return { rowRef, mirrorRef, compact };
+}
+
+/**
+ * TaskCard — the spacious mobile list card. A compact summary that OPENS the shared task preview
+ * (TaskDetailModal) on tap. Top-to-bottom: a leading status glyph + the title (which wraps with a
+ * hanging indent), then priority (· deadline · tag), then the time hero with an always-present
+ * coloured bar, then the assignee · Vadovas line, then the action zone — the worker timer and one
+ * adaptive row of uniform buttons (revert / approve-confirm / edit / delete) that stay on a single
+ * line and collapse to icon-only together when they no longer fit. The heavy detail — description,
+ * comments, photos, links — lives in the preview, so the card stays short.
+ *
+ * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the edit
+ * button opens the create/edit form directly, bypassing the preview.
  */
 const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) => {
     const { currentUser, userRole } = useAuth();
@@ -43,6 +105,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const [confirmRevert, setConfirmRevert] = useState(false);
     const [revertError, setRevertError] = useState('');
     const [confirmApprove, setConfirmApprove] = useState(false);
+    const [confirmComplete, setConfirmComplete] = useState(false);
     const [actionError, setActionError] = useState('');
     // One-shot completion celebration: fires only on a live not-done -> done transition while
     // the card is mounted, so already-finished cards (history) never replay it.
@@ -89,6 +152,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 confirmedAt: now,
                 updatedAt: now,
             });
+            setConfirmComplete(false);
         } catch (err) {
             logError(err, { source: 'TaskCard.performConfirm' });
             setActionError('Nepavyko patvirtinti atlikimo. Bandykite dar kartą.');
@@ -182,18 +246,23 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const estMinutes = parseTimeStringToMinutes(task.estimatedTime || '0');
     const isLimitExceeded = estMinutes > 0 && spentMinutes >= estMinutes;
     const progressPct = estMinutes > 0 ? Math.min(100, Math.round((spentMinutes / estMinutes) * 100)) : 0;
-    const hasTimeInfo = Boolean(task.estimatedTime) || spentMinutes > 0;
 
     const timeAccent = isLimitExceeded
         ? 'text-feedback-danger'
         : isRunning
             ? 'text-session-task-accent'
             : 'text-ink-strong';
-    const progressFill = isLimitExceeded
-        ? 'bg-feedback-danger'
-        : isRunning
-            ? 'bg-session-task-accent'
+    // The time bar is ALWAYS shown (a calm full-length track). Its fill tells the story at a
+    // glance: green + full when the work is finished (the positive end state), red + full when
+    // the planned time ran out before it was finished, otherwise blue at the share of planned
+    // time already used (0 % — an empty track — when there is no planned time to measure).
+    const isFinished = Boolean(task.completed);
+    const barFill = isFinished
+        ? 'bg-feedback-success'
+        : isLimitExceeded
+            ? 'bg-feedback-danger'
             : 'bg-brand';
+    const barPct = (isFinished || isLimitExceeded) ? 100 : progressPct;
     const timeCaption = spentMinutes > 0
         ? (task.estimatedTime ? 'praleista / planas' : 'praleista')
         : (task.estimatedTime ? 'planas' : '');
@@ -202,6 +271,47 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const managerId = task.managerId || task.creatorId;
     const samePerson = !!task.assignedUserId && managerId === task.assignedUserId;
     const showAssignee = task.assignedUserName && (isManager || !isAssignedToMe);
+
+    // Leading status glyph (left of the title) — the card's ONLY status signal now that the
+    // right-edge pill is gone. deriveTaskStatus is the single source of state; deleted is its own
+    // axis (DeletedBadge + strikethrough), so a deleted task shows no lifecycle glyph here.
+    const { Icon: StatusIcon, tone: statusTone, label: statusLabel } = deriveTaskStatus(task, { isRunning });
+    const showStatusIcon = !task.isDeleted && Boolean(StatusIcon);
+
+    // Manager sign-off actions, mirroring TaskDetailModal so the card and the preview agree:
+    // a finished task ("Nepatvirtinta") can be confirmed OR sent back, an unapproved task can be
+    // approved, and any finished/deleted task can be reverted.
+    const canConfirm = isManager && taskStatus === 'completed';
+    const canApprove = isManager && taskStatus === 'unapproved';
+    const canRevert = isManager && (task.completed || task.isDeleted);
+
+    // Footer actions, data-driven so the SAME list feeds both the visible (adaptive) row and the
+    // hidden measuring mirror. Order: revert → approve/confirm → edit → delete, so the
+    // destructive Trinti sits at the far edge (DESIGN_SYSTEM §8). Every entry renders as the same
+    // kind of button; they share the row width and collapse to icon-only together when too tight.
+    const actions = [];
+    if (canRevert) actions.push({
+        key: 'revert', label: 'Grąžinti', icon: Undo2, variant: 'secondary',
+        onClick: (e) => { e.stopPropagation(); setRevertError(''); setConfirmRevert(true); },
+    });
+    if (canApprove) actions.push({
+        key: 'approve', label: 'Patvirtinti', icon: CheckCircle2, variant: 'success',
+        onClick: (e) => { e.stopPropagation(); setConfirmApprove(true); },
+    });
+    if (canConfirm) actions.push({
+        key: 'confirm', label: 'Patvirtinti', icon: CheckCircle2, variant: 'success',
+        onClick: (e) => { e.stopPropagation(); setConfirmComplete(true); },
+    });
+    if (onEdit) actions.push({
+        key: 'edit', label: 'Redaguoti', icon: Edit, variant: 'primary',
+        onClick: (e) => { e.stopPropagation(); onEdit(task); },
+    });
+    if (isManager) actions.push({
+        key: 'delete', label: 'Trinti', icon: Trash2, variant: 'danger',
+        onClick: (e) => { e.stopPropagation(); handleDeleteTask(); },
+    });
+    const { rowRef: actionsRowRef, mirrorRef: actionsMirrorRef, compact: actionsCompact } =
+        useOneLineActions();
 
     const openDetail = () => setShowDetail(true);
 
@@ -238,9 +348,16 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                     )}
 
                     <div className="flex-1 min-w-0">
-                        {/* Title + live status — the two things a worker reads first. The title is the
-                            keyboard-accessible opener; tapping anywhere on the card opens it too. */}
-                        <div className="flex items-start justify-between gap-2 mb-2">
+                        {/* Title row — a leading status glyph (the card's only status signal) sits to
+                            the LEFT; the title takes the rest and wraps with a hanging indent, so a
+                            second line starts under the first line's text, never under the glyph. */}
+                        <div className="flex items-start gap-2 mb-2">
+                            {showStatusIcon && (
+                                <span className={clsx("mt-0.5 shrink-0", justCompleted && 'wz-pop')} title={statusLabel}>
+                                    <StatusIcon className={clsx("h-5 w-5", STATUS_ICON_TONE[statusTone] || STATUS_ICON_TONE.neutral)} aria-hidden="true" />
+                                    <span className="sr-only">{statusLabel}</span>
+                                </span>
+                            )}
                             <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); openDetail(); }}
@@ -250,68 +367,15 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                     taskStatus === 'unapproved' ? "bg-surface-sunken px-2 py-1 text-ink" : ""
                                 )}
                             >
-                                {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                 {task.title}
                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                             </button>
-
-                            <div className="flex items-center gap-1.5 shrink-0">
-                                <TaskStatusPill
-                                    task={task}
-                                    isRunning={isRunning}
-                                    justCompleted={justCompleted}
-                                    className={justCompleted ? 'wz-pop' : undefined}
-                                />
-                                {isManager && (
-                                    <IconButton
-                                        icon={Trash2}
-                                        label="Ištrinti užduotį"
-                                        variant="danger"
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteTask(); }}
-                                        className="-mr-1"
-                                    />
-                                )}
-                            </div>
                         </div>
 
-                        {/* Hero: time first. Spent is the prominent number; planned is muted; a
-                            thin progress bar gives the at-a-glance spent/planned ratio. */}
-                        {hasTimeInfo && (
-                            <div className="mb-2">
-                                <div className="flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
-                                    <Clock className={clsx("w-4 h-4 self-center shrink-0", timeAccent)} aria-hidden="true" />
-                                    <span className={clsx("text-h3 font-bold font-mono leading-none tabular-nums", timeAccent)}>
-                                        {formatMinutesToTimeString(spentMinutes)}
-                                    </span>
-                                    {task.estimatedTime && (
-                                        <span className="text-body font-mono text-ink-muted tabular-nums">/ {task.estimatedTime}</span>
-                                    )}
-                                    {timeCaption && (
-                                        <span className="ml-0.5 text-caption text-ink-muted">{timeCaption}</span>
-                                    )}
-                                </div>
-                                {estMinutes > 0 && (
-                                    <div
-                                        className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
-                                        role="progressbar"
-                                        aria-valuenow={progressPct}
-                                        aria-valuemin={0}
-                                        aria-valuemax={100}
-                                        aria-label="Sugaišto laiko dalis nuo suplanuoto"
-                                    >
-                                        <div
-                                            className={clsx("h-full rounded-full transition-all duration-base", progressFill)}
-                                            style={{ width: `${progressPct}%` }}
-                                        />
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        {/* One calm meta line — assignee and Vadovas sit together (deduped when they
-                            are the same person). Priority keeps its WCAG-correct colour. */}
-                        {(task.priority || task.deadline || showAssignee || task.tag || (managerName && !samePerson)) && (
-                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
+                        {/* Priority first, directly under the title — with any deadline / tag on the
+                            same line. */}
+                        {(task.priority || task.deadline || task.tag) && (
+                            <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
                                 {task.priority && <PriorityBadge priority={task.priority} pill />}
 
                                 {task.deadline && (
@@ -321,20 +385,58 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                     </span>
                                 )}
 
-                                {showAssignee && (
-                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={displayColor} ring />
-                                )}
-
                                 {task.tag && (
                                     <span className="inline-flex items-center gap-1 whitespace-nowrap">
                                         <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" aria-hidden="true"></span>
                                         {task.tag}
                                     </span>
                                 )}
+                            </div>
+                        )}
+
+                        {/* Time hero — spent is the prominent number, planned is muted. The bar below
+                            is ALWAYS present: a full-length track whose fill is blue (share of the
+                            planned time used), green once the work is finished, or red when the
+                            planned time ran out before it was finished. */}
+                        <div className="mb-2">
+                            <div className="flex items-baseline flex-wrap gap-x-1.5 gap-y-0.5">
+                                <Clock className={clsx("w-4 h-4 self-center shrink-0", timeAccent)} aria-hidden="true" />
+                                <span className={clsx("text-h3 font-bold font-mono leading-none tabular-nums", timeAccent)}>
+                                    {formatMinutesToTimeString(spentMinutes)}
+                                </span>
+                                {task.estimatedTime && (
+                                    <span className="text-body font-mono text-ink-muted tabular-nums">/ {task.estimatedTime}</span>
+                                )}
+                                {timeCaption && (
+                                    <span className="ml-0.5 text-caption text-ink-muted">{timeCaption}</span>
+                                )}
+                            </div>
+                            <div
+                                className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
+                                role="progressbar"
+                                aria-valuenow={barPct}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-label="Sugaišto laiko dalis nuo suplanuoto"
+                            >
+                                <div
+                                    className={clsx("h-full rounded-full transition-all duration-base", barFill)}
+                                    style={{ width: `${barPct}%` }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Who does it · who manages — one calm line (deduped when they are the same
+                            person). */}
+                        {(showAssignee || (managerName && !samePerson)) && (
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
+                                {showAssignee && (
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={displayColor} ring />
+                                )}
 
                                 {managerName && !samePerson && (
                                     <span className="inline-flex items-center whitespace-nowrap">
-                                        Vadovas: <UserChip userId={managerId} name={managerName} className="ml-1" />
+                                        Vad. <UserChip userId={managerId} name={managerName} className="ml-1" />
                                     </span>
                                 )}
                             </div>
@@ -349,42 +451,56 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                         {actionError}
                     </p>
                 )}
-                <div className="flex items-center justify-between gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+                <div className="mt-2" onClick={(e) => e.stopPropagation()}>
                     <TaskTimerControls
                         task={task}
                         role={role}
                     />
 
-                    <div className="flex items-center gap-1.5">
-                        {(task.completed || task.isDeleted) && isManager && (
-                            <Button
-                                variant="secondary"
-                                icon={Undo2}
-                                onClick={(e) => { e.stopPropagation(); setRevertError(''); setConfirmRevert(true); }}
+                    {/* One adaptive row: every action is the SAME kind of button (Redaguoti and
+                        Trinti included), they share the width and stay on a single line. A hidden
+                        mirror (same buttons at natural, labelled width) measures whether the labels
+                        fit; when they don't, all buttons drop to icon-only together — still real,
+                        bordered/filled buttons with a 44px target and an accessible name (via
+                        aria-label/title), never a bare glyph. */}
+                    {actions.length > 0 && (
+                        <div className="relative mt-2">
+                            <div
+                                ref={actionsMirrorRef}
+                                aria-hidden="true"
+                                className="pointer-events-none invisible absolute inset-x-0 top-0 flex gap-1.5 overflow-hidden"
                             >
-                                Grąžinti
-                            </Button>
-                        )}
-
-                        {isManager && taskStatus === 'unapproved' && (
-                            <Button
-                                variant="primary"
-                                icon={CheckCircle2}
-                                onClick={(e) => { e.stopPropagation(); setConfirmApprove(true); }}
-                            >
-                                Patvirtinti
-                            </Button>
-                        )}
-
-                        {onEdit && (
-                            <IconButton
-                                icon={Edit}
-                                label="Redaguoti"
-                                className="text-brand hover:bg-brand-soft"
-                                onClick={(e) => { e.stopPropagation(); onEdit(task); }}
-                            />
-                        )}
-                    </div>
+                                {actions.map((a) => (
+                                    <Button
+                                        key={a.key}
+                                        variant={a.variant}
+                                        size="md"
+                                        icon={a.icon}
+                                        tabIndex={-1}
+                                        className="shrink-0 whitespace-nowrap px-3"
+                                    >
+                                        {a.label}
+                                    </Button>
+                                ))}
+                            </div>
+                            <div ref={actionsRowRef} className="flex items-center gap-1.5">
+                                {actions.map((a) => (
+                                    <Button
+                                        key={a.key}
+                                        variant={a.variant}
+                                        size="md"
+                                        icon={a.icon}
+                                        aria-label={a.label}
+                                        title={a.label}
+                                        className="min-w-0 flex-auto px-3"
+                                        onClick={a.onClick}
+                                    >
+                                        {!actionsCompact && <span className="truncate">{a.label}</span>}
+                                    </Button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -452,6 +568,18 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                     variant="primary"
                     onConfirm={performApprove}
                     onCancel={() => setConfirmApprove(false)}
+                />
+            )}
+
+            {confirmComplete && (
+                <ConfirmDialog
+                    open
+                    title="Patvirtinti atliktą darbą?"
+                    message="Užduoties atlikimas bus patvirtintas."
+                    confirmLabel="Patvirtinti"
+                    variant="primary"
+                    onConfirm={performConfirm}
+                    onCancel={() => setConfirmComplete(false)}
                 />
             )}
         </>

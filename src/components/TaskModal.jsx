@@ -11,7 +11,7 @@ import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTempl
 import { parseTaskText } from '../utils/aiActions';
 import { notify } from '../utils/notify';
 import { logError } from '../utils/errorLog';
-import { assignTask, humanActor, MODES } from '../domain';
+import { assignTask, createTask, humanActor, MODES } from '../domain';
 import { getPriorityOptions, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
@@ -881,14 +881,19 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
                 }
 
-                docRef = await addDoc(collection(db, 'tasks'), {
-                    ...taskData,
-                    status: initialStatus,
-                    taskAuditor: activeAuditorId, // Store activeAuditorId as taskAuditor for approval/confirmation visibility
-                    createdAt: new Date().toISOString(),
-                    createdBy: currentUser.uid,
-                    creatorName: currentUser.displayName || currentUser.email
-                });
+                // Create through the audited createTask command (ADR 0015, increment 3): it
+                // canonicalizes, stamps provenance from the actor, writes the tasks doc, and records
+                // one decision_log entry — replacing the inline addDoc so creation has a single,
+                // audited path. The caller still owns the role-derived status + auditor.
+                const createResult = await createTask(
+                    { fields: { ...taskData, status: initialStatus, taskAuditor: activeAuditorId } },
+                    {
+                        actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }),
+                        mode: MODES.COMMIT,
+                        reason: 'created via task editor',
+                    },
+                );
+                docRef = { id: createResult.targetId };
 
                 // Create notification if task needs approval
                 // Use activeAuditorId here to ensure the notification goes to the CORRECT person (Default Manager)
