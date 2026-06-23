@@ -16,6 +16,7 @@ import DeletedBadge from './task/DeletedBadge';
 import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import TaskDetailModal from './task/TaskDetailModal';
+import TaskStatusIcon from './task/TaskStatusIcon';
 import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
@@ -740,16 +741,21 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             type="button"
                                             onClick={(e) => { e.stopPropagation(); openDetail(task); }}
                                             className={clsx(
-                                                // flex + items-start keeps the leading status marker glued to the
+                                                // flex + items-start keeps the leading status glyph glued to the
                                                 // FIRST line of the title (a wrapping title no longer lets the
-                                                // marker drift to the block's vertical centre); the small top
-                                                // nudge on the marker optically centres it on that line. Replaces
+                                                // glyph drift to the block's vertical centre); the small top
+                                                // nudge on the glyph optically centres it on that line. Replaces
                                                 // the old inline align-[-0.2em] that let it sink below the row.
                                                 "flex w-full items-start gap-1.5 rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
                                                 task.isDeleted ? "text-ink-muted line-through" : task.completed ? "text-ink" : "text-ink-strong"
                                             )}
                                         >
-                                            {!task.isDeleted && <CompletedMarker task={task} className="mt-[0.2em]" />}
+                                            {/* Leading status glyph — the same shape the mobile card shows, so the
+                                                lifecycle/approval state (pending / running / paused / awaiting /
+                                                done / confirmed) is glanceable in front of the title while scanning,
+                                                not only in the far-right "Būsena" column. Decorative here: that
+                                                column's pill already carries the labelled status for screen readers. */}
+                                            <TaskStatusIcon task={task} isRunning={isTaskRunning(task)} size="sm" decorative className="mt-0.5" />
                                             <span className="min-w-0 flex-1 break-words">
                                                 {task.title}
                                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}

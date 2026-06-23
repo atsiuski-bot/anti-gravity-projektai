@@ -18,29 +18,12 @@ import DeletedBadge from './task/DeletedBadge';
 import AssigneeChip from './task/AssigneeChip';
 import UserChip from './UserChip';
 import TaskDetailModal from './task/TaskDetailModal';
+import TaskStatusIcon from './task/TaskStatusIcon';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
 import { STATUS_STYLES } from '../utils/taskConstants';
-import { deriveTaskStatus } from '../utils/taskStatus';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 import { useUndoableAction } from '../hooks/useUndoableAction';
-
-/**
- * STATUS_ICON_TONE — color for the standalone leading status glyph, mirroring StatusPill's
- * tone→text-color map (the pill itself is gone from the card; the glyph alone now carries the
- * state to the left of the title). The finished/running/awaiting glyphs are self-colored
- * (green/amber baked in), so the tone here only actually paints the monochrome pending/paused
- * shapes — but keeping the full map means a tone change can never silently fall back to ink.
- */
-const STATUS_ICON_TONE = {
-    neutral: 'text-ink',
-    pending: 'text-feedback-warning-text',
-    running: 'text-feedback-success-text',
-    done: 'text-ink-muted',
-    success: 'text-feedback-success-text',
-    info: 'text-feedback-info-text',
-    danger: 'text-feedback-danger-text',
-};
 
 /**
  * useOneLineActions — keeps the footer action buttons on a SINGLE row, full-width-adaptive, and
@@ -295,12 +278,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const samePerson = !!task.assignedUserId && managerId === task.assignedUserId;
     const showAssignee = task.assignedUserName && (isManager || !isAssignedToMe);
 
-    // Leading status glyph (left of the title) — the card's ONLY status signal now that the
-    // right-edge pill is gone. deriveTaskStatus is the single source of state; deleted is its own
-    // axis (DeletedBadge + strikethrough), so a deleted task shows no lifecycle glyph here.
-    const { Icon: StatusIcon, tone: statusTone, label: statusLabel } = deriveTaskStatus(task, { isRunning });
-    const showStatusIcon = !task.isDeleted && Boolean(StatusIcon);
-
     // Manager sign-off actions, mirroring TaskDetailModal so the card and the preview agree:
     // a finished task ("Laukia priėmimo") can be accepted OR sent back, an unapproved task can be
     // approved, and any finished/deleted task can be reverted.
@@ -375,12 +352,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             the LEFT; the title takes the rest and wraps with a hanging indent, so a
                             second line starts under the first line's text, never under the glyph. */}
                         <div className="flex items-start gap-2 mb-2">
-                            {showStatusIcon && (
-                                <span className={clsx("mt-0.5 shrink-0", justCompleted && 'wz-pop')} title={statusLabel}>
-                                    <StatusIcon className={clsx("h-5 w-5", STATUS_ICON_TONE[statusTone] || STATUS_ICON_TONE.neutral)} aria-hidden="true" />
-                                    <span className="sr-only">{statusLabel}</span>
-                                </span>
-                            )}
+                            <TaskStatusIcon task={task} isRunning={isRunning} animate={justCompleted} className="mt-0.5" />
                             <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); openDetail(); }}
