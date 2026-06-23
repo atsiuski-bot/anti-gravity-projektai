@@ -115,7 +115,7 @@ function AdvancedSection({ icon: Icon, label, count = 0, open, onToggle, childre
     );
 }
 
-export default function TaskModal({ isOpen, onClose, task, role }) {
+export default function TaskModal({ isOpen, onClose, task, role, editTemplate = null }) {
     const { currentUser, userRole, userData } = useAuth();
     const { activeUsers } = useUsers();
     const workers = useMemo(() => activeUsers || [], [activeUsers]);
@@ -344,6 +344,28 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 attachmentUrls: existingUrls,
                 checklist: task.checklist || []
             });
+        } else if (editTemplate) {
+            // Editing a TEMPLATE as if it were a task: seed the standard form from the template's
+            // stored values so the manager edits title/priority/deadline/people/time in the normal
+            // dialog. Heal the legacy assignedWorkerId→assignedUserId drift on the way in.
+            const d = { ...(editTemplate.data || {}) };
+            if (!d.assignedUserId && d.assignedWorkerId) d.assignedUserId = d.assignedWorkerId;
+            setFormData({
+                title: d.title || '',
+                assignedUserId: d.assignedUserId || '',
+                managerId: d.managerId || '',
+                priority: normalizePriority(d.priority),
+                estimatedTime: d.estimatedTime || '',
+                description: d.description || '',
+                status: 'pending',
+                comments: [],
+                completed: false,
+                deadline: d.deadline || '',
+                attachmentUrl: '',
+                attachmentUrls: [],
+                checklist: []
+            });
+            setTemplateName(editTemplate.templateName || '');
         } else {
             // Reset for new task
             // Fetch current user's default manager if they're a worker
@@ -378,7 +400,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             })();
         }
         setSelectedFiles([]);
-    }, [task, role, currentUser]);
+    }, [task, editTemplate, role, currentUser]);
 
     useEffect(() => {
         if (isManagerRole(role)) {
@@ -410,11 +432,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 comment: (task.comments?.length || 0) > 0
             });
             setTimePickerOpen(false);
+        } else if (editTemplate) {
+            // A template only carries a description (no photos/checklist/comments) — reveal it if set.
+            setExpanded({ description: !!editTemplate.data?.description, photos: false, checklist: false, comment: false });
+            setTimePickerOpen(false);
         } else {
             setExpanded({ description: false, photos: false, checklist: false, comment: false });
             setTimePickerOpen(false);
         }
-    }, [task, isOpen, currentUser]);
+    }, [task, editTemplate, isOpen, currentUser]);
 
     const fetchTemplates = async () => {
         try {
@@ -690,6 +716,41 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         // `required`, so guard it here (analysis: 100% of real tasks carry a title).
         if (!formData.title.trim()) {
             setFormError('Įveskite pavadinimą.');
+            return;
+        }
+
+        // TEMPLATE-EDIT mode: this dialog is editing a template's content, not creating/updating a
+        // task. Write the edited spine fields back to the template (preserving any extra stored keys
+        // like tag/links the form doesn't surface) and close — no image upload / task write / nudge.
+        if (editTemplate) {
+            setLoading(true);
+            setFormError('');
+            try {
+                const data = { ...(editTemplate.data || {}) };
+                delete data.assignedWorkerId; // normalise legacy key
+                data.title = formData.title.trim();
+                data.priority = normalizePriority(formData.priority);
+                data.estimatedTime = formData.estimatedTime || '';
+                data.description = formData.description || '';
+                data.assignedUserId = formData.assignedUserId || '';
+                data.managerId = formData.managerId || '';
+                data.deadline = formData.deadline || '';
+                // In this mode the task IS the template, so its title doubles as the template's
+                // display name — keep them in sync so the recurring-tab row reflects the edit.
+                await updateTaskTemplate(
+                    editTemplate.id,
+                    formData.title.trim(),
+                    data,
+                    currentUser,
+                    getTemplateCategory(editTemplate)
+                );
+                onClose();
+            } catch (error) {
+                console.error('Failed to save template from task form', error);
+                setFormError('Nepavyko išsaugoti šablono. Bandykite dar kartą.');
+            } finally {
+                setLoading(false);
+            }
             return;
         }
 
@@ -1116,8 +1177,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-b border-line flex-shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
                         <h2 id="task-modal-title" className="text-lg font-bold text-ink-strong truncate min-w-0">
-                            {isSavingTemplate ? (editingTemplateId ? 'Redaguoti šabloną' : 'Išsaugoti šabloną') : (task ? 'Redaguoti užduotį' : 'Naujas darbas')}
+                            {isSavingTemplate ? (editingTemplateId ? 'Redaguoti šabloną' : 'Išsaugoti šabloną') : (editTemplate ? 'Redaguoti šabloną' : (task ? 'Redaguoti užduotį' : 'Naujas darbas'))}
                         </h2>
+                        {/* Template-edit badge — makes it unmistakable that saving updates the TEMPLATE,
+                            not a one-off task. */}
+                        {editTemplate && !isSavingTemplate && (
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-caption font-semibold text-brand">
+                                <LayoutTemplate className="h-3.5 w-3.5" aria-hidden="true" />
+                                Šablonas
+                            </span>
+                        )}
                         {/* Read-only status — the form previously showed none; now it carries the same
                             Patvirtinta / Nepatvirtinta / Ištrinta the task shows on every other surface. */}
                         {task && !isSavingTemplate && (
@@ -1127,7 +1196,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         )}
                     </div>
                     <div className="flex items-center gap-1 min-w-0">
-                        {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
+                        {!isSavingTemplate && !task && !editTemplate && isManagerRole(role) && templates.length > 0 && (
                             <Button
                                 variant="ghost"
                                 size="sm"
@@ -1232,7 +1301,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         ariaLabel="Ką reikia padaryti?"
                                         className="flex-1"
                                     />
-                                    {!task && (
+                                    {!task && !editTemplate && (
                                         <Button
                                             type="button"
                                             variant="secondary"
@@ -1252,7 +1321,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         {aiMsg.text}
                                     </p>
                                 )}
-                                {!task && !aiMsg && (
+                                {!task && !editTemplate && !aiMsg && (
                                     <p className="mt-1 text-caption text-ink-muted">
                                         Su AI parašykite sakinį, pvz. „rytoj Giedriui 2 val. kostiumų patikra“ — užpildys vykdytoją, laiką ir terminą.
                                     </p>
@@ -1659,7 +1728,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     ) : (
                         <>
                             <div className="flex flex-1 items-center justify-start">
-                                {!task && isManagerRole(role) && (
+                                {!task && !editTemplate && isManagerRole(role) && (
                                     <Button
                                         variant="ghost"
                                         size="md"
@@ -1675,7 +1744,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 Atšaukti
                             </Button>
                             <Button type="submit" form="task-form" variant="primary" size="md" loading={loading}>
-                                {loading ? (selectedFiles.length > 0 ? 'Keliama…' : 'Saugoma…') : (task ? 'Išsaugoti' : 'Sukurti')}
+                                {loading ? (selectedFiles.length > 0 ? 'Keliama…' : 'Saugoma…') : (editTemplate ? 'Išsaugoti šabloną' : (task ? 'Išsaugoti' : 'Sukurti'))}
                             </Button>
                         </>
                     )}
