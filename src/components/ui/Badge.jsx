@@ -78,13 +78,7 @@ export default function Badge({ tier = 'bronze', name, icon: Icon, size = 'md', 
             >
                 {Icon && <Icon className={size === 'sm' ? 'h-5 w-5' : 'h-6 w-6'} />}
             </div>
-            <span className={cn('mt-2 text-caption font-semibold', locked ? 'text-ink-muted' : 'text-ink')}>
-                {name}
-            </span>
-            <span className={cn('text-caption', locked ? 'text-ink-muted' : t.tierText)}>
-                {locked ? 'Dar neturite' : t.label}
-            </span>
-            <div aria-hidden="true" className="mt-1.5 flex gap-1">
+            <div aria-hidden="true" className="mt-2 flex gap-1">
                 {[1, 2, 3, 4].map((i) => (
                     <span
                         key={i}
@@ -92,6 +86,12 @@ export default function Badge({ tier = 'bronze', name, icon: Icon, size = 'md', 
                     />
                 ))}
             </div>
+            <span className={cn('mt-2 text-caption font-semibold', locked ? 'text-ink-muted' : 'text-ink')}>
+                {name}
+            </span>
+            <span className={cn('text-caption', locked ? 'text-ink-muted' : t.tierText)}>
+                {locked ? 'Dar neturite' : t.label}
+            </span>
         </div>
     );
 }
