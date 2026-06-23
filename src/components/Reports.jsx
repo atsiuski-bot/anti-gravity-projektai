@@ -10,6 +10,7 @@ import { addComment } from '../utils/commentActions';
 import { gatherReportData } from '../utils/reportData';
 import { buildReport } from '../utils/reportAggregate';
 import { formatStatValue } from '../utils/workerStats';
+import { confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
@@ -552,13 +553,14 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 t.id === task.id ? { ...t, status: newStatus, confirmedAt: newStatus === 'confirmed' ? new Date().toISOString() : null } : t
             ));
 
-            const taskRef = doc(db, 'tasks', task.id);
-            await updateDoc(taskRef, {
-                status: newStatus,
-                confirmedAt: newStatus === 'confirmed' ? new Date().toISOString() : null,
-                confirmedBy: newStatus === 'confirmed' ? (currentUser?.uid || null) : null,
-                updatedAt: new Date().toISOString()
-            });
+            // Audited confirm/unconfirm toggle (ADR 0015) — replaces the inline write whose confirmedBy
+            // was a literal 'MANAGER' string; the command stamps the real manager uid.
+            const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
+            if (newStatus === 'confirmed') {
+                await confirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirmed from reports' });
+            } else {
+                await unconfirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'unconfirmed from reports' });
+            }
 
         } catch (error) {
             console.error("Error toggling confirmation:", error);
