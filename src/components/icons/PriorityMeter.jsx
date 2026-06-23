@@ -2,7 +2,7 @@ import { getPriorityRank } from '../../utils/priority';
 
 /**
  * PriorityMeter — a 1..4 signal-strength bar glyph that makes priority COUNTABLE instead of a
- * read-the-word task (icon-system, ADR 0007 §"Priority"). It leads the <PriorityBadge> label
+ * read-the-word task (icon-system, ADR 0010 §"Priority"). It leads the <PriorityBadge> label
  * and inherits the chip's (WCAG-tuned) text color via `currentColor`, so it never introduces a
  * new color and stays legible on every priority chip. The top rung (Skubus/urgent) adds a
  * categorical alert tick, so it reads as qualitatively different — not just "one more bar".

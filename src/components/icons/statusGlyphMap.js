@@ -1,6 +1,6 @@
 /**
  * STATUS_GLYPHS — canonical map of a task's status key (from deriveTaskStatus) to its custom
- * glyph component (ADR 0007 §"Status circle"). Kept in its own constants module — mirroring the
+ * glyph component (ADR 0010 §"Status circle"). Kept in its own constants module — mirroring the
  * sessionColors.js / badgeCatalog.js pattern — so the glyph file stays components-only (React
  * Fast Refresh) and there is exactly one place that pairs a state with its shape.
  */

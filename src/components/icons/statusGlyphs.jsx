@@ -1,6 +1,6 @@
 /**
  * Task status glyphs — the custom shape vocabulary for a task's lifecycle/approval state
- * (icon-system, ADR 0007 §"Status circle"). Every surface renders status through
+ * (icon-system, ADR 0010 §"Status circle"). Every surface renders status through
  * <TaskStatusPill> -> deriveTaskStatus, which picks one of these by status key, so the SHAPE
  * (not just the pill color) carries the state: readable in sunlight, with gloves, and for
  * colorblind users (DESIGN_SYSTEM §4-A — color is never the sole signal).

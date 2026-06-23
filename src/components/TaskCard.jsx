@@ -16,6 +16,7 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import UserChip from './UserChip';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
@@ -218,8 +219,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 className={clsx(
                     "rounded-card border-2 shadow-sm p-3 mb-2 transition-shadow duration-base",
                     isRunning ? "bg-session-task-surface border-session-task-shell"
-                        : task.inspectionStatus === 'inspecting' ? "bg-blue-100 border-blue-300"
-                        : isLimitExceeded ? "bg-red-50 border-red-300"
+                        : task.inspectionStatus === 'inspecting' ? "bg-feedback-info-soft border-feedback-info-border"
+                        : isLimitExceeded ? "bg-feedback-danger-soft border-feedback-danger-border"
                         : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
                     task.completed && "opacity-75",
                     justCompleted && "wz-flash-success"
@@ -249,10 +250,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             <h3
                                 className={clsx(
                                     "flex-1 min-w-0 text-body font-bold leading-tight",
-                                    (task.completed || task.isDeleted) ? "line-through text-ink-muted" : "text-ink-strong",
+                                    task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong",
                                     taskStatus === 'unapproved' ? "rounded bg-surface-sunken px-2 py-1 text-ink" : ""
                                 )}
                             >
+                                {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                                 {task.title}
                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                             </h3>

@@ -1,5 +1,5 @@
 /**
- * Navigation glyphs (icon-system ADR 0007 §"Nav wayfinding"). Each primary destination gets a
+ * Navigation glyphs (icon-system ADR 0010 §"Nav wayfinding"). Each primary destination gets a
  * deliberately unique silhouette, and personal-vs-team is a one-glance pattern-match: the SAME
  * base silhouette + a reusable two-heads "team" badge in the bottom-right corner. This removes
  * the History-used-twice collision (Ataskaitos vs Kom. ataskaitos) and frees `Users` from

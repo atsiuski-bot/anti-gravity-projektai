@@ -1,5 +1,5 @@
 /**
- * Time / extension glyphs (icon-system ADR 0007 §"Notifications"). The three time-extension
+ * Time / extension glyphs (icon-system ADR 0010 §"Notifications"). The three time-extension
  * notices share ONE hourglass at the same shape and size, so they read as a progression — the
  * founder's exact design:
  *   TimeUp   — empty hourglass (the worker hit the limit / "laikas baigėsi")

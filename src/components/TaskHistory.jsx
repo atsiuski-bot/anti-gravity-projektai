@@ -1,13 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, addDoc, getDocs, updateDoc } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Pencil, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, getDocs, updateDoc } from 'firebase/firestore';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { getPriorityLabel } from '../utils/priority';
 import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
-import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
+import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
@@ -16,10 +16,13 @@ import SessionTypeIcon from './SessionTypeIcon';
 import { addComment } from '../utils/commentActions';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
+import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
+import DatePicker from './ui/DatePicker';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import AssigneeChip from './task/AssigneeChip';
 import UserChip from './UserChip';
@@ -38,7 +41,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     const isManagerOrAdmin = isManagerRole(userRole);
     // Scoped managers only ever read their team's archived tasks (array-contains); this surface
     // is manager/admin-only (rendered when "all" is selected), so the effective role is never 'worker'.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedTasks, setExpandedTasks] = useState(new Set());
@@ -49,7 +52,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     // Confirm dialogs (replace window.confirm — §8) and friendly error banner (replace alert — §10)
     const [restoreTarget, setRestoreTarget] = useState(null);
     const [restoring, setRestoring] = useState(false);
-    const [adjustmentDeleteTarget, setAdjustmentDeleteTarget] = useState(null);
     const [error, setError] = useState('');
 
     // Filter States
@@ -501,83 +503,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         setFilterTag('all');
     };
 
-    const handleAddAdjustment = async (taskId, date, h, m, reason) => {
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-            const durationMinutes = (parseInt(h) || 0) * 60 + (parseInt(m) || 0);
-
-            const now = getLithuanianNow();
-            const newSessionRef = await addDoc(collection(db, 'work_sessions'), {
-                taskId: task.id,
-                taskTitle: `🕒 Korekcija: ${task.title}${reason ? ` - ${reason}` : ''}`,
-                userId: task.assignedUserId || task.creatorId || 'unknown',
-                userName: task.assignedUserName || task.creatorName || 'Nežinomas',
-                startTime: new Date(date + 'T12:00:00').toISOString(),
-                endTime: new Date(date + 'T12:00:00').toISOString(),
-                durationMinutes: durationMinutes,
-                date: date,
-                createdAt: now.toISOString(),
-                isManualAdjustment: true
-            });
-
-            const newAdj = {
-                id: newSessionRef.id,
-                date: date,
-                durationMinutes: durationMinutes,
-                reason: reason,
-                createdAt: now.toISOString()
-            };
-
-            const collectionName = task.archivedAt ? 'archived_tasks' : 'tasks';
-            await updateDoc(doc(db, collectionName, task.id), {
-                timeAdjustments: [...(task.timeAdjustments || []), newAdj],
-                updatedAt: new Date().toISOString()
-            });
-
-            setTasks(prev => prev.map(t =>
-                t.id === task.id ? { ...t, timeAdjustments: [...(t.timeAdjustments || []), newAdj] } : t
-            ));
-        } catch (err) {
-            console.error('Error adding adjustment:', err);
-            setError('Nepavyko pridėti laiko korekcijos. Bandykite dar kartą.');
-        }
-    };
-
-    const handleDeleteAdjustment = (taskId, adj) => {
-        setError('');
-        setAdjustmentDeleteTarget({ taskId, adj });
-    };
-
-    const confirmDeleteAdjustment = async () => {
-        if (!adjustmentDeleteTarget) return;
-        const { taskId, adj } = adjustmentDeleteTarget;
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) {
-                setAdjustmentDeleteTarget(null);
-                return;
-            }
-
-            await deleteDoc(doc(db, 'work_sessions', adj.id));
-
-            const newAdjustments = (task.timeAdjustments || []).filter(a => a.id !== adj.id);
-            const collectionName = task.archivedAt ? 'archived_tasks' : 'tasks';
-            await updateDoc(doc(db, collectionName, task.id), {
-                timeAdjustments: newAdjustments,
-                updatedAt: new Date().toISOString()
-            });
-
-            setTasks(prev => prev.map(t =>
-                t.id === task.id ? { ...t, timeAdjustments: newAdjustments } : t
-            ));
-            setAdjustmentDeleteTarget(null);
-        } catch (err) {
-            console.error('Error deleting adjustment:', err);
-            setError('Nepavyko ištrinti korekcijos. Bandykite dar kartą.');
-            setAdjustmentDeleteTarget(null);
-        }
-    };
 
     // Comments IconButton with an always-visible count badge. The count is bumped to the 12px
     // floor (§5); the badge stays inside the 44px IconButton target.
@@ -625,13 +550,14 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         </div>
     );
 
-    // Admin-only inline time-adjustment trigger — 44px IconButton with an accessible name,
-    // replacing the bare <svg> button (§7). Shown in both the table and the mobile card.
+    // Admin-only read-only history trigger — opens the legacy time-correction list (deltas) for
+    // review. Shown only when the task actually has corrections; new corrections are made on the
+    // day timeline by editing the specific session, not as a task-total delta.
     const TimeEditButton = ({ task }) =>
-        userRole === 'admin' ? (
+        userRole === 'admin' && task.timeAdjustments?.length > 0 ? (
             <IconButton
-                icon={Pencil}
-                label="Koreguoti laiką"
+                icon={Clock}
+                label="Peržiūrėti laiko korekcijas"
                 onClick={() => setActiveModal({ type: 'timeAdjustments', taskId: task.id })}
             />
         ) : null;
@@ -674,14 +600,14 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleExportCSV}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <FileText className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti (CSV)
                         </button>
                         <button
                             onClick={handleExport}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-green-600 text-white rounded-control hover:bg-green-700 transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <Download className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti AI analizei (JSON)
@@ -750,25 +676,21 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         >
                             <div className="flex flex-col gap-1">
                                 <label htmlFor="hist-date-from" className={FILTER_LABEL_CLASS}>Nuo</label>
-                                <input
+                                <DatePicker
                                     id="hist-date-from"
-                                    type="date"
                                     value={dateFrom}
                                     max={dateTo}
-                                    onChange={(e) => setDateFrom(e.target.value)}
-                                    className={SELECT_CLASS}
+                                    onChange={setDateFrom}
                                 />
                             </div>
                             <div className="flex flex-col gap-1">
                                 <label htmlFor="hist-date-to" className={FILTER_LABEL_CLASS}>Iki</label>
-                                <input
+                                <DatePicker
                                     id="hist-date-to"
-                                    type="date"
                                     value={dateTo}
                                     min={dateFrom}
                                     max={getLithuanianDateString()}
-                                    onChange={(e) => setDateTo(e.target.value)}
-                                    className={SELECT_CLASS}
+                                    onChange={setDateTo}
                                 />
                             </div>
                         </div>
@@ -779,36 +701,32 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 {(isManagerOrAdmin && userId === 'all') && (
                     <div className="flex flex-col gap-1 min-w-[150px]">
                         <label className={FILTER_LABEL_CLASS}>Vykdytojas</label>
-                        <select
+                        <Select
                             value={filterUser}
-                            onChange={(e) => setFilterUser(e.target.value)}
-                            aria-label="Vykdytojas"
-                            className={SELECT_CLASS}
-                        >
-                            <option value="all">Visi</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>
-                                    {formatDisplayName(u.displayName || u.email)}
-                                </option>
-                            ))}
-                        </select>
+                            onChange={setFilterUser}
+                            options={[
+                                { value: 'all', label: 'Visi' },
+                                ...users.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) })),
+                            ]}
+                            label="Vykdytojas"
+                            ariaLabel="Filtruoti pagal vykdytoją"
+                        />
                     </div>
                 )}
 
                 {/* Tag Filter */}
                 <div className="flex flex-col gap-1 min-w-[120px]">
                     <label className={FILTER_LABEL_CLASS}>Žyma</label>
-                    <select
+                    <Select
                         value={filterTag}
-                        onChange={(e) => setFilterTag(e.target.value)}
-                        aria-label="Žyma"
-                        className={SELECT_CLASS}
-                    >
-                        <option value="all">Visos</option>
-                        {TASK_TAGS.map(tag => (
-                            <option key={tag} value={tag}>{tag}</option>
-                        ))}
-                    </select>
+                        onChange={setFilterTag}
+                        options={[
+                            { value: 'all', label: 'Visos' },
+                            ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+                        ]}
+                        label="Žyma"
+                        ariaLabel="Filtruoti pagal žymą"
+                    />
                 </div>
 
                 {/* Sort — a segmented switch (Pagal datą / Pagal būseną) rather than a dropdown,
@@ -881,9 +799,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     className="min-w-0 flex-1 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                 >
                                     <span className={clsx(
-                                        "text-body-lg font-bold text-ink-strong break-words",
-                                        deleted && "line-through text-ink-muted"
+                                        "text-body-lg font-bold break-words",
+                                        deleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                     )}>
+                                        {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
                                         {task.title}
                                     </span>
                                     {task.tag && (
@@ -997,9 +916,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                             onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
                                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                             className={clsx(
-                                            "text-body font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                            (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                            "text-body font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                            (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                         )}>
+                                            {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                             {task.title}
                                             {task.tag && (
                                                 <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-medium bg-brand-soft text-brand-hover rounded align-middle">
@@ -1111,8 +1031,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         isOpen={activeModal.type === 'timeAdjustments'}
                         onClose={() => setActiveModal({ type: null, taskId: null })}
                         task={task}
-                        onAddAdjustment={handleAddAdjustment}
-                        onDeleteAdjustment={handleDeleteAdjustment}
                     />
                 );
             })()}
@@ -1132,20 +1050,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 />
             )}
 
-            {/* Time-adjustment delete confirmation — replaces window.confirm (§8) */}
-            {adjustmentDeleteTarget && (
-                <ConfirmDialog
-                    open
-                    title="Ištrinti korekciją?"
-                    message="Ši laiko korekcija bus negrąžinamai ištrinta."
-                    warning="Veiksmo atšaukti nebus galima."
-                    confirmLabel="Ištrinti"
-                    cancelLabel="Atšaukti"
-                    variant="danger"
-                    onConfirm={confirmDeleteAdjustment}
-                    onCancel={() => setAdjustmentDeleteTarget(null)}
-                />
-            )}
         </div>
     );
 }

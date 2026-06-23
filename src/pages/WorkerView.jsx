@@ -11,9 +11,17 @@ import DailyWorkProgress from '../components/DailyWorkProgress';
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
 import { getPriorityRank } from '../utils/priority';
 import { Spinner } from '../components/ui/Loading';
+import Select from '../components/ui/Select';
+import SearchBox from '../components/ui/SearchBox';
+import {
+    filterRankTasks,
+    buildTaskSuggestions,
+    getTaskMatchFields,
+    getTaskSuggestionSources,
+} from '../utils/taskSearch';
 import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
 import { logError } from '../utils/errorLog';
-import { Filter, AlertCircle, ClipboardList, Search } from 'lucide-react';
+import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
 import Button from '../components/ui/Button';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -168,6 +176,17 @@ export default function WorkerView() {
         });
     }, [activeTab, scrollPositions]);
 
+    // Suggestions read from the tag-scoped set (own tasks) — titles and tags only; every row is
+    // the signed-in worker's own task, so a "Vykdytojas" suggestion would be noise. Driven by the
+    // live searchText so completions feel instant while the list re-filter stays debounced.
+    const searchSuggestions = useMemo(() => {
+        if (!searchText.trim()) return [];
+        const scoped = filterTag ? tasks.filter(t => t.tag === filterTag) : tasks;
+        return buildTaskSuggestions(scoped, searchText, getTaskSuggestionSources, {
+            kinds: ['task', 'tag'],
+        });
+    }, [tasks, searchText, filterTag]);
+
     const sortedTasks = useMemo(() => {
         let result = [...tasks];
 
@@ -175,11 +194,11 @@ export default function WorkerView() {
             result = result.filter(t => t.tag === filterTag);
         }
 
-        const query = debouncedSearch.trim().toLowerCase();
-        if (query) {
-            result = result.filter(t =>
-                [t.title, t.description, t.tag].some(field => field && String(field).toLowerCase().includes(query))
-            );
+        // Fuzzy free-text search (diacritic-insensitive, typo-tolerant, ranked by relevance).
+        // When a query is present the matches come back ordered by relevance; an explicit sort
+        // below overrides that, the default order keeps it.
+        if (debouncedSearch.trim()) {
+            result = filterRankTasks(result, debouncedSearch, getTaskMatchFields);
         }
 
         if (sortBy === 'status') {
@@ -217,7 +236,7 @@ export default function WorkerView() {
         <div className="pt-1">
             <div className="mb-2 sm:mb-6">
                 {error && (
-                    <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-red-50 p-4 wz-shake" role="alert">
+                    <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-feedback-danger-soft p-4 wz-shake" role="alert">
                         <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
                         <p className="text-body text-feedback-danger">{error}</p>
                     </div>
@@ -228,48 +247,44 @@ export default function WorkerView() {
             {/* Tasks Tab */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 sm:mb-6">
-                    <h2 className="text-h2 font-bold text-ink-strong">Mano užduotys</h2>
+                    <h2 className="text-h2 font-bold text-ink-strong wz-on-shell">Mano užduotys</h2>
 
-                    {/* Sort dropdown */}
-                    <div className="relative w-full sm:w-auto flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-2">
-                        <div className="relative">
-                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
-                            <input
-                                type="search"
-                                value={searchText}
-                                onChange={(e) => setSearchText(e.target.value)}
-                                placeholder="Ieškoti užduočių…"
-                                aria-label="Ieškoti užduočių"
-                                className="w-full sm:w-auto min-h-touch pl-10 pr-4 py-2 border border-line rounded-input text-body-lg text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                            />
-                        </div>
-                        <div className="relative">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
-                            <select
-                                value={sortBy}
-                                onChange={(e) => setSortBy(e.target.value)}
-                                aria-label="Rūšiuoti pagal"
-                                className="w-full sm:w-auto min-h-touch pl-10 pr-4 py-2 border border-line rounded-input text-body-lg text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                            >
-                                <option value="none">Numatyta tvarka</option>
-                                <option value="status">Pagal būseną</option>
-                                <option value="priority">Pagal prioritetą</option>
-                            </select>
-                        </div>
-                        <div className="relative">
-                            <Filter className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted" aria-hidden="true" />
-                            <select
-                                value={filterTag}
-                                onChange={(e) => setFilterTag(e.target.value)}
-                                aria-label="Filtruoti pagal žymę"
-                                className="w-full sm:w-auto min-h-touch pl-10 pr-4 py-2 border border-line rounded-input text-body-lg text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                            >
-                                <option value="">Visi Tagai</option>
-                                {TASK_TAGS.map(tag => (
-                                    <option key={`filter-${tag}`} value={tag}>{tag}</option>
-                                ))}
-                            </select>
-                        </div>
+                    {/* Search + the two classifiers — search spans the full width on a phone,
+                        then Rūšiavimas | Žyma sit side by side; inline from sm+. */}
+                    <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-2">
+                        <SearchBox
+                            value={searchText}
+                            onChange={setSearchText}
+                            suggestions={searchSuggestions}
+                            placeholder="Ieškoti užduočių…"
+                            ariaLabel="Ieškoti užduočių"
+                            className="col-span-2 sm:col-auto"
+                        />
+                        <Select
+                            value={sortBy}
+                            onChange={setSortBy}
+                            options={[
+                                { value: 'none', label: 'Numatyta tvarka' },
+                                { value: 'status', label: 'Pagal būseną' },
+                                { value: 'priority', label: 'Pagal prioritetą' },
+                            ]}
+                            label="Rūšiavimas"
+                            ariaLabel="Rūšiuoti pagal"
+                            icon={Filter}
+                            className="sm:w-auto sm:min-w-[10rem]"
+                        />
+                        <Select
+                            value={filterTag}
+                            onChange={setFilterTag}
+                            options={[
+                                { value: '', label: 'Visi Tagai' },
+                                ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+                            ]}
+                            label="Žyma"
+                            ariaLabel="Filtruoti pagal žymę"
+                            icon={Filter}
+                            className="sm:w-auto sm:min-w-[9rem]"
+                        />
                     </div>
                 </div>
 

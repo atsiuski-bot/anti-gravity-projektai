@@ -12,7 +12,7 @@
  *  - completed  -> "Nepatvirtinta" (work finished, manager has not confirmed)
  *  - confirmed  -> "Patvirtinta"   (manager confirmed the finished work)
  *
- * The `Icon` is the custom status glyph for the state (ADR 0007 §"Status circle"), keyed off
+ * The `Icon` is the custom status glyph for the state (ADR 0010 §"Status circle"), keyed off
  * the canonical status key — so the SHAPE carries the state on every surface, not just the
  * pill color (running = green play, completed = green ring + check, confirmed = green fill +
  * white check, …). Glyphs live in one map (`STATUS_GLYPHS`); this is their only picker.

@@ -1,5 +1,5 @@
 /**
- * Connection feedback glyphs (icon-system ADR 0007 §"Empty states + connection"). The offline
+ * Connection feedback glyphs (icon-system ADR 0010 §"Empty states + connection"). The offline
  * banner's message is "saved on your phone, will sync later" — but a bare WifiOff reads as
  * "no wifi", a different (and more alarming) claim. A cloud with a down-arrow says "stored
  * locally now"; the syncing variant adds a refresh ring. Slate/indigo only — never red (red is

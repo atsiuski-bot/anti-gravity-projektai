@@ -20,8 +20,8 @@ const VARIANTS = {
     // Outline danger (quiet, subordinate) vs. filled danger (the dominant destructive action,
     // mirroring Button's `danger`). Both pair the red with a distinct glyph so color is never
     // the sole signal (§5).
-    danger: 'text-red-700 hover:bg-red-50',
-    'danger-solid': 'bg-feedback-danger text-white hover:bg-red-700 shadow-sm',
+    danger: 'text-feedback-danger-text hover:bg-feedback-danger-soft',
+    'danger-solid': 'bg-feedback-danger text-white hover:bg-feedback-danger-hover shadow-sm',
     ghost: 'text-ink-muted hover:text-ink',
 };
 

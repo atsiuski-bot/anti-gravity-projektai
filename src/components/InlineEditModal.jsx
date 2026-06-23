@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
+import Select from './ui/Select';
 
 export function InlineEditModal({ isOpen, onClose, task, field, label }) {
     const [value, setValue] = useState('');
@@ -65,17 +66,14 @@ export function InlineEditModal({ isOpen, onClose, task, field, label }) {
             }
         >
             {field === 'dayOfWeek' ? (
-                <select
-                    aria-label={label}
+                <Select
                     value={dayValue}
-                    onChange={(e) => setDayValue(e.target.value)}
-                    className={controlClass}
-                    autoFocus
-                >
-                    {dayOptions.map(day => (
-                        <option key={day} value={day}>{day}</option>
-                    ))}
-                </select>
+                    onChange={setDayValue}
+                    options={dayOptions.map((day) => ({ value: day, label: day }))}
+                    label={label}
+                    ariaLabel={label}
+                    alwaysSheet
+                />
             ) : field === 'description' ? (
                 <textarea
                     aria-label={label}

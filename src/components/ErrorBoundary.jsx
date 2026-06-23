@@ -122,11 +122,11 @@ END OF ERROR REPORT
             const { error, timestamp, copied, showDetails } = this.state;
 
             return (
-                <div className="min-h-screen bg-gradient-to-br from-red-50 to-surface-sunken flex flex-col items-center justify-center p-4">
+                <div className="min-h-screen bg-gradient-to-br from-feedback-danger-soft to-surface-sunken flex flex-col items-center justify-center p-4">
                     <div className="bg-surface-card rounded-card shadow-2xl p-8 max-w-4xl w-full">
                         {/* Header */}
                         <div className="flex justify-center mb-4">
-                            <div className="bg-red-100 p-4 rounded-full">
+                            <div className="bg-feedback-danger-soft p-4 rounded-full">
                                 <AlertTriangle className="w-16 h-16 text-feedback-danger" />
                             </div>
                         </div>
@@ -143,8 +143,8 @@ END OF ERROR REPORT
                         {error && (
                             <div className="mb-6">
                                 <h2 className="text-body font-semibold text-ink mb-2">Klaidos pranešimas:</h2>
-                                <div className="bg-red-50 border border-red-200 p-4 rounded-card">
-                                    <p className="text-body text-red-800 break-words">
+                                <div className="bg-feedback-danger-soft border border-feedback-danger-border p-4 rounded-card">
+                                    <p className="text-body text-feedback-danger-text break-words">
                                         Programoje įvyko netikėta klaida ir ji negali tęsti darbo. Tikslią techninę informaciją rasite žemiau, ją galite nukopijuoti ir nusiųsti administratoriui.
                                     </p>
                                 </div>

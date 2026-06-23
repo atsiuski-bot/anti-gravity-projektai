@@ -1,5 +1,5 @@
 /**
- * Reports metric glyphs (icon-system ADR 0007 §"Reports time-bar"). One primitive — a short
+ * Reports metric glyphs (icon-system ADR 0010 §"Reports time-bar"). One primitive — a short
  * horizontal time-bar — modulated on a single axis (fill state), so a time figure is read by
  * shape, not by a borrowed icon:
  *   Planned = hollow/dashed bar (intended, not yet real)

@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, MAX_MANUAL_TASK_MINUTES } from '../utils/timeUtils';
+import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
-import { privateScopeConstraints, isScopedManager } from '../utils/teamScope';
+import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
+import CompletedMarker from './task/CompletedMarker';
 import TaskStatusPill from './task/TaskStatusPill';
 import { StatusRunningGlyph } from './icons/statusGlyphs';
 import { MetricWorkedGlyph, MetricTotalGlyph } from './icons/metricGlyphs';
@@ -14,23 +15,26 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, Filter, RotateCcw, X, Pencil } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, Filter, RotateCcw, X, Pencil, Plus } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
 import SessionTypeIcon from './SessionTypeIcon';
 import IconButton from './ui/IconButton';
+import Button from './ui/Button';
 import StatusPill from './ui/StatusPill';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Modal from './ui/Modal';
 import TaskModal from './TaskModal';
 import UserChip from './UserChip';
+import SessionEditModal from './SessionEditModal';
+import SessionEditedBadge from './task/SessionEditedBadge';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full', showTestUsers = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const scopeUid = currentUser?.uid;
     // Managers see the whole team here; workers see only themselves. The per-member picker was
     // removed (individual drill-down moves to the team calendar), so this is fixed at mount and
@@ -39,6 +43,15 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // Firestore listeners still scope by role via privateScopeConstraints, so this never widens
     // what the viewer may read.
     const [selectedUserId] = useState(forceUserId ?? (isManagerRole(userRole) ? 'all' : currentUser?.uid));
+
+    // Admin-only session editing (mirrors the legacy canEditTime gate). Reachable on the individual
+    // drill-down timeline — an admin opening one worker's day — where each real work session can
+    // have its start/end corrected, be deleted, or a missing one added. sessionEditTarget holds the
+    // open dialog's mode + (for edit) the timeline item; null when closed.
+    const canEditSessions = userRole === 'admin';
+    const [sessionEditTarget, setSessionEditTarget] = useState(null);
+    const openEditSession = (item, targetUser, dayTotal) => setSessionEditTarget({ mode: 'edit', session: item, targetUser, dayTotal });
+    const openCreateSession = (targetUser, dayTotal) => setSessionEditTarget({ mode: 'create', session: null, targetUser, dayTotal });
     const [selectedDate, setSelectedDate] = useState(initialDate ?? getLithuanianDateString());
     const [, setLoading] = useState(false);
 
@@ -623,11 +636,24 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 date: s.date || getLithuanianDateString(s.startTime),
                 title: title,
                 duration: sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment }),
+                // Raw stored minutes (pre-sanitize) so the editor can snapshot the true original.
+                durationMinutes: s.durationMinutes,
                 userId: resolveUserId(s),
                 userName: resolveUserName(s) || 'Nežinomas',
                 isActive: !!s.isActive,
                 isSystemTask: s.isSystemTask || (s.taskId && String(s.taskId).startsWith('call_')),
-                isQuickWork: s.isQuickWork || (s.taskId && String(s.taskId).startsWith('quick_'))
+                isQuickWork: s.isQuickWork || (s.taskId && String(s.taskId).startsWith('quick_')),
+                // Provenance + edit-audit fields the session editor reads/writes. isManualAdjustment
+                // marks a legacy synthetic delta-correction row (no real start/end → not editable
+                // here); the original* snapshot + reason feed SessionEditedBadge.
+                isManualAdjustment: !!s.isManualAdjustment,
+                isManualSession: !!s.isManualSession,
+                edited: !!s.edited,
+                originalStartTime: s.originalStartTime,
+                originalEndTime: s.originalEndTime,
+                originalDurationMinutes: s.originalDurationMinutes,
+                editReason: s.editReason,
+                editedByName: s.editedByName
             };
         });
 
@@ -752,6 +778,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     }, {}) : null;
 
     const workerList = workerSummaries ? Object.entries(workerSummaries) : [];
+
+    // The worker whose day is on screen (individual drill-down) — the subject of any session edit
+    // or the owner of a newly-added session. Null in team ('all') mode, where the timeline (and
+    // thus the editing affordances) is not shown.
+    const viewedUser = selectedUserId !== 'all' ? users.find(u => u.id === selectedUserId) : null;
+    const sessionEditTargetUser = selectedUserId !== 'all'
+        ? { id: selectedUserId, name: viewedUser ? formatDisplayName(viewedUser.displayName || viewedUser.email) : '' }
+        : null;
 
     const handleToggleConfirm = async (task) => {
         const isCurrentlyConfirmed = task.status === 'confirmed';
@@ -893,94 +927,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         }
     };
 
-    const handleTimeChange = async (task, newTotalMinutes, reason) => {
-        // A manual time edit changes payable hours, so it must be justified. Block an
-        // unattributed write and tell the editor why instead of silently overriding.
-        const trimmedReason = (reason || '').trim();
-        if (!trimmedReason) {
-            setActionError("Nurodykite laiko keitimo priežastį.");
-            return;
-        }
-        // Fat-finger guard: a manual time edit writes straight into the payable total, so reject
-        // a non-finite / negative / absurd value (a mistyped hours field) before it persists,
-        // rather than silently capping it — the editor sees the message and re-enters.
-        if (!Number.isFinite(newTotalMinutes) || newTotalMinutes < 0 || newTotalMinutes > MAX_MANUAL_TASK_MINUTES) {
-            setActionError(`Įvesta per didelė arba neteisinga laiko reikšmė. Įveskite ne daugiau nei ${MAX_MANUAL_TASK_MINUTES / 60} val.`);
-            return;
-        }
-        try {
-            const collectionName = (task.archivedAt || task.isDeleted || task.status === 'deleted') ? 'archived_tasks' : 'tasks';
-
-            // Snapshot the pre-edit total BEFORE writing, so the report row can show "from → to"
-            // and an auditor can see what the tracked figure was before the override.
-            const previousTotalMinutes = Math.round(calculateCurrentTotalMinutes(task)) || 0;
-
-            // Calculate how much time is already accounted for in timeAdjustments
-            let adjustmentsTotal = 0;
-            if (task.timeAdjustments && Array.isArray(task.timeAdjustments)) {
-                task.timeAdjustments.forEach(adj => {
-                    adjustmentsTotal += (adj.durationMinutes || 0);
-                });
-            }
-
-            // The user intends for the new absolute total to be newTotalMinutes.
-            // Since `calculateCurrentTotalMinutes` calculates total = manualMinutes + timeAdjustments,
-            // we must subtract the existing timeAdjustments from newTotalMinutes to get the correct manualMinutes.
-            // Exception: if manualMinutes drops below 0, it means the correction exceeds the total (prevent negative base time).
-            const newManualMinutes = Math.max(0, (newTotalMinutes || 0) - adjustmentsTotal);
-
-            const updates = {
-                timerMinutes: 0,
-                manualMinutes: newManualMinutes,
-                timeChanged: true,
-                timeChangedBy: currentUser?.uid || 'unknown',
-                timeChangedByName: currentUser?.displayName || currentUser?.email || 'Nežinomas',
-                timeChangedAt: new Date().toISOString(),
-                timeChangedFrom: previousTotalMinutes,
-                timeChangedTo: (newTotalMinutes || 0),
-                timeChangedReason: trimmedReason,
-                updatedAt: new Date().toISOString()
-            };
-
-            if (!task.id) throw new Error("Missing task ID");
-            await updateDoc(doc(db, collectionName, task.id), updates);
-
-            // True database update to ensure time goes to statistics
-            const difference = (newTotalMinutes || 0) - previousTotalMinutes;
-
-            if (difference !== 0) {
-                const completedDateDate = task.completedAt ? new Date(task.completedAt) : new Date();
-
-                // Construct payload explicitly removing undefined to prevent Firestore assertions.
-                // Carries the reason + who made it so the adjustment row is self-describing.
-                const payload = {
-                    taskId: task.id || 'unknown_id',
-                    taskTitle: `🕒 Laiko korekcija: ${task.title || 'Užduotis'}`,
-                    reason: trimmedReason,
-                    userId: task.assignedUserId || task.creatorId || 'unknown',
-                    userName: task.assignedUserName || task.creatorName || 'Nežinomas vykdytojas',
-                    adjustedBy: currentUser?.uid || 'unknown',
-                    startTime: completedDateDate.toISOString(),
-                    endTime: new Date().toISOString(),
-                    durationMinutes: difference,
-                    date: getLithuanianDateString(completedDateDate) || new Date().toISOString().split('T')[0],
-                    createdAt: new Date().toISOString(),
-                    isManualAdjustment: true
-                };
-
-                await addDoc(collection(db, 'work_sessions'), payload);
-            }
-
-            setFinishedTasks(prev => prev.map(t =>
-                t.id === task.id ? { ...t, ...updates } : t
-            ));
-            setActionError('');
-        } catch (err) {
-            console.error('Error changing task time:', err);
-            setActionError("Laiko keitimas nepavyko. Patikrinkite įvesties reikšmes ir bandykite iš naujo.");
-        }
-    };
-
     // View mode state for responsive design
     // Initialise from the current width so a phone never shows the desktop table on the first
     // paint (the resize listener below keeps it in sync afterwards). WCAG 1.4.10 / §9.
@@ -1077,9 +1023,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <Coffee className="w-4 h-4 text-amber-600 shrink-0" aria-hidden="true" />
+                        <Coffee className="w-4 h-4 text-feedback-warning shrink-0" aria-hidden="true" />
                         <span className="text-caption text-ink-muted">Pertraukos</span>
-                        <span className="text-body font-bold text-amber-600 tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
+                        <span className="text-body font-bold text-feedback-warning tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                         <MetricTotalGlyph className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
@@ -1089,11 +1035,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
                 </div>
 
-                {/* Sort filter — a horizontal two-option segmented control (Pagal laiką |
-                    Pagal būseną) so both choices stay on one row and the toolbar keeps to a
-                    single line. */}
+                {/* Sort filter — a two-option segmented control (Pagal laiką | Pagal būseną).
+                    On md+ it sits horizontally inline in the toolbar. On a phone it stacks
+                    VERTICALLY and sits to the RIGHT of the date stepper on the same row:
+                    `self-stretch` matches its height to the date stepper (no magic numbers),
+                    `flex-1` splits that height between the two options — trading a wasted
+                    second toolbar row for a tighter header. */}
                 <div
-                    className="flex bg-surface-sunken rounded-control overflow-hidden border border-line"
+                    className="flex flex-col md:flex-row self-stretch md:self-auto bg-surface-sunken rounded-control overflow-hidden border border-line"
                     role="group"
                     aria-label="Rūšiuoti"
                 >
@@ -1102,7 +1051,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         onClick={() => setSortBy('time')}
                         aria-pressed={sortBy === 'time'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
+                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -1110,13 +1059,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                         Pagal laiką
                     </button>
-                    <div className="w-px bg-line" aria-hidden="true" />
+                    <div className="w-full h-px md:w-px md:h-auto bg-line" aria-hidden="true" />
                     <button
                         type="button"
                         onClick={() => setSortBy('status')}
                         aria-pressed={sortBy === 'status'}
                         className={clsx(
-                            "flex items-center gap-1.5 px-3 py-1.5 text-caption font-semibold transition-colors",
+                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
                             "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
                             sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
                         )}
@@ -1128,7 +1077,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             </div>
 
             {hasAnomaly && (
-                <div role="alert" className="mb-3 flex items-start gap-2 rounded-card border border-amber-300 bg-amber-50 p-3 text-caption text-amber-800">
+                <div role="alert" className="mb-3 flex items-start gap-2 rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-3 text-caption text-feedback-warning-text">
                     <span aria-hidden="true">⚠</span>
                     <span>Kai kurios šio laikotarpio reikšmės atrodo neįprastos ir buvo apribotos iki 16 val. vienai sesijai. Patikrinkite šiuos įrašus rankiniu būdu.</span>
                 </div>
@@ -1216,7 +1165,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <dl className="mt-3 grid grid-cols-3 gap-2 text-center">
                                         <div>
                                             <dt className="text-caption text-ink-muted">Pertraukos</dt>
-                                            <dd className="font-mono text-body font-semibold text-amber-700">{formatMinutesToTimeString(summary.breakMinutes)}</dd>
+                                            <dd className="font-mono text-body font-semibold text-feedback-warning-text">{formatMinutesToTimeString(summary.breakMinutes)}</dd>
                                         </div>
                                         <div>
                                             <dt className="text-caption text-ink-muted">Užduotims</dt>
@@ -1234,7 +1183,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 <dl className="grid grid-cols-3 gap-2 text-center">
                                     <div>
                                         <dt className="text-caption text-ink-muted">Pertraukos</dt>
-                                        <dd className="font-mono text-body font-semibold text-amber-700">{formatMinutesToTimeString(totalBreakMinutes)}</dd>
+                                        <dd className="font-mono text-body font-semibold text-feedback-warning-text">{formatMinutesToTimeString(totalBreakMinutes)}</dd>
                                     </div>
                                     <div>
                                         <dt className="text-caption text-ink-muted">Užduotims</dt>
@@ -1287,13 +1236,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         <td className="px-4 py-3 text-center text-ink-muted font-mono text-sm">
                                             {formatTime(summary.latestEnd)}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-amber-600 font-mono">
+                                        <td className="px-4 py-3 text-right text-feedback-warning font-mono">
                                             {formatMinutesToTimeString(summary.breakMinutes)}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-indigo-600 font-mono font-semibold">
+                                        <td className="px-4 py-3 text-right text-brand font-mono font-semibold">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes)}
                                         </td>
-                                        <td className="px-4 py-3 text-right text-ink-strong font-mono font-bold bg-blue-50/10">
+                                        <td className="px-4 py-3 text-right text-ink-strong font-mono font-bold bg-feedback-info-soft/10">
                                             {formatMinutesToTimeString(summary.taskTimeMinutes + summary.breakMinutes)}
                                         </td>
                                         <td className="px-4 py-3 text-right text-ink-muted font-mono">
@@ -1305,13 +1254,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <td colSpan="3" className="px-4 py-3 text-right text-ink-strong">
                                         Viso komanda:
                                     </td>
-                                    <td className="px-4 py-3 text-right text-amber-700">
+                                    <td className="px-4 py-3 text-right text-feedback-warning-text">
                                         {formatMinutesToTimeString(totalBreakMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 text-right text-indigo-700">
+                                    <td className="px-4 py-3 text-right text-brand">
                                         {formatMinutesToTimeString(totalWorkedMinutes)}
                                     </td>
-                                    <td className="px-4 py-3 text-right text-ink-strong font-bold bg-blue-50/30">
+                                    <td className="px-4 py-3 text-right text-ink-strong font-bold bg-feedback-info-soft/30">
                                         {formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}
                                     </td>
                                     <td className="px-4 py-3 text-right text-ink-muted">—</td>
@@ -1322,9 +1271,21 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     </>
                 ) : (
                     <>
+                        {/* Admin-only: add a missing session for the worker whose day is on screen. */}
+                        {canEditSessions && selectedUserId !== 'all' && (
+                            <div className="mb-3 flex justify-end">
+                                <Button variant="secondary" size="md" icon={Plus} onClick={() => openCreateSession(sessionEditTargetUser, totalWorkedMinutes)}>
+                                    Pridėti sesiją
+                                </Button>
+                            </div>
+                        )}
                         {/* Mobile: timeline as a card list — never a horizontal table on a phone (§9) */}
                         <ul className="divide-y divide-line md:hidden">
-                            {combinedTimelineItems.map((item, idx) => (
+                            {combinedTimelineItems.map((item, idx) => {
+                                // Real, finished work sessions are editable; legacy synthetic delta rows
+                                // (isManualAdjustment) and live sessions are not.
+                                const canEditRow = canEditSessions && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+                                return (
                                 <li key={item.id || idx} className="flex items-center justify-between gap-3 p-4">
                                     <div className="min-w-0">
                                         <p className="font-mono text-caption text-ink-muted">
@@ -1346,15 +1307,22 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                 </>
                                             )}
                                         </div>
+                                        <SessionEditedBadge item={item} />
                                     </div>
-                                    <span className={clsx(
-                                        "font-mono text-body font-bold whitespace-nowrap",
-                                        item.type === 'break' ? 'text-amber-700' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'
-                                    )}>
-                                        {formatMinutesToTimeString(item.duration)}
-                                    </span>
+                                    <div className="flex items-center gap-1 whitespace-nowrap">
+                                        <span className={clsx(
+                                            "font-mono text-body font-bold",
+                                            item.type === 'break' ? 'text-feedback-warning-text' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'
+                                        )}>
+                                            {formatMinutesToTimeString(item.duration)}
+                                        </span>
+                                        {canEditRow && (
+                                            <IconButton icon={Pencil} label="Redaguoti sesijos laiką" onClick={() => openEditSession(item, sessionEditTargetUser, totalWorkedMinutes)} />
+                                        )}
+                                    </div>
                                 </li>
-                            ))}
+                                );
+                            })}
                             <li className="flex items-center justify-between gap-3 bg-surface-sunken p-4">
                                 <span className="text-body font-semibold text-ink-strong">Viso (laikmatis + rankinis)</span>
                                 <span className="font-mono text-body font-bold text-brand">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
@@ -1372,8 +1340,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
-                                {combinedTimelineItems.map((item, idx) => (
-                                    <tr key={item.id || idx} className={`text-xs hover:bg-surface-sunken border-b border-line last:border-0 ${item.type === 'break' ? 'text-amber-700 bg-amber-50/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
+                                {combinedTimelineItems.map((item, idx) => {
+                                    const canEditRow = canEditSessions && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+                                    return (
+                                    <tr key={item.id || idx} className={`text-xs hover:bg-surface-sunken border-b border-line last:border-0 ${item.type === 'break' ? 'text-feedback-warning-text bg-feedback-warning-soft/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
                                         <td className="px-4 py-3 font-mono text-ink-muted w-24">
                                             {formatTime(item.startTime)} - {formatTime(item.endTime)}
                                         </td>
@@ -1391,17 +1361,24 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                     {item.title || 'Darbas'}
                                                 </span>
                                             )}
+                                            <SessionEditedBadge item={item} />
                                         </td>
-                                        <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-amber-600' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'}`}>
-                                            {formatMinutesToTimeString(item.duration)}
+                                        <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-feedback-warning' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'}`}>
+                                            <span className="inline-flex items-center justify-end gap-1">
+                                                {formatMinutesToTimeString(item.duration)}
+                                                {canEditRow && (
+                                                    <IconButton icon={Pencil} label="Redaguoti sesijos laiką" onClick={() => openEditSession(item, sessionEditTargetUser, totalWorkedMinutes)} />
+                                                )}
+                                            </span>
                                         </td>
                                     </tr>
-                                ))}
+                                    );
+                                })}
                                 <tr className="bg-surface-sunken font-semibold">
                                     <td colSpan="2" className="px-4 py-3 text-right text-ink-strong">
                                         Viso (laikmatis + rankinis):
                                     </td>
-                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-indigo-600">
+                                    <td className="px-4 py-3 md:px-2 md:py-2 text-right text-brand">
                                         {formatMinutesToTimeString(totalWorkedMinutes)}
                                     </td>
                                 </tr>
@@ -1440,7 +1417,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
                     onRestore={handleRestore}
-                    onTimeChange={handleTimeChange}
                     users={users}
                     userRole={userRole}
                     currentUser={currentUser}
@@ -1460,7 +1436,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
                     onRestore={handleRestore}
-                    onTimeChange={handleTimeChange}
                     users={users}
                     userRole={userRole}
                     currentUser={currentUser}
@@ -1539,6 +1514,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     date={selectedDate}
                     items={combinedTimelineItems.filter(i => i.userId === workerDetail.userId)}
                     tasks={allLoadedTasks}
+                    canEditSessions={canEditSessions}
+                    onEditSession={(item, dayTotal) => openEditSession(item, { id: workerDetail.userId, name: workerDetail.name }, dayTotal)}
                     onOpenTask={(task) => { setWorkerDetail(null); setOpenTaskDetail(task); }}
                     onClose={() => setWorkerDetail(null)}
                 />
@@ -1553,6 +1530,22 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     onClose={() => setOpenTaskDetail(null)}
                 />
             )}
+
+            {/* Admin session editor — corrects/deletes a finished session or adds a missing one.
+                Rendered last so its portal stacks above the worker drill-down it can open over. The
+                live listeners refresh the timeline after a write, so no manual refresh is needed. */}
+            {sessionEditTarget && (
+                <SessionEditModal
+                    open
+                    mode={sessionEditTarget.mode}
+                    session={sessionEditTarget.session}
+                    targetUser={sessionEditTarget.targetUser || sessionEditTargetUser}
+                    defaultDate={typeof rangeStart === 'string' ? rangeStart : null}
+                    dayTotalMinutes={sessionEditTarget.dayTotal ?? totalWorkedMinutes}
+                    editor={currentUser}
+                    onClose={() => setSessionEditTarget(null)}
+                />
+            )}
         </div>
     );
 }
@@ -1563,7 +1556,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 // manager never has to switch the user filter just to inspect one person. Each work row carries
 // the same status the task shows everywhere else and, when resolvable, opens the full task on
 // click — editable only for a viewer with the rights (TaskModal gates that itself).
-function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, date, items, tasks = [], onOpenTask, onClose }) {
+function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, date, items, tasks = [], canEditSessions = false, onEditSession, onOpenTask, onClose }) {
     // Resolve each timeline row back to its task so the card shows the task's real status and
     // clicking it opens the task. Regular sessions join by their real taskId; quick-work/call
     // sessions carry a SYNTHETIC taskId, so they join on the durable workSessionId link instead
@@ -1621,7 +1614,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
         if (item.type === 'break') {
             return (
                 <li key={item.id || idx}>
-                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-amber-50/40 p-3 text-amber-700">
+                    <div className="flex items-start justify-between gap-3 rounded-control border border-line bg-feedback-warning-soft/40 p-3 text-feedback-warning-text">
                         <div className="min-w-0">
                             <div className="flex items-center gap-1.5 font-medium">
                                 <Coffee className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
@@ -1665,22 +1658,39 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
             </>
         );
 
+        // Real, finished work sessions are editable here too (the team-report drill-down is the
+        // natural admin entry); the edit control sits OUTSIDE the clickable card so it is never a
+        // button nested in a button. Legacy synthetic delta rows and live sessions stay read-only.
+        const canEditRow = canEditSessions && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
         return (
             <li key={item.id || idx}>
-                {task ? (
-                    <button
-                        type="button"
-                        onClick={() => onOpenTask?.(task)}
-                        aria-label={`Atidaryti užduotį: ${item.title || 'Darbas'}`}
-                        className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
-                    >
-                        {body}
-                    </button>
-                ) : (
-                    <div className="flex items-start justify-between gap-3 rounded-control border border-line p-3">
-                        {body}
+                <div className="flex items-stretch gap-1">
+                    <div className="min-w-0 flex-1">
+                        {task ? (
+                            <button
+                                type="button"
+                                onClick={() => onOpenTask?.(task)}
+                                aria-label={`Atidaryti užduotį: ${item.title || 'Darbas'}`}
+                                className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                            >
+                                {body}
+                            </button>
+                        ) : (
+                            <div className="flex items-start justify-between gap-3 rounded-control border border-line p-3">
+                                {body}
+                            </div>
+                        )}
+                        <SessionEditedBadge item={item} className="px-3 pb-1" />
                     </div>
-                )}
+                    {canEditRow && (
+                        <IconButton
+                            icon={Pencil}
+                            label="Redaguoti sesijos laiką"
+                            onClick={() => onEditSession?.(item, dayWorkMinutes)}
+                            className="self-center"
+                        />
+                    )}
+                </div>
             </li>
         );
     };
@@ -1695,7 +1705,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                     <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption">
                         <span className="font-mono text-ink-muted">{headerSpan}</span>
                         <span className="text-ink-muted">Darbas <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
-                        <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-amber-700">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
+                        <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-feedback-warning-text">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
                     </div>
                 </div>
                 <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2 -mt-2" />
@@ -1733,30 +1743,10 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
 }
 
 // Mobile Stats Card Component
-function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, onRestore, users, userRole, setActiveModal, onTimeChange, currentUser: _currentUser }) {
+function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, onRestore, users, userRole, setActiveModal, currentUser: _currentUser }) {
     const isConfirmed = task.status === 'confirmed';
     const worker = users.find(u => u.id === task.assignedUserId);
     const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '—');
-    const [editingTime, setEditingTime] = useState(false);
-    const [editHours, setEditHours] = useState(0);
-    const [editMins, setEditMins] = useState(0);
-    const [editReason, setEditReason] = useState('');
-    const canEditTime = (userRole === 'admin');
-
-    const startTimeEdit = () => {
-        const totalMins = Math.round(calculateCurrentTotalMinutes(task));
-        setEditHours(Math.floor(totalMins / 60));
-        setEditMins(totalMins % 60);
-        setEditReason('');
-        setEditingTime(true);
-    };
-
-    const saveTimeEdit = () => {
-        const newTotal = (editHours * 60) + editMins;
-        onTimeChange(task, newTotal, editReason);
-        setEditingTime(false);
-        setEditReason('');
-    };
 
     return (
         <div className={clsx(
@@ -1767,8 +1757,9 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                 <div className="flex-1">
                     <div className={clsx(
                         "font-bold text-body",
-                        task.isDeleted && "line-through text-ink-muted"
+                        task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : ""
                     )}>
+                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
                         {task.title}
                     </div>
                     {task.isDeleted && <DeletedBadge />}
@@ -1796,49 +1787,22 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                     <UserChip userId={task.assignedUserId} name={userName} className="font-medium" />
                 </div>
                 <div className="bg-surface-sunken px-1.5 py-0.5 rounded font-mono">
-                    {editingTime ? (
-                        <div className="flex flex-col gap-1" onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center gap-1">
-                                <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-12 min-h-touch px-2 border rounded text-center text-caption" />h
-                                <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-12 min-h-touch px-2 border rounded text-center text-caption" />m
-                            </div>
-                            <input
-                                type="text"
-                                value={editReason}
-                                onChange={(e) => setEditReason(e.target.value)}
-                                aria-label="Laiko keitimo priežastis"
-                                placeholder="Keitimo priežastis (privaloma)"
-                                className="w-40 min-h-touch px-2 border border-line rounded text-caption font-sans"
-                            />
-                            <div className="flex items-center gap-1">
-                                <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={saveTimeEdit} />
-                                <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => { setEditingTime(false); setEditReason(''); }} />
-                            </div>
-                        </div>
-                    ) : (
-                        <span className="flex items-center gap-1">
-                            {task.estimatedTime || '-'} / {calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}
-                            {canEditTime && (
-                                <IconButton
-                                    icon={Pencil}
-                                    label="Keisti darbo laiką"
-                                    title="Keisti laiką"
-                                    onClick={startTimeEdit}
-                                />
-                            )}
-                        </span>
-                    )}
+                    {/* Logged time is read-only here; corrections are made on the day timeline via
+                        the per-session editor (start/end), not as a task-total delta. */}
+                    <span className="flex items-center gap-1">
+                        {task.estimatedTime || '-'} / {calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}
+                    </span>
                     <TimeChangedWarning task={task} />
                 </div>
                 {task.deadline && (
-                    <div className="bg-orange-50 text-orange-700 border border-orange-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Calendar className="w-3 h-3 text-orange-500" />
+                    <div className="bg-feedback-warning-soft text-feedback-warning-text border border-feedback-warning-border px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Calendar className="w-3 h-3 text-feedback-warning" />
                         {task.deadline}
                     </div>
                 )}
                 {task.completedAt && (
-                    <div className="bg-green-50 text-green-700 border border-green-100 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Check className="w-3 h-3 text-green-500" />
+                    <div className="bg-feedback-success-soft text-feedback-success-text border border-feedback-success-border px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Check className="w-3 h-3 text-feedback-success" />
                         {new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </div>
                 )}
@@ -1911,30 +1875,10 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
 }
 
 // Task List Helper Component
-function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, onTimeChange, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false, collapsible = false, defaultOpen = true }) {
-    const [editingTimeTaskId, setEditingTimeTaskId] = useState(null);
-    const [editHours, setEditHours] = useState(0);
-    const [editMins, setEditMins] = useState(0);
-    const [editReason, setEditReason] = useState('');
+function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false, collapsible = false, defaultOpen = true }) {
     // The header doubles as an accordion toggle on the approval surface (collapsible); elsewhere
     // the body is always shown.
     const [open, setOpen] = useState(defaultOpen);
-    const canEditTime = (userRole === 'admin');
-
-    const startTimeEdit = (task) => {
-        const totalMins = Math.round(calculateCurrentTotalMinutes(task));
-        setEditHours(Math.floor(totalMins / 60));
-        setEditMins(totalMins % 60);
-        setEditReason('');
-        setEditingTimeTaskId(task.id);
-    };
-
-    const saveTimeEdit = (task) => {
-        const newTotal = (editHours * 60) + editMins;
-        onTimeChange(task, newTotal, editReason);
-        setEditingTimeTaskId(null);
-        setEditReason('');
-    };
 
     return (
         <div className={clsx("rounded-card shadow-sm border border-line overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-surface-card")}>
@@ -1974,7 +1918,6 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                             onToggleConfirm={onToggleConfirm}
                             onAddComment={onAddComment}
                             onRestore={onRestore}
-                            onTimeChange={onTimeChange}
                             users={users}
                             userRole={userRole}
                             currentUser={currentUser}
@@ -2038,9 +1981,10 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                         onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
                                                         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                                         className={clsx(
-                                                        "text-sm font-bold text-ink-strong whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                                        (task.isDeleted || task.status === 'deleted') && "line-through text-ink-muted"
+                                                        "text-sm font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                        (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                                     )}>
+                                                        {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                                         {task.title}
                                                     </div>
                                                     {task.deadline && (
@@ -2079,41 +2023,11 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                             }
                                             timeCell={
                                                 <>
-                                                    {editingTimeTaskId === task.id ? (
-                                                        <div className="flex flex-col items-end gap-1" onClick={(e) => e.stopPropagation()}>
-                                                            <div className="flex items-center gap-1">
-                                                                <input type="number" min="0" max="99" value={editHours} onChange={(e) => setEditHours(parseInt(e.target.value) || 0)} aria-label="Valandos" className="w-10 px-1 py-0.5 border rounded text-center text-caption" autoFocus />h
-                                                                <input type="number" min="0" max="59" value={editMins} onChange={(e) => setEditMins(parseInt(e.target.value) || 0)} aria-label="Minutės" className="w-10 px-1 py-0.5 border rounded text-center text-caption" />m
-                                                            </div>
-                                                            <input
-                                                                type="text"
-                                                                value={editReason}
-                                                                onChange={(e) => setEditReason(e.target.value)}
-                                                                aria-label="Laiko keitimo priežastis"
-                                                                placeholder="Keitimo priežastis (privaloma)"
-                                                                className="w-44 px-1.5 py-0.5 border border-line rounded text-caption font-sans text-left"
-                                                            />
-                                                            <div className="flex items-center gap-1">
-                                                                <IconButton icon={Check} label="Išsaugoti laiką" variant="primary" disabled={!editReason.trim()} onClick={() => saveTimeEdit(task)} />
-                                                                <IconButton icon={X} label="Atšaukti redagavimą" onClick={() => { setEditingTimeTaskId(null); setEditReason(''); }} />
-                                                            </div>
-                                                        </div>
-                                                    ) : (
-                                                        <>
-                                                            <span className="text-brand">{task.estimatedTime || '-'}</span>
-                                                            <span className="text-ink-muted mx-1">/</span>
-                                                            <span>{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
-                                                            {canEditTime && (
-                                                                <IconButton
-                                                                    icon={Pencil}
-                                                                    label="Keisti darbo laiką"
-                                                                    title="Keisti laiką"
-                                                                    className="ml-1 align-middle"
-                                                                    onClick={(e) => { e.stopPropagation(); startTimeEdit(task); }}
-                                                                />
-                                                            )}
-                                                        </>
-                                                    )}
+                                                    {/* Logged time is read-only here; corrections are made on the day
+                                                        timeline via the per-session editor, not as a task-total delta. */}
+                                                    <span className="text-brand">{task.estimatedTime || '-'}</span>
+                                                    <span className="text-ink-muted mx-1">/</span>
+                                                    <span>{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
                                                     <TimeChangedWarning task={task} alignEnd />
                                                 </>
                                             }

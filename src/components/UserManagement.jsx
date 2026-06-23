@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe } from 'lucide-react';
+import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe, Sparkles } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -15,6 +15,7 @@ import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import StatusPill from './ui/StatusPill';
 import Modal from './ui/Modal';
+import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 
@@ -27,10 +28,6 @@ const ROLE_META = {
     manager: { label: 'Vadovas', tone: 'neutral' },
     worker: { label: 'Vykdytojas', tone: 'running' },
 };
-
-const SELECT_CLASS =
-    'block w-full rounded-input border border-line bg-surface-card py-2.5 pl-3 pr-10 text-body-lg text-ink ' +
-    'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
 
 function RoleBadge({ role }) {
     const meta = ROLE_META[role] || ROLE_META.worker;
@@ -60,17 +57,19 @@ function ColorSwatch({ user, onEdit }) {
 function RoleSelect({ user, onChange }) {
     const name = formatDisplayName(user.displayName) || user.email || '';
     return (
-        <select
+        <Select
             value={user.role}
-            onChange={(e) => onChange(user.id, e.target.value)}
-            aria-label={`${name} rolė`}
-            className={SELECT_CLASS}
-        >
-            <option value="worker">Vykdytojas</option>
-            <option value="manager">Vadovas</option>
-            <option value="seniorManager">Vyr. vadovas</option>
-            <option value="admin">Administratorius</option>
-        </select>
+            onChange={(val) => onChange(user.id, val)}
+            options={[
+                { value: 'worker', label: 'Vykdytojas' },
+                { value: 'manager', label: 'Vadovas' },
+                { value: 'seniorManager', label: 'Vyr. vadovas' },
+                { value: 'admin', label: 'Administratorius' },
+            ]}
+            label="Rolė"
+            ariaLabel={`${name} rolė`}
+            alwaysSheet
+        />
     );
 }
 
@@ -82,54 +81,30 @@ function effectiveTeamIds(user) {
     return user.defaultManager ? [user.defaultManager] : [];
 }
 
-// Visibility control. Branches by role:
-//  • admin / senior manager — always global; shows a static "Mato visus" label (a senior
-//    manager (Vyr. vadovas) sees the whole company by rank and has no scope toggle).
-//  • manager — a per-manager scope toggle ("Tik sava komanda" vs "Visa įmonė"). Default
-//    (scopedManager absent/false) keeps today's behaviour: the manager sees the whole company.
-//    Only when an admin turns it on does the manager become restricted to their assigned people.
-//  • worker  — multi-select manager chips (their team), star marks the primary (defaultManager).
-// teamManagerIds is the visibility key the security rules read; it always contains the primary.
-function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped }) {
-    const name = formatDisplayName(user.displayName) || user.email || '';
-    if (user.role === 'admin' || user.role === 'seniorManager') {
-        return <span className="text-body italic text-ink-muted">Mato visus</span>;
+// A manager's senior managers (the Vyr. vadovas they answer to). Plain array, no legacy fallback —
+// this membership is new with the four-level hierarchy (ADR 0007).
+function effectiveSeniorIds(user) {
+    return Array.isArray(user.seniorManagerIds) ? user.seniorManagerIds : [];
+}
+
+// One reusable multi-select chip row: a candidate is toggled in/out of `selectedIds`, and (when
+// `onSetPrimary` is given) a selected chip can be starred as the primary. Used for BOTH a worker's
+// managers (with a primary star) and a manager's seniors (no primary).
+function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId, onSetPrimary, emptyLabel }) {
+    if (candidates.length === 0) {
+        return <span className="text-body italic text-ink-muted">{emptyLabel}</span>;
     }
-    if (user.role === 'manager') {
-        const scoped = user.scopedManager === true;
-        return (
-            <button
-                type="button"
-                aria-pressed={scoped}
-                onClick={() => onToggleScoped(user)}
-                title={scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
-                className={cn(
-                    'inline-flex min-h-touch items-center gap-2 rounded-full border px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
-                    scoped ? 'border-brand bg-brand/10 text-ink' : 'border-line bg-surface-card text-ink-muted'
-                )}
-            >
-                {scoped
-                    ? <Users className="h-4 w-4 text-brand" aria-hidden="true" />
-                    : <Globe className="h-4 w-4" aria-hidden="true" />}
-                {scoped ? 'Tik sava komanda' : 'Visa įmonė'}
-            </button>
-        );
-    }
-    if (managers.length === 0) {
-        return <span className="text-body italic text-ink-muted">Nėra vadovų</span>;
-    }
-    const teamIds = effectiveTeamIds(user);
     return (
         <fieldset>
-            <legend className="sr-only">{`${name} vadovai`}</legend>
+            <legend className="sr-only">{legend}</legend>
             <div className="flex flex-wrap gap-2">
-                {managers.map((m) => {
-                    const selected = teamIds.includes(m.id);
-                    const primary = selected && user.defaultManager === m.id;
-                    const mName = formatDisplayName(m.displayName) || m.email;
+                {candidates.map((c) => {
+                    const selected = selectedIds.includes(c.id);
+                    const primary = !!onSetPrimary && selected && primaryId === c.id;
+                    const cName = formatDisplayName(c.displayName) || c.email;
                     return (
                         <span
-                            key={m.id}
+                            key={c.id}
                             className={cn(
                                 'inline-flex items-center overflow-hidden rounded-full border',
                                 selected ? 'border-brand bg-brand/10' : 'border-line bg-surface-card'
@@ -138,19 +113,19 @@ function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped
                             <button
                                 type="button"
                                 aria-pressed={selected}
-                                onClick={() => onToggle(user, m.id)}
+                                onClick={() => onToggle(c.id)}
                                 className="inline-flex min-h-touch items-center gap-1 px-3 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                             >
                                 {selected && <Check className="h-4 w-4 text-brand" aria-hidden="true" />}
-                                {mName}
+                                {cName}
                             </button>
-                            {selected && (
+                            {onSetPrimary && selected && (
                                 <button
                                     type="button"
                                     aria-pressed={primary}
-                                    aria-label={primary ? `${mName} — pagrindinis vadovas` : `Padaryti ${mName} pagrindiniu vadovu`}
+                                    aria-label={primary ? `${cName} — pagrindinis vadovas` : `Padaryti ${cName} pagrindiniu vadovu`}
                                     title={primary ? 'Pagrindinis vadovas' : 'Padaryti pagrindiniu'}
-                                    onClick={() => onSetPrimary(user, m.id)}
+                                    onClick={() => onSetPrimary(c.id)}
                                     className="inline-flex min-h-touch min-w-touch items-center justify-center border-l border-brand/30 px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                                 >
                                     <Star className={cn('h-4 w-4', primary ? 'fill-current text-brand' : 'text-ink-muted')} aria-hidden="true" />
@@ -161,6 +136,92 @@ function ManagerControl({ user, managers, onToggle, onSetPrimary, onToggleScoped
                 })}
             </div>
         </fieldset>
+    );
+}
+
+// Visibility / hierarchy control. Branches by role (four-level hierarchy, ADR 0007):
+//  • admin        — global; static "Mato visus".
+//  • seniorManager— scoped to their subtree (assigned managers + those managers' workers); the
+//    assignment is done on each MANAGER's row (adding this senior there), so here we show a static
+//    explainer rather than an editable control. No whole-company toggle — a senior is never global.
+//  • manager      — TWO controls: a scope toggle ("Tik sava komanda" vs "Visa įmonė" — what THIS
+//    manager sees) AND senior-manager chips (which Vyr. vadovas oversee this manager's team).
+//  • worker       — multi-select manager chips (their team), star marks the primary (defaultManager,
+//    the approval/notification route). teamManagerIds is the visibility key the rules read.
+function ManagerControl({ user, managerCandidates, seniorCandidates, onToggleManager, onSetPrimary, onToggleScoped, onToggleSenior }) {
+    const name = formatDisplayName(user.displayName) || user.email || '';
+    if (user.role === 'admin') {
+        return <span className="text-body italic text-ink-muted">Mato visus</span>;
+    }
+    if (user.role === 'seniorManager') {
+        // Inverse view: assign managers to THIS senior right here. The membership lives on each
+        // manager's doc (seniorManagerIds), so a toggle writes the MANAGER's doc, not the senior's
+        // — the same write the manager's own row would make, from the other side.
+        const myManagerIds = managerCandidates
+            .filter((m) => effectiveSeniorIds(m).includes(user.id))
+            .map((m) => m.id);
+        return (
+            <div className="space-y-2">
+                <span className="block text-body italic text-ink-muted">Mato priskirtų vadovų komandas</span>
+                <ChipMultiSelect
+                    legend={`${name} pavaldūs vadovai`}
+                    candidates={managerCandidates}
+                    selectedIds={myManagerIds}
+                    onToggle={(mid) => {
+                        const m = managerCandidates.find((c) => c.id === mid);
+                        if (m) onToggleSenior(m, user.id);
+                    }}
+                    emptyLabel="Nėra vadovų"
+                />
+            </div>
+        );
+    }
+    if (user.role === 'manager') {
+        const scoped = user.scopedManager === true;
+        return (
+            <div className="space-y-3">
+                <div>
+                    <span className="mb-1 block text-caption font-medium text-ink-muted">Šis vadovas mato</span>
+                    <button
+                        type="button"
+                        aria-pressed={scoped}
+                        onClick={() => onToggleScoped(user)}
+                        title={scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
+                        className={cn(
+                            'inline-flex min-h-touch items-center gap-2 rounded-full border px-3 text-body focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                            scoped ? 'border-brand bg-brand/10 text-ink' : 'border-line bg-surface-card text-ink-muted'
+                        )}
+                    >
+                        {scoped
+                            ? <Users className="h-4 w-4 text-brand" aria-hidden="true" />
+                            : <Globe className="h-4 w-4" aria-hidden="true" />}
+                        {scoped ? 'Tik sava komanda' : 'Visa įmonė'}
+                    </button>
+                </div>
+                <div>
+                    <span className="mb-1 block text-caption font-medium text-ink-muted">Vyr. vadovai</span>
+                    <ChipMultiSelect
+                        legend={`${name} vyr. vadovai`}
+                        candidates={seniorCandidates}
+                        selectedIds={effectiveSeniorIds(user)}
+                        onToggle={(sid) => onToggleSenior(user, sid)}
+                        emptyLabel="Nėra vyr. vadovų"
+                    />
+                </div>
+            </div>
+        );
+    }
+    // worker
+    return (
+        <ChipMultiSelect
+            legend={`${name} vadovai`}
+            candidates={managerCandidates}
+            selectedIds={effectiveTeamIds(user)}
+            onToggle={(mid) => onToggleManager(user, mid)}
+            primaryId={user.defaultManager}
+            onSetPrimary={(mid) => onSetPrimary(user, mid)}
+            emptyLabel="Nėra vadovų"
+        />
     );
 }
 
@@ -234,6 +295,68 @@ function LastActiveBadge({ user }) {
     const days = Math.floor((Date.now() - last) / (1000 * 60 * 60 * 24));
     if (days < STALE_AFTER_DAYS) return null;
     return <StatusPill tone="pending" icon={Clock}>{`Neaktyvus ${days} d.`}</StatusPill>;
+}
+
+// How long a freshly-created worker reads as "new" on the roster — so a near-empty history is read
+// as recency, not low engagement. Keyed on the user doc's createdAt (set at first login).
+const NEW_FOR_DAYS = 14;
+
+// "Naujas" badge for a recently-joined active worker. Same gating as the staleness badge (workers
+// only, never disabled/test); the two cannot both show — a brand-new worker isn't stale yet.
+function NewUserBadge({ user }) {
+    if (user.role !== 'worker' || user.isDisabled || user.isTest) return null;
+    const ts = user.createdAt;
+    if (!ts) return null;
+    const created = new Date(ts).getTime();
+    if (!Number.isFinite(created)) return null;
+    const days = Math.floor((Date.now() - created) / (1000 * 60 * 60 * 24));
+    if (days > NEW_FOR_DAYS) return null;
+    return <StatusPill tone="info" icon={Sparkles}>Naujas</StatusPill>;
+}
+
+// Per-worker weekly hours baseline. Feeds the report's Planuota fallback so Skirtumas has a real
+// denominator even when the worker never hand-drew a calendar plan (the root cause of the fake
+// "+164h surplus"). Workers only — managers/admins have no quota. Committed on blur, clamped to a
+// sane 0–168 h/week; an empty field clears the baseline (null).
+function ExpectedHoursInput({ user, onCommit }) {
+    const [val, setVal] = useState(
+        user.weeklyExpectedHours === undefined || user.weeklyExpectedHours === null ? '' : String(user.weeklyExpectedHours)
+    );
+    useEffect(() => {
+        setVal(user.weeklyExpectedHours === undefined || user.weeklyExpectedHours === null ? '' : String(user.weeklyExpectedHours));
+    }, [user.weeklyExpectedHours]);
+    if (user.role !== 'worker') return null;
+    const name = formatDisplayName(user.displayName) || user.email || '';
+    const commit = () => {
+        const trimmed = val.trim();
+        if (trimmed === '') {
+            if (user.weeklyExpectedHours !== undefined && user.weeklyExpectedHours !== null) onCommit(user, null);
+            return;
+        }
+        const n = Number(trimmed);
+        if (!Number.isFinite(n)) { setVal(user.weeklyExpectedHours == null ? '' : String(user.weeklyExpectedHours)); return; }
+        const clamped = Math.max(0, Math.min(168, Math.round(n)));
+        setVal(String(clamped));
+        if (clamped !== user.weeklyExpectedHours) onCommit(user, clamped);
+    };
+    return (
+        <label className="block">
+            <span className="mb-1 block text-caption font-medium text-ink-muted">Savaitės norma (val.)</span>
+            <input
+                type="number"
+                min="0"
+                max="168"
+                step="1"
+                inputMode="numeric"
+                value={val}
+                onChange={(e) => setVal(e.target.value)}
+                onBlur={commit}
+                placeholder="—"
+                aria-label={`${name} savaitės norma valandomis`}
+                className="block w-full rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+            />
+        </label>
+    );
 }
 
 function BlockButton({ user, isSelf, onRequest, fullWidth, iconOnly }) {
@@ -347,7 +470,7 @@ export default function UserManagement() {
 
     // Color Picker State
     const [editingColorUser, setEditingColorUser] = useState(null);
-    const [tempColor, setTempColor] = useState({ r: 59, g: 130, b: 246 }); // Default blue
+    const [tempColor, setTempColor] = useState({ r: 79, g: 70, b: 229 }); // Default brand indigo (#4F46E5)
 
     // Block/unblock confirmation (replaces window.confirm — §8)
     const [blockTarget, setBlockTarget] = useState(null);
@@ -385,9 +508,10 @@ export default function UserManagement() {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- subscribe once on mount; adding 'error' would tear down/re-create the listener on every error change
     }, []);
 
-    const managers = users.filter(
-        (u) => (u.role === 'manager' || u.role === 'admin' || u.role === 'seniorManager') && !u.isDisabled
-    );
+    // Assignment candidate pools, by rank (ADR 0007): a worker's overseers are MANAGERS; a
+    // manager's overseers are SENIOR managers. Disabled accounts can't oversee anyone.
+    const managerCandidates = users.filter((u) => u.role === 'manager' && !u.isDisabled);
+    const seniorCandidates = users.filter((u) => u.role === 'seniorManager' && !u.isDisabled);
 
     const countAdmins = () => {
         return users.filter(u => u.role === 'admin' && !u.isDisabled).length;
@@ -430,7 +554,7 @@ export default function UserManagement() {
             r: parseInt(result[1], 16),
             g: parseInt(result[2], 16),
             b: parseInt(result[3], 16)
-        } : { r: 59, g: 130, b: 246 };
+        } : { r: 79, g: 70, b: 229 };
     };
 
     // Helper: RGB to Hex
@@ -518,6 +642,26 @@ export default function UserManagement() {
         }
     };
 
+    // Toggle a senior manager (Vyr. vadovas) in/out of a MANAGER's overseer set. Writes the
+    // manager's own doc (seniorManagerIds) — the security rules gate this field to admins, and the
+    // Cloud Function folds it into the subtree's overseer closure so the senior sees the manager's
+    // team (ADR 0007). Triggerable from either the manager's row or the senior's row (same write).
+    const handleToggleSenior = async (managerUser, seniorId) => {
+        setError('');
+        const current = Array.isArray(managerUser.seniorManagerIds) ? managerUser.seniorManagerIds : [];
+        const next = current.includes(seniorId)
+            ? current.filter((id) => id !== seniorId)
+            : [...current, seniorId];
+        try {
+            await updateDoc(doc(db, 'users', managerUser.id), {
+                seniorManagerIds: next,
+            });
+        } catch (err) {
+            console.error("Error updating senior managers:", err);
+            setError('Nepavyko atnaujinti vyr. vadovų. Bandykite dar kartą.');
+        }
+    };
+
     // Toggle the test/founder flag. Excluded from payroll reports by default; the report has a
     // manager opt-in to show them. A simple boolean flip on the user doc, mirroring the other
     // per-user updates above.
@@ -528,6 +672,18 @@ export default function UserManagement() {
         } catch (err) {
             console.error("Error updating test flag:", err);
             setError('Nepavyko pažymėti bandomojo vartotojo. Bandykite dar kartą.');
+        }
+    };
+
+    // Persist a worker's weekly hours baseline (or clear it with null). The report falls back to
+    // this when the worker has no calendar plan for the span, so Skirtumas stops being garbage.
+    const handleSetExpectedHours = async (user, hours) => {
+        setError('');
+        try {
+            await updateDoc(doc(db, 'users', user.id), { weeklyExpectedHours: hours });
+        } catch (err) {
+            console.error("Error updating expected hours:", err);
+            setError('Nepavyko išsaugoti savaitės normos. Bandykite dar kartą.');
         }
     };
 
@@ -689,6 +845,8 @@ export default function UserManagement() {
                                         className="min-w-0 text-body font-semibold text-ink-strong"
                                     />
                                     <DisabledPill user={user} />
+                                    <NewUserBadge user={user} />
+                                    <LastActiveBadge user={user} />
                                 </div>
                                 <p className="truncate text-body text-ink-muted">{user.email}</p>
                                 <div className="mt-2">
@@ -709,12 +867,16 @@ export default function UserManagement() {
                                 </span>
                                 <ManagerControl
                                     user={user}
-                                    managers={managers}
-                                    onToggle={handleToggleManager}
+                                    managerCandidates={managerCandidates}
+                                    seniorCandidates={seniorCandidates}
+                                    onToggleManager={handleToggleManager}
                                     onSetPrimary={handleSetPrimary}
                                     onToggleScoped={handleToggleScoped}
+                                    onToggleSenior={handleToggleSenior}
                                 />
                             </div>
+                            <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
+                            <TestButton user={user} onToggle={handleToggleTest} fullWidth />
                             <BlockButton
                                 user={user}
                                 isSelf={user.id === currentUser?.uid}
@@ -762,6 +924,7 @@ export default function UserManagement() {
                                                     size="md"
                                                 />
                                                 <DisabledPill user={user} />
+                                                <NewUserBadge user={user} />
                                                 <LastActiveBadge user={user} />
                                             </div>
                                             <div className="text-body text-ink-muted">{user.email}</div>
@@ -777,10 +940,12 @@ export default function UserManagement() {
                                 <td className="px-6 py-3 align-top">
                                     <ManagerControl
                                         user={user}
-                                        managers={managers}
-                                        onToggle={handleToggleManager}
+                                        managerCandidates={managerCandidates}
+                                        seniorCandidates={seniorCandidates}
+                                        onToggleManager={handleToggleManager}
                                         onSetPrimary={handleSetPrimary}
                                         onToggleScoped={handleToggleScoped}
+                                        onToggleSenior={handleToggleSenior}
                                     />
                                 </td>
                                 <td className="px-6 py-3 align-top">
@@ -789,6 +954,7 @@ export default function UserManagement() {
                                         roughly halving the old four-tall vertical stack. */}
                                     <div className="flex flex-col gap-2">
                                         <RoleSelect user={user} onChange={handleRoleChange} />
+                                        <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
                                         <div className="flex items-center gap-1.5">
                                             <BlockButton
                                                 user={user}

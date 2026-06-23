@@ -1,5 +1,5 @@
 /**
- * WORKZ custom icon kit (ADR 0007). One barrel for the purpose-built glyph families so every
+ * WORKZ custom icon kit (ADR 0010). One barrel for the purpose-built glyph families so every
  * consumer imports from a single place and no glyph is hand-placed twice. Each family is a
  * keyed map (mirroring the SESSION_COLORS pattern) plus its individual components.
  *

@@ -1,5 +1,5 @@
 /**
- * Role/rank insignia (icon-system ADR 0007 §"Role insignia"). A chevron ladder read by
+ * Role/rank insignia (icon-system ADR 0010 §"Role insignia"). A chevron ladder read by
  * COUNTING — so the 4-level hierarchy is legible at scan time and Vadovas vs Vyr. vadovas (today
  * color-identical) differ by shape, not color:
  *   Vykdytojas  — no insignia (absence is the signal; keeps the default calm)

@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAchievements } from '../hooks/useAchievements';
 import { formatDisplayName } from '../utils/formatters';
 import { BADGE_ICONS, tierKey } from '../utils/badgeCatalog';
-import { canSeeWholeTeam, isScopedManager, isOnManagerTeam } from '../utils/teamScope';
+import { canSeeWholeTeam, isScopedOverseer, isOverseenBy } from '../utils/teamScope';
 import Modal from './ui/Modal';
 import Avatar from './ui/Avatar';
 import StatusPill from './ui/StatusPill';
@@ -19,7 +19,7 @@ import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 const DailyStatistics = lazy(() => import('./DailyStatistics'));
 
 // Role presentation — color paired with text (DESIGN_SYSTEM §5), with the rank insignia
-// (ADR 0007). `seniorManager` must be present: without it a Vyr. vadovas peer profile fell back
+// (ADR 0010). `seniorManager` must be present: without it a Vyr. vadovas peer profile fell back
 // to the worker entry and read "Vykdytojas".
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
@@ -54,13 +54,14 @@ export default function UserProfileModal({ userId, onClose }) {
         : null;
 
     // May the signed-in viewer see this member's work statistics? Whole-team viewers see anyone;
-    // a scoped manager only their own team. Never for one's own chip.
+    // a scoped overseer (scoped manager or senior manager) only their own subtree. Never for one's
+    // own chip.
     const isSelf = currentUser?.uid === userId;
     const canViewStats =
         !isSelf &&
         !!user &&
         (canSeeWholeTeam(userData) ||
-            (isScopedManager(userData) && isOnManagerTeam(user, currentUser?.uid)));
+            (isScopedOverseer(userData) && isOverseenBy(user, currentUser?.uid)));
 
     const showStats = canViewStats && tab === 'stats';
 

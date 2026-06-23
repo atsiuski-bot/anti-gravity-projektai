@@ -11,10 +11,18 @@ export const PRIORITIES = {
     VERY_LOW: 'VERY_LOW'
 };
 
+// The priority chip is a contrast-tuned ramp. It is THEME-REACTIVE: the bg/text colors live in
+// CSS variables (`--priority-<slug>-bg/-text`, defined per theme in index.css) and the getters
+// below return `var(...)` references, so the chip re-paints with the theme. In light the ramp
+// runs black(urgent) -> near-white(very-low); in dark it inverts (bright urgent -> faint
+// very-low) so "more urgent = louder against the canvas" holds and no chip glares on the dark
+// surface. The literal `color` hexes are retained as the LIGHT source of truth + for the runtime
+// contrast helper; `slug` keys the CSS variable.
 const PRIORITY_CONFIG = {
     [PRIORITIES.URGENT]: {
         id: PRIORITIES.URGENT,
         rank: 5,
+        slug: 'urgent',
         label: 'Skubus',
         color: '#000000', // Black
         textColor: '#FFFFFF',
@@ -22,6 +30,7 @@ const PRIORITY_CONFIG = {
     [PRIORITIES.HIGH]: {
         id: PRIORITIES.HIGH,
         rank: 4,
+        slug: 'high',
         label: 'Aukštas',
         color: '#666666', // Lighter Dark Grey (was #4D4D4D)
         textColor: '#FFFFFF',
@@ -29,6 +38,7 @@ const PRIORITY_CONFIG = {
     [PRIORITIES.MEDIUM]: {
         id: PRIORITIES.MEDIUM,
         rank: 3,
+        slug: 'medium',
         label: 'Vidutinis',
         color: '#A3A3A3', // Lighter Medium Grey (was #8C8C8C)
         // No explicit textColor: white-on-#A3A3A3 is 2.52:1 (fails WCAG AA). Let
@@ -37,6 +47,7 @@ const PRIORITY_CONFIG = {
     [PRIORITIES.LOW]: {
         id: PRIORITIES.LOW,
         rank: 2,
+        slug: 'low',
         label: 'Žemas',
         color: '#E0E0E0', // Lighter Grey (was #BDBDBD)
         textColor: '#111111',
@@ -44,6 +55,7 @@ const PRIORITY_CONFIG = {
     [PRIORITIES.VERY_LOW]: {
         id: PRIORITIES.VERY_LOW,
         rank: 1,
+        slug: 'verylow',
         label: 'Labai žemas',
         color: '#FAFAFA', // Almost White (was #F5F5F5)
         textColor: '#111111',
@@ -75,11 +87,13 @@ export const normalizePriority = (priority) => {
 };
 
 /**
- * Returns hex color for a given priority
+ * Returns the THEME-REACTIVE background color for a given priority, as a CSS `var()` reference
+ * (resolves per theme via index.css). Intended for inline `style`; for the raw light hex (e.g.
+ * a contrast computation) read PRIORITY_CONFIG via getPriorityHex.
  */
 export const getPriorityColor = (priority) => {
     const p = normalizePriority(priority);
-    return PRIORITY_CONFIG[p].color;
+    return `var(--priority-${PRIORITY_CONFIG[p].slug}-bg)`;
 };
 
 /**
@@ -91,11 +105,13 @@ export const getPriorityLabel = (priority) => {
 };
 
 /**
- * Returns text color for a given priority (explicit or calculated)
+ * Returns the THEME-REACTIVE text color for a given priority, as a CSS `var()` reference. The
+ * per-theme value in index.css already encodes the AA-correct fg for each chip bg (e.g. dark
+ * text on the light MEDIUM chip), so no runtime contrast pick is needed at the call site.
  */
 export const getPriorityTextColor = (priority) => {
     const p = normalizePriority(priority);
-    return PRIORITY_CONFIG[p].textColor || getContrastingTextColor(PRIORITY_CONFIG[p].color);
+    return `var(--priority-${PRIORITY_CONFIG[p].slug}-text)`;
 };
 
 /**

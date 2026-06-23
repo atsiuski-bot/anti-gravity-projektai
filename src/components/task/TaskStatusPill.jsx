@@ -8,7 +8,7 @@ import { StatusConfirmedGlyph } from '../icons/statusGlyphs';
  * "Vyksta" / "Pristabdyta" / "Nepatvirtinta" / "Patvirtinta" pill is byte-identical whether it
  * appears on a worker card, a manager table row, or the task form header.
  *
- * The status glyph (ADR 0007) is always present now — the shape carries the state on every
+ * The status glyph (ADR 0010) is always present now — the shape carries the state on every
  * surface (no per-surface opt-in), which is the whole point of the custom set. Deleted is
  * rendered separately (<DeletedBadge>), not through here.
  *

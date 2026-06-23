@@ -7,14 +7,14 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, sanitizeReportMinutes } from '../utils/timeUtils';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
-import { isScopedManager, scopeRoster } from '../utils/teamScope';
+import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
 import UserChip from './UserChip';
 
 export default function CombinedHoursSummary() {
     const { currentUser, userData } = useAuth();
     const { users: allUsers, loading: usersLoading } = useUsers();
     // Scoped manager: only their team's rows + roster. Admin/unscoped manager: whole company.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const uid = currentUser?.uid;
     const users = useMemo(() => scopeRoster(allUsers, userData, uid), [allUsers, scoped, uid]); // eslint-disable-line react-hooks/exhaustive-deps -- userData read via the stable `scoped` flag
     const [tasks, setTasks] = useState([]);
@@ -136,9 +136,12 @@ export default function CombinedHoursSummary() {
             let plannedHours = 0;
             let workedMinutes = 0;
 
-            // Calculate weekly scheduled hours (Calendar)
+            // Calculate weekly scheduled hours (Calendar). Approved leave (any absence type, all of
+            // which keep isVacation true) is time OFF, not planned work — counting it would inflate
+            // the planned bar and make a holiday week read as planned hours, the same exclusion
+            // Reports and DailyWorkProgress already apply.
             workHours.forEach(wh => {
-                if (wh.userId === user.id) {
+                if (wh.userId === user.id && !wh.isVacation) {
                     const whStart = new Date(wh.start);
                     const whEnd = new Date(wh.end);
                     const duration = (whEnd - whStart) / (1000 * 60 * 60);
@@ -258,7 +261,7 @@ export default function CombinedHoursSummary() {
                                         {/* Planned Bar — labelled so colour is never the sole signal (§5) */}
                                         <div className="flex items-center gap-2">
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Planuota</span>
-                                            <span className="text-body-lg text-ink-muted font-mono w-16 text-right tabular-nums">
+                                            <span className="text-body-lg text-ink-muted font-mono w-24 text-right tabular-nums">
                                                 {user.plannedHours.toFixed(1)}h
                                             </span>
                                             <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden relative">
@@ -269,24 +272,37 @@ export default function CombinedHoursSummary() {
                                             </div>
                                         </div>
 
-                                        {/* Worked Bar — work only, comparable to Planned above */}
+                                        {/* Worked Bar — green = work (comparable to Planned above); breaks
+                                            stacked in amber after it. The worked figure stays work-only; the
+                                            amber addend/segment is shown beside it, never folded into it. */}
                                         <div className="flex items-center gap-2">
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Dirbta</span>
-                                            <span className="text-body-lg text-ink-strong font-bold font-mono w-16 text-right tabular-nums">
-                                                {user.workedHours.toFixed(1)}h
+                                            <span className="text-body-lg font-bold font-mono w-24 text-right tabular-nums">
+                                                <span className="text-ink-strong">{user.workedHours.toFixed(1)}</span>
+                                                {user.breakHours > 0 && (
+                                                    <span className="text-session-break-accent">+{user.breakHours.toFixed(1)}</span>
+                                                )}
+                                                <span className="text-ink-strong">h</span>
                                             </span>
-                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden relative">
+                                            <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden flex">
                                                 <div
-                                                    className="absolute top-0 left-0 h-full bg-feedback-success rounded-full"
+                                                    className={`h-full bg-feedback-success rounded-l-full ${user.breakHours > 0 ? '' : 'rounded-r-full'}`}
                                                     style={{ width: `${(user.workedHours / combinedStats.max) * 100}%` }}
                                                 />
+                                                {user.breakHours > 0 && (
+                                                    <div
+                                                        className="h-full bg-session-break-accent rounded-r-full"
+                                                        style={{ width: `${(user.breakHours / combinedStats.max) * 100}%` }}
+                                                    />
+                                                )}
                                             </div>
                                         </div>
 
-                                        {/* Breaks — surfaced separately, NOT part of the worked comparison */}
+                                        {/* Breaks — named in text so the amber segment is never colour-only (§5),
+                                            with the work + break total spelled out. */}
                                         {user.breakHours > 0 && (
                                             <span className="text-caption text-ink-muted">
-                                                Pertraukos: {user.breakHours.toFixed(1)}h (neįskaičiuota į „Dirbta“)
+                                                Pertraukos: {user.breakHours.toFixed(1)}h · iš viso {(user.workedHours + user.breakHours).toFixed(1)}h
                                             </span>
                                         )}
                                     </div>

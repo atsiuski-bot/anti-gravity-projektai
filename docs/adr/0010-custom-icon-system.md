@@ -1,9 +1,10 @@
-# 0007 — Custom symbol / icon system
+# 0010 — Custom symbol / icon system
 
 - **Date:** 2026-06-23
-- **Status:** Accepted (rolling out in phases)
+- **Status:** Accepted — Phases 1–5 shipped (status+priority · nav+team modifier · role insignia + seniorManager fix · offline glyph + reports metric bars · notification hourglass family).
 - **Supersedes / relates to:** extends [ADR 0001](./0001-visual-design-system.md) (visual design
-  system); consumes the motion utilities from the 2026-06-22 motion-system decision.
+  system); consumes the motion utilities from the 2026-06-22 motion-system decision. **Renumbered
+  from 0007** — that number was independently taken on `main` by the senior-manager-subtree ADR.
 
 ## Context
 

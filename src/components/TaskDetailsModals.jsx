@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square } from 'lucide-react';
+import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
 import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
@@ -72,15 +72,36 @@ export function LinksModal({ isOpen, onClose, links }) {
     );
 }
 
-export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
+export function CommentsModal({ isOpen, onClose, comments, onAddComment, currentUserId, canManage = false, onUpdateComment, onDeleteComment }) {
     const [newComment, setNewComment] = React.useState('');
     const [optimisticComments, setOptimisticComments] = React.useState([]);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
+
+    // Inline edit state — a comment's author (or a manager) edits in place, the same affordance
+    // the desktop row used to carry before comments consolidated into this one modal.
+    const [editingIndex, setEditingIndex] = React.useState(null);
+    const [editText, setEditText] = React.useState('');
+    const canEditComments = !!(onUpdateComment || onDeleteComment);
 
     // When the real comments update from Firestore, clear our optimistic ones
     React.useEffect(() => {
         setOptimisticComments([]);
     }, [comments]);
+
+    const startEdit = (index, text) => {
+        setEditingIndex(index);
+        setEditText(text);
+    };
+    const cancelEdit = () => {
+        setEditingIndex(null);
+        setEditText('');
+    };
+    const saveEdit = async (index) => {
+        const text = editText.trim();
+        if (!text) return;
+        await onUpdateComment?.(index, text);
+        cancelEdit();
+    };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -118,19 +139,53 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment }) {
             <div className="flex flex-col h-full max-h-[60vh]">
                 <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {displayComments.length > 0 ? (
-                        displayComments.map((comment, idx) => (
-                            <div key={idx} className={`bg-surface-sunken p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
-                                <div className="flex justify-between items-start mb-2">
-                                    <span className="font-medium text-ink-strong">
-                                        {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : <UserChip userId={comment.userId} name={comment.user} />}
-                                    </span>
-                                    <span className="text-xs text-ink-muted">
-                                        {new Date(comment.createdAt).toLocaleString()}
-                                    </span>
+                        displayComments.map((comment, idx) => {
+                            const isEditing = editingIndex === idx;
+                            const mayEdit = canEditComments && !comment.isOptimistic
+                                && (canManage || (comment.userId && comment.userId === currentUserId));
+                            return (
+                                <div key={idx} className={`bg-surface-sunken p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
+                                    <div className="flex justify-between items-start mb-2 gap-2">
+                                        <span className="font-medium text-ink-strong">
+                                            {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : <UserChip userId={comment.userId} name={comment.user} />}
+                                        </span>
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                            <span className="text-xs text-ink-muted">
+                                                {new Date(comment.createdAt).toLocaleString()}
+                                            </span>
+                                            {mayEdit && !isEditing && (
+                                                <>
+                                                    {onUpdateComment && (
+                                                        <IconButton icon={Pencil} label="Redaguoti komentarą" variant="ghost" onClick={() => startEdit(idx, comment.text)} />
+                                                    )}
+                                                    {onDeleteComment && (
+                                                        <IconButton icon={Trash2} label="Ištrinti komentarą" variant="danger" onClick={() => onDeleteComment(idx)} />
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {isEditing ? (
+                                        <div>
+                                            <textarea
+                                                value={editText}
+                                                onChange={(e) => setEditText(e.target.value)}
+                                                rows={2}
+                                                aria-label="Redaguoti komentarą"
+                                                className="w-full px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm resize-y"
+                                                autoFocus
+                                            />
+                                            <div className="mt-2 flex justify-end gap-2">
+                                                <IconButton icon={X} label="Atšaukti" variant="ghost" onClick={cancelEdit} />
+                                                <IconButton icon={Check} label="Išsaugoti" variant="primary" onClick={() => saveEdit(idx)} disabled={!editText.trim()} />
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="text-ink whitespace-pre-wrap">{comment.text}</p>
+                                    )}
                                 </div>
-                                <p className="text-ink whitespace-pre-wrap">{comment.text}</p>
-                            </div>
-                        ))
+                            );
+                        })
                     ) : (
                         <p className="text-ink-muted text-center py-4">Nėra komentarų</p>
                     )}
@@ -213,7 +268,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                                     onClick={() => canEdit && onToggle?.(item.id)}
                                     disabled={!canEdit}
                                     aria-pressed={!!item.done}
-                                    className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-gray-200 disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                    className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-surface-sunken disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                 >
                                     {item.done
                                         ? <CheckSquare className="mt-0.5 h-5 w-5 flex-shrink-0 text-brand" aria-hidden="true" />
@@ -275,115 +330,39 @@ export function DescriptionModal({ isOpen, onClose, description }) {
     );
 }
 
-export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, onDeleteAdjustment }) {
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [hours, setHours] = useState(0);
-    const [mins, setMins] = useState(0);
-    const [reason, setReason] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
+// Read-only history of legacy manual time corrections (deltas). Adding/removing corrections was
+// retired in favour of the per-session start/end editor on the day timeline; the existing records
+// are kept and stay viewable here so past adjustments remain auditable.
+export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
     if (!isOpen || !task) return null;
 
     const adjustments = task.timeAdjustments || [];
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        const h = parseInt(hours) || 0;
-        const m = parseInt(mins) || 0;
-        if (h === 0 && m === 0) return;
-
-        setIsSubmitting(true);
-        try {
-            await onAddAdjustment(task.id, date, h, m, reason);
-            setHours(0);
-            setMins(0);
-            setReason('');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
     return (
         <DetailsModal isOpen={isOpen} onClose={onClose} title="Papildomi laiko įrašai" icon={Clock}>
             <div className="flex flex-col h-full max-h-[60vh]">
-                <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2">
                     {adjustments.length > 0 ? (
                         adjustments.map((adj, idx) => (
-                            <div key={idx} className="bg-surface-sunken p-4 rounded-lg flex justify-between items-center">
-                                <div>
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <span className="font-semibold text-ink-strong">{adj.date}</span>
-                                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                                            {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
-                                        </span>
-                                    </div>
-                                    <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
+                            <div key={idx} className="bg-surface-sunken p-4 rounded-lg">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-semibold text-ink-strong">{adj.date}</span>
+                                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-feedback-danger-soft text-feedback-danger-text' : 'bg-feedback-success-soft text-feedback-success-text'}`}>
+                                        {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
+                                    </span>
                                 </div>
-                                <IconButton
-                                    icon={Trash2}
-                                    label="Ištrinti šį įrašą"
-                                    variant="danger"
-                                    onClick={() => onDeleteAdjustment(task.id, adj)}
-                                />
+                                <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
                             </div>
                         ))
                     ) : (
                         <p className="text-ink-muted text-center py-4">Nėra papildomų laiko įrašų</p>
                     )}
                 </div>
-
-                <form onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="mt-auto pt-4 border-t border-line flex flex-col gap-3">
-                    <h4 className="text-sm font-semibold text-ink">Pridėti naują įrašą</h4>
-                    <div className="flex flex-wrap gap-2">
-                        <input
-                            type="date"
-                            value={date}
-                            onChange={(e) => setDate(e.target.value)}
-                            max={new Date().toISOString().split('T')[0]}
-                            aria-label="Data"
-                            className="min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm flex-1 min-w-[120px]"
-                            required
-                        />
-                        <div className="flex items-center gap-1">
-                            <input
-                                type="number"
-                                value={hours}
-                                onChange={(e) => setHours(e.target.value)}
-                                placeholder="Valandos"
-                                aria-label="Valandos"
-                                className="w-20 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
-                            />
-                            <span className="text-sm text-ink-muted font-medium">h</span>
-                            <input
-                                type="number"
-                                value={mins}
-                                onChange={(e) => setMins(e.target.value)}
-                                placeholder="Minutės"
-                                aria-label="Minutės"
-                                className="w-20 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
-                            />
-                            <span className="text-sm text-ink-muted font-medium">m</span>
-                        </div>
-                    </div>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={reason}
-                            onChange={(e) => setReason(e.target.value)}
-                            placeholder="Priežastis (pvz. 'Pamiršo įjungti taimerį')"
-                            aria-label="Pakeitimo priežastis"
-                            className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
-                        />
-                        <button
-                            type="submit"
-                            disabled={isSubmitting || (parseInt(hours) === 0 && parseInt(mins) === 0)}
-                            className="min-h-touch bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                        >
-                            {isSubmitting ? 'Saugoma...' : 'Pridėti'}
-                        </button>
-                    </div>
-                    <p className="text-xs text-ink-muted">Patarimas: norėdami atimti laiką, naudokite minuso ženklą (pvz. -1 valanda).</p>
-                </form>
+                {/* Read-only: new corrections are made on the day timeline by editing the specific
+                    session's start/end, not as a task-total delta. */}
+                <p className="mt-4 pt-4 border-t border-line text-xs text-ink-muted">
+                    Šie įrašai – istorija (tik peržiūrai). Laiką koreguokite dienos laiko juostoje, redaguodami konkrečią sesiją.
+                </p>
             </div>
         </DetailsModal>
     );
@@ -608,7 +587,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
             >
                 <div className="p-6">
                     <div className="flex items-center gap-3 mb-4 text-feedback-danger">
-                        <div className="p-2 bg-red-50 rounded-full">
+                        <div className="p-2 bg-feedback-danger-soft rounded-full">
                             <AlertTriangle className="w-6 h-6" />
                         </div>
                         <h3 id={titleId} className="text-xl font-bold">{isTask ? 'Ištrinti užduotį' : 'Ištrinti įrašą'}</h3>
@@ -623,7 +602,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                             )}
                         </p>
                         {error && (
-                            <p role="alert" aria-live="assertive" className="rounded-control border border-red-200 bg-red-50 px-3 py-2 text-sm font-medium text-red-700">
+                            <p role="alert" aria-live="assertive" className="rounded-control border border-feedback-danger-border bg-feedback-danger-soft px-3 py-2 text-sm font-medium text-feedback-danger-text">
                                 {error}
                             </p>
                         )}
@@ -632,7 +611,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                     <div className="flex flex-col gap-3">
                         <button
                             onClick={onClose}
-                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-gray-200 rounded-lg transition-colors text-left text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-surface-sunken rounded-lg transition-colors text-left text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             Atšaukti{isTask ? ' trynimą' : ''}
                         </button>
@@ -642,7 +621,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                                 onClick={() => {
                                     onConfirm({ keepWorkHours: true });
                                 }}
-                                className="w-full px-4 py-3 bg-yellow-50 text-yellow-800 border border-yellow-200 text-sm font-medium rounded-lg hover:bg-yellow-100 transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                className="w-full px-4 py-3 bg-feedback-warning-soft text-feedback-warning-text border border-feedback-warning-border text-sm font-medium rounded-lg hover:bg-feedback-warning-soft transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
                                 Palikti darbo valandas, perbraukti užduotį ir ją užbaigti
                             </button>
@@ -652,7 +631,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                             onClick={() => {
                                 onConfirm({ keepWorkHours: false });
                             }}
-                            className={`w-full px-4 py-3 bg-red-50 text-red-700 border border-red-200 text-sm font-bold rounded-lg hover:bg-red-100 transition-colors flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-danger focus-visible:ring-offset-2 ${isTask ? 'text-left' : 'justify-center'} leading-tight`}
+                            className={`w-full px-4 py-3 bg-feedback-danger-soft text-feedback-danger-text border border-feedback-danger-border text-sm font-bold rounded-lg hover:bg-feedback-danger-soft transition-colors flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-danger focus-visible:ring-offset-2 ${isTask ? 'text-left' : 'justify-center'} leading-tight`}
                         >
                             <Trash2 className="w-5 h-5 flex-shrink-0" />
                             <span>{isTask ? 'IŠTRINTI DARBO VALANDAS ir visą užduotį' : 'IŠTRINTI'}</span>

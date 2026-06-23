@@ -9,16 +9,17 @@ import { useAuth } from '../context/AuthContext';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { getSessionColors } from '../utils/sessionColors';
 import UserChip from './UserChip';
-import { isScopedManager, scopeRoster } from '../utils/teamScope';
+import EmptyState from './ui/EmptyState';
+import { isScopedOverseer, scopeRoster } from '../utils/teamScope';
 
-export default function ActiveWorkSessions() {
+export default function ActiveWorkSessions({ embedded = false }) {
     const { users: allUsers, loading: usersLoading } = useUsers();
     const { currentUser, userData } = useAuth();
     const [tasks, setTasks] = useState([]);
     const [isCollapsed, setIsCollapsed] = useState(false);
 
     // A scoped manager only sees their own team's live activity; admin/unscoped see everyone.
-    const scoped = isScopedManager(userData);
+    const scoped = isScopedOverseer(userData);
     const uid = currentUser?.uid;
 
     // Active (non-disabled) users, narrowed to the viewer's team when scoped.
@@ -118,7 +119,39 @@ export default function ActiveWorkSessions() {
     }, [users, tasks]);
 
     if (usersLoading) return null;
-    if (activeSessions.length === 0) return null; // Hide completely if empty? Or show empty state? Let's hide to reduce clutter.
+
+    const hasSessions = activeSessions.length > 0;
+
+    // Embedded in the "Aktyvūs darbai" sub-tab: the tab itself is the frame, so there is no
+    // collapse chrome. An empty roster shows an explicit empty state instead of returning null —
+    // a blank tab reads as broken (this is the bug where the panel "disappeared" when nobody
+    // was working).
+    if (embedded) {
+        return (
+            <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
+                <div className="flex items-center gap-2 p-4 bg-surface-sunken border-b border-line">
+                    <Activity className="w-5 h-5 text-brand" aria-hidden="true" />
+                    <h3 className="font-semibold text-ink-strong">Aktyvi veikla</h3>
+                </div>
+                {hasSessions ? (
+                    <div className="p-4 space-y-2 animate-in fade-in slide-in-from-top-2">
+                        {activeSessions.map(session => (
+                            <ActiveSessionRow key={session.userId} session={session} />
+                        ))}
+                    </div>
+                ) : (
+                    <EmptyState
+                        icon={Activity}
+                        title="Nėra aktyvios veiklos"
+                        description="Kai komandos nariai pradės darbą, pertrauką ar skambutį, jie pasirodys čia."
+                    />
+                )}
+            </div>
+        );
+    }
+
+    // Standalone accordion — collapses, and hides entirely when empty.
+    if (!hasSessions) return null;
 
     return (
         <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden mb-6">
@@ -212,7 +245,7 @@ const ActiveSessionRow = React.memo(({ session }) => {
     }, [session.startTime, session.task]);
 
     return (
-        <div className={`p-3 rounded-card flex items-center justify-between shadow-sm transition-all ${session.colorClass} ${isStale ? 'opacity-70 ring-1 ring-amber-300' : ''}`}>
+        <div className={`p-3 rounded-card flex items-center justify-between shadow-sm transition-all ${session.colorClass} ${isStale ? 'opacity-70 ring-1 ring-feedback-warning' : ''}`}>
             <div className="flex-shrink-0">
                 <SessionTypeIcon type={session.type} className="w-5 h-5" />
             </div>
@@ -224,7 +257,7 @@ const ActiveSessionRow = React.memo(({ session }) => {
                         className="min-w-0 font-semibold text-sm"
                     />
                     {isStale && (
-                        <span className="inline-flex items-center whitespace-nowrap rounded-full border border-amber-200 bg-amber-100 px-1.5 py-0.5 text-caption font-semibold text-amber-800">
+                        <span className="inline-flex items-center whitespace-nowrap rounded-full border border-feedback-warning-border bg-feedback-warning-soft px-1.5 py-0.5 text-caption font-semibold text-feedback-warning-text">
                             galimai pasenusi
                         </span>
                     )}

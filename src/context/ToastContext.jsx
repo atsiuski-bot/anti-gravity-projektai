@@ -18,7 +18,7 @@ export function useToast() {
 const TONES = {
     info: { icon: Info, accent: 'text-brand', ring: 'border-line' },
     success: { icon: CheckCircle2, accent: 'text-feedback-success', ring: 'border-feedback-success/40' },
-    warning: { icon: AlertCircle, accent: 'text-amber-600', ring: 'border-amber-200' },
+    warning: { icon: AlertCircle, accent: 'text-feedback-warning', ring: 'border-feedback-warning-border' },
     notification: { icon: Bell, accent: 'text-brand', ring: 'border-line' }
 };
 

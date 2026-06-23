@@ -1,7 +1,73 @@
 import { useState, useMemo, useEffect } from 'react';
 import { getPriorityRank } from '../utils/priority';
+import {
+    filterRankTasks,
+    buildTaskSuggestions,
+    getTaskMatchFields,
+    getTaskSuggestionSources,
+} from '../utils/taskSearch';
 
 import { getLithuanianNow, getLithuanian3AMCutoff, getLithuanianDateString } from '../utils/timeUtils';
+
+/**
+ * scopeActiveTasks — the visible task set for "today's work day" after the structural filters
+ * (user / priority / tag), but BEFORE free-text search and sort. Extracted so the list and the
+ * search suggestions both read from the same scope (suggest only what is actually in view).
+ */
+const scopeActiveTasks = (tasks, { filterUser, filterPriority, filterTag }) => {
+    let activeTasks = tasks.filter(t => {
+        // Definition of "Today's Work Day" (Starts at 3:00 AM Europe/Vilnius)
+        const now = getLithuanianNow();
+        let cutoffDate = getLithuanianDateString(now);
+
+        // If it's before 3AM, the work day started at 3AM yesterday
+        if (now.getHours() < 3) {
+            const yesterday = new Date(now);
+            yesterday.setDate(now.getDate() - 1);
+            cutoffDate = getLithuanianDateString(yesterday);
+        }
+
+        const cutoff = getLithuanian3AMCutoff(cutoffDate);
+
+        // Deleted tasks: show if deleted today (with strikethrough), hide otherwise
+        if (t.isDeleted || t.status === 'deleted') {
+            const deletedAt = t.deletedAt || t.completedAt || t.updatedAt;
+            if (!deletedAt) return false;
+            return new Date(deletedAt) >= cutoff;
+        }
+
+        const isDone = t.completed || t.status === 'completed' || t.status === 'confirmed';
+
+        if (isDone) {
+            // If the task is done, it should only show if it was finished TODAY (after 3AM)
+            const finishedAt = t.completedAt || t.confirmedAt || t.updatedAt;
+            if (!finishedAt) return false;
+
+            const finishDate = new Date(finishedAt);
+            return finishDate >= cutoff;
+        }
+
+        // Not done, so it's active
+        return true;
+    });
+
+    // Apply user filter
+    if (filterUser) {
+        activeTasks = activeTasks.filter(t => t.assignedUserId === filterUser);
+    }
+
+    // Apply priority filter
+    if (filterPriority) {
+        activeTasks = activeTasks.filter(t => t.priority === filterPriority);
+    }
+
+    // Apply tag filter
+    if (filterTag) {
+        activeTasks = activeTasks.filter(t => t.tag === filterTag);
+    }
+
+    return activeTasks;
+};
 
 export const useTaskFiltering = (tasks, manualTaskOrder) => {
     const [filterUser, setFilterUser] = useState('');
@@ -10,7 +76,8 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
     const [sortBy, setSortBy] = useState('none');
 
     // Free-text search, debounced so the list doesn't re-filter on every keystroke. Matches
-    // client-side over the already-loaded array (title, description, worker name, tag).
+    // client-side via the shared fuzzy core (diacritic-insensitive, typo-tolerant, ranked) —
+    // see utils/taskSearch.js.
     const [searchText, setSearchText] = useState('');
     const [debouncedSearch, setDebouncedSearch] = useState('');
     useEffect(() => {
@@ -18,66 +85,23 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         return () => clearTimeout(handle);
     }, [searchText]);
 
+    // Suggestions read from the in-scope set so the dropdown only offers titles / workers / tags
+    // that are actually present under the current filters. Driven by the live searchText (not the
+    // debounced one) so completions feel instant while the heavier list re-filter stays debounced.
+    const searchSuggestions = useMemo(() => {
+        if (!searchText.trim()) return [];
+        const scoped = scopeActiveTasks(tasks, { filterUser, filterPriority, filterTag });
+        return buildTaskSuggestions(scoped, searchText, getTaskSuggestionSources);
+    }, [tasks, searchText, filterUser, filterPriority, filterTag]);
+
     const sortedTasks = useMemo(() => {
-        // Filter out completed, deleted, and unapproved tasks
-        let activeTasks = tasks.filter(t => {
-            // Definition of "Today's Work Day" (Starts at 3:00 AM Europe/Vilnius)
-            const now = getLithuanianNow();
-            let cutoffDate = getLithuanianDateString(now);
+        let activeTasks = scopeActiveTasks(tasks, { filterUser, filterPriority, filterTag });
 
-            // If it's before 3AM, the work day started at 3AM yesterday
-            if (now.getHours() < 3) {
-                const yesterday = new Date(now);
-                yesterday.setDate(now.getDate() - 1);
-                cutoffDate = getLithuanianDateString(yesterday);
-            }
-
-            const cutoff = getLithuanian3AMCutoff(cutoffDate);
-
-            // Deleted tasks: show if deleted today (with strikethrough), hide otherwise
-            if (t.isDeleted || t.status === 'deleted') {
-                const deletedAt = t.deletedAt || t.completedAt || t.updatedAt;
-                if (!deletedAt) return false;
-                return new Date(deletedAt) >= cutoff;
-            }
-
-            const isDone = t.completed || t.status === 'completed' || t.status === 'confirmed';
-
-            if (isDone) {
-                // If the task is done, it should only show if it was finished TODAY (after 3AM)
-                const finishedAt = t.completedAt || t.confirmedAt || t.updatedAt;
-                if (!finishedAt) return false;
-
-                const finishDate = new Date(finishedAt);
-                return finishDate >= cutoff;
-            }
-
-            // Not done, so it's active
-            return true;
-        });
-
-        // Apply user filter
-        if (filterUser) {
-            activeTasks = activeTasks.filter(t => t.assignedUserId === filterUser);
-        }
-
-        // Apply priority filter
-        if (filterPriority) {
-            activeTasks = activeTasks.filter(t => t.priority === filterPriority);
-        }
-
-        // Apply tag filter
-        if (filterTag) {
-            activeTasks = activeTasks.filter(t => t.tag === filterTag);
-        }
-
-        // Apply free-text search (case-insensitive) over the human-readable fields.
-        const query = debouncedSearch.trim().toLowerCase();
-        if (query) {
-            activeTasks = activeTasks.filter(t =>
-                [t.title, t.description, t.assignedUserName, t.tag]
-                    .some(field => field && String(field).toLowerCase().includes(query))
-            );
+        // Apply fuzzy free-text search. When a query is present this returns the matches ordered
+        // by relevance; that order is kept for the default 'none' sort and overridden by an
+        // explicit sort choice below.
+        if (debouncedSearch.trim()) {
+            activeTasks = filterRankTasks(activeTasks, debouncedSearch, getTaskMatchFields);
         }
 
         if (sortBy === 'none') return activeTasks;
@@ -189,6 +213,7 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         setFilterTag,
         searchText,
         setSearchText,
+        searchSuggestions,
         sortBy,
         setSortBy
     };
