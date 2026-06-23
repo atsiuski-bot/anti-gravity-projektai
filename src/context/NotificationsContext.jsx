@@ -119,7 +119,13 @@ export function NotificationsProvider({ children }) {
         return () => unsub();
     }, [currentUser, showToast]);
 
-    // Pending calendar approval requests.
+    // Pending calendar approval requests. This MUST use the SAME predicate the bell's card list
+    // uses (ManagerNotifications) or the badge and the list disagree: a calendar request fans out
+    // to ALL of a worker's managers via the `managerIds` array, so a worker with several managers
+    // would see a badge counting only the requests where they were the single legacy `managerId`,
+    // while the list (array-contains) shows all of them. Query the array (single-field
+    // array-contains needs no composite index) and filter to pending in memory, so badge and cards
+    // derive from one source.
     useEffect(() => {
         if (!currentUser || !isManager) {
             setCalendarCount(0);
@@ -127,11 +133,17 @@ export function NotificationsProvider({ children }) {
         }
         const q = query(
             collection(db, 'calendar_requests'),
-            where('managerId', '==', currentUser.uid),
-            where('status', '==', 'pending')
+            where('managerIds', 'array-contains', currentUser.uid)
         );
-        const unsub = onSnapshot(q, (snap) => setCalendarCount(snap.size),
-            (err) => console.error('NotificationsProvider: calendar listener', err));
+        const unsub = onSnapshot(
+            q,
+            (snap) => {
+                let pending = 0;
+                snap.forEach((d) => { if (d.data().status === 'pending') pending += 1; });
+                setCalendarCount(pending);
+            },
+            (err) => console.error('NotificationsProvider: calendar listener', err)
+        );
         return () => unsub();
     }, [currentUser, isManager]);
 
