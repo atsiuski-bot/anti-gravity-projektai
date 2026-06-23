@@ -41,6 +41,12 @@ import Modal from './Modal';
  * @param {string} [id] - id for the trigger button (for an external `<label htmlFor>`).
  * @param {string} [className] - wrapper class (width / grid span).
  * @param {string} [buttonClassName] - trigger overrides.
+ * @param {(args: {open: boolean, disabled: boolean, selected: object|null, triggerText: string,
+ *   toggle: () => void, triggerProps: object}) => React.ReactNode} [renderTrigger] - render a
+ *   custom trigger (e.g. a column-filter funnel icon) in place of the default labeled button.
+ *   Spread `triggerProps` onto your control to inherit open/close, the trigger keyboard, focus
+ *   return, and the listbox ARIA wiring; supply your OWN accessible name. The popup/listbox and
+ *   its a11y are unchanged — this only swaps the thing you click to open it.
  */
 export default function Select({
     value,
@@ -55,6 +61,7 @@ export default function Select({
     id,
     className,
     buttonClassName,
+    renderTrigger,
 }) {
     const [open, setOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(false);
@@ -228,36 +235,50 @@ export default function Select({
         </ul>
     );
 
+    // Trigger attributes shared by the default button and any custom `renderTrigger`. `ref` is
+    // extracted by React even when spread, so a custom trigger inherits focus-return + keyboard +
+    // listbox ARIA for free. The accessible name is deliberately NOT here: the default button
+    // sets it from `ariaLabel || label`, and a custom trigger supplies its own (so a column funnel
+    // can say "Filtruoti pagal …" without being overridden).
+    const toggle = () => (open ? closeMenu(false) : openMenu());
+    const triggerProps = {
+        ref: triggerRef,
+        type: 'button',
+        id,
+        disabled,
+        onClick: toggle,
+        onKeyDown: onTriggerKeyDown,
+        'aria-haspopup': 'listbox',
+        'aria-expanded': open,
+        'aria-controls': open ? listId : undefined,
+    };
+
     return (
         <div ref={wrapperRef} className={cn('relative', className)}>
-            <button
-                ref={triggerRef}
-                type="button"
-                id={id}
-                disabled={disabled}
-                onClick={() => (open ? closeMenu(false) : openMenu())}
-                onKeyDown={onTriggerKeyDown}
-                aria-haspopup="listbox"
-                aria-expanded={open}
-                aria-controls={open ? listId : undefined}
-                aria-label={ariaLabel || label}
-                className={cn(
-                    'flex min-h-touch w-full items-center gap-2 rounded-input border border-line bg-surface-card px-3 py-2 text-left text-body text-ink',
-                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
-                    'disabled:opacity-50 disabled:pointer-events-none',
-                    open && 'border-brand ring-2 ring-brand',
-                    buttonClassName
-                )}
-            >
-                {Icon && <Icon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />}
-                <span className={cn('min-w-0 flex-1 truncate', isPlaceholder && 'text-ink-muted')}>
-                    {triggerText}
-                </span>
-                <ChevronDown
-                    className={cn('h-4 w-4 shrink-0 text-ink-muted transition-transform', open && 'rotate-180')}
-                    aria-hidden="true"
-                />
-            </button>
+            {renderTrigger ? (
+                renderTrigger({ open, disabled, selected, triggerText, toggle, triggerProps })
+            ) : (
+                <button
+                    {...triggerProps}
+                    aria-label={ariaLabel || label}
+                    className={cn(
+                        'flex min-h-touch w-full items-center gap-2 rounded-input border border-line bg-surface-card px-3 py-2 text-left text-body text-ink',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                        'disabled:opacity-50 disabled:pointer-events-none',
+                        open && 'border-brand ring-2 ring-brand',
+                        buttonClassName
+                    )}
+                >
+                    {Icon && <Icon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />}
+                    <span className={cn('min-w-0 flex-1 truncate', isPlaceholder && 'text-ink-muted')}>
+                        {triggerText}
+                    </span>
+                    <ChevronDown
+                        className={cn('h-4 w-4 shrink-0 text-ink-muted transition-transform', open && 'rotate-180')}
+                        aria-hidden="true"
+                    />
+                </button>
+            )}
 
             {/* Anchored panel — exactly the trigger's width (DESIGN_SYSTEM §8). Only for triggers
                 that are NOT inside a clipping scroll container. */}
