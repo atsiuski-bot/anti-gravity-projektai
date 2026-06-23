@@ -1,5 +1,5 @@
 ---
-description: One-command ship for WORKZ. Commit the current branch → pull/merge origin/main → run the lint+build quality gate → fast-forward push to origin/main (which auto-deploys via Cloudflare Pages). Worktree-safe (never checks out main). STOPS on merge conflicts or a failing gate — never force-pushes, never auto-resolves conflicts, never opens a PR. Run ONLY on the explicit /ship command — it ships to PRODUCTION.
+description: One-command ship for WORKZ. Commit the current branch → pull/merge origin/main → run the lint+build+test quality gate → fast-forward push to origin/main (which auto-deploys via Cloudflare Pages). Worktree-safe (never checks out main). STOPS on merge conflicts or a failing gate — never force-pushes, never auto-resolves conflicts, never opens a PR. Run ONLY on the explicit /ship command — it ships to PRODUCTION.
 allowed-tools: Bash, Read, Grep, Glob
 ---
 
@@ -23,8 +23,10 @@ Print a one-line "about to push" summary, then push.
 - **Integrate before shipping.** We merge `origin/main` into the branch first, so any
   conflict surfaces *on the branch* (where it's safe to stop), and the subsequent push is a
   clean fast-forward.
-- **Gate before prod.** `npm run lint` (zero warnings) + `npm run build` must pass before the
-  push — per CLAUDE.md's quality gate. A broken build must never reach `main`.
+- **Gate before prod.** `npm run lint` (zero warnings) + `npm run build` + `npm test` must pass
+  before the push — per CLAUDE.md's quality gate plus the time-credit test gate
+  ([ADR 0013](../../docs/adr/0013-test-gate-for-time-credit.md)). A broken build or a regressed
+  ghost-time path must never reach `main`.
 
 ---
 
@@ -93,7 +95,7 @@ git merge --no-edit origin/main
   This mirrors `/sujunk`: never auto-resolve a conflict.
 - (If `BRANCH` is already `main`, this is the normal "merge in upstream" step — same rules.)
 
-### 5 — Quality gate (lint + build) — required before any push
+### 5 — Quality gate (lint + build + test) — required before any push
 
 ```bash
 npm run lint
@@ -105,9 +107,24 @@ npm run build
 ```
 - Non-zero exit → **STOP**: "Build failed — not shipping." Show the failing output.
 
-> `npm test` is intentionally **not** in the gate: a fresh worktree resolves lint/build from
-> the parent `node_modules`, but vitest isn't installed there, so the test runner would fail
-> spuriously. Lint + build is the gate the user chose and CLAUDE.md mandates.
+**Test gate** ([ADR 0013](../../docs/adr/0013-test-gate-for-time-credit.md)) — covers the
+stateful time-credit / ghost-time paths. First confirm the runner is resolvable, so a missing
+`vitest` is a *clear, actionable stop* rather than a spurious red (a worktree has no local
+`node_modules`; it resolves the runner from the primary checkout's, the same as lint/build):
+
+```bash
+node -e "require.resolve('vitest/package.json')" >/dev/null 2>&1 && echo RUNNER_OK || echo RUNNER_MISSING
+```
+
+- `RUNNER_OK` → run the suite:
+  ```bash
+  npm test
+  ```
+  Non-zero exit → **STOP**: "Tests failed — not shipping." Show the failing output.
+- `RUNNER_MISSING` → **STOP**: "Test runner not installed in this worktree's module-resolution
+  path — not shipping without the test gate. Run `npm install` here (or refresh the primary
+  checkout's `node_modules` so worktrees resolve `vitest` from the parent, like lint/build),
+  then re-run `/ship`." Do **not** skip the gate and push.
 
 ### 6 — Ship (fast-forward push to remote main)
 
@@ -152,4 +169,5 @@ State plainly:
 - **No Firestore/Storage rules deploy.** `firestore.rules` / `storage.rules` ship via a
   separate, human-run `firebase deploy --only firestore:rules` (see the deploy runbook and
   CLAUDE.md) — a code push to main does not deploy rules.
-- **No `npm test`.** See step 5.
+- **No silent test skip.** The test gate (step 5) is part of the gate now; if the runner is
+  unavailable it STOPs with remediation rather than pushing untested ([ADR 0013](../../docs/adr/0013-test-gate-for-time-credit.md)).

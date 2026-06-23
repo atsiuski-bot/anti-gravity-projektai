@@ -183,6 +183,48 @@ describe('calculateCurrentTotalMinutes', () => {
     });
 });
 
+describe('calculateCurrentTotalMinutes — credit composition & skew (ghost-time hardening)', () => {
+    it('does NOT double-count the actualTime fallback after a manual time edit (timeChanged guard)', () => {
+        // After an admin edits the task total, manual/timer read 0 but actualTime still holds the
+        // OLD string. timeChanged short-circuits the fallback so the edited value is not re-added.
+        expect(
+            calculateCurrentTotalMinutes({ manualMinutes: 0, timerMinutes: 0, timeChanged: true, actualTime: '5h' })
+        ).toBe(0);
+        // Without the flag the same shape DOES fall back — proving the flag is what suppresses it.
+        expect(
+            calculateCurrentTotalMinutes({ manualMinutes: 0, timerMinutes: 0, actualTime: '5h' })
+        ).toBe(300);
+    });
+
+    it('sums manual + timer + explicit adjustments + a live running interval together', () => {
+        const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        const total = calculateCurrentTotalMinutes({
+            manualMinutes: 100,
+            timerMinutes: 20,
+            timeAdjustments: [{ durationMinutes: 15 }, { durationMinutes: -5 }],
+            timerStatus: 'running',
+            timerStartedAt: tenMinAgo,
+        });
+        // 100 + 20 + (15 - 5) = 130 base, plus ~10 live minutes.
+        expect(total).toBeGreaterThan(139.5);
+        expect(total).toBeLessThan(141);
+    });
+
+    it('ignores an unparseable timerStartedAt instead of poisoning the total with NaN', () => {
+        expect(
+            calculateCurrentTotalMinutes({ manualMinutes: 42, timerStatus: 'running', timerStartedAt: 'not-a-date' })
+        ).toBe(42);
+    });
+
+    it('does not add the running interval unless timerStatus is exactly "running"', () => {
+        const hourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+        // Same stale timestamp, but paused -> the interval must not be credited live.
+        expect(
+            calculateCurrentTotalMinutes({ manualMinutes: 30, timerStatus: 'paused', timerStartedAt: hourAgo })
+        ).toBe(30);
+    });
+});
+
 describe('formatMinutesToHHMM (carry-the-minute, payroll CSV)', () => {
     it('carries a [59.5, 60) minute remainder into the hour instead of printing ":60"', () => {
         // The exact regression: 3h59m30s used to render "03:60".
