@@ -556,7 +556,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
             await updateDoc(taskRef, {
                 status: newStatus,
                 confirmedAt: newStatus === 'confirmed' ? new Date().toISOString() : null,
-                confirmedBy: newStatus === 'confirmed' ? 'MANAGER' : null,
+                confirmedBy: newStatus === 'confirmed' ? (currentUser?.uid || null) : null,
                 updatedAt: new Date().toISOString()
             });
 
