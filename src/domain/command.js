@@ -1,4 +1,6 @@
 import { appendDecision } from './decisionLog';
+import { isAgent } from './actor';
+import { areAgentsEnabled } from './agentControl';
 import { logError } from '../utils/errorLog';
 
 /**
@@ -66,6 +68,14 @@ export const defineCommand = ({ name, targetType, authorize, plan, apply }) => {
     // Safe default: anything other than an explicit COMMIT is treated as a dry-run PROPOSE.
     const mode = ctx.mode === MODES.COMMIT ? MODES.COMMIT : MODES.PROPOSE;
     const idempotencyKey = ctx.idempotencyKey || newKey();
+
+    // 0. Agent kill-switch — a single global brake (ADR 0015). When an admin engages it, EVERY
+    //    agent command is refused (propose AND commit), before authorize/plan/apply run: a killed
+    //    agent does nothing. Human and system actors are never gated by it. This is the circuit
+    //    breaker that must exist before an agent's autonomy can ever be raised.
+    if (isAgent(actor) && !areAgentsEnabled()) {
+      return { ok: false, refused: true, reason: 'AGENTS_DISABLED', command: name, mode };
+    }
 
     // 1. Authorization — a policy refusal is a normal result, not an exception.
     if (typeof authorize === 'function') {

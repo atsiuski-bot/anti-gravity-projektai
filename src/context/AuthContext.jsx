@@ -10,6 +10,7 @@ import {
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { logError } from '../utils/errorLog';
 import { removeFcmToken } from '../utils/messaging';
+import { setAgentsEnabled } from '../domain/agentControl';
 
 const AuthContext = createContext();
 
@@ -300,6 +301,23 @@ export function AuthProvider({ children }) {
             }
         };
     }, []);
+
+    // Keep the agent kill-switch (ADR 0015) live for the command kernel while signed in: mirror
+    // system_config/agents into the in-memory cache. A permission-denied (the rule not yet deployed)
+    // is the EXPECTED pre-rollout state — swallow it so it never spams the crash log; the cache holds
+    // its safe default (enabled), and no client path commits as an agent yet.
+    useEffect(() => {
+        if (!currentUser?.uid) {
+            setAgentsEnabled(true);
+            return undefined;
+        }
+        const unsub = onSnapshot(
+            doc(db, 'system_config', 'agents'),
+            (snap) => setAgentsEnabled(snap.exists() ? snap.data().enabled !== false : true),
+            (err) => { if (err.code !== 'permission-denied') logError(err, { source: 'agentControl.subscribe' }); }
+        );
+        return () => unsub();
+    }, [currentUser?.uid]);
 
     const [showForceButton, setShowForceButton] = useState(false);
 

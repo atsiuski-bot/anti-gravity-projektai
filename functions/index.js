@@ -316,7 +316,7 @@ async function grantTier(uid, key, tier) {
     const badge = BADGES[key];
     const ref = db.collection('users').doc(uid).collection('achievements').doc(key);
     const nowIso = new Date().toISOString();
-    return db.runTransaction(async (tx) => {
+    const reached = await db.runTransaction(async (tx) => {
         const snap = await tx.get(ref);
         const prev = snap.exists ? (snap.data().tier || 0) : 0;
         if (tier <= prev) return 0;
@@ -335,6 +335,23 @@ async function grantTier(uid, key, tier) {
         }, { merge: true });
         return tier;
     });
+    // Audit a genuine NEW tier under the SYSTEM actor (ADR 0015) — the badge engine deciding to
+    // award recognition that changes a worker's public profile. Only fires when the tier actually
+    // rose (reached > 0); the deterministic id (uid+badge+tier) dedups via create(), and a re-fired
+    // event that re-grants the same tier returns 0 above → no duplicate audit. Best-effort.
+    if (reached) {
+        await appendSystemDecision(db, {
+            idempotencyKey: `badge_${uid}_${key}_${reached}`,
+            command: 'recognition.grantBadge',
+            source: 'achievementEngine',
+            targetType: 'user',
+            targetId: uid,
+            reason: `Awarded "${badge.name}" — ${TIER_NAMES[reached]} (tier ${reached})`,
+            before: null,
+            after: { badge: key, name: badge.name, tier: reached, tierName: TIER_NAMES[reached] },
+        });
+    }
+    return reached;
 }
 
 // Background push for a newly-reached tier. The FOREGROUND in-app toast is a client listener on

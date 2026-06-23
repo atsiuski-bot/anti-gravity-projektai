@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, limit, onSnapshot, doc, setDoc } from 'firebase/firestore';
 import {
     ScrollText, ShieldCheck, User, Bot, Cog,
     CheckCircle2, AlertTriangle, AlertOctagon,
-    Timer, FileClock, Database, Info,
+    Timer, FileClock, Database, Info, Power,
 } from 'lucide-react';
 import { db } from '../firebase';
+import { useAuth } from '../context/AuthContext';
+import { AGENT_CONTROL_COLLECTION, AGENT_CONTROL_DOC_ID } from '../domain';
 import Card from './ui/Card';
+import Button from './ui/Button';
 import EmptyState from './ui/EmptyState';
 import Select from './ui/Select';
 import { Spinner } from './ui/Loading';
@@ -246,6 +249,118 @@ function RulesNotice({ collectionName }) {
     );
 }
 
+// The agent kill-switch control (ADR 0015): the admin engages/releases the single global brake that
+// makes the command kernel refuse EVERY agent command. Reads + writes system_config/agents; the
+// write needs the system_config rule deployed (admin-only), so a permission-denied degrades to a
+// precise "rules not deployed" note rather than a dead button.
+function AgentControlCard() {
+    const { currentUser } = useAuth();
+    const [status, setStatus] = useState('loading'); // loading | ready | denied | error
+    const [enabled, setEnabled] = useState(true);
+    const [configured, setConfigured] = useState(false);
+    const [busy, setBusy] = useState(false);
+    const [writeError, setWriteError] = useState(null);
+
+    useEffect(() => {
+        const unsub = onSnapshot(
+            doc(db, AGENT_CONTROL_COLLECTION, AGENT_CONTROL_DOC_ID),
+            (snap) => {
+                setConfigured(snap.exists());
+                setEnabled(snap.exists() ? snap.data().enabled !== false : true);
+                setStatus('ready');
+            },
+            (err) => {
+                if (err.code !== 'permission-denied') logError(err, { source: 'AuditDashboard:agentControl' });
+                setStatus(err.code === 'permission-denied' ? 'denied' : 'error');
+            },
+        );
+        return () => unsub();
+    }, []);
+
+    const toggle = async () => {
+        setBusy(true);
+        setWriteError(null);
+        try {
+            await setDoc(
+                doc(db, AGENT_CONTROL_COLLECTION, AGENT_CONTROL_DOC_ID),
+                { enabled: !enabled, updatedAt: new Date().toISOString(), updatedBy: currentUser?.uid || null },
+                { merge: true },
+            );
+            // The onSnapshot listener reflects the new state — no optimistic flip needed.
+        } catch (err) {
+            logError(err, { source: 'AuditDashboard:agentToggle' });
+            setWriteError(
+                err.code === 'permission-denied'
+                    ? 'Nepavyko išsaugoti — reikia įdiegti atnaujintas Firestore taisykles (system_config).'
+                    : 'Nepavyko pakeisti būsenos. Bandykite dar kartą.',
+            );
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <Card as="section" aria-labelledby="agent-control-heading" className="p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-line bg-surface-sunken">
+                        <Bot className="h-5 w-5 text-ink-muted" aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                        <h2 id="agent-control-heading" className="text-h2 font-semibold text-ink-strong">AI agentų valdymas</h2>
+                        <p className="mt-1 text-caption text-ink-muted">
+                            Avarinis jungiklis: kai išjungta, visos AI agentų komandos atmetamos (žmonių
+                            ir sistemos veiksmų tai neliečia).
+                        </p>
+                    </div>
+                </div>
+                {status === 'ready' && (
+                    <span className={cn(
+                        'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-caption font-semibold',
+                        enabled
+                            ? 'bg-feedback-success-soft text-feedback-success-text border-feedback-success-border'
+                            : 'bg-feedback-danger-soft text-feedback-danger-text border-feedback-danger-border',
+                    )}>
+                        <Power className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                        {enabled ? 'Agentai įjungti' : 'Agentai išjungti'}
+                    </span>
+                )}
+            </div>
+
+            {status === 'loading' ? (
+                <Spinner />
+            ) : status === 'denied' ? (
+                <div className="mt-3 flex items-start gap-3">
+                    <Info className="mt-0.5 h-5 w-5 shrink-0 text-feedback-info-text" aria-hidden="true" />
+                    <p className="text-caption text-ink-muted">
+                        Jungiklis dar neaktyvuotas — reikia įdiegti atnaujintas Firestore taisykles
+                        (system_config). Iki tol agentai lieka numatytai įjungti, bet nė vienas kliento
+                        kelias dar nevykdo komandų kaip agentas.
+                    </p>
+                </div>
+            ) : status === 'error' ? (
+                <p className="mt-3 text-caption text-feedback-danger-text">Nepavyko įkelti jungiklio būsenos.</p>
+            ) : (
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <Button
+                        variant={enabled ? 'danger' : 'success'}
+                        icon={Power}
+                        loading={busy}
+                        onClick={toggle}
+                        aria-label={enabled ? 'Išjungti visus AI agentus' : 'Įjungti visus AI agentus'}
+                    >
+                        {enabled ? 'Išjungti agentus' : 'Įjungti agentus'}
+                    </Button>
+                    {!configured && (
+                        <span className="text-caption text-ink-muted">Numatytoji būsena (dar nekeista).</span>
+                    )}
+                    {writeError && <span className="text-caption text-feedback-danger-text">{writeError}</span>}
+                </div>
+            )}
+        </Card>
+    );
+}
+
 export default function AuditDashboard() {
     const [reports, setReports] = useState([]);
     const [reportsLoading, setReportsLoading] = useState(true);
@@ -324,6 +439,9 @@ export default function AuditDashboard() {
                     (žmogus, AI agentas ar automatinis darbas).
                 </p>
             </header>
+
+            {/* ---- Agent kill-switch (most operationally important control — first) ----- */}
+            <AgentControlCard />
 
             {/* ---- Integrity reports ---------------------------------------------------- */}
             <section aria-labelledby="audit-integrity-heading">

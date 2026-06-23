@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Isolate the KERNEL from the audit sink: mock decisionLog so we assert the kernel's contract
 // (mode handling, authorization, idempotency threading, apply ordering) without touching Firestore.
@@ -13,6 +13,7 @@ vi.mock('../utils/errorLog', () => ({ logError: vi.fn() }));
 import { appendDecision } from './decisionLog';
 import { defineCommand, MODES } from './command';
 import { humanActor, agentActor } from './actor';
+import { setAgentsEnabled } from './agentControl';
 
 const HUMAN = humanActor({ uid: 'u1', displayName: 'A' });
 const AGENT = agentActor({ id: 'ag1', kind: 'planner' });
@@ -110,6 +111,47 @@ describe('defineCommand — audit failure must NOT abort an applied command (the
     const res = await cmd({ id: 't1' }, { actor: HUMAN, mode: MODES.COMMIT });
     expect(apply).toHaveBeenCalledTimes(1);
     expect(res).toMatchObject({ ok: true, mode: MODES.COMMIT, decisionId: null });
+  });
+});
+
+describe('defineCommand — agent kill-switch (global brake)', () => {
+  // The switch is module-global state; restore the brake-off default after each case so the
+  // gate cannot leak into the other suites (which run agents through propose/commit freely).
+  afterEach(() => setAgentsEnabled(true));
+
+  it('refuses an agent COMMIT when agents are disabled — before authorize/plan/apply run', async () => {
+    const authorize = vi.fn(() => true);
+    const { cmd, plan, apply } = makeCmd({ authorize });
+    setAgentsEnabled(false);
+    const res = await cmd({ id: 't1' }, { actor: AGENT, mode: MODES.COMMIT });
+    expect(res).toMatchObject({ ok: false, refused: true, reason: 'AGENTS_DISABLED', command: 'testCmd' });
+    expect(authorize).not.toHaveBeenCalled();
+    expect(plan).not.toHaveBeenCalled();
+    expect(apply).not.toHaveBeenCalled();
+    expect(appendDecision).not.toHaveBeenCalled();
+  });
+
+  it('also refuses an agent PROPOSE when disabled (a killed agent does nothing)', async () => {
+    const { cmd, plan } = makeCmd();
+    setAgentsEnabled(false);
+    const res = await cmd({ id: 't1' }, { actor: AGENT, mode: MODES.PROPOSE });
+    expect(res).toMatchObject({ ok: false, refused: true, reason: 'AGENTS_DISABLED' });
+    expect(plan).not.toHaveBeenCalled();
+  });
+
+  it('does NOT gate human actors when the switch is engaged', async () => {
+    const { cmd } = makeCmd();
+    setAgentsEnabled(false);
+    const res = await cmd({ id: 't1' }, { actor: HUMAN, mode: MODES.PROPOSE });
+    expect(res.ok).toBe(true);
+  });
+
+  it('lets agents through again once the switch is re-enabled', async () => {
+    const { cmd } = makeCmd();
+    setAgentsEnabled(false);
+    setAgentsEnabled(true);
+    const res = await cmd({ id: 't1' }, { actor: AGENT, mode: MODES.PROPOSE });
+    expect(res.ok).toBe(true);
   });
 });
 

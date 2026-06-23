@@ -19,6 +19,12 @@ export {
 
 export { MODES, defineCommand } from './command';
 export { DECISION_LOG_COLLECTION, appendDecision } from './decisionLog';
+export {
+  areAgentsEnabled,
+  setAgentsEnabled,
+  AGENT_CONTROL_COLLECTION,
+  AGENT_CONTROL_DOC_ID,
+} from './agentControl';
 
 // Commands
 export { assignTask } from './commands/assignTask';

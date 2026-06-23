@@ -547,5 +547,21 @@ service cloud.firestore {
       allow read:  if isManagerOrAdmin();
       allow write: if false;
     }
+
+    // ---- SYSTEM CONFIG (AI-agent kill-switch + future global toggles) --------
+    // system_config/agents = { enabled: boolean, updatedAt, updatedBy }: the AI-agent KILL-SWITCH
+    // (ADR 0015) — a single global brake. The command kernel mirrors this flag into memory and
+    // refuses EVERY agent command the instant it is engaged, so EVERY active session must be able to
+    // READ it (it carries no sensitive data — just a boolean toggle). CREATE/UPDATE (engaging or
+    // releasing the brake) is an ADMIN-only privileged safety action; the write must carry a boolean
+    // `enabled` (present + typed) so a malformed flag can't silently disable the brake. DELETE is
+    // explicitly forbidden (the flag is a permanent control, never removed) — split out from the
+    // create/update grant so a future refactor of the shape guard can't accidentally permit it. The
+    // future server-side agent surface reads this same doc and fails CLOSED.
+    match /system_config/{docId} {
+      allow read:          if isUserActive();
+      allow create, update: if isAdmin() && request.resource.data.enabled is bool;
+      allow delete:        if false;
+    }
   }
 }
