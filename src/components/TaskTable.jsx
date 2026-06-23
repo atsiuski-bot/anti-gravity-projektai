@@ -475,7 +475,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             {/* Metadata */}
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[160px]" />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} ring showColor={false} className="max-w-[160px]" />
                                 )}
                                 <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
                                 {task.tag && (
@@ -671,7 +671,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.tag)}>
                                 {gc ? <HeaderCell label="Žymos" sortMode={sortCols.tag} sort={gc.sort} filter={filters.tag} filterLabel="Filtruoti pagal žymą" /> : 'Žymos'}
                             </th>
-                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-44">Veik.</th>
+                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-56">Veik.</th>
                         </tr>
                     </thead>
                     <tbody className="bg-surface-card divide-y divide-line">
@@ -740,13 +740,20 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             type="button"
                                             onClick={(e) => { e.stopPropagation(); openDetail(task); }}
                                             className={clsx(
-                                                "block w-full break-words rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                // flex + items-start keeps the leading status marker glued to the
+                                                // FIRST line of the title (a wrapping title no longer lets the
+                                                // marker drift to the block's vertical centre); the small top
+                                                // nudge on the marker optically centres it on that line. Replaces
+                                                // the old inline align-[-0.2em] that let it sink below the row.
+                                                "flex w-full items-start gap-1.5 rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
                                                 task.isDeleted ? "text-ink-muted line-through" : task.completed ? "text-ink" : "text-ink-strong"
                                             )}
                                         >
-                                            {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
-                                            {task.title}
-                                            {task.isDeleted && <DeletedBadge inline className="ml-2" />}
+                                            {!task.isDeleted && <CompletedMarker task={task} className="mt-[0.2em]" />}
+                                            <span className="min-w-0 flex-1 break-words">
+                                                {task.title}
+                                                {task.isDeleted && <DeletedBadge inline className="ml-2" />}
+                                            </span>
                                         </button>
                                         {/* One muted line: the indicators lead, the manager closes it — so a
                                             deadline / urgent / comment glyph rides IN FRONT of "Vadovas" instead
@@ -791,7 +798,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </td>
                                     <td className="px-1 py-3 align-top">
                                         {task.assignedUserName && (
-                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[110px]" />
+                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} ring showColor={false} className="max-w-[110px]" />
                                         )}
                                     </td>
                                     <td className="px-1 py-3 align-top whitespace-nowrap">
@@ -824,39 +831,41 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             </span>
                                         )}
                                     </td>
-                                    {/* Veik. — only the contextual confirm/approve (shown when there is something
-                                        to act on) plus the worker's timer. Edit / revert / delete moved into the
-                                        detail sheet that the row opens. */}
+                                    {/* Veik. — the SAME action set the mobile card shows, but icon-only
+                                        (no text labels) and laid out in one wrapping row together with Grąžinti:
+                                        edit, confirm/approve, comments, revert, delete. The worker's timer sits
+                                        below them. (DESIGN_SYSTEM §8 — icon-only controls keep their accessible
+                                        name via `label`.) */}
                                     <td className="px-1 py-3 align-top" onClick={(e) => e.stopPropagation()}>
-                                        {(() => {
-                                            const canConfirmRow = canManage && task.status === 'completed';
-                                            const canApproveRow = canManage && task.status === 'unapproved';
-                                            const canRevertRow = canManage && (task.completed || task.isDeleted);
-                                            return (
-                                                <div className="flex flex-col items-stretch gap-2">
-                                                    {(canRevertRow || canConfirmRow || canApproveRow) && (
-                                                        <div className="flex flex-wrap items-center justify-end gap-1">
-                                                            {/* Grąžinti sits to the LEFT of Patvirtinti — the manager can send a
-                                                                finished/confirmed task back without first opening the sheet. */}
-                                                            {canRevertRow && (
-                                                                <IconButton icon={Undo2} label="Grąžinti" variant="default" onClick={() => setRevertTarget(task)} />
-                                                            )}
-                                                            {canConfirmRow && (
-                                                                <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
-                                                                    Patvirtinti
-                                                                </Button>
-                                                            )}
-                                                            {canApproveRow && (
-                                                                <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleApproveTask(task.id)}>
-                                                                    Patvirtinti
-                                                                </Button>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                    <TaskTimerControls task={task} role={role} />
-                                                </div>
-                                            );
-                                        })()}
+                                        <div className="flex flex-col items-end gap-2">
+                                            <div className="flex flex-wrap items-center justify-end gap-1">
+                                                {onEdit && (
+                                                    <IconButton icon={Pencil} label="Redaguoti" variant="default" onClick={() => onEdit(task)} />
+                                                )}
+                                                {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
+                                                    <IconButton icon={CheckCircle2} label="Patvirtinti atlikimą" variant="primary" onClick={() => handleConfirmTask(task.id)} />
+                                                )}
+                                                {canManage && task.status === 'unapproved' && (
+                                                    <IconButton icon={CheckCircle2} label="Patvirtinti" variant="primary" onClick={() => handleApproveTask(task.id)} />
+                                                )}
+                                                <IconButton
+                                                    icon={MessageSquare}
+                                                    label={`Komentarai${task.comments?.length ? ` (${task.comments.length})` : ''}`}
+                                                    variant="default"
+                                                    className="text-feedback-success hover:text-feedback-success"
+                                                    onClick={() => setActiveModal({ type: 'comments', taskId: task.id })}
+                                                />
+                                                {/* Grąžinti sits to the LEFT of Ištrinti — the manager can send a
+                                                    finished/confirmed task back without first opening the sheet. */}
+                                                {(task.completed || task.isDeleted) && canManage && (
+                                                    <IconButton icon={Undo2} label="Grąžinti" variant="default" onClick={() => setRevertTarget(task)} />
+                                                )}
+                                                {(canManage || !isWorker) && (
+                                                    <IconButton icon={Trash2} label="Ištrinti" variant="danger" onClick={() => handleDeleteTask(task.id, task.title)} />
+                                                )}
+                                            </div>
+                                            <TaskTimerControls task={task} role={role} />
+                                        </div>
                                     </td>
                                 </tr>
                             );
