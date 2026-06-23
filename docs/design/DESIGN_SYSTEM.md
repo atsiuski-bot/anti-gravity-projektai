@@ -209,6 +209,14 @@ Each replaces a cluster of today's copy-pasted variants (see
   standard padding, a `≥44px` close `IconButton`, `role="dialog"` + `aria-modal` +
   `aria-labelledby`, focus moved to the primary action on open, backdrop-tap to dismiss for
   non-destructive dialogs, `Escape` to close. Replaces ~10 hand-rolled modal scaffolds.
+- **Dismiss policy — three cases, two props.** `dismissible` (default true) is the master
+  switch gating `Escape`, the header `X`, **and** the backdrop tap together; `closeOnBackdrop`
+  (default true) then peels the backdrop tap off on its own. (1) *Content viewer* — defaults
+  (Escape + backdrop both dismiss). (2) *Form with unsaved input* — `closeOnBackdrop={false}`
+  so a stray backdrop tap can't silently discard the draft, while `Escape` and the `X` still
+  close. (3) *Destructive / forced-acknowledge* — `dismissible={false}` (no Escape, no `X`, no
+  backdrop; the user must choose a button). Never gate a form's backdrop by hand-rolling a
+  scrim — pass `closeOnBackdrop={false}` and inherit the shared focus-trap.
 - **Presentation rule (binding):** the scrim dims the **whole** viewport and the dialog is a
   content-sized card **centred over it** — including on phones, where a pop-up must appear
   centred over the full screen, **never anchored to a trigger, corner or some fixed spot**.

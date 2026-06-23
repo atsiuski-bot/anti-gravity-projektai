@@ -175,3 +175,23 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
   confirm the live runtime via the API/console, not the deploy log. See
   [ADR 0004](./adr/0004-notification-infrastructure.md) and the
   [FCM runbook](./runbooks/fcm-notifications-deploy.md).
+- **2026-06-23** — **Modal dismiss policy decoupled; 5 hand-rolled shells canonicalised.** The
+  canonical `Modal` gained a `closeOnBackdrop` prop (default `true`, so all existing callers are
+  unchanged) that peels backdrop-tap-to-dismiss off the `dismissible` master switch. This unblocks
+  the long-deferred modal canonicalisation: a form holding unsaved input can now stay
+  `Escape`-dismissible while a stray backdrop tap no longer discards it (`dismissible` +
+  `closeOnBackdrop={false}`) — previously impossible, which is why `TaskModal` had hand-rolled its
+  own scrim. Migrated onto the shared shell (via `bare` mode, preserving each dialog's exact
+  chrome): `TaskModal`, `DeleteConfirmationModal`, and WorkPlanner's three dialogs (Edit Event,
+  Reason — both forms, backdrop-no; Approval Feedback — acknowledgement, backdrop-yes). This also
+  **removed WorkPlanner's ~45-line hand-rolled a11y effect, which lacked the WCAG 2.4.3 Tab
+  focus-trap** — that trap is now present via the shared `useModalA11y`. Net −57 lines. **Deferred
+  (with reason):** `DetailsModal` (+ its 5 content viewers) and `ImageModal` — already a11y-correct
+  and either already matching the default backdrop behaviour or intentionally full-bleed (the image
+  viewer is a black zoom/drag surface, a poor fit for a centred card). Gate: `lint` + `build` only
+  (no component tests exist; app not visually QA'd — needs Google auth). Adversarially reviewed
+  (4 targets × skeptic verify): one HIGH regression caught and fixed (bare form bodies needed
+  `flex-1 min-h-0 overflow-y-auto` so tall content scrolls within the new `max-h-[90vh]` cap instead
+  of clipping). Documented in [`DESIGN_SYSTEM.md`](./design/DESIGN_SYSTEM.md) §8. Pre-existing
+  WorkPlanner delete-confirm-vs-edit-event z-order issue flagged as a follow-up (not introduced
+  here). No backend/rules impact.

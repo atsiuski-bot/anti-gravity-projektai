@@ -5,6 +5,7 @@ import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
+import Modal from './ui/Modal';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -567,28 +568,18 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
 }
 
 export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error, level = 'modal' }) {
-    const dialogRef = useRef(null);
     const titleId = useId();
 
-    // Focus-in, focus restore, Escape, and a Tab focus-trap (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
-
-    if (!isOpen) return null;
-
-    // `level="top"` raises this confirm above another already-open overlay on the same z-ladder
-    // (e.g. WorkPlanner's Edit Event modal, which stays mounted behind the delete confirm). The
-    // default keeps the standard modal layer, so every other call site is unaffected.
+    // Destructive confirm on the canonical Modal (bare): it supplies the scrim, focus-trap,
+    // Escape and portal, while this keeps its bespoke danger-header + multi-button body.
+    // closeOnBackdrop={false} so a stray backdrop tap can't cancel — the choice is made via the
+    // explicit buttons (or Escape). level="top" lets a caller raise this confirm above another
+    // already-open top-level modal (e.g. WorkPlanner's Edit Event modal, which stays mounted
+    // behind it); the default keeps the standard modal layer, so every other call site is
+    // unaffected.
     return (
-        <div className={`fixed inset-0 ${level === 'top' ? 'z-top' : 'z-modal'} flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in`}>
-            <div
-                ref={dialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={titleId}
-                tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 focus:outline-none"
-            >
-                <div className="p-6">
+        <Modal open={isOpen} bare size="md" closeOnBackdrop={false} level={level} ariaLabelledby={titleId} onClose={onClose}>
+            <div className="flex-1 min-h-0 overflow-y-auto p-6">
                     <div className="flex items-center gap-3 mb-4 text-feedback-danger">
                         <div className="p-2 bg-feedback-danger-soft rounded-full">
                             <AlertTriangle className="w-6 h-6" />
@@ -641,7 +632,6 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                         </button>
                     </div>
                 </div>
-            </div>
-        </div>
+        </Modal>
     );
 }
