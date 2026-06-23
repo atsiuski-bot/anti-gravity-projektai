@@ -5,6 +5,7 @@ import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
+import { isSelfDirectedTask } from '../utils/selfDirectedTask';
 import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
 import { SoundManager } from '../utils/soundUtils';
@@ -206,8 +207,14 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 finalTimerMinutes += clampSessionMinutes((now - start) / (1000 * 60));
             }
 
-            // 2. Prepare task data for completion
-            const isManagerOrAdmin = isManagerRole(userRole) || currentUser?.uid === task.managerId;
+            // 2. Prepare task data for completion.
+            // Mirror completeTask's auto-confirm rule (keep the two finish paths consistent): a
+            // manager/admin role auto-confirms, and so does the task's OWN manager — EXCEPT for a
+            // self-directed task (managerId === the assignee), where "own manager" would make the
+            // worker silently sign off their own work. Such a task lands as 'completed' so it reaches
+            // the team board's review affordance instead of auto-confirming.
+            const isOwnManager = currentUser?.uid === task.managerId && !isSelfDirectedTask(task);
+            const isManagerOrAdmin = isManagerRole(userRole) || isOwnManager;
             const totalMinutes = finalTimerMinutes + currentManualMinutes;
             const formattedTime = formatMinutesToTimeString(totalMinutes);
 
