@@ -17,6 +17,7 @@ import StatusPill from './ui/StatusPill';
 import Modal from './ui/Modal';
 import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
+import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 
 // Role display metadata. Tone avoids the reserved session blue (call) — admin reads as the
 // brand accent, manager neutral, worker green; the text label always names the role so color
@@ -30,7 +31,7 @@ const ROLE_META = {
 
 function RoleBadge({ role }) {
     const meta = ROLE_META[role] || ROLE_META.worker;
-    return <StatusPill tone={meta.tone}>{meta.label}</StatusPill>;
+    return <StatusPill tone={meta.tone} icon={ROLE_GLYPHS[role]}>{meta.label}</StatusPill>;
 }
 
 function ColorSwatch({ user, onEdit }) {

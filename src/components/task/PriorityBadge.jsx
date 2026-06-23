@@ -1,5 +1,6 @@
 import { cn } from '../../utils/cn';
 import { getPriorityColor, getPriorityLabel, getPriorityTextColor } from '../../utils/priority';
+import PriorityMeter from '../icons/PriorityMeter';
 
 /**
  * PriorityBadge — the single priority chip for the whole app. Before this, the same
@@ -24,7 +25,7 @@ export default function PriorityBadge({ priority, size = 'sm', pill = false, cla
     return (
         <span
             className={cn(
-                'inline-flex items-center font-bold uppercase whitespace-nowrap border',
+                'inline-flex items-center gap-1 font-bold uppercase whitespace-nowrap border',
                 pill ? 'rounded-full' : 'rounded-md',
                 size === 'md' ? 'px-2 py-0.5 text-caption' : 'px-1.5 py-0.5 text-caption leading-4',
                 className
@@ -35,6 +36,9 @@ export default function PriorityBadge({ priority, size = 'sm', pill = false, cla
                 borderColor: 'var(--priority-hairline)',
             }}
         >
+            {/* Countable signal-strength bars lead the label; they inherit the chip's
+                WCAG-tuned text color via currentColor (ADR 0010). */}
+            <PriorityMeter priority={priority} className={cn('shrink-0', size === 'md' ? 'h-3' : 'h-2.5')} />
             {getPriorityLabel(priority)}
         </span>
     );

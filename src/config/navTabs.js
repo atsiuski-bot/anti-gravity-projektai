@@ -1,4 +1,9 @@
-import { ListTodo, UserCheck, Calendar, Users, History, UserCog } from 'lucide-react';
+import { UserCog } from 'lucide-react';
+import {
+    TasksGlyph, TasksTeamGlyph,
+    CalendarGlyph, CalendarTeamGlyph,
+    ReportsGlyph, ReportsTeamGlyph,
+} from '../components/icons/navGlyphs';
 import { isManagerRole } from '../utils/formatters';
 
 /**
@@ -19,18 +24,18 @@ export function getNavSections(userRole) {
                 id: 'mine',
                 label: 'Mano',
                 items: [
-                    { id: 'my-tasks', label: 'Darbai', icon: ListTodo },
-                    { id: 'my-calendar', label: 'Kalendorius', icon: Calendar },
-                    { id: 'my-reports', label: 'Ataskaitos', icon: History },
+                    { id: 'my-tasks', label: 'Darbai', icon: TasksGlyph },
+                    { id: 'my-calendar', label: 'Kalendorius', icon: CalendarGlyph },
+                    { id: 'my-reports', label: 'Ataskaitos', icon: ReportsGlyph },
                 ],
             },
             {
                 id: 'team',
                 label: 'Komanda',
                 items: [
-                    { id: 'tasks', label: 'Kom. darbai', icon: UserCheck },
-                    { id: 'team-calendar', label: 'Kom. kalendorius', icon: Users },
-                    { id: 'reports', label: 'Kom. ataskaitos', icon: History },
+                    { id: 'tasks', label: 'Kom. darbai', icon: TasksTeamGlyph },
+                    { id: 'team-calendar', label: 'Kom. kalendorius', icon: CalendarTeamGlyph },
+                    { id: 'reports', label: 'Kom. ataskaitos', icon: ReportsTeamGlyph },
                 ],
             },
             ...(userRole === 'admin'
@@ -48,10 +53,10 @@ export function getNavSections(userRole) {
             id: 'main',
             label: null,
             items: [
-                { id: 'tasks', label: 'Darbai', icon: ListTodo },
-                { id: 'calendar', label: 'Kalendorius', icon: Calendar },
-                { id: 'reports', label: 'Ataskaitos', icon: History },
-                { id: 'team-calendar', label: 'Kom. kalendorius', icon: Users },
+                { id: 'tasks', label: 'Darbai', icon: TasksGlyph },
+                { id: 'calendar', label: 'Kalendorius', icon: CalendarGlyph },
+                { id: 'reports', label: 'Ataskaitos', icon: ReportsGlyph },
+                { id: 'team-calendar', label: 'Kom. kalendorius', icon: CalendarTeamGlyph },
             ],
         },
     ];

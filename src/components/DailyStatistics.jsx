@@ -9,11 +9,13 @@ import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
 import CompletedMarker from './task/CompletedMarker';
 import TaskStatusPill from './task/TaskStatusPill';
+import { StatusRunningGlyph } from './icons/statusGlyphs';
+import { MetricWorkedGlyph, MetricTotalGlyph } from './icons/metricGlyphs';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Zap, MessageSquare, Check, CheckCircle2, Filter, RotateCcw, X, Pencil, Plus } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, Filter, RotateCcw, X, Pencil, Plus } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
@@ -1016,7 +1018,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         </span>
                     )}
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                        <MetricWorkedGlyph className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
                         <span className="text-caption text-ink-muted">Darbas</span>
                         <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
                     </span>
@@ -1026,7 +1028,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <span className="text-body font-bold text-feedback-warning tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <Zap className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
+                        <MetricTotalGlyph className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
                         <span className="text-caption text-brand">Viso</span>
                         <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
                     </span>
@@ -1101,7 +1103,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 <div className="grid grid-cols-3 divide-x divide-line">
                     <div className="flex flex-col items-center px-1 text-center">
                         <span className="flex items-center gap-1 text-caption text-ink-muted">
-                            <Clock className="w-3.5 h-3.5" aria-hidden="true" />
+                            <MetricWorkedGlyph className="w-3.5 h-3.5" aria-hidden="true" />
                             Darbas
                         </span>
                         <span className="mt-1 text-h3 font-bold text-ink-strong tabular-nums">
@@ -1119,7 +1121,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     </div>
                     <div className="flex flex-col items-center px-1 text-center">
                         <span className="flex items-center gap-1 text-caption text-brand">
-                            <Zap className="w-3.5 h-3.5" aria-hidden="true" />
+                            <MetricTotalGlyph className="w-3.5 h-3.5" aria-hidden="true" />
                             Viso
                         </span>
                         <span className="mt-1 text-h3 font-bold text-brand tabular-nums">
@@ -1602,9 +1604,9 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
     // DeletedBadge; resolved task -> its pill with a persistent completion check on finished
     // work; an unresolvable quick-work/call (after-the-fact log) -> a generic "Atlikta".
     const renderStatus = (item, task) => {
-        if (item.isActive) return <StatusPill tone="running">Vyksta</StatusPill>;
+        if (item.isActive) return <StatusPill tone="running" icon={StatusRunningGlyph}>Vyksta</StatusPill>;
         if (task && (task.isDeleted || task.status === 'deleted')) return <DeletedBadge />;
-        if (task) return <TaskStatusPill task={task} doneIcon />;
+        if (task) return <TaskStatusPill task={task} />;
         return <StatusPill tone="done" icon={CheckCircle2}>Atlikta</StatusPill>;
     };
 

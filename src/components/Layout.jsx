@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { WifiOff } from 'lucide-react';
+import { ConnectionOfflineGlyph } from './icons/connectionGlyphs';
 import AppHeader from './AppHeader';
 import BottomNavigation from './BottomNavigation';
 import SideRail from './SideRail';
@@ -97,7 +97,7 @@ export default function Layout({ children }) {
                 quick-work shell (DESIGN_SYSTEM §4-C). Paired with a wifi-off icon. */}
             {!isOnline && (
                 <div className="relative z-toast flex items-center justify-center gap-2 bg-feedback-offline px-4 py-1 text-center text-caption font-medium text-white shadow-sm">
-                    <WifiOff className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <ConnectionOfflineGlyph className="h-4 w-4 shrink-0" aria-hidden="true" />
                     <span>Jūs esate neprisijungęs. Duomenys bus išsaugoti telefone ir sinchronizuoti vėliau.</span>
                 </div>
             )}
