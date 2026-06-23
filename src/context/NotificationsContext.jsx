@@ -60,6 +60,8 @@ function copyFor(n) {
         case 'session_deleted': return { title: 'Pašalintas darbo laikas', body: n.day || 'Darbo laikas' };
         // Worker → manager: a logged-time error report.
         case 'session_correction_request': return { title: 'Pranešimas apie darbo laiko klaidą', body: n.commentText ? `${n.day || 'Darbo laikas'}: ${n.commentText}` : (n.day || 'Darbo laikas') };
+        // System → admin: a new sign-up awaits approval.
+        case 'account_approval': return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'WORKZ' };
         default: return { title: 'Naujas pranešimas', body: task };
     }
 }

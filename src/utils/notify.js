@@ -39,6 +39,8 @@ export const NOTIFICATION_CATEGORY = {
     session_deleted: 'info',            // an admin removed one of the worker's logged sessions
     // ── Worker → manager (new, two-way) ──────────────────────────────────────
     session_correction_request: 'action', // worker flagged a logged-time error → manager resolves it
+    // ── System → admin ───────────────────────────────────────────────────────
+    account_approval: 'action',         // a new sign-up is pending — an admin approves/blocks it
     // ── System → manager ─────────────────────────────────────────────────────
     recurring_reassign: 'action',       // a recurring job's usual assignee is away — reassign it
 };

@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus, Ban, UserPlus } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
@@ -457,6 +457,33 @@ export default function ManagerNotifications({ onClose }) {
         setActiveTab?.('reports');
     };
 
+    // --- Account approval (system → admin) ---
+    // Flip a pending sign-up's status, mirroring UserManagement's block/approve write EXACTLY:
+    //   approve → { isDisabled:false, status:'active' }; block → { isDisabled:true, status:'blocked' }
+    // (status:'blocked' clears the 'pending' flag so the account no longer reads as awaiting
+    // approval). The first admin to act flips the shared user doc; we then dismiss only THIS admin's
+    // own notification (each admin received their own), matching the per-recipient model.
+    const [decidingAccount, setDecidingAccount] = useState(null); // notif.id of an in-flight decision
+    const handleAccountDecision = async (notif, approve) => {
+        const targetUid = notif?.targetUserId;
+        if (!targetUid || decidingAccount) return;
+        setDecidingAccount(notif.id);
+        setActionError(null);
+        try {
+            await updateDoc(doc(db, 'users', targetUid), approve
+                ? { isDisabled: false, status: 'active' }
+                : { isDisabled: true, status: 'blocked' });
+            await handleDismissTask(notif.id);
+        } catch (err) {
+            console.error('Error deciding account approval:', err);
+            setActionError(err.code === 'permission-denied'
+                ? 'Neturite teisių atlikti šį veiksmą.'
+                : 'Nepavyko atnaujinti vartotojo statuso. Bandykite dar kartą.');
+        } finally {
+            setDecidingAccount(null);
+        }
+    };
+
     const allNotifications = [...calendarNotifications, ...calendarRequests, ...taskNotifications];
 
     // Action-required items must float above informational ones regardless of arrival order:
@@ -849,6 +876,50 @@ export default function ManagerNotifications({ onClose }) {
                                     </Button>
                                     <Button variant="primary" size="md" icon={Edit} onClick={() => handleResolveCorrection(notif)}>
                                         Spręsti
+                                    </Button>
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    // System → admin ACTION: a new sign-up is pending approval. Inline Patvirtinti /
+                    // Užblokuoti flip the user's status (mirroring User Management) without leaving
+                    // the bell. Created server-side (admin SDK) because the new user is signed out
+                    // before the client can write.
+                    if (notif.type === 'account_approval') {
+                        const inFlight = decidingAccount === notif.id;
+                        return (
+                            <div key={notif.id} className="rounded-card border border-feedback-info-border bg-feedback-info-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <div className="flex items-start gap-3">
+                                    <UserPlus className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-info" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1 text-sm text-feedback-info-text">
+                                        <p className="font-medium leading-relaxed">
+                                            Naujas vartotojas laukia patvirtinimo:
+                                        </p>
+                                        <p className="mt-1 font-semibold">{notif.targetUserName || notif.targetUserEmail || 'Nežinomas vartotojas'}</p>
+                                        {notif.targetUserName && notif.targetUserEmail && (
+                                            <p className="mt-0.5 text-xs opacity-80">{notif.targetUserEmail}</p>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                                    <Button
+                                        variant="danger"
+                                        size="md"
+                                        icon={Ban}
+                                        disabled={inFlight}
+                                        onClick={() => handleAccountDecision(notif, false)}
+                                    >
+                                        Užblokuoti
+                                    </Button>
+                                    <Button
+                                        variant="success"
+                                        size="md"
+                                        icon={Check}
+                                        loading={inFlight}
+                                        onClick={() => handleAccountDecision(notif, true)}
+                                    >
+                                        Patvirtinti
                                     </Button>
                                 </div>
                             </div>
