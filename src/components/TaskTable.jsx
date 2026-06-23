@@ -191,7 +191,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         try {
             const task = tasks.find(t => t.id === taskId);
             if (!task) return;
-            await toggleTaskCompletion(task, currentUser.uid, userRole, task.managerId);
+            await toggleTaskCompletion(task, currentUser, userRole);
         } catch (err) {
             console.error("Error toggling task completion:", err);
         }
@@ -293,7 +293,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         if (!revertTarget) return;
         setReverting(true);
         try {
-            await revertTask(revertTarget);
+            await revertTask(revertTarget, currentUser);
             setRevertTarget(null);
         } catch (err) {
             logError(err, { source: 'TaskTable.confirmRevert' });
