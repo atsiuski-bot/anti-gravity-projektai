@@ -11,7 +11,7 @@ import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
 import { deleteTask } from '../utils/taskActions';
-import { approveTask, humanActor, MODES } from '../domain';
+import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
@@ -43,7 +43,7 @@ import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyp
  *
  * The notification carries only taskId/taskTitle, so this wrapper subscribes to the live task doc
  * and feeds it to TaskCard. TaskCard already exposes the manager sign-off buttons for a finished
- * task (Patvirtinti / Grąžinti / Redaguoti / Trinti); the optional post-action hooks below are
+ * task (Priimti / Grąžinti / Redaguoti / Trinti); the optional post-action hooks below are
  * what keep the two-way feed honest — after the card's own write succeeds they dismiss this
  * notification and notify the worker.
  */
@@ -314,13 +314,10 @@ export default function ManagerNotifications({ onClose }) {
             },
             deferredEffect: () => notifyTaskApproved(notif),
             undo: async () => {
-                await updateDoc(doc(db, 'tasks', taskId), {
-                    status: prior.status ?? 'pending',
-                    isApproved: prior.isApproved,
-                    approvedAt: null,
-                    approvedBy: null,
-                    updatedAt: new Date().toISOString(),
-                });
+                await unapproveTask(
+                    { task: { id: taskId, title: notif.taskTitle }, priorStatus: prior.status, priorIsApproved: prior.isApproved },
+                    { actor, mode: MODES.COMMIT, reason: 'approval undone from notification' },
+                );
                 await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
             },
             message: 'Užduotis patvirtinta.',
@@ -398,14 +395,8 @@ export default function ManagerNotifications({ onClose }) {
     const confirmCompletionWrite = async (notif) => {
         const taskId = notif?.taskId;
         if (!taskId) return;
-        const now = new Date().toISOString();
-        await updateDoc(doc(db, 'tasks', taskId), {
-            status: 'confirmed',
-            isApproved: true,
-            confirmedBy: currentUser.uid,
-            confirmedAt: now,
-            updatedAt: now
-        });
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+        await confirmTask({ task: { id: taskId, title: notif.taskTitle } }, { actor, mode: MODES.COMMIT, reason: 'confirmed from notification (bulk)' });
         await handleDismissTask(notif.id);
     };
 
@@ -419,12 +410,8 @@ export default function ManagerNotifications({ onClose }) {
     // this is a fully clean undo: nothing the worker can see ever happened.
     const undoConfirmCompletion = async (notif) => {
         if (!notif?.taskId) return;
-        await updateDoc(doc(db, 'tasks', notif.taskId), {
-            status: 'completed',
-            confirmedBy: null,
-            confirmedAt: null,
-            updatedAt: new Date().toISOString()
-        });
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+        await unconfirmTask({ task: { id: notif.taskId, title: notif.taskTitle } }, { actor, mode: MODES.COMMIT, reason: 'confirm undone from notification (bulk)' });
         await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
     };
 
@@ -444,9 +431,9 @@ export default function ManagerNotifications({ onClose }) {
             run: async () => { for (const n of completions) await confirmCompletionWrite(n); },
             deferredEffect: async () => { for (const n of completions) await notifyCompletionConfirmed(n); },
             undo: async () => { for (const n of completions) await undoConfirmCompletion(n); },
-            message: completions.length === 1 ? 'Užduotis patvirtinta.' : `Patvirtinta užduočių: ${completions.length}.`,
-            undoneMessage: 'Atšaukta — grąžinta patvirtinimui.',
-            errorMessage: 'Nepavyko patvirtinti visų užduočių. Bandykite dar kartą.',
+            message: completions.length === 1 ? 'Užduotis priimta.' : `Priimta užduočių: ${completions.length}.`,
+            undoneMessage: 'Atšaukta — grąžinta priėmimui.',
+            errorMessage: 'Nepavyko priimti visų užduočių. Bandykite dar kartą.',
         }).finally(() => setBulkConfirming(false));
     };
 
@@ -547,7 +534,7 @@ export default function ManagerNotifications({ onClose }) {
                         Užbaigtos užduotys: {taskNotifications.filter(n => n.type === 'task_completion').length}
                     </span>
                     <Button variant="success" size="md" icon={Check} loading={bulkConfirming} onClick={handleConfirmAllCompletions}>
-                        Patvirtinti visas
+                        Priimti visas
                     </Button>
                 </div>
             )}
@@ -674,7 +661,7 @@ export default function ManagerNotifications({ onClose }) {
                         switch (notif.type) {
                             case 'task_assigned': Icon = ListTodo; tone = 'text-brand'; text = `${who} priskyrė Jums naują užduotį: ${task}`; break;
                             case 'task_approved': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų užduotis patvirtinta — galite pradėti: ${task}`; break;
-                            case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis patvirtinta: ${task}`; break;
+                            case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis priimta: ${task}`; break;
                             case 'extension_granted': Icon = TimeGrantedGlyph; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
                             case 'extension_denied': Icon = TimeDeniedGlyph; tone = 'text-feedback-danger'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
                             case 'calendar_decision': {

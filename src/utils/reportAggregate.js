@@ -39,7 +39,7 @@ const TIMESHEET_PLAN_FLOOR = 0.25;
 // Lifetime recognition counters worth surfacing (subset of users/{uid}/achievements/_stats).
 const RECOGNITION_FIELDS = [
     { key: 'completedTasks', label: 'Užbaigta' },
-    { key: 'confirmedTasks', label: 'Patvirtinta' },
+    { key: 'confirmedTasks', label: 'Priimta' },
     { key: 'onEstimate', label: 'Telpa į planą' },
     { key: 'punctualDays', label: 'Punktualių dienų' },
     { key: 'workDays', label: 'Darbo dienų' },

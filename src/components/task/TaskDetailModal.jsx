@@ -497,7 +497,7 @@ export default function TaskDetailModal({
                         )}
                         {canConfirm && onConfirm && (
                             <Button variant="success" size="md" icon={CheckCircle2} onClick={() => onConfirm(task.id)}>
-                                Patvirtinti atlikimą
+                                Priimti
                             </Button>
                         )}
                         {onEdit && (

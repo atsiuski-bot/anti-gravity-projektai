@@ -9,6 +9,7 @@ import { cn } from '../utils/cn';
 import { addComment } from '../utils/commentActions';
 import { gatherReportData } from '../utils/reportData';
 import { buildReport } from '../utils/reportAggregate';
+import { confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
@@ -551,13 +552,14 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 t.id === task.id ? { ...t, status: newStatus, confirmedAt: newStatus === 'confirmed' ? new Date().toISOString() : null } : t
             ));
 
-            const taskRef = doc(db, 'tasks', task.id);
-            await updateDoc(taskRef, {
-                status: newStatus,
-                confirmedAt: newStatus === 'confirmed' ? new Date().toISOString() : null,
-                confirmedBy: newStatus === 'confirmed' ? (currentUser?.uid || null) : null,
-                updatedAt: new Date().toISOString()
-            });
+            // Audited confirm/unconfirm toggle (ADR 0015) — replaces the inline write whose confirmedBy
+            // was a literal 'MANAGER' string; the command stamps the real manager uid.
+            const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
+            if (newStatus === 'confirmed') {
+                await confirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirmed from reports' });
+            } else {
+                await unconfirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'unconfirmed from reports' });
+            }
 
         } catch (error) {
             console.error("Error toggling confirmation:", error);
@@ -756,10 +758,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                         checked={isConfirmed}
                                         onChange={() => handleToggleConfirm(task)}
                                         disabled={task.isArchived}
-                                        aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
+                                        aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepriimtą` : `Priimti „${task.title}“`}
                                         className="w-5 h-5 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                     />
-                                    <span className="text-caption text-ink">{isConfirmed ? 'Patvirtinta' : 'Nepatvirtinta'}</span>
+                                    <span className="text-caption text-ink">{isConfirmed ? 'Priimtas' : 'Laukia priėmimo'}</span>
                                 </label>
                                 <div className="flex items-center gap-1">
                                     <IconButton
@@ -829,7 +831,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 confirmChecked={isConfirmed}
                                 confirmDisabled={task.isArchived}
                                 onToggleConfirm={handleToggleConfirm}
-                                confirmAriaLabel={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
+                                confirmAriaLabel={isConfirmed ? `Pažymėti „${task.title}“ kaip nepriimtą` : `Priimti „${task.title}“`}
                                 assigneeName={userName}
                                 commentCount={task.comments?.length || 0}
                                 onOpenComments={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
@@ -986,7 +988,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 activeTab === 'approval' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                             )}
                         >
-                            Patvirtinimas
+                            Pridavimas
                         </button>
                         <div className="w-px bg-line" aria-hidden="true" />
                         <button
@@ -1000,7 +1002,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 activeTab === 'calendar-history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                             )}
                         >
-                            Kalendoriaus pakeitimų istorija
+                            Kalendoriaus istorija
                         </button>
                     </div>
                 </div>
@@ -1035,7 +1037,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         icon+label on desktop) and appears only for a multi-day range (day mode
                         has no export). The button reveals the range ladder (week → month →
                         3 months → year) and a custom date picker. */}
-                    <div className="flex items-start gap-2">
+                    <div className="flex items-stretch gap-2">
                         <div className="flex-1 min-w-0">
                         <PeriodPicker
                             presets={PERIOD_PRESETS}
@@ -1124,8 +1126,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
                     {/* Day mode → the live daily timeline. Any multi-day range → the same view
                         aggregated over [start, end] (summary cards, sort filters).
-                        On the manager team view the task-confirmation lists and history move to the
-                        dedicated "Patvirtinimas" tab, so this tab shows only the work-hours surface
+                        On the manager team view the task-acceptance lists and history move to the
+                        dedicated "Pridavimas" tab, so this tab shows only the work-hours surface
                         (view='hours'). A personal report (worker, or a manager viewing their own
                         data via viewRole='worker') has no such tab, so it keeps the full surface. */}
                     {reportPeriod === 'day' ? (

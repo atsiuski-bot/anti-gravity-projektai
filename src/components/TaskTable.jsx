@@ -1,7 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
-import { db } from '../firebase';
-import { doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -22,7 +20,7 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
-import { approveTask, completeTask, reopenTask, humanActor, MODES } from '../domain';
+import { approveTask, unapproveTask, completeTask, reopenTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { isManagerRole } from '../utils/formatters';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
@@ -209,29 +207,29 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         });
     };
 
-    // Confirming finished work (completed -> confirmed) is a cleanly reversible sign-off, so it is
-    // immediate + undoable; undo restores the exact prior state. The table pings no one, so there is
-    // no notification to defer.
+    // Accepting finished work (completed -> confirmed) is a cleanly reversible sign-off, so it is
+    // immediate + undoable; both the accept and its undo are audited commands (confirmTask /
+    // unconfirmTask — the undo returns the task to 'completed', "awaiting acceptance"). The table
+    // pings no one, so there is no notification to defer.
     const handleConfirmTask = (taskId) => {
-        // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
-        // Task-level managers (who are not system managers) cannot confirm.
+        // PERMISSION CHECK: Only explicit Managers or Admins can accept tasks.
+        // Task-level managers (who are not system managers) cannot accept.
         if (!isManagerRole(userRole)) {
-            setError("Tik vadovai gali patvirtinti užduotis.");
+            setError("Tik vadovai gali priimti užduotis.");
             return;
         }
         setError('');
         const task = tasks.find(t => t.id === taskId);
         if (!task) return;
-        const prior = { status: task.status ?? 'completed', confirmedBy: task.confirmedBy ?? null, confirmedAt: task.confirmedAt ?? null };
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
         runUndoable({
-            run: async () => {
-                const now = new Date().toISOString();
-                await updateDoc(doc(db, 'tasks', taskId), { status: 'confirmed', confirmedBy: currentUser.uid, confirmedAt: now, updatedAt: now });
-            },
-            undo: () => updateDoc(doc(db, 'tasks', taskId), { status: prior.status, confirmedBy: prior.confirmedBy, confirmedAt: prior.confirmedAt, updatedAt: new Date().toISOString() }),
-            message: 'Atlikimas patvirtintas.',
-            undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
-            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite vėliau.',
+            // Forward sign-off AND undo are both audited commands (ADR 0015) — confirmTask returns the
+            // task to 'completed' on undo, the same state it confirmed from.
+            run: () => confirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirmed from task table' }),
+            undo: () => unconfirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirm undone from task table' }),
+            message: 'Užduotis priimta.',
+            undoneMessage: 'Atšaukta — laukiama priėmimo.',
+            errorMessage: 'Nepavyko priimti užduoties. Bandykite vėliau.',
         });
     };
 
@@ -247,13 +245,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
         runUndoable({
             run: () => approveTask({ task }, { actor, mode: MODES.COMMIT, reason: 'approved from task table' }),
-            undo: () => updateDoc(doc(db, 'tasks', taskId), {
-                status: prior.status ?? 'pending',
-                isApproved: prior.isApproved,
-                approvedAt: null,
-                approvedBy: null,
-                updatedAt: new Date().toISOString(),
-            }),
+            undo: () => unapproveTask({ task, priorStatus: prior.status, priorIsApproved: prior.isApproved }, { actor, mode: MODES.COMMIT, reason: 'approval undone from task table' }),
             message: 'Užduotis patvirtinta.',
             undoneMessage: 'Atšaukta — patvirtinimas atšauktas.',
             errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite vėliau.',
@@ -607,7 +599,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 )}
                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
                                     <Button variant="primary" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
-                                        Patvirtinti atlikimą
+                                        Priimti
                                     </Button>
                                 )}
                                 {canManage && task.status === 'unapproved' && (
@@ -849,7 +841,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     <IconButton icon={Pencil} label="Redaguoti" variant="default" onClick={() => onEdit(task)} />
                                                 )}
                                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
-                                                    <IconButton icon={CheckCircle2} label="Patvirtinti atlikimą" variant="primary" onClick={() => handleConfirmTask(task.id)} />
+                                                    <IconButton icon={CheckCircle2} label="Priimti" variant="primary" onClick={() => handleConfirmTask(task.id)} />
                                                 )}
                                                 {canManage && task.status === 'unapproved' && (
                                                     <IconButton icon={CheckCircle2} label="Patvirtinti" variant="primary" onClick={() => handleApproveTask(task.id)} />

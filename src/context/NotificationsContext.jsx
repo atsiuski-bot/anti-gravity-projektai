@@ -47,7 +47,7 @@ function copyFor(n) {
         // Manager → worker
         case 'task_assigned': return { title: 'Nauja užduotis', body: task };
         case 'task_approved': return { title: 'Užduotis patvirtinta', body: task };
-        case 'task_confirmed': return { title: 'Užduotis užbaigta ir patvirtinta', body: task };
+        case 'task_confirmed': return { title: 'Užduotis užbaigta ir priimta', body: task };
         case 'task_reverted': return { title: 'Užduotis grąžinta taisyti', body: task };
         case 'extension_granted': return { title: 'Laikas pratęstas', body: task };
         case 'extension_denied': return { title: 'Laikas nepratęstas', body: task };
