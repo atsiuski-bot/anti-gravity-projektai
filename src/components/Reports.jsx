@@ -299,8 +299,11 @@ export default function Reports({ users, canExport = false, viewRole }) {
             const getUserName = (uid, sessionName) => {
                 const u = users?.find(user => user.id === uid);
                 if (u) return u.displayName || u.email;
-                if (sessionName && sessionName !== 'Unknown') return sessionName;
-                return 'Unknown';
+                // Treat both the legacy English placeholder and the current Lithuanian one as
+                // "no real name" so an old doc storing 'Unknown' never surfaces English; fall
+                // back to the Lithuanian placeholder used everywhere else (resolveUserName).
+                if (sessionName && sessionName !== 'Unknown' && sessionName !== 'Nežinomas') return sessionName;
+                return 'Nežinomas';
             };
 
             // Helper to init user map

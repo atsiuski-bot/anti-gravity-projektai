@@ -53,6 +53,52 @@ The founder periodically reviews via `git log --grep="ai-author"` and can revert
 This trades maximum velocity against retrospective audit. **Do not deploy autonomously** —
 deploy is human-initiated.
 
+## Minimizing manual toil — agent autonomy
+
+The founder is not a programmer and **cannot evaluate security trade-offs**. Agents must
+therefore minimize the manual, copy-paste "monkey work" (pasting keys, running console
+scripts, switching accounts) and do as much as possible themselves — **without ever crossing
+the human-only boundary below.** The split is deliberate: drive avoidable toil to zero, and
+reduce the genuine security boundary to a single confirmation, never many paste steps.
+
+### Do it yourself (don't ask the founder to paste/run it)
+
+- **Firebase work goes through the Firebase MCP, not pasted scripts.** Reading config,
+  inspecting/validating security rules, querying Firestore, reading function logs, checking
+  deploy status — all are MCP calls the agent makes directly. Never ask the founder to copy a
+  console snippet for anything the MCP can do. Read-only MCP tools are pre-approved in
+  `.claude/settings.json`, so they run without a prompt.
+- **Read secrets from where they already live; never ask for a re-paste.** Local dev secrets
+  live in `.env.local` (gitignored, matches `*.local`). If a value is already there or
+  fetchable via MCP, read it — don't make the founder paste it again.
+- **Most "Firebase keys" are NOT secrets.** The web `apiKey`, `projectId`, `appId`, `authDomain`,
+  and the VAPID public key are *public client config* — they are meant to ship in the browser
+  bundle and need no protection. Only **service-account JSON and admin/private keys** are real
+  secrets. Don't treat public config with secret-grade ceremony, and don't alarm the founder
+  about it.
+- **Pin the right account automatically.** WORKZ Firestore/Functions = `audrius@medievalclub.org`
+  (`karolis.j` has no access). Use the account already configured (`acc doctor` / global
+  `settings.json`); don't ask the founder to re-authenticate unless a token has actually expired.
+- **Encapsulate any repeated procedure as a skill/command.** If a console sequence would be run
+  more than once, turn it into a `/command` (see `.claude/commands/`) so the founder types one
+  word instead of pasting steps. Existing: `/ship`, `/deploy-netlify`, `/firebase-status`.
+
+### Human-only boundary (keep it manual — this is the safety net)
+
+These are irreversible or secret-exposing, so they stay a deliberate human action. Prepare
+everything, then hand the founder **one** clearly-labelled step — never a wall of commands:
+
+- **Production deploys** — Firestore/Storage **rules** and **Cloud Functions** deploys, and any
+  hosting promote. The permission classifier blocks these by design; surface the exact one-liner
+  and let the founder run it. (Rules deploy reads the **CWD's** `firestore.rules` — deploy from
+  the worktree holding the intended rules, then re-verify the *live* ruleset, don't trust
+  "Deploy complete" alone.)
+- **Secret creation/rotation** and writing real secrets to a hosting provider's env settings.
+- **Destructive data operations** — bulk Firestore writes/deletes against production.
+
+When in doubt whether something crosses this line, treat it as human-only and explain why in
+one sentence.
+
 ## Design system (binding)
 
 All UI work conforms to [`docs/design/DESIGN_SYSTEM.md`](./docs/design/DESIGN_SYSTEM.md) and

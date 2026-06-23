@@ -907,6 +907,12 @@ export default function WorkPlanner() {
                 own. On a screen too short to show the whole box, the *page* scrolls (the container
                 simply grows past the viewport) — the calendar no longer traps the scroll. Phones
                 use the day view, which is naturally shorter. */}
+            {/* Card chrome mirrors the team calendar (AllUsersCalendar): a rounded surface-card
+                panel with a subtle line border, so in both themes the personal planner reads as
+                the same component family rather than a bare library grid. The grid stays
+                transparent and inherits this surface; padding gives the toolbar + grid breathing
+                room without eating the fixed height (the inner box keeps its own height). */}
+            <div className="bg-surface-card rounded-card border border-line shadow-lg overflow-hidden p-2 sm:p-3">
             <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[880px]">
                 <Calendar
                     key={isPhone ? 'day' : 'week'}
@@ -934,6 +940,7 @@ export default function WorkPlanner() {
                         showMore: total => `+ Dar ${total}`
                     }}
                 />
+            </div>
             </div>
 
             {/* Edit Event Modal — canonical Modal (bare) keeps the bespoke form chrome while
