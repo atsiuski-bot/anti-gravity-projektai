@@ -1,7 +1,8 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
-import { Phone, Square, Check, ShieldAlert } from 'lucide-react';
+import { useSpeechDictation } from '../hooks/useSpeechDictation';
+import { Phone, Square, Check, ShieldAlert, Mic, Clock } from 'lucide-react';
 import { formatMinutesToTimeString, MIN_LOGGED_SESSION_MINUTES } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
@@ -10,11 +11,13 @@ import { startSession, endSession } from '../utils/sessionActions';
 import { getSessionColors } from '../utils/sessionColors';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
+import IconButton from './ui/IconButton';
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) {
+const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting }) {
     const textareaRef = useRef(null);
     const totalDisplay = formatMinutesToTimeString(currentSessionMinutes);
+    const { supported: dictationSupported, isListening, toggle: toggleDictation } = useSpeechDictation(textareaRef);
 
     const handleSubmit = (e) => {
         e.preventDefault();
@@ -45,32 +48,63 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                     <label htmlFor="callTextarea" className="block text-caption font-bold text-ink-strong mb-2 uppercase tracking-wide">
                         Skambučio aprašymas
                     </label>
-                    <textarea
-                        ref={textareaRef}
-                        id="callTextarea"
-                        name="callDescription"
-                        placeholder="Trumpai aprašykite skambutį..."
-                        rows={4}
-                        className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
-                        style={{
-                            width: '100%',
-                            padding: '12px',
-                            fontSize: '16px',
-                            resize: 'none',
-                            direction: 'ltr',
-                            textAlign: 'left'
-                        }}
-                        required
-                    />
+                    <div className="relative">
+                        <textarea
+                            ref={textareaRef}
+                            id="callTextarea"
+                            name="callDescription"
+                            placeholder="Trumpai aprašykite skambutį..."
+                            rows={4}
+                            className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
+                            style={{
+                                width: '100%',
+                                // Reserve room at the bottom-right so dictated text never slides under the mic.
+                                padding: dictationSupported ? '12px 12px 52px 12px' : '12px',
+                                fontSize: '16px',
+                                resize: 'none',
+                                direction: 'ltr',
+                                textAlign: 'left'
+                            }}
+                            required
+                        />
+                        {/* Voice dictation — feature-detected; hidden where the Web Speech API is
+                            absent. Listening state is signalled by color AND a label change AND the
+                            filled/outline mic glyph, so color is never the sole cue (§5). */}
+                        {dictationSupported && (
+                            <IconButton
+                                icon={Mic}
+                                label={isListening ? 'Stabdyti diktavimą' : 'Diktuoti balsu'}
+                                variant={isListening ? 'danger-solid' : 'default'}
+                                aria-pressed={isListening}
+                                onClick={toggleDictation}
+                                className={clsx(
+                                    'absolute bottom-2 right-2',
+                                    isListening && 'wz-pulse-soft'
+                                )}
+                            />
+                        )}
+                    </div>
+                    {isListening && (
+                        <p className="mt-2 text-caption text-feedback-danger" role="status">
+                            Klausomasi… kalbėkite, tekstas atsiras laukelyje.
+                        </p>
+                    )}
                 </div>
 
                 {/* Footer */}
-                <div className="mt-6 flex gap-3 justify-end">
-                    <Button type="button" variant="secondary" onClick={onClose}>
-                        Atšaukti
-                    </Button>
-                    <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
-                        {isSubmitting ? 'Saugoma...' : 'Išsaugoti skambutį'}
+                <div className="mt-6 flex flex-col gap-2">
+                    <div className="flex gap-3 justify-end">
+                        <Button type="button" variant="secondary" onClick={onClose}>
+                            Atšaukti
+                        </Button>
+                        <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
+                            {isSubmitting ? 'Saugoma...' : 'Išsaugoti skambutį'}
+                        </Button>
+                    </div>
+                    {/* Defer naming: log the call now without a description so the worker can name it
+                        later. Subordinate (ghost) so the type-now primary stays dominant (§8). */}
+                    <Button type="button" variant="ghost" icon={Clock} onClick={onDefer} disabled={isSubmitting} className="self-end">
+                        Vėliau aprašysiu
                     </Button>
                 </div>
             </form>
@@ -139,9 +173,10 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         setShowTitleModal(true);
     };
 
-    const handleCompleteCall = useCallback(async (taskTitle) => {
-        if (!taskTitle || !taskTitle.trim()) return;
-
+    // Shared end-of-call flow. `customTitle` carries the worker's description on the type-now
+    // path; the defer path passes undefined so endSession logs the call without a name. Either
+    // way the same paused-session restore logic runs.
+    const finishCall = useCallback(async (customTitle) => {
         setIsSubmitting(true);
         setError('');
         try {
@@ -170,8 +205,10 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             // Optimistic UI Update: Instantly assume call ended and paused session restored
             setOptimisticUserData(optimistic);
 
-            // End session with custom title overrides
-            await endSession(currentUser.uid, null, { customTitle: taskTitle });
+            // End session. With a title it logs a described call; without one (defer) it logs a
+            // plain "Skambutis" so the worker isn't blocked at the stop screen.
+            const overrides = customTitle ? { customTitle } : {};
+            await endSession(currentUser.uid, null, overrides);
             setShowTitleModal(false);
         } catch (err) {
             console.error("Error completing call:", err);
@@ -181,6 +218,14 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             setIsSubmitting(false);
         }
     }, [currentUser, userData, setOptimisticUserData]);
+
+    const handleCompleteCall = useCallback((taskTitle) => {
+        if (!taskTitle || !taskTitle.trim()) return;
+        return finishCall(taskTitle.trim());
+    }, [finishCall]);
+
+    // "Vėliau aprašysiu": log the call now with no description.
+    const handleDeferCall = useCallback(() => finishCall(undefined), [finishCall]);
 
     const handleToggleCall = async () => {
         if (!currentUser || isDisabled) return;
@@ -205,6 +250,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         <CallModalComponent
             onSubmit={handleCompleteCall}
             onClose={() => setShowTitleModal(false)}
+            onDefer={handleDeferCall}
             currentSessionMinutes={currentSessionMinutes}
             isSubmitting={isSubmitting}
         />
