@@ -35,3 +35,5 @@ export { approveTask } from './commands/approveTask';
 export { reprioritizeTask } from './commands/reprioritizeTask';
 export { rescheduleTask } from './commands/rescheduleTask';
 export { deleteTask } from './commands/deleteTask';
+export { confirmTask } from './commands/confirmTask';
+export { unconfirmTask } from './commands/unconfirmTask';
