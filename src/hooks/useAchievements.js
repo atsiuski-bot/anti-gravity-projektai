@@ -8,9 +8,10 @@ import { BADGE_CATALOG } from '../utils/badgeCatalog';
  * (see functions/index.js BADGES). The thresholds for the four tiers live client-side on
  * BADGE_CATALOG, but the NAME of the counter field is server-only — so the bridge between a
  * catalog badge `key` and its `_stats` field lives here. This must stay in lockstep with the
- * server `BADGES[key].stat`.
+ * server `BADGES[key].stat`. Exported so a unit test can assert the bridge has no gaps (every
+ * catalog badge maps to a field) and so it cannot silently drift from the server BADGES map.
  */
-const STAT_FIELD_BY_KEY = {
+export const STAT_FIELD_BY_KEY = {
     follow_through: 'completedTasks',
     steady_rhythm: 'workDays',
     on_estimate: 'onEstimate',
@@ -29,8 +30,11 @@ const STAT_FIELD_BY_KEY = {
  * `atMax` means every tier is already reached (the bar is full and there is nothing ahead). When
  * the counter is missing (engine never fired for this user) `count` is 0 — the badge is simply at
  * the start of its first tier, which renders as an honest, encouraging empty bar.
+ *
+ * Exported (alongside the hook) so the tier-boundary maths can be unit-tested directly without a
+ * React render harness.
  */
-function deriveProgress(stats) {
+export function deriveProgress(stats) {
     const map = {};
     BADGE_CATALOG.forEach((def) => {
         const field = STAT_FIELD_BY_KEY[def.key];

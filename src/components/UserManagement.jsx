@@ -116,10 +116,13 @@ function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId,
                                 type="button"
                                 aria-pressed={selected}
                                 onClick={() => onToggle(c.id)}
-                                className="inline-flex min-h-touch items-center gap-1 px-3 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                className="inline-flex min-h-touch items-center gap-1 py-1 pl-1.5 pr-2.5 text-caption text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                             >
-                                {selected && <Check className="h-4 w-4 text-brand" aria-hidden="true" />}
-                                {cName}
+                                {selected && <Check className="h-3.5 w-3.5 shrink-0 text-brand" aria-hidden="true" />}
+                                {/* Standard person rendering: avatar + name (UserChip), at the small
+                                    size — non-interactive (linkToProfile=false) so it nests cleanly
+                                    inside this toggle button. */}
+                                <UserChip userId={c.id} name={cName} size="sm" linkToProfile={false} />
                             </button>
                             {onSetPrimary && selected && (
                                 <button
@@ -264,12 +267,13 @@ function OverseerSummary({ user, usersById }) {
         .map((id) => ({ id, name: overseerName(usersById, id) }))
         .filter((x) => x.name);
     return (
-        <p className={cn(base, 'flex flex-wrap items-center gap-x-1.5')}>
+        <p className={cn(base, 'flex flex-wrap items-center gap-x-1.5 gap-y-1')}>
             <span className="font-medium text-ink">Vadovai:</span>
-            {names.map((n, i) => (
+            {names.map((n) => (
                 <span key={n.id} className="inline-flex items-center gap-0.5">
                     {n.id === primaryId && <Star className="h-3 w-3 shrink-0 fill-current text-brand" aria-hidden="true" />}
-                    {n.name}{i < names.length - 1 ? ',' : ''}
+                    {/* Standard small person chip (avatar + name) instead of a bare name. */}
+                    <UserChip userId={n.id} name={n.name} size="sm" linkToProfile={false} />
                 </span>
             ))}
         </p>
