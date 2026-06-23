@@ -182,12 +182,20 @@
    them), so the same value used as FOREGROUND text is too dark on the dark canvas. Override
    only the `text-*` utilities in dark to the lighter accent — fills (`bg-*`) are untouched. */
 [data-theme="dark"] .text-brand { color: rgb(165 180 252); }            /* indigo-300 */
+[data-theme="dark"] .text-brand-hover { color: rgb(165 180 252); }      /* indigo-300 — used as resting FG text on bg-brand-soft chips (BottomNavigation active tab, SideRail badges, etc.); indigo-700 was 2.02:1 on the dark indigo-950 wash */
 [data-theme="dark"] .text-feedback-success { color: rgb(74 222 128); }  /* green-400 */
 [data-theme="dark"] .text-feedback-warning { color: rgb(251 191 36); }  /* amber-400 */
 [data-theme="dark"] .text-feedback-danger { color: rgb(248 113 113); }  /* red-400 */
 [data-theme="dark"] .text-feedback-info { color: rgb(165 180 252); }    /* indigo-300 */
 
 @layer base {
+  /* Native input/textarea placeholder: route through the muted-ink token so it themes with
+     light/dark and clears AA. The browser default (~gray-400) is only 2.54:1 on the light card
+     (a fail); --ink-muted is 4.83:1 on white (light) and 6.71:1 on the dark card. Kept in
+     @layer base so a per-input `placeholder:text-*` utility can still override it. */
+  input::placeholder,
+  textarea::placeholder { color: rgb(var(--ink-muted)); opacity: 1; }
+
   body {
     @apply bg-surface-base text-ink-strong;
     /* Disable the browser's native pull-to-refresh / overscroll chaining (Chrome
@@ -274,6 +282,46 @@
 }
 [data-theme="dark"] .rbc-show-more {
   color: rgb(var(--brand-ring));
+}
+
+/* Surface parity with the team calendar (AllUsersCalendar). That view is a bespoke
+   token-built card — rounded surface-card panel, subtle line hairlines. The personal
+   planner is bare react-big-calendar, so its grid used to sit on the darker page base
+   with the vendor's off-brand blue events, reading as a different component. The grid
+   itself stays transparent (the WorkPlanner wrapper now supplies the surface-card card
+   chrome, so cells inherit that surface); here we only align the day-header band and the
+   event fill so both calendars share one visual language. */
+
+/* Day-name header row → calm, no heavy fill; it rides on the card surface like the team
+   calendar's header band. Borders already track --line via the subtree rule above. */
+.rbc-time-header .rbc-header {
+  color: rgb(var(--ink));
+  font-weight: 600;
+}
+
+/* Hour gutter labels → muted meta ink, matching the team calendar's hour scale. */
+.rbc-time-gutter .rbc-label,
+.rbc-time-gutter .rbc-time-slot {
+  color: rgb(var(--ink-muted));
+}
+
+/* Events → the brand indigo fill (replacing the vendor #3174ad), so a work shift reads in
+   the same colour family as the team calendar's bars and the rest of the app's brand.
+   Padding is zeroed so the custom event component (which sets its own padding and, for
+   vacation, a soft-brand fill) covers the block edge-to-edge with no vendor-blue ring. */
+.rbc-event,
+.rbc-day-slot .rbc-event {
+  background-color: rgb(var(--brand));
+  border: none;
+  padding: 0;
+}
+.rbc-event.rbc-selected,
+.rbc-day-slot .rbc-event.rbc-selected {
+  background-color: rgb(var(--brand-hover));
+}
+.rbc-event:focus {
+  outline: 2px solid rgb(var(--brand-ring));
+  outline-offset: 1px;
 }
 
 /* =====================================================================

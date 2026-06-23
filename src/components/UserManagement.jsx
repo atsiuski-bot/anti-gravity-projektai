@@ -832,7 +832,7 @@ export default function UserManagement() {
         } catch (err) {
             console.error("Error updating user status:", err);
             if (err.code === 'permission-denied') {
-                setError(`Neturite teisių. Jūsų rolė: ${userRole}.`);
+                setError('Neturite teisių atlikti šį veiksmą.');
             } else {
                 setError('Nepavyko atnaujinti vartotojo statuso. Bandykite dar kartą.');
             }
@@ -877,7 +877,7 @@ export default function UserManagement() {
         } catch (err) {
             console.error("Error deleting user:", err);
             if (err.code === 'permission-denied') {
-                setError(`Neturite teisių. Jūsų rolė: ${userRole}.`);
+                setError('Neturite teisių atlikti šį veiksmą.');
             } else {
                 setError('Nepavyko ištrinti vartotojo. Bandykite dar kartą.');
             }
@@ -918,6 +918,7 @@ export default function UserManagement() {
                                         userId={user.id}
                                         name={user.displayName || 'Be vardo'}
                                         size="md"
+                                        block
                                         className="min-w-0 text-body font-semibold text-ink-strong"
                                     />
                                     <DisabledPill user={user} />
@@ -1020,6 +1021,7 @@ export default function UserManagement() {
                                             userId={user.id}
                                             name={user.displayName || 'Be vardo'}
                                             size="md"
+                                            block
                                         />
                                         <DisabledPill user={user} />
                                         <NewUserBadge user={user} />

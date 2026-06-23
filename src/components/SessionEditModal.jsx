@@ -207,6 +207,7 @@ export default function SessionEditModal({
                 open={open}
                 onClose={busy ? undefined : onClose}
                 dismissible={!busy}
+                closeOnBackdrop={false}
                 title={isCreate ? 'Pridėti sesiją' : 'Redaguoti sesijos laiką'}
                 size="lg"
                 footer={

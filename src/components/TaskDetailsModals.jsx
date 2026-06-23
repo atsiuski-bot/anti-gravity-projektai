@@ -539,7 +539,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                 >
                     <img
                         src={imageUrls[validIndex]}
-                        alt={`Attachment ${validIndex + 1}`}
+                        alt={`Priedas ${validIndex + 1}`}
                         style={{
                             width: zoom > 1 ? '350%' : 'auto',
                             maxWidth: zoom > 1 ? 'none' : '100%',
@@ -549,7 +549,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                             pointerEvents: 'auto', // Allow native touch interactions
                             cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'
                         }}
-                        className={`rounded shadow-2xl selectable-none select-none m-auto ${zoom <= 1 ? 'max-w-full max-h-[90vh]' : ''}`}
+                        className={`rounded shadow-xl selectable-none select-none m-auto ${zoom <= 1 ? 'max-w-full max-h-[90vh]' : ''}`}
                         onClick={(e) => {
                             // Verify clicking image toggles zoom
                             if (!isDragging) {

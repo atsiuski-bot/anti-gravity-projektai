@@ -1072,23 +1072,26 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <span className="flex items-center gap-1.5 whitespace-nowrap">
                             <Clock className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
                             <span className="text-caption text-ink-muted">Pradžia/Pabaiga</span>
-                            <span className="text-body font-bold text-ink-strong tabular-nums">
+                            <span className="text-h2 font-bold text-ink-strong tabular-nums">
                                 {firstActivity ? formatTime(firstActivity) : '--:--'}–{lastActivity ? formatTime(lastActivity) : '--:--'}
                             </span>
                         </span>
                     )}
+                    {/* Desktop totals scaled up to read as the toolbar's hero figures: the box is a
+                        min-h-touch row, so text-h2 (20px) fills it without overflowing while the
+                        caption labels stay small — the number is the signal, the word is the legend. */}
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                         <span className="text-caption text-ink-muted">Darbas</span>
-                        <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
+                        <span className="text-h2 font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                         <Coffee className="w-4 h-4 text-feedback-warning shrink-0" aria-hidden="true" />
                         <span className="text-caption text-ink-muted">Pertraukos</span>
-                        <span className="text-body font-bold text-feedback-warning tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
+                        <span className="text-h2 font-bold text-feedback-warning tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                         <span className="text-caption text-brand">Viso</span>
-                        <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
+                        <span className="text-h2 font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
                     </span>
                 </div>
                 </div>
@@ -1153,7 +1156,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
                 {selectedUserId !== 'all' && (
                     <div className="px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
-                        <h3 className="font-semibold">{isRange ? 'Darbų eiga' : 'Darbų eiga (Timeline)'}</h3>
+                        <h3 className="font-semibold">Darbų eiga</h3>
                     </div>
                 )}
 

@@ -225,10 +225,15 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         };
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
+            setError(''); // a recovered snapshot clears any stale listener-error banner
             teamRows = snapshot.docs.map(mapDoc);
             recompute();
         }, (error) => {
             console.error("Error subscribing to archived tasks:", error);
+            // Surface the failure instead of silently rendering an empty "Istorija tuščia" —
+            // a swallowed listener error (e.g. a still-building index) otherwise reads as a
+            // genuinely empty archive.
+            setError('Nepavyko užkrauti istorijos. Patikrinkite ryšį ir bandykite dar kartą.');
             setLoading(false);
         });
 
@@ -243,10 +248,13 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         if (scoped && currentUser?.uid) {
             const vadovasQ = query(collection(db, 'archived_tasks'), where('managerId', '==', currentUser.uid));
             unsubVadovas = onSnapshot(vadovasQ, (snapshot) => {
+                setError(''); // a recovered snapshot clears any stale listener-error banner
                 vadovasRows = snapshot.docs.map(mapDoc);
                 recompute();
             }, (error) => {
                 console.error("Error subscribing to vadovas archived tasks:", error);
+                setError('Nepavyko užkrauti istorijos. Patikrinkite ryšį ir bandykite dar kartą.');
+                setLoading(false);
             });
         }
 
@@ -603,9 +611,9 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 )}
             </div>
 
-            {historyOpen && (
-            <>
-            {/* Friendly error banner — replaces the banned alert() with mapped LT copy (§10) */}
+            {/* Friendly error banner — OUTSIDE the historyOpen gate so a listener failure surfaces
+                even when the archive panel is collapsed (the default), instead of reading as an
+                empty archive. Mapped LT copy, replaces the banned alert() (§10). */}
             {error && (
                 <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4" role="alert">
                     <AlertCircle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
@@ -618,6 +626,9 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     </button>
                 </div>
             )}
+
+            {historyOpen && (
+            <>
 
             {/* Filters — a nested accordion inside the history panel. Collapsed by default so
                 the panel stays compact; the chevron reveals the date/user/tag/sort controls. */}
