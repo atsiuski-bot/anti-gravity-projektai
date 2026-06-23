@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useLayoutEffect, Fragment } from 'react';
 import { db, storage } from '../firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, MessageSquare, Sparkles, Pencil, LayoutTemplate } from 'lucide-react';
+import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
@@ -15,7 +15,7 @@ import { assignTask, createTask, humanActor, MODES } from '../domain';
 import { getPriorityOptions, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
+import { parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
@@ -91,26 +91,65 @@ const isThemeDismissed = (stems) =>
         stemSetsSimilar(stems, new Set(sig.split('|').filter(Boolean)))
     );
 
-// One collapsible row in the optional "Daugiau" block. Keeps the create card short by
-// hiding low-frequency fields behind a labelled, keyboard-reachable disclosure (icon +
-// text label + optional count badge — count never relies on color). DESIGN_SYSTEM §8/§11.
-function AdvancedSection({ icon: Icon, label, count = 0, open, onToggle, children }) {
+// Grow a textarea to fit its content so the description never needs an inner scrollbar — it
+// extends downward as more lines are typed (a CSS min-height keeps a comfortable starting size).
+const autoGrowTextarea = (el) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+};
+
+// Lays the quick time-pick chips out on a SINGLE line that never wraps. A zero-size, off-screen
+// measurement copy reports each chip's natural width; we then show only as many chips as fit
+// before the always-visible trailing control ("+"). Chips that don't fit aren't dropped — the
+// "+" picker holds the full scale, so the row "compresses to one line and the overflow collapses
+// into the plus" (product rule). Re-measures on container resize and whenever `signature` changes.
+function OneLineChips({ items, more, signature }) {
+    const rowRef = useRef(null);
+    const measureRef = useRef(null);
+    const moreRef = useRef(null);
+    const [visible, setVisible] = useState(items.length);
+
+    useLayoutEffect(() => {
+        const recompute = () => {
+            const row = rowRef.current;
+            const measure = measureRef.current;
+            if (!row || !measure) return;
+            const gap = 8; // matches gap-2
+            const moreWidth = moreRef.current ? moreRef.current.offsetWidth + gap : 0;
+            const available = row.clientWidth - moreWidth;
+            let used = 0;
+            let count = 0;
+            for (const chip of Array.from(measure.children)) {
+                const need = (count > 0 ? gap : 0) + chip.offsetWidth;
+                if (used + need <= available) {
+                    used += need;
+                    count += 1;
+                } else {
+                    break;
+                }
+            }
+            setVisible(count);
+        };
+        recompute();
+        const row = rowRef.current;
+        if (!row || typeof ResizeObserver === 'undefined') return undefined;
+        const observer = new ResizeObserver(recompute);
+        observer.observe(row);
+        return () => observer.disconnect();
+    }, [signature]);
+
     return (
-        <div className="rounded-lg border border-line">
-            <button
-                type="button"
-                onClick={onToggle}
-                aria-expanded={open}
-                className="flex w-full min-h-touch items-center gap-3 rounded-lg px-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-            >
-                <Icon className="h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
-                <span className="flex-1 text-base text-ink">{label}</span>
-                {count > 0 && (
-                    <span className="min-w-[1.5rem] rounded-full bg-surface-sunken px-2 text-center text-caption text-ink-muted tabular-nums">{count}</span>
-                )}
-                <ChevronDown className={`h-5 w-5 flex-shrink-0 text-ink-muted transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
-            </button>
-            {open && <div className="px-3 pb-3 pt-1">{children}</div>}
+        <div ref={rowRef} className="relative flex min-w-0 flex-nowrap items-center gap-2">
+            {/* Off-screen, zero-size measurement copy: children report true offsetWidth even though
+                the wrapper is clipped, so it costs no layout space and can't push the modal wider. */}
+            <div aria-hidden="true" className="pointer-events-none absolute h-0 w-0 overflow-hidden">
+                <div ref={measureRef} className="flex w-max flex-nowrap gap-2">
+                    {items.map((it) => <Fragment key={it.key}>{it.node}</Fragment>)}
+                </div>
+            </div>
+            {items.slice(0, visible).map((it) => <Fragment key={it.key}>{it.node}</Fragment>)}
+            <span ref={moreRef} className="flex-shrink-0">{more}</span>
         </div>
     );
 }
@@ -148,21 +187,19 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         checklist: []
     });
 
-    const [newComment, setNewComment] = useState('');
     const [newChecklistItem, setNewChecklistItem] = useState('');
     const [selectedFiles, setSelectedFiles] = useState([]); // Changed to array
     const [uploadProgress, setUploadProgress] = useState(0);
+    // When checked on the create form, pressing the primary button saves a TEMPLATE built from the
+    // filled fields instead of creating a task (the button relabels to "Sukurti šabloną").
+    const [createAsTemplate, setCreateAsTemplate] = useState(false);
+    // The description textarea auto-grows to fit its content; this ref lets us resize it when the
+    // value changes programmatically (AI fill, template apply) as well as on each keystroke.
+    const descriptionRef = useRef(null);
 
     // Estimated-time picker: common values are one-tap chips; the full scale is revealed
     // on demand (or auto-revealed when the saved value isn't one of the common ones).
     const [timePickerOpen, setTimePickerOpen] = useState(false);
-    // Which optional ("Daugiau") sections are currently expanded.
-    const [expanded, setExpanded] = useState({
-        description: false,
-        photos: false,
-        checklist: false,
-        comment: false
-    });
 
     // Template State
     const [templates, setTemplates] = useState([]);
@@ -394,27 +431,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         setOverwriteTemplate(null);
         setTemplateSuggestion(null);
         setIsSavingTemplate(false);
+        setTimePickerOpen(false);
+        setCreateAsTemplate(false);
     }, [isOpen]);
 
-    // When opening an existing task, auto-expand only the optional sections that actually
-    // hold data (so nothing is silently hidden); keep them all collapsed for a new task.
-    // Likewise reveal the full time list when the saved value isn't one of the common chips.
-    useEffect(() => {
-        if (!isOpen) return;
-        if (task) {
-            const photoCount = (task.attachmentUrls?.length || 0) || (task.attachmentUrl ? 1 : 0);
-            setExpanded({
-                description: !!task.description,
-                photos: photoCount > 0,
-                checklist: (task.checklist?.length || 0) > 0,
-                comment: (task.comments?.length || 0) > 0
-            });
-            setTimePickerOpen(false);
-        } else {
-            setExpanded({ description: false, photos: false, checklist: false, comment: false });
-            setTimePickerOpen(false);
-        }
-    }, [task, isOpen, currentUser]);
+    // The description is always shown (no longer collapsed); size it to its content whenever the
+    // value changes — including programmatic fills (AI / template) — and when the modal opens.
+    useLayoutEffect(() => {
+        if (!isOpen || isSavingTemplate) return;
+        autoGrowTextarea(descriptionRef.current);
+    }, [formData.description, isOpen, isSavingTemplate]);
 
     const fetchTemplates = async () => {
         try {
@@ -683,13 +709,50 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         });
     };
 
+    // Save the in-progress create form as a template (the "Kurti kaip šabloną" path). The template
+    // carries exactly the fields the user filled — empty values are skipped so Firestore never
+    // receives a blank field — and the title doubles as the template name. No task is created.
+    const handleCreateTemplateFromForm = async () => {
+        const templateFields = ['title', 'priority', 'estimatedTime', 'description', 'assignedUserId', 'managerId', 'deadline'];
+        const data = {};
+        for (const key of templateFields) {
+            const value = formData[key];
+            if (value !== undefined && value !== null && value !== '') data[key] = value;
+        }
+        const name = formData.title.trim();
+        setLoading(true);
+        try {
+            await saveTaskTemplate(
+                name,
+                data,
+                currentUser,
+                inferTemplateCategory({ templateName: name, data: { title: name } }),
+            );
+            onClose();
+        } catch (error) {
+            logError(error, { source: 'TaskModal.handleCreateTemplateFromForm' });
+            setFormError('Nepavyko išsaugoti šablono. Bandykite dar kartą.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleSubmit = async (e) => {
         e.preventDefault();
 
         // Title is the one field every task truly needs; the combobox input has no native
-        // `required`, so guard it here (analysis: 100% of real tasks carry a title).
+        // `required`, so guard it here (analysis: 100% of real tasks carry a title). The title
+        // also doubles as the template name in the "create as template" path below.
         if (!formData.title.trim()) {
             setFormError('Įveskite pavadinimą.');
+            return;
+        }
+
+        // "Kurti kaip šabloną" — save a TEMPLATE from the currently-filled fields instead of
+        // creating a task. Templates may carry partial data, so the estimated-time guard below is
+        // intentionally skipped on this path. Create-only (the checkbox is hidden when editing).
+        if (!task && createAsTemplate) {
+            await handleCreateTemplateFromForm();
             return;
         }
 
@@ -697,7 +760,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         // is guaranteed to be in the DOM), so guard it explicitly with a friendly message.
         if (!formData.estimatedTime) {
             setFormError('Pasirinkite planuojamą laiką.');
-            setExpanded(prev => ({ ...prev }));
             return;
         }
 
@@ -942,19 +1004,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }
     };
 
-    const addComment = () => {
-        if (newComment) {
-            const comment = {
-                text: newComment,
-                user: currentUser.displayName,
-                userId: currentUser.uid,
-                createdAt: new Date().toISOString()
-            };
-            setFormData(prev => ({ ...prev, comments: [...prev.comments, comment] }));
-            setNewComment('');
-        }
-    };
-
     // Checklist items are composed locally and persisted with the task on save
     // (same array-on-the-doc pattern as links/comments). Live ticking happens on
     // the card via checklistActions; this section is for authoring the item list.
@@ -1036,8 +1085,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             setAiBusy(false);
         }
     };
-
-    const toggleSection = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
 
     // Closing while the template nudge is showing counts as "no thanks" — remember it so the same
     // recurring title is not offered again. Used by the header X and Escape.
@@ -1260,9 +1307,9 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             </div>
 
                             {/* Priority — directly under the title. Signature colour swatches; the active
-                                one carries its text label so colour is never the only signal. */}
+                                one carries its text label so colour is never the only signal. Its caption
+                                is intentionally dropped (the active swatch's own label names it). */}
                             <div>
-                                <span className="mb-1 block text-caption font-medium text-ink-muted">Prioritetas</span>
                                 <div role="group" aria-label="Prioritetas" className="flex gap-1 rounded-lg border border-line p-1">
                                     {[...getPriorityOptions()].reverse().map((p) => {
                                         const active = normalizePriority(formData.priority) === p.id;
@@ -1293,14 +1340,22 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             </div>
 
                             {/* Deadline — optional; the placeholder carries the label. The text→date type
-                                swap keeps that placeholder readable until the field is focused. */}
+                                swap keeps that placeholder readable until the field is focused, and a tap
+                                immediately pops the native calendar (showPicker) instead of needing a second
+                                tap on the tiny date glyph. */}
                             <div>
                                 <input
                                     type={formData.deadline ? "date" : "text"}
                                     value={formData.deadline}
                                     onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-                                    onFocus={(e) => e.target.type = 'date'}
-                                    onBlur={(e) => !e.target.value && (e.target.type = 'text')}
+                                    onFocus={(e) => { e.target.type = 'date'; }}
+                                    onClick={(e) => {
+                                        e.target.type = 'date';
+                                        // showPicker needs a user gesture (this click) and isn't in every
+                                        // browser; ignore if unsupported/blocked — the field still works.
+                                        try { e.target.showPicker?.(); } catch { /* no-op */ }
+                                    }}
+                                    onBlur={(e) => { if (!e.target.value) e.target.type = 'text'; }}
                                     aria-label="Atlikti iki"
                                     placeholder="Atlikti iki… (neprivalomas įrašas)"
                                     disabled={fieldsLocked}
@@ -1369,70 +1424,89 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
                             {/* Estimated time — a per-title suggestion (when history has one) leads as a
                                 distinct chip; then four one-tap quick durations; the full scale and a
-                                free-text custom value live one tap away behind the "+" picker. */}
+                                free-text custom value live one tap away behind the "+" picker. The chips
+                                are laid out on a single line that never wraps: any that don't fit collapse
+                                into the "+" (OneLineChips), which holds the full scale anyway. */}
                             <div>
                                 <span className="mb-1 block text-caption font-medium text-ink-muted">Planuojamas laikas</span>
-                                <div className="flex flex-wrap items-center gap-2">
-                                    {suggestedTime && formData.estimatedTime !== suggestedTime && (
-                                        <button
-                                            type="button"
-                                            onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: suggestedTime })); setTimePickerOpen(false); }}
-                                            disabled={fieldsLocked}
-                                            aria-label={`Siūloma trukmė: ${suggestedTime}`}
-                                            className="inline-flex items-center gap-1 min-h-touch rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
-                                        >
-                                            <Sparkles className="h-4 w-4" aria-hidden="true" />
-                                            Siūloma {suggestedTime}
-                                        </button>
-                                    )}
-                                    {timeChips
-                                        .filter((t) => !(suggestedTime && formData.estimatedTime !== suggestedTime && t === suggestedTime))
-                                        .map((t) => {
-                                            const active = formData.estimatedTime === t;
-                                            return (
+                                {(() => {
+                                    const showSuggested = suggestedTime && formData.estimatedTime !== suggestedTime;
+                                    const items = [];
+                                    if (showSuggested) {
+                                        items.push({
+                                            key: `suggested-${suggestedTime}`,
+                                            node: (
                                                 <button
-                                                    key={t}
                                                     type="button"
-                                                    onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: t })); setTimePickerOpen(false); }}
+                                                    onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: suggestedTime })); setTimePickerOpen(false); }}
                                                     disabled={fieldsLocked}
-                                                    aria-pressed={active}
-                                                    className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
+                                                    aria-label={`Siūloma trukmė: ${suggestedTime}`}
+                                                    className="inline-flex items-center gap-1 min-h-touch whitespace-nowrap rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
                                                 >
-                                                    {t}
+                                                    <Sparkles className="h-4 w-4" aria-hidden="true" />
+                                                    Siūloma {suggestedTime}
                                                 </button>
-                                            );
-                                        })}
-                                    {/* The current value when it is off the four quick chips (a "+"-picked or
-                                        custom duration) — shown as its own active chip so the choice stays visible;
-                                        tapping it reopens the picker. */}
-                                    {(() => {
-                                        const v = formData.estimatedTime;
-                                        const covered = !v || timeChips.includes(v) || (suggestedTime && v === suggestedTime);
-                                        if (covered) return null;
-                                        return (
-                                            <button
-                                                type="button"
-                                                onClick={() => setTimePickerOpen(true)}
-                                                disabled={fieldsLocked}
-                                                aria-pressed="true"
-                                                className="min-h-touch rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
-                                            >
-                                                {v}
-                                            </button>
-                                        );
-                                    })()}
-                                    {/* "+" opens the full scrollable scale + custom entry. */}
-                                    <button
-                                        type="button"
-                                        onClick={() => setTimePickerOpen(true)}
-                                        disabled={fieldsLocked}
-                                        aria-label="Pasirinkti kitą planuojamą laiką"
-                                        title="Daugiau…"
-                                        className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border border-line text-ink-muted transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
-                                    >
-                                        <Plus className="h-5 w-5" aria-hidden="true" />
-                                    </button>
-                                </div>
+                                            ),
+                                        });
+                                    }
+                                    timeChips
+                                        .filter((t) => !(showSuggested && t === suggestedTime))
+                                        .forEach((t) => {
+                                            const active = formData.estimatedTime === t;
+                                            items.push({
+                                                key: `chip-${t}`,
+                                                node: (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: t })); setTimePickerOpen(false); }}
+                                                        disabled={fieldsLocked}
+                                                        aria-pressed={active}
+                                                        className={`min-h-touch whitespace-nowrap rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
+                                                    >
+                                                        {t}
+                                                    </button>
+                                                ),
+                                            });
+                                        });
+                                    // The current value when it is off the four quick chips (a "+"-picked or
+                                    // custom duration) — shown as its own active chip so the choice stays visible.
+                                    const v = formData.estimatedTime;
+                                    const covered = !v || timeChips.includes(v) || (suggestedTime && v === suggestedTime);
+                                    if (!covered) {
+                                        items.push({
+                                            key: `custom-${v}`,
+                                            node: (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setTimePickerOpen(true)}
+                                                    disabled={fieldsLocked}
+                                                    aria-pressed="true"
+                                                    className="min-h-touch whitespace-nowrap rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                                >
+                                                    {v}
+                                                </button>
+                                            ),
+                                        });
+                                    }
+                                    return (
+                                        <OneLineChips
+                                            items={items}
+                                            signature={`${formData.estimatedTime}|${suggestedTime}|${fieldsLocked}|${items.map((i) => i.key).join(',')}`}
+                                            more={
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setTimePickerOpen(true)}
+                                                    disabled={fieldsLocked}
+                                                    aria-label="Pasirinkti kitą planuojamą laiką"
+                                                    title="Daugiau…"
+                                                    className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border border-line text-ink-muted transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                                >
+                                                    <Plus className="h-5 w-5" aria-hidden="true" />
+                                                </button>
+                                            }
+                                        />
+                                    );
+                                })()}
                             </div>
 
                             <TimeEstimatePicker
@@ -1442,201 +1516,178 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 onClose={() => setTimePickerOpen(false)}
                             />
 
-                            {/* ─────────────── "Daugiau" — optional, collapsed by default ─────────────── */}
-                            <div className="border-t border-line pt-4">
-                                <p className="mb-2 text-caption text-ink-muted">Daugiau (neprivaloma)</p>
-                                <div className="space-y-2">
-                                    {/* Description */}
-                                    <AdvancedSection icon={AlignLeft} label="Aprašymas" count={formData.description ? 1 : 0} open={expanded.description} onToggle={() => toggleSection('description')}>
-                                        <textarea
-                                            value={formData.description}
-                                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                            disabled={fieldsLocked}
-                                            rows={3}
-                                            placeholder="Užduoties aprašymas..."
-                                            aria-label="Aprašymas"
-                                            className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
-                                        />
-                                    </AdvancedSection>
-
-                                    {/* Photos — direct-camera button (workers photograph work on-site)
-                                        alongside a gallery picker. capture="environment" opens the rear
-                                        camera on phones and is ignored on desktop. */}
-                                    <AdvancedSection icon={Camera} label="Nuotraukos" count={(formData.attachmentUrls?.length || 0) + selectedFiles.length} open={expanded.photos} onToggle={() => toggleSection('photos')}>
-                                        <p className="mb-2 text-caption text-ink-muted">Maksimaliai 8 nuotraukos.</p>
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand">
-                                                <Camera className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
-                                                <span className="text-base text-ink-muted">Fotografuoti</span>
-                                                <input
-                                                    type="file"
-                                                    accept="image/*"
-                                                    capture="environment"
-                                                    onChange={handleFileSelect}
-                                                    className="hidden"
-                                                />
-                                            </label>
-                                            <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand">
-                                                <Plus className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
-                                                <span className="text-base text-ink-muted">Iš galerijos</span>
-                                                <input
-                                                    type="file"
-                                                    accept="image/*"
-                                                    multiple // Allow multiple files
-                                                    onChange={handleFileSelect}
-                                                    className="hidden"
-                                                />
-                                            </label>
-                                        </div>
-
-                                        {/* Display Existing Attachments */}
-                                        {formData.attachmentUrls && formData.attachmentUrls.length > 0 && (
-                                            <div className="mt-4 grid grid-cols-2 gap-2">
-                                                {formData.attachmentUrls.map((url, index) => (
-                                                    <div key={`existing-${index}`} className="relative group border rounded-lg p-1">
-                                                        <a href={url} target="_blank" rel="noopener noreferrer">
-                                                            <img src={url} alt={`Priedas ${index + 1}`} className="w-full h-24 object-cover rounded" />
-                                                        </a>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => removeExistingAttachment(index)}
-                                                            aria-label="Pašalinti nuotrauką"
-                                                            className="absolute top-1 right-1 inline-flex items-center justify-center min-h-touch min-w-touch bg-surface-card rounded-full text-feedback-danger shadow transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                                                        >
-                                                            <Trash2 className="w-4 h-4" aria-hidden="true" />
-                                                        </button>
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-
-                                        {/* Display Selected (Proposed) Attachments — with original size
-                                            so the worker can judge the mobile-data cost before uploading. */}
-                                        {selectedFiles.length > 0 && (
-                                            <div className="mt-4">
-                                                <p className="text-xs font-semibold text-ink-muted mb-2">Naujai pasirinktos:</p>
-                                                <div className="space-y-2">
-                                                    {selectedFiles.map((file, index) => (
-                                                        <div key={`selected-${index}`} className="flex items-center justify-between gap-2 text-sm text-ink bg-surface-sunken p-2 rounded">
-                                                            <span className="truncate min-w-0 flex-1">{file.name}</span>
-                                                            <span className="shrink-0 text-caption text-ink-muted tabular-nums">{formatBytes(file.size)}</span>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => removeSelectedFile(index)}
-                                                                aria-label={`Pašalinti ${file.name}`}
-                                                                className="inline-flex items-center justify-center min-h-touch min-w-touch shrink-0 text-ink-muted hover:text-feedback-danger rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                                                            >
-                                                                <X className="w-4 h-4" aria-hidden="true" />
-                                                            </button>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-
-                                        {/* Combined upload progress (slow mobile networks) */}
-                                        {loading && selectedFiles.length > 0 && (
-                                            <div className="mt-3" aria-live="polite">
-                                                <div className="mb-1 flex items-center justify-between text-caption text-ink-muted">
-                                                    <span>Keliama…</span>
-                                                    <span className="tabular-nums">{uploadProgress}%</span>
-                                                </div>
-                                                <div
-                                                    className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
-                                                    role="progressbar"
-                                                    aria-valuenow={uploadProgress}
-                                                    aria-valuemin={0}
-                                                    aria-valuemax={100}
-                                                    aria-label="Nuotraukų įkėlimo eiga"
-                                                >
-                                                    <div className="h-full rounded-full bg-brand transition-all duration-base" style={{ width: `${uploadProgress}%` }} />
-                                                </div>
-                                            </div>
-                                        )}
-                                    </AdvancedSection>
-
-                                    {/* Checklist (sub-tasks) authoring. Stored on the task doc; workers
-                                        tick items live from the card. Editable here when creating, or by
-                                        a manager editing an existing task — otherwise shown read-only. */}
-                                    <AdvancedSection icon={CheckSquare} label="Kontrolinis sąrašas" count={formData.checklist?.length || 0} open={expanded.checklist} onToggle={() => toggleSection('checklist')}>
-                                        {(isManager || !task) && (
-                                            <div className="flex gap-2">
-                                                <input
-                                                    type="text"
-                                                    value={newChecklistItem}
-                                                    onChange={(e) => setNewChecklistItem(e.target.value)}
-                                                    placeholder="Pridėti punktą..."
-                                                    className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
-                                                />
-                                                <IconButton icon={Plus} label="Pridėti punktą" variant="primary" onClick={addChecklistItemLocal} />
-                                            </div>
-                                        )}
-                                        {formData.checklist && formData.checklist.length > 0 && (
-                                            <ul className="mt-2 space-y-2">
-                                                {formData.checklist.map((item) => (
-                                                    <li key={item.id} className="flex items-center justify-between gap-2 bg-surface-sunken p-2 rounded-lg">
-                                                        <span className="flex items-center gap-2 min-w-0 flex-1">
-                                                            {item.done
-                                                                ? <CheckSquare className="w-4 h-4 flex-shrink-0 text-brand" aria-hidden="true" />
-                                                                : <Square className="w-4 h-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
-                                                            <span className={`truncate text-sm ${item.done ? 'text-ink-muted line-through' : 'text-ink'}`}>{item.text}</span>
-                                                        </span>
-                                                        {(isManager || !task) && (
-                                                            <IconButton icon={Trash2} label="Pašalinti punktą" variant="danger" onClick={() => removeChecklistItemLocal(item.id)} />
-                                                        )}
-                                                    </li>
-                                                ))}
-                                            </ul>
-                                        )}
-                                    </AdvancedSection>
-
-                                    {/* Comment */}
-                                    <AdvancedSection icon={MessageSquare} label="Komentaras" count={formData.comments?.length || 0} open={expanded.comment} onToggle={() => toggleSection('comment')}>
-                                        <div className="flex items-end gap-2">
-                                            <textarea
-                                                value={newComment}
-                                                onChange={(e) => setNewComment(e.target.value)}
-                                                placeholder="Rašyti komentarą..."
-                                                aria-label="Rašyti komentarą"
-                                                rows={2}
-                                                className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base resize-y"
-                                            />
-                                            <button type="button" onClick={addComment} className="min-h-touch bg-brand-soft text-brand px-4 rounded-lg hover:bg-brand-soft font-medium whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2">
-                                                Skelbti
-                                            </button>
-                                        </div>
-                                    </AdvancedSection>
-                                </div>
+                            {/* Description — always shown and auto-growing: the field extends downward as
+                                more lines are typed instead of scrolling inside a fixed box. The placeholder
+                                carries the label (no separate caption). */}
+                            <div>
+                                <textarea
+                                    ref={descriptionRef}
+                                    value={formData.description}
+                                    onChange={(e) => { setFormData({ ...formData, description: e.target.value }); autoGrowTextarea(e.target); }}
+                                    disabled={fieldsLocked}
+                                    placeholder="Užduoties aprašymas..."
+                                    aria-label="Aprašymas"
+                                    className="w-full min-h-[6rem] resize-none overflow-hidden px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
+                                />
                             </div>
 
-                            {/* Timestamps - Read Only */}
-                            {
-                                task && (
-                                    <div className="text-xs text-ink-muted border-t border-line pt-4 flex flex-col gap-1.5">
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                            {task.createdAt && <div><span className="font-semibold text-ink">Sukurta:</span> {new Date(task.createdAt).toLocaleString('lt-LT')}{task.creatorName && <span className="ml-1 text-ink-muted">({task.creatorName})</span>}</div>}
-                                            {task.assignedAt && <div><span className="font-semibold text-ink">Priskirta:</span> {new Date(task.assignedAt).toLocaleString('lt-LT')}</div>}
-                                            {task.startedAt && <div><span className="font-semibold text-ink">Pradėta:</span> {new Date(task.startedAt).toLocaleString('lt-LT')}</div>}
-                                            {task.completedAt && <div><span className="font-semibold text-ink">Užbaigta:</span> {new Date(task.completedAt).toLocaleString('lt-LT')}</div>}
-                                            {task.approvedAt && <div><span className="font-semibold text-ink">Patvirtinta:</span> {new Date(task.approvedAt).toLocaleString('lt-LT')}</div>}
-                                            {task.confirmedAt && !task.approvedAt && <div><span className="font-semibold text-ink">Patvirtinta:</span> {new Date(task.confirmedAt).toLocaleString('lt-LT')}</div>}
-                                        </div>
-                                        {(() => {
-                                            const spent = calculateCurrentTotalMinutes(task);
-                                            if (spent > 0) {
-                                                return (
-                                                    <div className="flex items-center gap-1 font-bold text-feedback-info mt-1">
-                                                        <Clock className="w-3.5 h-3.5" />
-                                                        Praleistas laikas: {formatMinutesToTimeString(spent)}
-                                                    </div>
-                                                );
-                                            }
-                                            return null;
-                                        })()}
-                                        {task.id && <div className="font-mono text-caption text-ink-muted mt-1">ID: {task.id}</div>}
+                            {/* Photos — always shown as two direct actions (no section heading): a rear-camera
+                                capture and a gallery picker. capture="environment" opens the rear camera on
+                                phones and is ignored on desktop. The "max 8" note appears only once at least
+                                one photo is attached. */}
+                            <div>
+                                {(formData.attachmentUrls?.length || 0) + selectedFiles.length > 0 && (
+                                    <p className="mb-2 text-caption text-ink-muted">Maksimaliai 8 nuotraukos.</p>
+                                )}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand">
+                                        <Camera className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                                        <span className="text-base text-ink-muted">Fotografuoti</span>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            capture="environment"
+                                            onChange={handleFileSelect}
+                                            disabled={fieldsLocked}
+                                            className="hidden"
+                                        />
+                                    </label>
+                                    <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand">
+                                        <Plus className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                                        <span className="text-base text-ink-muted">Iš galerijos</span>
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            multiple // Allow multiple files
+                                            onChange={handleFileSelect}
+                                            disabled={fieldsLocked}
+                                            className="hidden"
+                                        />
+                                    </label>
+                                </div>
+
+                                {/* Display Existing Attachments */}
+                                {formData.attachmentUrls && formData.attachmentUrls.length > 0 && (
+                                    <div className="mt-4 grid grid-cols-2 gap-2">
+                                        {formData.attachmentUrls.map((url, index) => (
+                                            <div key={`existing-${index}`} className="relative group border rounded-lg p-1">
+                                                <a href={url} target="_blank" rel="noopener noreferrer">
+                                                    <img src={url} alt={`Priedas ${index + 1}`} className="w-full h-24 object-cover rounded" />
+                                                </a>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removeExistingAttachment(index)}
+                                                    aria-label="Pašalinti nuotrauką"
+                                                    className="absolute top-1 right-1 inline-flex items-center justify-center min-h-touch min-w-touch bg-surface-card rounded-full text-feedback-danger shadow transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                >
+                                                    <Trash2 className="w-4 h-4" aria-hidden="true" />
+                                                </button>
+                                            </div>
+                                        ))}
                                     </div>
-                                )
-                            }
+                                )}
+
+                                {/* Display Selected (Proposed) Attachments — with original size
+                                    so the worker can judge the mobile-data cost before uploading. */}
+                                {selectedFiles.length > 0 && (
+                                    <div className="mt-4">
+                                        <p className="text-xs font-semibold text-ink-muted mb-2">Naujai pasirinktos:</p>
+                                        <div className="space-y-2">
+                                            {selectedFiles.map((file, index) => (
+                                                <div key={`selected-${index}`} className="flex items-center justify-between gap-2 text-sm text-ink bg-surface-sunken p-2 rounded">
+                                                    <span className="truncate min-w-0 flex-1">{file.name}</span>
+                                                    <span className="shrink-0 text-caption text-ink-muted tabular-nums">{formatBytes(file.size)}</span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => removeSelectedFile(index)}
+                                                        aria-label={`Pašalinti ${file.name}`}
+                                                        className="inline-flex items-center justify-center min-h-touch min-w-touch shrink-0 text-ink-muted hover:text-feedback-danger rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                    >
+                                                        <X className="w-4 h-4" aria-hidden="true" />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Combined upload progress (slow mobile networks) */}
+                                {loading && selectedFiles.length > 0 && (
+                                    <div className="mt-3" aria-live="polite">
+                                        <div className="mb-1 flex items-center justify-between text-caption text-ink-muted">
+                                            <span>Keliama…</span>
+                                            <span className="tabular-nums">{uploadProgress}%</span>
+                                        </div>
+                                        <div
+                                            className="h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
+                                            role="progressbar"
+                                            aria-valuenow={uploadProgress}
+                                            aria-valuemin={0}
+                                            aria-valuemax={100}
+                                            aria-label="Nuotraukų įkėlimo eiga"
+                                        >
+                                            <div className="h-full rounded-full bg-brand transition-all duration-base" style={{ width: `${uploadProgress}%` }} />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Eigos sąrašas (progress list / sub-tasks) — always open. Stored on the task
+                                doc; workers tick items live from the card. Editable here when creating, or by
+                                a manager editing an existing task — otherwise shown read-only. */}
+                            <div>
+                                <span className="mb-1 block text-caption font-medium text-ink-muted">Eigos sąrašas</span>
+                                {(isManager || !task) && (
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={newChecklistItem}
+                                            onChange={(e) => setNewChecklistItem(e.target.value)}
+                                            placeholder="Pridėti punktą..."
+                                            className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
+                                        />
+                                        <IconButton icon={Plus} label="Pridėti punktą" variant="primary" onClick={addChecklistItemLocal} />
+                                    </div>
+                                )}
+                                {formData.checklist && formData.checklist.length > 0 && (
+                                    <ul className="mt-2 space-y-2">
+                                        {formData.checklist.map((item) => (
+                                            <li key={item.id} className="flex items-center justify-between gap-2 bg-surface-sunken p-2 rounded-lg">
+                                                <span className="flex items-center gap-2 min-w-0 flex-1">
+                                                    {item.done
+                                                        ? <CheckSquare className="w-4 h-4 flex-shrink-0 text-brand" aria-hidden="true" />
+                                                        : <Square className="w-4 h-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
+                                                    <span className={`truncate text-sm ${item.done ? 'text-ink-muted line-through' : 'text-ink'}`}>{item.text}</span>
+                                                </span>
+                                                {(isManager || !task) && (
+                                                    <IconButton icon={Trash2} label="Pašalinti punktą" variant="danger" onClick={() => removeChecklistItemLocal(item.id)} />
+                                                )}
+                                            </li>
+                                        ))}
+                                    </ul>
+                                )}
+                            </div>
+
+                            {/* Create-as-template — when checked, the primary button saves a template built
+                                from the filled fields instead of creating a task (manager tool, create only). */}
+                            {!task && isManager && (
+                                <div className="border-t border-line pt-4">
+                                    <label className="flex min-h-touch cursor-pointer items-center gap-3">
+                                        <input
+                                            type="checkbox"
+                                            checked={createAsTemplate}
+                                            onChange={(e) => setCreateAsTemplate(e.target.checked)}
+                                            className="h-5 w-5 rounded text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                        />
+                                        <span className="text-base text-ink">Kurti kaip šabloną</span>
+                                    </label>
+                                    {createAsTemplate && (
+                                        <p className="mt-1 pl-8 text-caption text-ink-muted">
+                                            Bus sukurtas šablonas su užpildytais laukais (darbas nebus sukurtas).
+                                        </p>
+                                    )}
+                                </div>
+                            )}
                         </form>
                     )}
                 </div>
@@ -1658,24 +1709,13 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         </>
                     ) : (
                         <>
-                            <div className="flex flex-1 items-center justify-start">
-                                {!task && isManagerRole(role) && (
-                                    <Button
-                                        variant="ghost"
-                                        size="md"
-                                        onClick={() => setIsPickingTemplate(true)}
-                                        title="Peržiūrėti, išsaugoti, keisti ar ištrinti šablonus"
-                                    >
-                                        <LayoutTemplate className="h-4 w-4" aria-hidden="true" />
-                                        Šablonai
-                                    </Button>
-                                )}
-                            </div>
                             <Button variant="secondary" size="md" onClick={onClose}>
                                 Atšaukti
                             </Button>
                             <Button type="submit" form="task-form" variant="primary" size="md" loading={loading}>
-                                {loading ? (selectedFiles.length > 0 ? 'Keliama…' : 'Saugoma…') : (task ? 'Išsaugoti' : 'Sukurti')}
+                                {loading
+                                    ? (selectedFiles.length > 0 ? 'Keliama…' : 'Saugoma…')
+                                    : (!task && createAsTemplate ? 'Sukurti šabloną' : (task ? 'Išsaugoti' : 'Sukurti'))}
                             </Button>
                         </>
                     )}
