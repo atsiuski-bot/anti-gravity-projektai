@@ -93,7 +93,7 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
 
                     <div className="rounded-card border border-line bg-surface-card p-4 text-center">
                         <span className="block text-caption font-medium uppercase tracking-wide text-ink-muted">
-                            Atskaičius mokesčius (į rankas)
+                            Apytikslis uždarbis į rankas (orientacinis)
                         </span>
                         <span className="mt-1 block text-h2 font-bold tabular-nums text-feedback-success-text">
                             {formatEur(netEarnings)}
@@ -102,8 +102,9 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
 
                     <p className="text-center text-caption text-ink-muted">
                         Įkainis: {formatEurPerHour(taskHours > 0 ? grossEarnings / taskHours : 0)} su mokesčiais ·{' '}
-                        {formatEurPerHour(taskHours > 0 ? netEarnings / taskHours : 0)} į rankas. Mokesčiai pagal
-                        individualią veiklą (~{taxPct}%).
+                        {formatEurPerHour(taskHours > 0 ? netEarnings / taskHours : 0)} į rankas. Suma „į rankas“ –
+                        orientacinė: mokesčiai skaičiuoti pagal fiksuotą prielaidą (individuali veikla, ~{taxPct}%,
+                        ~30 000 €/m. pajamos, be išlaidų). Tikrasis atskaitymas priklauso nuo Jūsų visų metinių pajamų.
                     </p>
                 </div>
             )}
