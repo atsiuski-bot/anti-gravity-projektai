@@ -1,7 +1,5 @@
-import React, { useState, useEffect, useRef, useId } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState, useEffect, useId } from 'react';
 import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
-import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
@@ -9,42 +7,31 @@ import Modal from './ui/Modal';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
-    const dialogRef = useRef(null);
     const titleId = useId();
 
-    // Focus-in, focus restore, Escape, and a Tab focus-trap (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
-
-    if (!isOpen) return null;
-
+    // Routed through the canonical Modal (DESIGN_SYSTEM §8): the scrim, z-ladder, portal,
+    // focus-trap and dismissal (backdrop tap + Escape) are all shared. `bare` + a block scroll
+    // container preserve the bordered, sticky icon header this details modal has always shown.
     return (
-        <div
-            className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4"
-            onClick={onClose}
-            onTouchEnd={(e) => { e.stopPropagation(); onClose(); }}
+        <Modal
+            open={isOpen}
+            onClose={onClose}
+            ariaLabelledby={titleId}
+            size="xl"
+            bare
+            className="block max-h-[80vh] overflow-y-auto"
         >
-            <div
-                ref={dialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={titleId}
-                tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto focus:outline-none"
-                onClick={(e) => e.stopPropagation()}
-                onTouchEnd={(e) => e.stopPropagation()}
-            >
-                <div className="flex justify-between items-center p-4 border-b border-line sticky top-0 bg-surface-card z-10">
-                    <div className="flex items-center gap-2">
-                        {Icon && <Icon className="w-5 h-5 text-brand" />}
-                        <h3 id={titleId} className="text-lg font-semibold text-ink-strong">{title}</h3>
-                    </div>
-                    <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
+            <div className="flex justify-between items-center p-4 border-b border-line sticky top-0 bg-surface-card z-10">
+                <div className="flex items-center gap-2">
+                    {Icon && <Icon className="w-5 h-5 text-brand" />}
+                    <h3 id={titleId} className="text-lg font-semibold text-ink-strong">{title}</h3>
                 </div>
-                <div className="p-6">
-                    {children}
-                </div>
+                <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
             </div>
-        </div>
+            <div className="p-6">
+                {children}
+            </div>
+        </Modal>
     );
 }
 
@@ -380,7 +367,6 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     const [scrollLeft, setScrollLeft] = useState(0);
     const [scrollTop, setScrollTop] = useState(0);
     const containerRef = React.useRef(null);
-    const dialogRef = React.useRef(null);
     const isDragOccurred = React.useRef(false);
 
     const hasMultiple = imageUrls && imageUrls.length > 1;
@@ -399,9 +385,6 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
     }, [isOpen, hasMultiple, imageUrls]);
-
-    // Move focus into the viewer, restore on close, Escape closes, and trap Tab (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
 
     if (!isOpen || !imageUrls || imageUrls.length === 0) return null;
 
@@ -467,17 +450,24 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
         containerRef.current.scrollTop = scrollTop - walkY;
     };
 
-    const modalContent = (
-        <div
-            ref={dialogRef}
-            className="fixed inset-0 z-top flex items-center justify-center bg-black/95 focus:outline-none"
-            onClick={onClose}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Nuotraukos peržiūra"
-            tabIndex={-1}
+    // Routed through the canonical Modal (DESIGN_SYSTEM §8) for the shared focus-trap, Escape,
+    // portal and dialog stack (so it sits cleanly above an already-open task modal via
+    // level="top"). `bare` + a full-bleed black dialog reproduce the edge-to-edge lightbox;
+    // the dialog covers the scrim, so click-to-close lives on the dialog surface itself.
+    return (
+        <Modal
+            open={isOpen}
+            onClose={onClose}
+            ariaLabel="Nuotraukos peržiūra"
+            level="top"
+            bare
+            closeOnBackdrop={false}
+            className="h-screen max-h-screen w-screen max-w-none rounded-none bg-black/95 shadow-none"
         >
-            <div className={`relative w-full h-full flex items-center justify-center overflow-hidden`}>
+            <div
+                className="relative w-full h-full flex items-center justify-center overflow-hidden"
+                onClick={onClose}
+            >
                 {/* Controls - Only show when not zoomed or fix them to screen edges */}
                 <button
                     type="button"
@@ -561,10 +551,8 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                     </div>
                 )}
             </div>
-        </div>
+        </Modal>
     );
-
-    return createPortal(modalContent, document.body);
 }
 
 export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error, level = 'modal' }) {
