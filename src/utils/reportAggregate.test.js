@@ -198,11 +198,11 @@ describe('renderers', () => {
         expect(md).toContain('Skaitymo gairės modeliui');
     });
 
-    it('CSV has a header row keyed on a stable userId column', () => {
+    it('CSV has a header row keyed on a stable user-id column', () => {
         const csv = renderReportCSV(report);
         const [header] = csv.split('\n');
         expect(header).toContain('Vykdytojas');
-        expect(header).toContain('userId');
+        expect(header).toContain('Vartotojo ID');
         expect(csv).toContain('u1');
     });
 });

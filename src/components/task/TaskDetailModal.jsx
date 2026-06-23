@@ -113,7 +113,7 @@ export default function TaskDetailModal({
                     <PriorityBadge priority={task.priority} size="md" pill />
                     {isDeleted && <DeletedBadge />}
                     {task.tag && (
-                        <span className="inline-flex items-center rounded-full border border-purple-200 bg-purple-100 px-2 py-0.5 text-caption font-semibold text-purple-800">
+                        <span className="inline-flex items-center rounded-full border border-line bg-surface-sunken px-2 py-0.5 text-caption font-semibold text-ink">
                             {task.tag}
                         </span>
                     )}
@@ -141,7 +141,7 @@ export default function TaskDetailModal({
                     </MetaRow>
                     {showManagerLine && managerName && (
                         <MetaRow icon={UserCog} label="Vadovas">
-                            <UserChip userId={task.managerId || task.creatorId} name={managerName} className="font-medium text-purple-700" />
+                            <UserChip userId={task.managerId || task.creatorId} name={managerName} className="font-medium" />
                         </MetaRow>
                     )}
                     <MetaRow icon={Calendar} label="Atlikti iki">

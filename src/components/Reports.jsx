@@ -189,8 +189,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
             const getUserName = (uid, sessionName) => {
                 const u = users?.find(user => user.id === uid);
                 if (u) return u.displayName || u.email;
-                if (sessionName && sessionName !== 'Unknown') return sessionName;
-                return 'Unknown';
+                if (sessionName && sessionName !== 'Unknown' && sessionName !== 'Nežinomas') return sessionName;
+                return 'Nežinomas vykdytojas';
             };
 
             // Helper to init user map
@@ -373,16 +373,20 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
             // Convert to array
             const results = Object.values(userMap).sort((a, b) => b.totalMinutes - a.totalMinutes);
+            setError('');
             setWorkData(results);
 
         } catch (error) {
             console.error("Error fetching work hours:", error);
+            // Surface the failure as a friendly banner instead of silently leaving the report
+            // empty — a swallowed fetch error otherwise reads as a genuine "no work" result.
+            setError('Nepavyko užkrauti darbo valandų ataskaitos. Patikrinkite ryšį ir bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
     };
 
-    const fetchTasks = async () => {
+    const fetchTasks = async ({ preserveError = false } = {}) => {
         setLoading(true);
         try {
             const isManager = isManagerRole(userRole);
@@ -481,10 +485,17 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 return timeB - timeA;
             });
 
+            // Don't clear a caller-set banner (e.g. confirmRevert calls fetchTasks() to restore
+            // the optimistically-removed task AFTER a failed revert — the READ succeeds and would
+            // otherwise wipe the revert-failure message).
+            if (!preserveError) setError('');
             setFilteredTasks(sortedTasks);
 
         } catch (error) {
             console.error("Error fetching tasks:", error);
+            // Surface the failure (banner) instead of falling through to the empty-state copy,
+            // which would misread a failed load as "no tasks found".
+            setError('Nepavyko užkrauti užduočių ataskaitos. Patikrinkite ryšį ir bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
@@ -513,8 +524,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
             } else {
                 setCalendarHistory(data);
             }
+            setError('');
         } catch (error) {
             console.error("Error fetching calendar history:", error);
+            setError('Nepavyko užkrauti kalendoriaus istorijos. Patikrinkite ryšį ir bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
@@ -634,7 +647,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
             // Never surface raw err.message to the user (§10) — map to friendly Lithuanian copy.
             setError("Klaida grąžinant užduotį. Bandykite iš naujo arba kontaktuokite vadybą.");
             setRevertTarget(null);
-            fetchTasks(); // Refresh on error
+            fetchTasks({ preserveError: true }); // Refresh on error — keep the revert-failure banner
         } finally {
             setReverting(false);
         }
@@ -1240,7 +1253,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         ).length;
                         return (
                             <p className="mb-3 px-1 text-caption text-ink-muted">
-                                Planą turi {withPlan} iš {rows.length} darbuotojų
+                                Planą turi {withPlan} iš {rows.length} vykdytojų
                                 {withPlan < rows.length ? ' — likusiems „Skirtumas" neskaičiuojamas.' : '.'}
                             </p>
                         );
@@ -1366,7 +1379,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         </div>
                     )}
 
-                    {!loading && calendarHistory.length === 0 && (
+                    {!loading && !error && calendarHistory.length === 0 && (
                         <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                             Pagal pasirinktą laikotarpį nėra išsaugota jokių kalendoriaus pakeitimų istorijoje.
                         </div>
@@ -1564,7 +1577,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 />
                             ))}
 
-                            {groupedTasks.length === 0 && (
+                            {!error && groupedTasks.length === 0 && (
                                 <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                                     Nerasta užduočių pagal pasirinktus filtrus.
                                 </div>

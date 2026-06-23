@@ -202,7 +202,7 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
                 'Trukmės apkarpytos iki realių ribų (darbo sesija ≤ 16 val.) prieš sumuojant.',
                 `Punktualumas: darbas pradėtas ≤ ${ON_TIME_GRACE_MIN} min. po planuotos pamainos = „laiku".`,
                 'Δ — pokytis prieš ankstesnį tokio paties ilgio laikotarpį; „geriau"/„prasčiau" pagal metrikos kryptį.',
-                'Uždarbis — neto po mokesčių, tarpinis pagal darbuotojo tarifų pakopas ir kaupiamas mėnesio valandas.',
+                'Uždarbis — neto po mokesčių, tarpinis pagal vykdytojo tarifų pakopas ir kaupiamas mėnesio valandas.',
                 'Pripažinimo skaičiai — viso per visą laiką (ne šio laikotarpio).',
             ],
         },
@@ -257,7 +257,7 @@ export function renderReportMarkdown(report) {
 
     const t = report.team;
     L.push('## Komandos suvestinė');
-    L.push(`- Darbuotojų: ${t.workerCount}`);
+    L.push(`- Vykdytojų: ${t.workerCount}`);
     L.push(`- Viso dirbta: ${formatStatValue(t.totalHours, 'hours')}`);
     L.push(`- Užbaigta užduočių: ${t.completedTasks}`);
     if (Number.isFinite(t.avgOnTimePct)) L.push(`- Vid. punktualus startas: ${t.avgOnTimePct}%`);
@@ -308,7 +308,7 @@ export function renderReportJSON(report) {
 export function renderReportCSV(report) {
     const cols = [
         { header: 'Vykdytojas', get: (w) => w.name },
-        { header: 'userId', get: (w) => w.userId },
+        { header: 'Vartotojo ID', get: (w) => w.userId },
         { header: 'Viso dirbta', get: (w) => w.metrics.totalHours?.formatted ?? '' },
         { header: 'Aktyvios dienos', get: (w) => w.metrics.activeDays?.formatted ?? '' },
         { header: 'Vid. per dieną', get: (w) => w.metrics.avgPerDay?.formatted ?? '' },

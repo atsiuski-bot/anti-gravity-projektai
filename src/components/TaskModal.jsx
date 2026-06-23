@@ -968,7 +968,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 {formData.attachmentUrls.map((url, index) => (
                                                     <div key={`existing-${index}`} className="relative group border rounded-lg p-1">
                                                         <a href={url} target="_blank" rel="noopener noreferrer">
-                                                            <img src={url} alt={`Attachment ${index + 1}`} className="w-full h-24 object-cover rounded" />
+                                                            <img src={url} alt={`Priedas ${index + 1}`} className="w-full h-24 object-cover rounded" />
                                                         </a>
                                                         <button
                                                             type="button"

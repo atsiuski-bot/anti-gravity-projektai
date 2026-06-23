@@ -27,7 +27,7 @@ const LoadingFallback = () => (
 const ProtectedRoute = ({ children }) => {
     const { currentUser, loading } = useAuth();
 
-    if (loading) return <div className="flex h-screen items-center justify-center" role="status">Kraunama…</div>;
+    if (loading) return <LoadingFallback />;
 
     if (!currentUser) {
         return <Navigate to="/login" />;
