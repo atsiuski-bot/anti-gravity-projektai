@@ -10,6 +10,7 @@ import {
     formatMinutesToHHMM,
     formatSignedMinutesToHHMM,
     vilniusWallClockToISO,
+    relativeDeadline,
 } from './timeUtils';
 
 // These are characterization tests for the pure time-math + timezone helpers that the
@@ -272,6 +273,49 @@ describe('formatSignedMinutesToHHMM (difference columns)', () => {
     it('guards non-finite input', () => {
         expect(formatSignedMinutesToHHMM(NaN)).toBe('00:00');
         expect(formatSignedMinutesToHHMM(Infinity)).toBe('00:00');
+    });
+});
+
+describe('relativeDeadline (Vilnius-day bucketed, colour-coded)', () => {
+    // `now` is injected so the buckets are deterministic without mocking the clock. The reference
+    // is a mid-day UTC instant, which is the same Vilnius calendar day in both winter and summer.
+    const now = new Date('2026-06-23T12:00:00Z'); // Vilnius day 2026-06-23
+
+    it('returns null when there is no deadline', () => {
+        expect(relativeDeadline(null, now)).toBeNull();
+        expect(relativeDeadline(undefined, now)).toBeNull();
+        expect(relativeDeadline('', now)).toBeNull();
+    });
+
+    it('labels today as "Šiandien" with the warning tone', () => {
+        expect(relativeDeadline('2026-06-23', now)).toEqual({ label: 'Šiandien', tone: 'warning' });
+    });
+
+    it('labels tomorrow as "Rytoj" with no urgency colour (neutral)', () => {
+        expect(relativeDeadline('2026-06-24', now)).toEqual({ label: 'Rytoj', tone: 'neutral' });
+    });
+
+    it('labels an overdue deadline as "Vėluoja N d." with the danger tone', () => {
+        expect(relativeDeadline('2026-06-22', now)).toEqual({ label: 'Vėluoja 1 d.', tone: 'danger' });
+        expect(relativeDeadline('2026-06-20', now)).toEqual({ label: 'Vėluoja 3 d.', tone: 'danger' });
+        // Crosses a month boundary (overdue count keeps stepping by calendar days).
+        expect(relativeDeadline('2026-05-31', now)).toEqual({ label: 'Vėluoja 23 d.', tone: 'danger' });
+    });
+
+    it('shows a zero-padded "MM.DD d." date for deadlines 2+ days out (neutral)', () => {
+        expect(relativeDeadline('2026-06-25', now)).toEqual({ label: '06.25 d.', tone: 'neutral' });
+        expect(relativeDeadline('2026-12-01', now)).toEqual({ label: '12.01 d.', tone: 'neutral' });
+    });
+
+    it('buckets by the Vilnius calendar day, not the raw UTC day', () => {
+        // 23:30 UTC on Jun 22 is 02:30 Vilnius on Jun 23 (summer, UTC+3) — i.e. TODAY, not overdue.
+        expect(relativeDeadline('2026-06-22T23:30:00Z', now)).toEqual({ label: 'Šiandien', tone: 'warning' });
+        // 22:30 UTC on Jun 23 is 01:30 Vilnius on Jun 24 — i.e. TOMORROW.
+        expect(relativeDeadline('2026-06-23T22:30:00Z', now)).toEqual({ label: 'Rytoj', tone: 'neutral' });
+    });
+
+    it('echoes an unparseable deadline verbatim with the neutral tone', () => {
+        expect(relativeDeadline('not-a-date', now)).toEqual({ label: 'not-a-date', tone: 'neutral' });
     });
 });
 
