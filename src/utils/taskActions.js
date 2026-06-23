@@ -320,11 +320,14 @@ export const archiveTask = async (task, userId) => {
  * @param {Object} user - The current user object.
  * @returns {Promise<void>}
  */
-export const saveTaskTemplate = async (templateName, selectedData, user) => {
+export const saveTaskTemplate = async (templateName, selectedData, user, category = '') => {
     try {
         await addDoc(collection(db, 'task_templates'), {
             templateName,
             data: selectedData,
+            // Top-level (not inside `data`) so it groups templates without ever leaking into the
+            // task form when the template is applied.
+            category: category || '',
             createdBy: user.uid,
             creatorName: user.displayName || user.email,
             createdAt: new Date().toISOString()
@@ -372,11 +375,12 @@ export const deleteTaskTemplate = async (templateId) => {
  * @param {Object} user - The current user object.
  * @returns {Promise<void>}
  */
-export const updateTaskTemplate = async (templateId, templateName, selectedData, user) => {
+export const updateTaskTemplate = async (templateId, templateName, selectedData, user, category = '') => {
     try {
         await updateDoc(doc(db, 'task_templates', templateId), {
             templateName,
             data: selectedData,
+            category: category || '',
             updatedBy: user.uid,
             updatedByName: user.displayName || user.email,
             updatedAt: new Date().toISOString()
@@ -384,6 +388,55 @@ export const updateTaskTemplate = async (templateId, templateName, selectedData,
 
     } catch (err) {
         console.error("Error updating template:", err);
+        throw err;
+    }
+};
+
+/**
+ * Sets (or clears) a template's recurrence descriptor — the WHEN that turns a plain template into a
+ * recurring job the scheduled generator materializes. Pass the full recurrence object (see
+ * utils/recurrence.js) or null to make the template non-recurring. Manager/admin-writable per the
+ * task_templates rules (no new rule needed).
+ *
+ * @param {string} templateId
+ * @param {Object|null} recurrence
+ * @param {Object} user - current user (for the audit stamp)
+ */
+export const setTemplateRecurrence = async (templateId, recurrence, user) => {
+    try {
+        await updateDoc(doc(db, 'task_templates', templateId), {
+            recurrence: recurrence || null,
+            updatedBy: user.uid,
+            updatedByName: user.displayName || user.email,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error("Error setting template recurrence:", err);
+        throw err;
+    }
+};
+
+/**
+ * Sets a template's baked assignee to the single CANONICAL field (`data.assignedUserId`), which the
+ * generator reads. This is also the place the legacy `assignedWorkerId` drift is healed: writing the
+ * canonical field and clearing the old one removes the ambiguity the data exposed (templates split
+ * 5 old / 9 new). Pass an empty string to leave it unassigned.
+ *
+ * @param {string} templateId
+ * @param {string} assignedUserId
+ * @param {Object} user
+ */
+export const setTemplateAssignee = async (templateId, assignedUserId, user) => {
+    try {
+        await updateDoc(doc(db, 'task_templates', templateId), {
+            'data.assignedUserId': assignedUserId || '',
+            'data.assignedWorkerId': null, // heal the old-field drift on write
+            updatedBy: user.uid,
+            updatedByName: user.displayName || user.email,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error("Error setting template assignee:", err);
         throw err;
     }
 };

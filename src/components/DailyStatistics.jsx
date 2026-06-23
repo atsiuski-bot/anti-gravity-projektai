@@ -15,7 +15,7 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, Filter, RotateCcw, X, Pencil, Plus } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, RotateCcw, X, Pencil, Plus } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
@@ -366,7 +366,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     };
 
     // Sorting state
-    const [sortBy, setSortBy] = useState('time'); // 'time' or 'status'
+    // Finished-task list ordering. The "Pagal laiką / Pagal būseną" toolbar toggle was removed
+    // from the report header; ordering is pinned to time (newest-first). The status-sort branch
+    // in splitTasks below is kept intact so the toggle can be reinstated by restoring this state.
+    const sortBy = 'time';
 
     // Split finished tasks into Today, Earlier, and Archived
     const splitTasks = useMemo(() => {
@@ -1088,46 +1091,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
                     </span>
                 </div>
-                </div>
-
-                {/* Sort filter — a two-option segmented control (Pagal laiką | Pagal būseną).
-                    On md+ it sits horizontally inline in the toolbar. On a phone it stacks
-                    VERTICALLY and sits to the RIGHT of the date stepper on the same row:
-                    `self-stretch` matches its height to the date stepper (no magic numbers),
-                    `flex-1` splits that height between the two options — trading a wasted
-                    second toolbar row for a tighter header. */}
-                <div
-                    className="flex flex-col md:flex-row self-stretch md:self-auto bg-surface-sunken rounded-control overflow-hidden border border-line"
-                    role="group"
-                    aria-label="Rūšiuoti"
-                >
-                    <button
-                        type="button"
-                        onClick={() => setSortBy('time')}
-                        aria-pressed={sortBy === 'time'}
-                        className={clsx(
-                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                            sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
-                        )}
-                    >
-                        <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                        Pagal laiką
-                    </button>
-                    <div className="w-full h-px md:w-px md:h-auto bg-line" aria-hidden="true" />
-                    <button
-                        type="button"
-                        onClick={() => setSortBy('status')}
-                        aria-pressed={sortBy === 'status'}
-                        className={clsx(
-                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                            sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
-                        )}
-                    >
-                        <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                        Pagal būseną
-                    </button>
                 </div>
             </div>
 

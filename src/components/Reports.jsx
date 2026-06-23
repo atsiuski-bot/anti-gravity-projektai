@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, formatMinutesToHHMM, formatSignedMinutesToHHMM, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints } from '../utils/teamScope';
 import { absenceLabel } from '../utils/absence';
 import { addComment } from '../utils/commentActions';
-import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Calendar, FileText } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -22,6 +22,7 @@ import AssigneeChip from './task/AssigneeChip';
 import TaskRow from './task/TaskRow';
 
 import DailyStatistics from './DailyStatistics';
+import ReportExportModal from './ReportExportModal';
 import { CommentsModal } from './TaskDetailsModals';
 import { useAuth } from '../context/AuthContext';
 import { TASK_TAGS } from '../utils/taskUtils';
@@ -69,6 +70,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
     // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
     const [reportPeriod, setReportPeriod] = useState('day'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
     const [periodOpen, setPeriodOpen] = useState(false);
+
+    // The rich "Atsisiųsti ataskaitą" modal (Markdown / JSON / CSV summary + per-worker selection).
+    // Manager-only (gated by canExport); owns its own period + worker scope, so it works in any mode.
+    const [exportModalOpen, setExportModalOpen] = useState(false);
 
     // --- TASKS REPORT STATE ---
     const [taskFilters, setTaskFilters] = useState({
@@ -709,86 +714,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         ? `${historyRange.start} – ${historyRange.end}`
         : (PERIOD_PRESETS.find((p) => p.id === historyPeriod)?.label ?? `${historyRange.start} – ${historyRange.end}`);
 
-    // Export the already-computed hours summary to a CSV the manager can hand to payroll.
-    // One row per worker-day (work + break, HH:MM), then a per-worker "Viso" total row.
-    // Mirrors TaskHistory.handleExportCSV: same escapeCSV rules + UTF-8 BOM so Excel reads
-    // the Lithuanian characters correctly. workData is whatever the current month resolved to.
-    const handleExportHoursCSV = () => {
-        const escapeCSV = (str) => {
-            if (str === null || str === undefined) return '';
-            const s = String(str);
-            if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
-                return `"${s.replace(/"/g, '""')}"`;
-            }
-            return s;
-        };
-
-        const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
-        const rows = [];
-
-        // Exclude test/founder accounts from the payroll export unless the manager opted in, so
-        // team totals and the per-worker list aren't skewed by non-production rows.
-        const testUserIds = new Set((users || []).filter(u => u.isTest).map(u => u.id));
-        const rowsSource = showTestUsers ? workData : workData.filter(u => !testUserIds.has(u.userId));
-
-        rowsSource.forEach(userStats => {
-            const workerName = formatDisplayName(userStats.name);
-            Object.entries(userStats.days)
-                .sort((a, b) => a[0].localeCompare(b[0]))
-                .forEach(([date, dayData]) => {
-                    rows.push([
-                        escapeCSV(workerName),
-                        escapeCSV(date),
-                        escapeCSV(formatMinutesToHHMM(dayData.totalWork)),
-                        escapeCSV(formatMinutesToHHMM(dayData.totalBreak)),
-                        '',
-                        '',
-                    ].join(','));
-                });
-            // Export-time self-check: the Viso total and the per-day rows are built from one
-            // sanitized userMap, so they must agree; a divergence beyond rounding signals a
-            // malformed/merged dataset and is surfaced to the console rather than shipped silently.
-            const daySum = Object.values(userStats.days).reduce((a, d) => a + (d.totalWork || 0), 0);
-            if (Math.abs(daySum - userStats.totalMinutes) > 1) {
-                console.warn(`[Reports] Viso/detalės neatitikimas (${workerName}): viso ${Math.round(userStats.totalMinutes)} vs dienų suma ${Math.round(daySum)} min`);
-            }
-            const hasPlan = userStats.plannedMinutes > 0;
-            // Worked == 0 with a plan is a genuine 100% shortfall (a planned-but-absent worker),
-            // so it is allowed through; only a non-trivial worked total against a tiny plan is
-            // treated as inadequate coverage.
-            const planCoversSpan = hasPlan && (
-                userStats.totalMinutes <= 0 ||
-                userStats.plannedMinutes >= PLAN_COVERAGE_FLOOR * userStats.totalMinutes
-            );
-            const plannedCell = hasPlan ? formatMinutesToHHMM(userStats.plannedMinutes) : '';
-            const skirtumasCell = !hasPlan
-                ? ''
-                : (planCoversSpan
-                    ? formatSignedMinutesToHHMM(userStats.totalMinutes - userStats.plannedMinutes)
-                    : 'Nepakanka plano');
-            rows.push([
-                escapeCSV(workerName),
-                escapeCSV('Viso'),
-                escapeCSV(formatMinutesToHHMM(userStats.totalMinutes)),
-                escapeCSV(formatMinutesToHHMM(userStats.totalBreakMinutes)),
-                escapeCSV(plannedCell),
-                escapeCSV(skirtumasCell),
-            ].join(','));
-        });
-
-        const csvContent = [headers.join(','), ...rows].join('\n');
-        // BOM so Excel recognises UTF-8 (Lithuanian diacritics).
-        const blob = new Blob(['﻿' + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `darbo_valandos_${dateRange.start}_${dateRange.end}.csv`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    };
-
     // Group tasks by date
     const groupedTasks = React.useMemo(() => {
         const groups = {};
@@ -1191,16 +1116,19 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         )}
                         </div>
 
-                        {reportPeriod !== 'day' && (
+                        {/* Single export entry point: the modal carries Markdown (for an LLM) / JSON /
+                            a per-day timesheet CSV, with a worker-subset picker — superseding the old
+                            standalone hours-CSV button. Manager-only; the modal owns its own period +
+                            scope, so it is offered in every mode (including 'day'). */}
+                        {canExport && (
                             <Button
-                                variant="success"
-                                icon={Download}
-                                onClick={handleExportHoursCSV}
-                                disabled={loading || workData.length === 0}
-                                aria-label="Eksportuoti CSV"
+                                variant="primary"
+                                icon={FileText}
+                                onClick={() => setExportModalOpen(true)}
+                                aria-label="Atsisiųsti ataskaitą (AI / JSON / CSV)"
                                 className="shrink-0 px-3 sm:px-4"
                             >
-                                <span className="hidden sm:inline">Eksportuoti CSV</span>
+                                <span className="hidden sm:inline">Ataskaita</span>
                             </Button>
                         )}
                     </div>
@@ -1251,6 +1179,16 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             dateRange={dateRange}
                             view={isManagerRole(userRole) ? 'hours' : 'full'}
                             showTestUsers={showTestUsers}
+                        />
+                    )}
+
+                    {canExport && (
+                        <ReportExportModal
+                            open={exportModalOpen}
+                            onClose={() => setExportModalOpen(false)}
+                            users={users}
+                            scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
+                            defaultRange={{ start: dateRange.start, end: dateRange.end }}
                         />
                     )}
                 </div>

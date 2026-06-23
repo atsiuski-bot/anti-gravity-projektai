@@ -3,10 +3,11 @@ import clsx from 'clsx';
 import { db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar } from 'lucide-react';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
+import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Button from './ui/Button';
 import TaskStatusPill from './task/TaskStatusPill';
@@ -26,8 +27,96 @@ import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklis
 import { logError } from '../utils/errorLog';
 import SessionTypeIcon from './SessionTypeIcon';
 
-const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown, hideCheckboxes }) => {
+// ---------------------------------------------------------------------------------------------
+// Desktop data-grid header controls. Rendered only when the parent passes `gridControls`; without
+// it the headers stay static text (back-compat for the read-only "My Tasks" table). Sorting reuses
+// the existing comparator modes (no asc/desc) — clicking the active column again resets to 'none'.
+// Filtering reuses the canonical Select via its `renderTrigger`, with `alwaysSheet` so the menu
+// opens as a Modal sheet that escapes the table's horizontal-scroll clip.
+// ---------------------------------------------------------------------------------------------
+
+function SortableHeaderButton({ label, mode, sort }) {
+    const active = sort.value === mode;
+    return (
+        <button
+            type="button"
+            onClick={() => sort.set(active ? 'none' : mode)}
+            aria-pressed={active}
+            className={clsx(
+                'inline-flex items-center gap-1 rounded px-1 py-1.5 text-caption font-medium uppercase tracking-wider',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                active ? 'text-brand' : 'text-ink-muted hover:text-ink'
+            )}
+        >
+            <span>{label}</span>
+            <ArrowDownUp
+                className={clsx('h-3.5 w-3.5 shrink-0', active ? 'text-brand' : 'text-ink-muted opacity-50')}
+                aria-hidden="true"
+            />
+            {active && <span className="sr-only"> (rūšiuojama)</span>}
+        </button>
+    );
+}
+
+// The per-column filter funnel. A compact, dense trigger (NOT the 44px IconButton) so the
+// whole "label + sort + funnel" cluster fits inside a narrow data-grid column instead of
+// overflowing into the neighbour — this is what made it ambiguous which funnel owned which
+// column. Desktop-only header (md:block, mouse-driven), so a sub-44px target is acceptable
+// under §9 dual density, matching SortableHeaderButton's footprint. Active = filled brand.
+function ColumnFilter({ filter, label }) {
+    const active = filter.value !== '' && filter.value != null;
+    const selectedLabel = active ? (filter.options.find((o) => o.value === filter.value)?.label ?? '') : '';
+    const name = active ? `${label}: ${selectedLabel}` : label;
+    return (
+        <Select
+            value={filter.value}
+            onChange={filter.set}
+            options={filter.options}
+            ariaLabel={name}
+            alwaysSheet
+            className="shrink-0"
+            renderTrigger={({ triggerProps }) => (
+                <button
+                    {...triggerProps}
+                    aria-label={name}
+                    title={name}
+                    className={clsx(
+                        'inline-flex shrink-0 items-center justify-center rounded p-1 transition-colors',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                        active ? 'bg-brand text-white' : 'text-ink-muted hover:bg-surface-sunken hover:text-ink'
+                    )}
+                >
+                    <Filter className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                </button>
+            )}
+        />
+    );
+}
+
+// Each interactive column header bundles its label, sort toggle and filter funnel into one
+// bordered chip. The chip is the "which funnel belongs to which column" cue: the controls are
+// visibly boxed together and each column's chip is separated from its neighbours by the cell
+// gap, so a funnel can no longer read as belonging to the column beside it.
+function HeaderCell({ label, sortMode, sort, filter, filterLabel }) {
+    const hasSort = !!sortMode;
+    const hasFilter = !!filter;
+    if (!hasSort && !hasFilter) return label;
+    return (
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-line bg-surface-card px-1.5 py-0.5">
+            {hasSort ? <SortableHeaderButton label={label} mode={sortMode} sort={sort} /> : <span className="px-1">{label}</span>}
+            {hasFilter && <ColumnFilter filter={filter} label={filterLabel} />}
+        </span>
+    );
+}
+
+const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown, hideCheckboxes, gridControls }) => {
     const { currentUser, userRole, userData } = useAuth();
+    // Data-grid header wiring (see helpers above). Derived once per render; harmless no-ops when
+    // `gridControls` is absent.
+    const gc = gridControls;
+    const sortCols = gc?.sort?.columns || {};
+    const filters = gc?.filters || {};
+    const ariaSortFor = (mode) => (gc && mode ? (gc.sort.value === mode ? 'other' : 'none') : undefined);
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null }); // { type: 'description'|'links'|'comments', taskId: string }
     const [, setRefreshTick] = useState(0);
     const [deleteModalTask, setDeleteModalTask] = useState(null);
@@ -576,9 +665,18 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 </th>
                             )}
                             <th className="px-2 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider">Užduotis</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28">Darb.</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-20">Prior.</th>
-                            <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">Būsena</th>
+                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.user)}>
+                                {gc ? <HeaderCell label="Darb." sortMode={sortCols.user} sort={gc.sort} filter={filters.user} filterLabel="Filtruoti pagal vykdytoją" /> : 'Darb.'}
+                            </th>
+                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.priority)}>
+                                {gc ? <HeaderCell label="Prior." sortMode={sortCols.priority} sort={gc.sort} filter={filters.priority} filterLabel="Filtruoti pagal prioritetą" /> : 'Prior.'}
+                            </th>
+                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">
+                                {gc ? <HeaderCell label="Žymos" filter={filters.tag} filterLabel="Filtruoti pagal žymą" /> : 'Žymos'}
+                            </th>
+                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" aria-sort={ariaSortFor(sortCols.status)}>
+                                {gc ? <HeaderCell label="Būsena" sortMode={sortCols.status} sort={gc.sort} /> : 'Būsena'}
+                            </th>
                             <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" title="Sugaišta / numatyta">Laikas</th>
                             <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-44">Veik.</th>
                         </tr>
@@ -642,8 +740,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         </td>
                                     )}
                                     {/* Task — title is the keyboard-accessible opener; the whole row opens on
-                                        mouse click. Tag / deadline / links / image / checklist / comments collapse
-                                        into one muted indicator row instead of their own (mostly empty) columns. */}
+                                        mouse click. Deadline / links / image / checklist / comments collapse into
+                                        one muted indicator row in front of "Vadovas" (tag keeps its own column). */}
                                     <td className="px-2 py-3 align-top">
                                         <button
                                             type="button"
@@ -660,13 +758,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         {/* One muted line: the indicators lead, the manager closes it — so a
                                             deadline / urgent / comment glyph rides IN FRONT of "Vadovas" instead
                                             of dropping onto its own extra row and making the task taller. */}
-                                        {(task.tag || task.isSystemTask || task.isQuickWork || deadline || links.length > 0 || hasImage || checklist || commentCount > 0 || (showManagerLine && (task.managerName || task.creatorName))) && (
+                                        {(task.isSystemTask || task.isQuickWork || deadline || links.length > 0 || hasImage || checklist || commentCount > 0 || (showManagerLine && (task.managerName || task.creatorName))) && (
                                             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
-                                                {task.tag && (
-                                                    <span className="inline-flex items-center rounded-md border border-feedback-info-border bg-feedback-info-soft px-1.5 py-0.5 font-semibold text-feedback-info-text">
-                                                        {task.tag}
-                                                    </span>
-                                                )}
                                                 {(task.isSystemTask || task.isQuickWork) && (
                                                     <SessionTypeIcon
                                                         type={task.isSystemTask ? 'call' : 'quickWork'}
@@ -710,6 +803,13 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </td>
                                     <td className="px-1 py-3 align-top whitespace-nowrap">
                                         <PriorityBadge priority={task.priority} />
+                                    </td>
+                                    <td className="px-1 py-3 align-top">
+                                        {task.tag && (
+                                            <span className="inline-flex items-center rounded-md border border-feedback-info-border bg-feedback-info-soft px-1.5 py-0.5 text-caption font-semibold text-feedback-info-text">
+                                                {task.tag}
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="px-1 py-3 align-top whitespace-nowrap">
                                         <TaskStatusPill task={task} isRunning={isTaskRunning(task)} doneIcon />
@@ -896,6 +996,22 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 export default React.memo(TaskTable, (prevProps, nextProps) => {
     if (prevProps.role !== nextProps.role) return false;
     if (prevProps.showReorderControls !== nextProps.showReorderControls) return false;
+
+    // The data-grid headers (active sort caret + funnel "filtered" styling) are driven by
+    // gridControls values, not by the task rows. Compare them explicitly, or a re-sort/re-filter
+    // that leaves the row set the same length would skip the re-render and strand the header UI.
+    const pg = prevProps.gridControls;
+    const ng = nextProps.gridControls;
+    if (!!pg !== !!ng) return false;
+    if (pg && ng) {
+        if (pg.sort?.value !== ng.sort?.value) return false;
+        const pf = pg.filters || {};
+        const nf = ng.filters || {};
+        if (pf.user?.value !== nf.user?.value) return false;
+        if (pf.priority?.value !== nf.priority?.value) return false;
+        if (pf.tag?.value !== nf.tag?.value) return false;
+    }
+
     if (prevProps.tasks?.length !== nextProps.tasks?.length) return false;
 
     // Fast check by reference and updatedAt

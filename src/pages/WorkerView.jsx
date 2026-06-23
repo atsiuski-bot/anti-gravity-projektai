@@ -13,6 +13,7 @@ import { getPriorityRank } from '../utils/priority';
 import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
 import SearchBox from '../components/ui/SearchBox';
+import SearchPopover from '../components/ui/SearchPopover';
 import {
     filterRankTasks,
     buildTaskSuggestions,
@@ -245,6 +246,28 @@ export default function WorkerView() {
         return result;
     }, [tasks, sortBy, filterTag, debouncedSearch]);
 
+    // Desktop data-grid wiring (worker subset). The worker's table headers carry priority/status
+    // sort + the tag filter; there is no user/priority filter and no composite/manual sort here, so
+    // the only non-column mode is 'none' — reachable by toggling the active sort header off — and
+    // no "Daugiau rūšiavimo" launcher is needed.
+    const workerGridControls = {
+        sort: {
+            value: sortBy,
+            set: setSortBy,
+            columns: { priority: 'priority', status: 'status' },
+        },
+        filters: {
+            tag: {
+                value: filterTag,
+                set: setFilterTag,
+                options: [
+                    { value: '', label: 'Visi Tagai' },
+                    ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+                ],
+            },
+        },
+    };
+
     return (
         <div className="pt-1">
             <div className="mb-2 sm:mb-6">
@@ -262,9 +285,11 @@ export default function WorkerView() {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 sm:mb-6">
                     <h2 className="text-h2 font-bold text-ink-strong wz-on-shell">Mano užduotys</h2>
 
-                    {/* Search + the two classifiers — search spans the full width on a phone,
-                        then Rūšiavimas | Žyma sit side by side; inline from sm+. */}
-                    <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-2">
+                    {/* Mobile (<md): full toolbar — search + sort + tag filter (inline from sm).
+                        Desktop (md+): sort and the tag filter live on the table headers (TaskTable
+                        `gridControls`); only the collapsed search stays here. The `md:hidden` gate
+                        keeps this from doubling up with the desktop strip in the 640–767px band. */}
+                    <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-2 md:hidden">
                         <SearchBox
                             value={searchText}
                             onChange={setSearchText}
@@ -297,6 +322,15 @@ export default function WorkerView() {
                             ariaLabel="Filtruoti pagal žymę"
                             icon={Filter}
                             className="sm:w-auto sm:min-w-[9rem]"
+                        />
+                    </div>
+                    <div className="hidden md:flex md:items-center">
+                        <SearchPopover
+                            value={searchText}
+                            onChange={setSearchText}
+                            suggestions={searchSuggestions}
+                            placeholder="Ieškoti užduočių…"
+                            label="Ieškoti užduočių"
                         />
                     </div>
                 </div>
@@ -344,6 +378,7 @@ export default function WorkerView() {
                                 onEdit={handleEditTask}
                                 role="worker"
                                 hideCheckboxes={true}
+                                gridControls={workerGridControls}
                             />
                         </div>
                     </>

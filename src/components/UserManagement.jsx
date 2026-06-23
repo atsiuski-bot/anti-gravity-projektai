@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe, Sparkles, Coins } from 'lucide-react';
+import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe, Sparkles, Coins, ChevronDown } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -148,9 +148,12 @@ function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId,
 //    explainer rather than an editable control. No whole-company toggle — a senior is never global.
 //  • manager      — TWO controls: a scope toggle ("Tik sava komanda" vs "Visa įmonė" — what THIS
 //    manager sees) AND senior-manager chips (which Vyr. vadovas oversee this manager's team).
-//  • worker       — multi-select manager chips (their team), star marks the primary (defaultManager,
-//    the approval/notification route). teamManagerIds is the visibility key the rules read.
-function ManagerControl({ user, managerCandidates, seniorCandidates, onToggleManager, onSetPrimary, onToggleScoped, onToggleSenior }) {
+//  • worker       — multi-select overseer chips (their team). The candidate pool is BROAD —
+//    any active superior (manager, senior manager, or admin), not managers-only — so an existing
+//    assignment to an admin/senior stays visible and editable instead of silently vanishing from
+//    the picker. Star marks the primary (defaultManager, the approval/notification route);
+//    teamManagerIds is the visibility key the rules read.
+function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCandidates, onToggleManager, onSetPrimary, onToggleScoped, onToggleSenior }) {
     const name = formatDisplayName(user.displayName) || user.email || '';
     if (user.role === 'admin') {
         return <span className="text-body italic text-ink-muted">Mato visus</span>;
@@ -217,13 +220,59 @@ function ManagerControl({ user, managerCandidates, seniorCandidates, onToggleMan
     return (
         <ChipMultiSelect
             legend={`${name} vadovai`}
-            candidates={managerCandidates}
+            candidates={overseerCandidates}
             selectedIds={effectiveTeamIds(user)}
             onToggle={(mid) => onToggleManager(user, mid)}
             primaryId={user.defaultManager}
             onSetPrimary={(mid) => onSetPrimary(user, mid)}
-            emptyLabel="Nėra vadovų"
+            emptyLabel="Nėra galimų vadovų"
         />
+    );
+}
+
+// Resolve an overseer's id to a display name via the prebuilt lookup. Returns null for an id that
+// no longer matches any user (e.g. a deleted account) so the caller can drop it from the summary.
+function overseerName(usersById, id) {
+    const u = usersById[id];
+    if (!u) return null;
+    return formatDisplayName(u.displayName) || u.email || '—';
+}
+
+// Read-only one-line mirror of ManagerControl, shown on the COLLAPSED mobile card so a roster stays
+// scannable without expanding every row. Editing still happens in the expanded section; this never
+// writes. Branches by role exactly like ManagerControl so the summary always matches the editor.
+function OverseerSummary({ user, usersById }) {
+    const base = 'text-caption text-ink-muted';
+    if (user.role === 'admin') return <p className={base}>Mato visus</p>;
+    if (user.role === 'seniorManager') return <p className={base}>Mato priskirtų vadovų komandas</p>;
+    if (user.role === 'manager') {
+        const scoped = user.scopedManager === true;
+        const seniors = effectiveSeniorIds(user).map((id) => overseerName(usersById, id)).filter(Boolean);
+        return (
+            <p className={base}>
+                {scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
+                {seniors.length > 0 && `  ·  Vyr. vadovai: ${seniors.join(', ')}`}
+            </p>
+        );
+    }
+    // worker — list assigned overseers, primary (starred) first; color is never the only signal (§5).
+    const ids = effectiveTeamIds(user);
+    if (ids.length === 0) return <p className={cn(base, 'italic')}>Nepriskirtas vadovas</p>;
+    const primaryId = user.defaultManager;
+    const names = [...ids]
+        .sort((a, b) => (a === primaryId ? -1 : b === primaryId ? 1 : 0))
+        .map((id) => ({ id, name: overseerName(usersById, id) }))
+        .filter((x) => x.name);
+    return (
+        <p className={cn(base, 'flex flex-wrap items-center gap-x-1.5')}>
+            <span className="font-medium text-ink">Vadovai:</span>
+            {names.map((n, i) => (
+                <span key={n.id} className="inline-flex items-center gap-0.5">
+                    {n.id === primaryId && <Star className="h-3 w-3 shrink-0 fill-current text-brand" aria-hidden="true" />}
+                    {n.name}{i < names.length - 1 ? ',' : ''}
+                </span>
+            ))}
+        </p>
     );
 }
 
@@ -240,45 +289,6 @@ function DisabledPill({ user }) {
     return isPendingUser(user)
         ? <StatusPill tone="pending" icon={Clock}>Laukia patvirtinimo</StatusPill>
         : <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>;
-}
-
-// Marks an account as a test/founder account so it can be excluded from payroll reports by
-// default (distinct from isDisabled — a test account often stays fully usable). The label and
-// variant flip with state so the current flag is legible without relying on color alone.
-function TestButton({ user, onToggle, fullWidth, iconOnly }) {
-    // Compact (desktop toolbar) form: a single 44px icon button. The "on" state is signalled by
-    // a check badge over the flask, not by color alone — color-blind-safe (§5). aria-pressed
-    // carries the toggle state to assistive tech.
-    if (iconOnly) {
-        return (
-            <IconButton
-                variant={user.isTest ? 'primary' : 'default'}
-                aria-pressed={user.isTest}
-                label={user.isTest ? 'Bandomasis vartotojas — paspauskite, kad nuimtumėte žymą' : 'Žymėti bandomu'}
-                onClick={() => onToggle(user)}
-            >
-                <span className="relative inline-flex">
-                    <FlaskConical className="h-5 w-5" aria-hidden="true" />
-                    {user.isTest && (
-                        <span className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white">
-                            <Check className="h-2.5 w-2.5 text-brand" strokeWidth={3} aria-hidden="true" />
-                        </span>
-                    )}
-                </span>
-            </IconButton>
-        );
-    }
-    return (
-        <Button
-            variant={user.isTest ? 'primary' : 'secondary'}
-            size="md"
-            icon={FlaskConical}
-            fullWidth={fullWidth}
-            onClick={() => onToggle(user)}
-        >
-            {user.isTest ? 'Bandomasis ✓' : 'Žymėti bandomu'}
-        </Button>
-    );
 }
 
 // Days a worker may go silent before the roster flags them — lets a manager tell a churned
@@ -320,7 +330,7 @@ function NewUserBadge({ user }) {
 // denominator even when the worker never hand-drew a calendar plan (the root cause of the fake
 // "+164h surplus"). Workers only — managers/admins have no quota. Committed on blur, clamped to a
 // sane 0–168 h/week; an empty field clears the baseline (null).
-function ExpectedHoursInput({ user, onCommit }) {
+function ExpectedHoursInput({ user, onCommit, hideLabel = false }) {
     const [val, setVal] = useState(
         user.weeklyExpectedHours === undefined || user.weeklyExpectedHours === null ? '' : String(user.weeklyExpectedHours)
     );
@@ -341,22 +351,30 @@ function ExpectedHoursInput({ user, onCommit }) {
         setVal(String(clamped));
         if (clamped !== user.weeklyExpectedHours) onCommit(user, clamped);
     };
+    const input = (
+        <input
+            type="number"
+            min="0"
+            max="168"
+            step="1"
+            inputMode="numeric"
+            value={val}
+            onChange={(e) => setVal(e.target.value)}
+            onBlur={commit}
+            placeholder="—"
+            aria-label={`${name} savaitės norma valandomis`}
+            className={cn(
+                'min-h-touch rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                hideLabel ? 'w-20 text-center' : 'block w-full'
+            )}
+        />
+    );
+    // Compact (desktop "Norma" column): the column header is the label, so render the bare input.
+    if (hideLabel) return input;
     return (
         <label className="block">
             <span className="mb-1 block text-caption font-medium text-ink-muted">Savaitės norma (val.)</span>
-            <input
-                type="number"
-                min="0"
-                max="168"
-                step="1"
-                inputMode="numeric"
-                value={val}
-                onChange={(e) => setVal(e.target.value)}
-                onBlur={commit}
-                placeholder="—"
-                aria-label={`${name} savaitės norma valandomis`}
-                className="block w-full rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-            />
+            {input}
         </label>
     );
 }
@@ -521,6 +539,17 @@ export default function UserManagement() {
     const [deleting, setDeleting] = useState(false);
     // Pay-rate editor target (admin-only). Holds the user whose tiered rate is being edited.
     const [payRateUser, setPayRateUser] = useState(null);
+    // Which mobile cards are expanded into their editing form. At rest a card is collapsed to a
+    // scannable summary (identity + role + overseers); editing controls live behind a per-card
+    // toggle so a long roster no longer scrolls forever (progressive disclosure). Desktop is a
+    // dense table and stays fully inline (DESIGN_SYSTEM §9 dual density).
+    const [expandedIds, setExpandedIds] = useState(() => new Set());
+    const toggleExpanded = (id) =>
+        setExpandedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
     const isAdmin = userRole === 'admin';
 
     useEffect(() => {
@@ -549,10 +578,17 @@ export default function UserManagement() {
         // eslint-disable-next-line react-hooks/exhaustive-deps -- subscribe once on mount; adding 'error' would tear down/re-create the listener on every error change
     }, []);
 
-    // Assignment candidate pools, by rank (ADR 0007): a worker's overseers are MANAGERS; a
-    // manager's overseers are SENIOR managers. Disabled accounts can't oversee anyone.
+    // Assignment candidate pools. A WORKER may report to any active superior — manager, senior
+    // manager, or admin (broad pool, restored after ADR 0006 narrowed it to managers-only and
+    // silently hid every legacy admin/senior assignment). A SENIOR's inverse list, by contrast,
+    // stays managers-only (only a manager reports up to a senior). Disabled accounts oversee nobody.
+    const overseerCandidates = users.filter(
+        (u) => (u.role === 'manager' || u.role === 'seniorManager' || u.role === 'admin') && !u.isDisabled
+    );
     const managerCandidates = users.filter((u) => u.role === 'manager' && !u.isDisabled);
     const seniorCandidates = users.filter((u) => u.role === 'seniorManager' && !u.isDisabled);
+    // Id → user lookup for the read-only overseer summary on collapsed mobile cards.
+    const usersById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
     const countAdmins = () => {
         return users.filter(u => u.role === 'admin' && !u.isDisabled).length;
@@ -700,19 +736,6 @@ export default function UserManagement() {
         } catch (err) {
             console.error("Error updating senior managers:", err);
             setError('Nepavyko atnaujinti vyr. vadovų. Bandykite dar kartą.');
-        }
-    };
-
-    // Toggle the test/founder flag. Excluded from payroll reports by default; the report has a
-    // manager opt-in to show them. A simple boolean flip on the user doc, mirroring the other
-    // per-user updates above.
-    const handleToggleTest = async (user) => {
-        setError('');
-        try {
-            await updateDoc(doc(db, 'users', user.id), { isTest: !user.isTest });
-        } catch (err) {
-            console.error("Error updating test flag:", err);
-            setError('Nepavyko pažymėti bandomojo vartotojo. Bandykite dar kartą.');
         }
     };
 
@@ -873,7 +896,9 @@ export default function UserManagement() {
                 border, shadow and a left accent in the user's own color so each user reads as a
                 separate card, not a divider-separated row (never a horizontal table — §9). */}
             <ul className="space-y-3 bg-surface-sunken/40 p-3 md:hidden">
-                {users.map((user) => (
+                {users.map((user) => {
+                    const expanded = expandedIds.has(user.id);
+                    return (
                     <li
                         key={user.id}
                         className={cn(
@@ -896,65 +921,86 @@ export default function UserManagement() {
                                     <LastActiveBadge user={user} />
                                 </div>
                                 <p className="truncate text-body text-ink-muted">{user.email}</p>
-                                <div className="mt-2">
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
                                     <RoleBadge role={user.role} />
+                                </div>
+                                {/* Read-only overseer line so the roster stays scannable while collapsed. */}
+                                <div className="mt-1.5">
+                                    <OverseerSummary user={user} usersById={usersById} />
                                 </div>
                             </div>
                             <ColorSwatch user={user} onEdit={startEditingColor} />
                         </div>
 
-                        <div className="mt-4 grid gap-3">
-                            <label className="block">
-                                <span className="mb-1 block text-caption font-medium text-ink-muted">Rolė</span>
-                                <RoleSelect user={user} onChange={handleRoleChange} />
-                            </label>
-                            <div>
-                                <span className="mb-1 block text-caption font-medium text-ink-muted">
-                                    Matomumas
-                                </span>
-                                <ManagerControl
-                                    user={user}
-                                    managerCandidates={managerCandidates}
-                                    seniorCandidates={seniorCandidates}
-                                    onToggleManager={handleToggleManager}
-                                    onSetPrimary={handleSetPrimary}
-                                    onToggleScoped={handleToggleScoped}
-                                    onToggleSenior={handleToggleSenior}
-                                />
-                            </div>
-                            <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
-                            {isAdmin && user.role === 'worker' && (
-                                <PayRateButton user={user} onEdit={setPayRateUser} fullWidth />
-                            )}
-                            <TestButton user={user} onToggle={handleToggleTest} fullWidth />
-                            <BlockButton
-                                user={user}
-                                isSelf={user.id === currentUser?.uid}
-                                onRequest={requestBlock}
-                                fullWidth
-                            />
-                            {isAdmin && (
-                                <DeleteButton
+                        {/* Progressive disclosure: rare editing controls live behind this toggle so a
+                            collapsed card is ~1/4 the old height (DESIGN_SYSTEM §9). */}
+                        <button
+                            type="button"
+                            onClick={() => toggleExpanded(user.id)}
+                            aria-expanded={expanded}
+                            aria-controls={`user-edit-${user.id}`}
+                            className="mt-3 inline-flex min-h-touch w-full items-center justify-center gap-2 rounded-control border border-line bg-surface-card px-3 text-body font-medium text-ink transition-colors hover:bg-surface-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        >
+                            <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
+                            {expanded ? 'Suskleisti' : 'Tvarkyti'}
+                        </button>
+
+                        {expanded && (
+                            <div id={`user-edit-${user.id}`} className="mt-4 grid gap-3 border-t border-line pt-4">
+                                <label className="block">
+                                    <span className="mb-1 block text-caption font-medium text-ink-muted">Rolė</span>
+                                    <RoleSelect user={user} onChange={handleRoleChange} />
+                                </label>
+                                <div>
+                                    <span className="mb-1 block text-caption font-medium text-ink-muted">Vadovai</span>
+                                    <ManagerControl
+                                        user={user}
+                                        overseerCandidates={overseerCandidates}
+                                        managerCandidates={managerCandidates}
+                                        seniorCandidates={seniorCandidates}
+                                        onToggleManager={handleToggleManager}
+                                        onSetPrimary={handleSetPrimary}
+                                        onToggleScoped={handleToggleScoped}
+                                        onToggleSenior={handleToggleSenior}
+                                    />
+                                </div>
+                                <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
+                                {isAdmin && user.role === 'worker' && (
+                                    <PayRateButton user={user} onEdit={setPayRateUser} fullWidth />
+                                )}
+                                <BlockButton
                                     user={user}
                                     isSelf={user.id === currentUser?.uid}
-                                    onRequest={requestDelete}
+                                    onRequest={requestBlock}
                                     fullWidth
                                 />
-                            )}
-                        </div>
+                                {isAdmin && (
+                                    <DeleteButton
+                                        user={user}
+                                        isSelf={user.id === currentUser?.uid}
+                                        onRequest={requestDelete}
+                                        fullWidth
+                                    />
+                                )}
+                            </div>
+                        )}
                     </li>
-                ))}
+                    );
+                })}
             </ul>
 
-            {/* Desktop / wide: denser table is allowed (§9) */}
+            {/* Desktop / wide: denser table is allowed (§9). Each control owns ONE column, so a row
+                is a single line tall instead of a vertical stack: the role SELECT lives in the Rolė
+                column (no separate read-only badge to duplicate it), the weekly quota gets a compact
+                Norma column, and Veiksmai holds only the 44px icon toolbar. */}
             <div className="hidden overflow-x-auto md:block">
                 <table className="min-w-full divide-y divide-line">
                     <thead className="bg-surface-sunken">
                         <tr>
-                            {['Vartotojas', 'Rolė', 'Spalva', 'Matomumas', 'Veiksmai'].map((h) => (
+                            {['Vartotojas', 'Rolė', 'Spalva', 'Vadovai', 'Norma', 'Veiksmai'].map((h) => (
                                 <th
                                     key={h}
-                                    className="px-6 py-3 text-left text-caption font-medium uppercase tracking-wider text-ink-muted"
+                                    className="px-4 py-3 text-left text-caption font-medium uppercase tracking-wider text-ink-muted"
                                 >
                                     {h}
                                 </th>
@@ -964,32 +1010,31 @@ export default function UserManagement() {
                     <tbody className="divide-y divide-line bg-surface-card">
                         {users.map((user) => (
                             <tr key={user.id} className={user.isDisabled ? 'bg-surface-sunken/60' : ''}>
-                                <td className="whitespace-nowrap px-6 py-3 align-top">
-                                    <div className="flex items-center gap-3">
-                                        <div>
-                                            <div className="flex flex-wrap items-center gap-2 text-body font-medium text-ink-strong">
-                                                <UserChip
-                                                    userId={user.id}
-                                                    name={user.displayName || 'Be vardo'}
-                                                    size="md"
-                                                />
-                                                <DisabledPill user={user} />
-                                                <NewUserBadge user={user} />
-                                                <LastActiveBadge user={user} />
-                                            </div>
-                                            <div className="text-body text-ink-muted">{user.email}</div>
-                                        </div>
+                                <td className="whitespace-nowrap px-4 py-2.5 align-top">
+                                    <div className="flex flex-wrap items-center gap-2 text-body font-medium text-ink-strong">
+                                        <UserChip
+                                            userId={user.id}
+                                            name={user.displayName || 'Be vardo'}
+                                            size="md"
+                                        />
+                                        <DisabledPill user={user} />
+                                        <NewUserBadge user={user} />
+                                        <LastActiveBadge user={user} />
+                                    </div>
+                                    <div className="text-body text-ink-muted">{user.email}</div>
+                                </td>
+                                <td className="px-4 py-2.5 align-top">
+                                    <div className="w-40">
+                                        <RoleSelect user={user} onChange={handleRoleChange} />
                                     </div>
                                 </td>
-                                <td className="whitespace-nowrap px-6 py-3 align-top">
-                                    <RoleBadge role={user.role} />
-                                </td>
-                                <td className="whitespace-nowrap px-6 py-3 align-top">
+                                <td className="whitespace-nowrap px-4 py-2.5 align-top">
                                     <ColorSwatch user={user} onEdit={startEditingColor} />
                                 </td>
-                                <td className="px-6 py-3 align-top">
+                                <td className="px-4 py-2.5 align-top">
                                     <ManagerControl
                                         user={user}
+                                        overseerCandidates={overseerCandidates}
                                         managerCandidates={managerCandidates}
                                         seniorCandidates={seniorCandidates}
                                         onToggleManager={handleToggleManager}
@@ -998,33 +1043,28 @@ export default function UserManagement() {
                                         onToggleSenior={handleToggleSenior}
                                     />
                                 </td>
-                                <td className="px-6 py-3 align-top">
-                                    {/* Actions grouped into a compact two-row block: the role
-                                        editor, then a horizontal toolbar of 44px icon buttons —
-                                        roughly halving the old four-tall vertical stack. */}
-                                    <div className="flex flex-col gap-2">
-                                        <RoleSelect user={user} onChange={handleRoleChange} />
-                                        <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
-                                        <div className="flex items-center gap-1.5">
-                                            <BlockButton
+                                <td className="whitespace-nowrap px-4 py-2.5 align-top">
+                                    <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} hideLabel />
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-2.5 align-top">
+                                    <div className="flex items-center gap-1.5">
+                                        <BlockButton
+                                            user={user}
+                                            isSelf={user.id === currentUser?.uid}
+                                            onRequest={requestBlock}
+                                            iconOnly
+                                        />
+                                        {isAdmin && user.role === 'worker' && (
+                                            <PayRateButton user={user} onEdit={setPayRateUser} iconOnly />
+                                        )}
+                                        {isAdmin && (
+                                            <DeleteButton
                                                 user={user}
                                                 isSelf={user.id === currentUser?.uid}
-                                                onRequest={requestBlock}
+                                                onRequest={requestDelete}
                                                 iconOnly
                                             />
-                                            <TestButton user={user} onToggle={handleToggleTest} iconOnly />
-                                            {isAdmin && user.role === 'worker' && (
-                                                <PayRateButton user={user} onEdit={setPayRateUser} iconOnly />
-                                            )}
-                                            {isAdmin && (
-                                                <DeleteButton
-                                                    user={user}
-                                                    isSelf={user.id === currentUser?.uid}
-                                                    onRequest={requestDelete}
-                                                    iconOnly
-                                                />
-                                            )}
-                                        </div>
+                                        )}
                                     </div>
                                 </td>
                             </tr>

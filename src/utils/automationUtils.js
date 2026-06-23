@@ -2,6 +2,7 @@ import { db } from '../firebase';
 import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
 import { archiveTask } from './taskActions';
 import { getLithuanianNow, getLithuanianDateString, getLithuanian3AMCutoff, addDaysToDateString } from './timeUtils';
+import { PRIORITIES, normalizePriority } from './priority';
 
 /**
  * Checks all active tasks and promotes their priority based on deadline proximity.
@@ -42,16 +43,22 @@ export async function checkAndPromoteTasks() {
 
             let newPriority = null;
 
+            // Compare against the CANONICAL priority, not the raw stored value: tasks may carry
+            // either casing historically (e.g. 'Urgent' vs 'URGENT'), and an un-normalized
+            // comparison would re-promote an already-urgent task on every run (a redundant write,
+            // and a casing flip-flop). normalizePriority collapses both to the PRIORITIES token.
+            const currentPriority = normalizePriority(task.priority);
+
             // Overdue, today, or tomorrow -> Urgent. (dayAfterTomorrowStr == today+2, so
             // deadlineStr < it covers everything up to and including tomorrow.)
             if (deadlineStr < dayAfterTomorrowStr) {
-                if (task.priority !== 'Urgent') {
-                    newPriority = 'Urgent';
+                if (currentPriority !== PRIORITIES.URGENT) {
+                    newPriority = PRIORITIES.URGENT;
                 }
             } else if (deadlineStr < threeDaysStr) {
                 // Day after tomorrow -> High
-                if (task.priority !== 'Urgent' && task.priority !== 'High') {
-                    newPriority = 'High';
+                if (currentPriority !== PRIORITIES.URGENT && currentPriority !== PRIORITIES.HIGH) {
+                    newPriority = PRIORITIES.HIGH;
                 }
             }
 
