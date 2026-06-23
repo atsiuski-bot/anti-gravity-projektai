@@ -1,13 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
-import { privateScopeConstraints } from '../utils/teamScope';
+import { privateScopeConstraints, scopeRoster } from '../utils/teamScope';
 import { absenceLabel } from '../utils/absence';
 import { cn } from '../utils/cn';
 import { addComment } from '../utils/commentActions';
-import { Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText } from 'lucide-react';
+import { gatherReportData } from '../utils/reportData';
+import { buildReport } from '../utils/reportAggregate';
+import { formatStatValue } from '../utils/workerStats';
+import { Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -66,6 +69,11 @@ export default function Reports({ users, canExport = false, viewRole }) {
     // The rich "Atsisiųsti ataskaitą" modal (Markdown / JSON / CSV summary + per-worker selection).
     // Manager-only (gated by canExport); owns its own period + worker scope, so it works in any mode.
     const [exportModalOpen, setExportModalOpen] = useState(false);
+
+    // On-screen team summary drill-down: clicking a flagged worker in the summary opens THAT worker's
+    // day timeline (the same single-worker drill-down the team calendar uses), scoped to the report's
+    // range, so the manager can locate and fix the suspicious sessions. { userId, name } | null.
+    const [summaryDrillWorker, setSummaryDrillWorker] = useState(null);
 
     // --- TASKS REPORT STATE ---
     const [taskFilters, setTaskFilters] = useState({
@@ -904,7 +912,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
         const evt = item.requestedEvent || item.originalEvent || {};
         let TypeIcon = Briefcase;
-        let typeLabel = "Darbas ofise";
+        let typeLabel = "Veikla";
         let typeColor = "text-ink-muted";
         if (evt.isVacation) {
             TypeIcon = null;
@@ -912,7 +920,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
             typeColor = "text-feedback-warning";
         } else if (evt.isWorkFromHome) {
             TypeIcon = null;
-            typeLabel = "Nuotolinis darbas";
+            typeLabel = "Veikla namuose";
             typeColor = "text-feedback-info";
         }
 
@@ -1101,6 +1109,20 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         );
                     })()}
 
+                    {/* On-screen team summary — manager-only, multi-day ranges only. Reuses the same
+                        aggregated report the download produces (buildReport): the team rollup with
+                        period-over-period deltas, plus an "Įspėjimai" list of workers whose sessions
+                        were clamped (dataTrust.implausibleSessions > 0), each linking into that
+                        worker's day timeline so the manager can fix them. */}
+                    {reportPeriod !== 'day' && isManagerRole(userRole) && (
+                        <TeamPeriodSummary
+                            range={dateRange}
+                            users={users}
+                            scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
+                            onDrillWorker={(userId, name) => setSummaryDrillWorker({ userId, name })}
+                        />
+                    )}
+
                     {/* Day mode → the live daily timeline. Any multi-day range → the same view
                         aggregated over [start, end] (summary cards, sort filters).
                         On the manager team view the task-confirmation lists and history move to the
@@ -1135,6 +1157,23 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             users={users}
                             scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
                             defaultRange={{ start: dateRange.start, end: dateRange.end }}
+                        />
+                    )}
+
+                    {/* Drill-down opened from a summary warning — that worker's day timeline over the
+                        report range, the same single-worker modal the team calendar uses. */}
+                    {summaryDrillWorker && (
+                        <DailyStatistics
+                            currentUser={currentUser}
+                            userRole={userRole}
+                            users={users}
+                            canExport={canExport}
+                            dateRange={dateRange}
+                            forceUserId={summaryDrillWorker.userId}
+                            forceUserName={summaryDrillWorker.name}
+                            workerDetailOnly
+                            showTestUsers={showTestUsers}
+                            onClose={() => setSummaryDrillWorker(null)}
                         />
                     )}
                 </div>
@@ -1428,5 +1467,170 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 />
             )}
         </div>
+    );
+}
+
+// One team-rollup metric tile with an optional period-over-period delta. The delta is derived by
+// diffing the current vs previous team total (both from buildReport), so its arrow/colour mean the
+// same thing as the per-worker deltas in the downloaded report. `goodWhen` says which direction is
+// an improvement so colour never contradicts the numbers (more hours/tasks = up-good; on-time % up
+// = good). Colour is paired with an arrow + sign, never the sole signal (DESIGN_SYSTEM §5).
+function SummaryStat({ label, value, delta }) {
+    let Arrow = Minus;
+    let tone = 'text-ink-muted';
+    if (delta && delta.pct !== 0) {
+        Arrow = delta.improved ? TrendingUp : TrendingDown;
+        tone = delta.improved ? 'text-feedback-success' : 'text-feedback-danger';
+    }
+    return (
+        <div className="flex flex-col px-1">
+            <span className="text-caption text-ink-muted">{label}</span>
+            <span className="mt-0.5 text-h3 font-bold text-ink-strong tabular-nums">{value}</span>
+            {delta && (
+                <span className={cn('mt-0.5 flex items-center gap-0.5 text-caption font-semibold tabular-nums', tone)}>
+                    <Arrow className="h-3 w-3" aria-hidden="true" />
+                    {delta.pct > 0 ? '+' : ''}{delta.pct}%
+                </span>
+            )}
+        </div>
+    );
+}
+
+// On-screen team/period summary — the same conclusion the report download carries, surfaced inline.
+// Builds buildReport over the report's range for the whole scoped roster (one fetch, the same reads
+// the export modal makes — no new query kind, schema, or rule), then reads its team rollup, derives
+// team-level deltas by diffing against a second buildReport over the previous window (the fetch
+// already spans it), and lists workers whose sessions were clamped (dataTrust.implausibleSessions).
+// Pure presentation over the shared aggregator: reportAggregate.js is imported and called, never
+// modified. Best-effort — any failure renders nothing, leaving the work-hours report below intact.
+function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
+    const { userData, uid, effectiveRole } = scope || {};
+    const [state, setState] = useState({ loading: true, team: null, prevTeam: null, warnings: [], error: false });
+
+    // The roster the summary covers — everyone the viewer may see, minus disabled and test accounts
+    // (Reports never counts test users), matching the export modal's candidate list.
+    const workerIds = useMemo(() => {
+        const roster = scopeRoster(users, userData, uid) || [];
+        return roster.filter((u) => !u.isDisabled && !u.isTest).map((u) => u.id);
+    }, [users, userData, uid]);
+
+    const startStr = range?.start;
+    const endStr = range?.end;
+
+    useEffect(() => {
+        let ignore = false;
+        if (!startStr || !endStr || startStr > endStr || workerIds.length === 0) {
+            setState({ loading: false, team: null, prevTeam: null, warnings: [], error: false });
+            return undefined;
+        }
+        setState((s) => ({ ...s, loading: true, error: false }));
+        (async () => {
+            try {
+                const window = { startStr, endStr };
+                const { workers, prevWindow } = await gatherReportData({
+                    db, userData, uid, effectiveRole, users, window, workerIds, includeRecognition: false,
+                });
+                const generatedAt = new Date().toISOString();
+                // Current report carries the team rollup + per-worker dataTrust we surface.
+                const current = buildReport({ generatedAt, window, prevWindow, scopeLabel: '', includeEarnings: true, workers });
+                // A second build over the PREVIOUS window (already fetched) gives a real prior team
+                // total to diff — true team-level deltas without modifying the aggregator.
+                const previous = buildReport({ generatedAt, window: prevWindow, prevWindow, scopeLabel: '', includeEarnings: true, workers });
+                if (ignore) return;
+                const warnings = current.workers
+                    .filter((w) => w.dataTrust && w.dataTrust.implausibleSessions > 0)
+                    .map((w) => ({ userId: w.userId, name: w.name, count: w.dataTrust.implausibleSessions }));
+                setState({ loading: false, team: current.team, prevTeam: previous.team, warnings, error: false });
+            } catch (err) {
+                console.error('Team summary build failed:', err);
+                if (!ignore) setState({ loading: false, team: null, prevTeam: null, warnings: [], error: true });
+            }
+        })();
+        return () => { ignore = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData/users read through the stable workerIds + scope ids; depending on the whole objects would refetch on every parent render
+    }, [startStr, endStr, workerIds, uid, effectiveRole]);
+
+    // Team-level delta from current vs previous total. `goodWhen='up'` for quantities (more is
+    // better) and on-time %; null when there is no prior value to compare against.
+    const delta = (cur, prev) => {
+        if (!Number.isFinite(cur) || !Number.isFinite(prev) || prev === 0) return null;
+        const pct = Math.round(((cur - prev) / Math.abs(prev)) * 100);
+        if (pct === 0) return { pct: 0, improved: null };
+        return { pct, improved: pct > 0 };
+    };
+
+    if (state.loading) {
+        return (
+            <div className="mb-4 rounded-card border border-line bg-surface-card p-4 shadow-sm">
+                <Spinner label="Kraunama komandos suvestinė…" />
+            </div>
+        );
+    }
+    // Silent when there is nothing to summarise or the build failed — the report below still stands.
+    if (state.error || !state.team || state.team.workerCount === 0) return null;
+
+    const t = state.team;
+    const p = state.prevTeam;
+
+    return (
+        <section
+            className="mb-4 rounded-card border border-line bg-surface-card p-4 shadow-sm"
+            aria-label="Komandos laikotarpio suvestinė"
+        >
+            <div className="mb-3 flex items-center gap-2">
+                <Users className="h-5 w-5 text-brand" aria-hidden="true" />
+                <h3 className="text-body font-bold text-ink-strong">Komandos suvestinė</h3>
+                <span className="ml-auto font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-x-2 gap-y-4 divide-line sm:grid-cols-4 sm:divide-x">
+                <SummaryStat label="Vykdytojų" value={t.workerCount} />
+                <SummaryStat
+                    label="Viso dirbta"
+                    value={formatStatValue(t.totalHours, 'hours')}
+                    delta={p ? delta(t.totalHours, p.totalHours) : null}
+                />
+                <SummaryStat
+                    label="Užbaigta užduočių"
+                    value={t.completedTasks}
+                    delta={p ? delta(t.completedTasks, p.completedTasks) : null}
+                />
+                {Number.isFinite(t.avgOnTimePct) ? (
+                    <SummaryStat
+                        label="Vid. punktualus startas"
+                        value={`${t.avgOnTimePct}%`}
+                        delta={p && Number.isFinite(p.avgOnTimePct) ? delta(t.avgOnTimePct, p.avgOnTimePct) : null}
+                    />
+                ) : (
+                    <SummaryStat label="Uždarbis (neto)" value={t.netEarningsEur ? `${Number(t.netEarningsEur).toLocaleString('lt-LT')} €` : '—'} />
+                )}
+            </div>
+
+            {/* Įspėjimai — workers whose sessions were clamped (would otherwise read as inflated time).
+                Each chip drills into that worker's day timeline so the manager can locate and fix them. */}
+            {state.warnings.length > 0 && (
+                <div className="mt-4 border-t border-line pt-3">
+                    <p className="mb-2 flex items-center gap-1.5 text-caption font-bold uppercase tracking-wide text-feedback-warning-text">
+                        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                        Įspėjimai — patikrintinos sesijos
+                    </p>
+                    <ul className="flex flex-wrap gap-2">
+                        {state.warnings.map((w) => (
+                            <li key={w.userId}>
+                                <button
+                                    type="button"
+                                    onClick={() => onDrillWorker?.(w.userId, w.name)}
+                                    className="flex min-h-touch items-center gap-1.5 rounded-control border border-feedback-warning-border bg-feedback-warning-soft px-3 py-1.5 text-caption font-semibold text-feedback-warning-text transition-colors hover:bg-feedback-warning-soft/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                >
+                                    <span className="break-words">{w.name}</span>
+                                    <span className="rounded-full bg-feedback-warning-border/40 px-1.5 font-mono tabular-nums">{w.count}</span>
+                                    <ChevronRight className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                </button>
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+        </section>
     );
 }

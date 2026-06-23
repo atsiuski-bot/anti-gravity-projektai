@@ -157,8 +157,14 @@ raised 15 findings; **7 were confirmed and fixed**, 8 dismissed as out-of-scope/
    UI changes priority/deadline through the edit form until that path is routed through a command).
    Review clean (0 findings); verified live in prod (real auth): a create→approve→reprioritize→reschedule
    run left the task `approved` / `URGENT` / dated and wrote the four matching decision entries.
-   STILL TODO: confirm (completed→confirmed — its writes vary across sites and need reconciling),
-   extend-time, delete, and routing the EDIT path through one command (retiring increment 2's split).
+   **`deleteTask` DONE (increment 6, same worktree):** task deletion is now an audited command —
+   the soft (keep-hours, in-place mark) and hard (remove + mark work_sessions deleted) writes plus the
+   decision entry are owned by the command; the util keeps the timer-pause + role/actor resolution and
+   the 4 call sites (TaskCard/TaskTable/TaskHistory/ManagerNotifications) are unchanged. Review clean
+   (0 findings); gate green (297 tests). `extend-time` is N/A — `extendTaskTime` is dead code (no caller).
+   STILL TODO: **confirm** (completed→confirmed — its writes still vary across 4 sites and those sit in
+   the actively-churned approval-unify zone, so reconcile once that settles) and routing the **EDIT**
+   path through one command (retiring increment 2's split — TaskModal is also a hot, parallel-edited zone).
 3. **Formalize the task lifecycle as an explicit state machine** enforced by the commands.
 4. **Promote perception (E):** make `workerStats`/`reportAggregate` callable server-side so an agent
    can read "decision context" without a browser.
