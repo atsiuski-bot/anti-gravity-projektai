@@ -241,7 +241,8 @@ export default function ManagerNotifications({ onClose }) {
                 status: 'approved',
                 isApproved: true, // Redundant but explicit
                 approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid
+                approvedBy: currentUser.uid,
+                updatedAt: new Date().toISOString()
             });
 
             // 2. Dismiss notification + tell the worker
@@ -264,7 +265,8 @@ export default function ManagerNotifications({ onClose }) {
                 status: 'approved',
                 isApproved: true,
                 approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid
+                approvedBy: currentUser.uid,
+                updatedAt: new Date().toISOString()
             });
 
             // 2. Dismiss notification + tell the worker

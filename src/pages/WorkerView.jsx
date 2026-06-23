@@ -218,11 +218,12 @@ export default function WorkerView() {
                 const getStatusRank = (task) => {
                     const status = task.status || 'pending';
                     if (status === 'in-progress') return 1;
-                    if (status === 'pending') return 2;
-                    if (status === 'unapproved') return 3;
-                    if (status === 'completed') return 4;
-                    if (status === 'confirmed') return 5;
-                    return 6;
+                    if (status === 'approved') return 2; // gate cleared, ready to start — near the top
+                    if (status === 'pending') return 3;
+                    if (status === 'unapproved') return 4;
+                    if (status === 'completed') return 5;
+                    if (status === 'confirmed') return 6;
+                    return 7;
                 };
                 const rankA = getStatusRank(a);
                 const rankB = getStatusRank(b);

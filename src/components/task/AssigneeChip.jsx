@@ -8,7 +8,7 @@ import Avatar from '../ui/Avatar';
 
 /**
  * AssigneeChip — the one "who is this assigned to" chip. Two looks, one component:
- *  - ring: the worker's avatar color as a thin ring around a card-colored pill (spacious cards)
+ *  - ring: the worker's color as a small leading dot on a calm pill (spacious cards)
  *  - plain: a quiet sunken pill (dense tables / rows)
  * Both run the name through formatDisplayName so "Jonas Kazlauskas" -> "Jonas K." consistently.
  *
@@ -56,19 +56,18 @@ export default function AssigneeChip({ name, userId, color, ring = false, firstN
         const leading = userId
             ? <Avatar src={user?.photoURL || null} name={fullName} email={user?.email} size="xs" className="shrink-0" />
             : (showIcon ? <User className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> : null);
+        // One calm pill — the same weight the manager (UserChip) chip carries — so assignee and
+        // Vadovas read at a single size. The worker colour survives as a small leading dot instead
+        // of a full ring that inflated the element and made every chip look a different size.
         return (
-            <span
-                className="inline-flex items-center justify-center p-[2px] rounded-full"
-                style={{ backgroundColor: color || WORKER_FALLBACK_COLOR }}
+            <Tag
+                {...tagProps}
+                className={cn('inline-flex min-w-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface-sunken text-caption font-medium text-ink', interactive, className)}
             >
-                <Tag
-                    {...tagProps}
-                    className={cn('inline-flex min-w-0 items-center gap-1 px-1.5 py-0.5 rounded-full font-bold bg-surface-card text-ink', interactive, className)}
-                >
-                    {leading}
-                    <span className="truncate">{display}</span>
-                </Tag>
-            </span>
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color || WORKER_FALLBACK_COLOR }} aria-hidden="true" />
+                {leading}
+                <span className="truncate">{display}</span>
+            </Tag>
         );
     }
 

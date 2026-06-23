@@ -12,10 +12,11 @@ import { getLithuanianNow, getLithuanianDateString, getLithuanian3AMCutoff, addD
  */
 export async function checkAndPromoteTasks() {
     try {
-        // Fetch all non-completed tasks
+        // Fetch all non-completed tasks. 'approved' = gate cleared but not yet started, so it still
+        // needs deadline-based priority promotion (it is the canonical post-approval status now).
         const tasksQuery = query(
             collection(db, 'tasks'),
-            where('status', 'in', ['pending', 'in-progress'])
+            where('status', 'in', ['pending', 'in-progress', 'approved'])
         );
 
         const snapshot = await getDocs(tasksQuery);
