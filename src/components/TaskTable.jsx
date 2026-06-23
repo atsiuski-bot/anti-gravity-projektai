@@ -22,7 +22,7 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
-import { approveTask, completeTask, reopenTask, humanActor, MODES } from '../domain';
+import { approveTask, completeTask, reopenTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { isManagerRole } from '../utils/formatters';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
@@ -210,8 +210,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     };
 
     // Confirming finished work (completed -> confirmed) is a cleanly reversible sign-off, so it is
-    // immediate + undoable; undo restores the exact prior state. The table pings no one, so there is
-    // no notification to defer.
+    // immediate + undoable; both the confirm and its undo are audited commands (confirmTask /
+    // unconfirmTask — the undo returns the task to 'completed', "awaiting confirmation"). The table
+    // pings no one, so there is no notification to defer.
     const handleConfirmTask = (taskId) => {
         // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
         // Task-level managers (who are not system managers) cannot confirm.
@@ -222,13 +223,12 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         setError('');
         const task = tasks.find(t => t.id === taskId);
         if (!task) return;
-        const prior = { status: task.status ?? 'completed', confirmedBy: task.confirmedBy ?? null, confirmedAt: task.confirmedAt ?? null };
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
         runUndoable({
-            run: async () => {
-                const now = new Date().toISOString();
-                await updateDoc(doc(db, 'tasks', taskId), { status: 'confirmed', confirmedBy: currentUser.uid, confirmedAt: now, updatedAt: now });
-            },
-            undo: () => updateDoc(doc(db, 'tasks', taskId), { status: prior.status, confirmedBy: prior.confirmedBy, confirmedAt: prior.confirmedAt, updatedAt: new Date().toISOString() }),
+            // Forward sign-off AND undo are both audited commands (ADR 0015) — confirmTask returns the
+            // task to 'completed' on undo, the same state it confirmed from.
+            run: () => confirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirmed from task table' }),
+            undo: () => unconfirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirm undone from task table' }),
             message: 'Atlikimas patvirtintas.',
             undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
             errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite vėliau.',
