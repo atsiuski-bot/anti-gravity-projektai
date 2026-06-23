@@ -1151,9 +1151,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
             {/* Timeline Table or Worker Summary */}
             <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
-                <div className="px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
-                    <h3 className="font-semibold">{selectedUserId === 'all' ? 'Darbo valandos' : (isRange ? 'Darbų eiga' : 'Darbų eiga (Timeline)')}</h3>
-                </div>
+                {selectedUserId !== 'all' && (
+                    <div className="px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
+                        <h3 className="font-semibold">{isRange ? 'Darbų eiga' : 'Darbų eiga (Timeline)'}</h3>
+                    </div>
+                )}
 
                 {combinedTimelineItems.length === 0 ? (
                     <div className="p-12 text-center text-ink-muted">
