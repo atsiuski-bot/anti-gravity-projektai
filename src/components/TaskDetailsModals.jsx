@@ -566,7 +566,7 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     return createPortal(modalContent, document.body);
 }
 
-export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error }) {
+export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error, level = 'modal' }) {
     const dialogRef = useRef(null);
     const titleId = useId();
 
@@ -575,8 +575,11 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
 
     if (!isOpen) return null;
 
+    // `level="top"` raises this confirm above another already-open overlay on the same z-ladder
+    // (e.g. WorkPlanner's Edit Event modal, which stays mounted behind the delete confirm). The
+    // default keeps the standard modal layer, so every other call site is unaffected.
     return (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in">
+        <div className={`fixed inset-0 ${level === 'top' ? 'z-top' : 'z-modal'} flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in`}>
             <div
                 ref={dialogRef}
                 role="dialog"

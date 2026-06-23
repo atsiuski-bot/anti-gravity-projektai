@@ -1180,12 +1180,16 @@ export default function WorkPlanner() {
                 </div>
             )}
 
+            {/* level="top" so the confirm stacks ABOVE the Edit Event modal (also z-top), which
+                stays mounted behind it — without it the confirm (default z-modal) renders hidden
+                behind the edit overlay. */}
             <DeleteConfirmationModal
                 isOpen={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
                 onConfirm={confirmDelete}
                 taskTitle={editingEvent?.title || 'Darbo laiko įrašą'}
                 isTask={false}
+                level="top"
             />
         </div >
     );
