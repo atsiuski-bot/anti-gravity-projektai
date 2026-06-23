@@ -5,6 +5,7 @@ import { getCommentKey } from '../utils/commentActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
+import ConfirmDialog from './ui/ConfirmDialog';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -216,6 +217,8 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
 export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, onToggle, onAdd, onDelete }) {
     const [newItem, setNewItem] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    // Removing a checklist item writes through to Firestore, so it is gated behind a confirm.
+    const [pendingDelete, setPendingDelete] = useState(null);
 
     const items = Array.isArray(checklist) ? checklist : [];
     const { total, done } = getChecklistProgress(items);
@@ -289,7 +292,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                                         icon={Trash2}
                                         label="Ištrinti punktą"
                                         variant="danger"
-                                        onClick={() => onDelete?.(item.id)}
+                                        onClick={() => setPendingDelete(item)}
                                     />
                                 )}
                             </li>
@@ -313,6 +316,17 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                     </form>
                 )}
             </div>
+
+            <ConfirmDialog
+                open={!!pendingDelete}
+                onConfirm={() => { onDelete?.(pendingDelete.id); setPendingDelete(null); }}
+                onCancel={() => setPendingDelete(null)}
+                title="Ištrinti punktą"
+                message={pendingDelete ? `Ar tikrai norite ištrinti punktą „${pendingDelete.text}“?` : ''}
+                confirmLabel="Ištrinti"
+                cancelLabel="Atšaukti"
+                variant="danger"
+            />
         </DetailsModal>
     );
 }

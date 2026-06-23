@@ -66,7 +66,10 @@ const BottomNavigation = () => {
                 className="fixed left-0 right-0 z-nav flex w-full flex-col items-center gap-2 px-3 pb-3 pointer-events-none"
                 style={{ bottom: 'calc(64px + env(safe-area-inset-bottom))' }}
             >
-                <div className="pointer-events-auto flex w-full max-w-md items-center justify-between gap-2 rounded-card border border-line bg-surface-card/95 px-3 py-1.5 shadow-lg backdrop-blur-sm">
+                <div
+                    className="pointer-events-auto flex w-full max-w-md items-center justify-between gap-2 rounded-card border border-line bg-surface-card/95 px-3 py-1.5 ring-1 ring-black/[0.04] backdrop-blur-sm"
+                    style={{ boxShadow: '0 12px 28px -8px rgba(15, 23, 42, 0.28), 0 4px 10px -4px rgba(15, 23, 42, 0.16)' }}
+                >
                     {showCreateButton && <CreateButton />}
                     <QuickWorkTimer compact={true} />
                     <CallTimer compact={true} />
@@ -77,7 +80,10 @@ const BottomNavigation = () => {
             {/* Main bottom bar — the quiet substrate. Recedes into the canvas (surface-base, no
                 shadow) so only the action dock above reads as "floating": two competing shadows
                 were the reason the two strips blended into one (DESIGN_SYSTEM §9). */}
-            <div className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-base pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+            <div
+                className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-base pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
+                style={{ boxShadow: '0 -10px 24px -14px rgba(15, 23, 42, 0.22)' }}
+            >
                 <div className="relative mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-2">
                     {/* Tablet (sm..lg): full tab set, centered, a thin separator between groups */}
                     <div className="hidden flex-1 items-center justify-center gap-2 sm:flex">

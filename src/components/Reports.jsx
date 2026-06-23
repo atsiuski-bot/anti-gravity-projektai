@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints } from '../utils/teamScope';
 import { absenceLabel } from '../utils/absence';
+import { cn } from '../utils/cn';
 import { addComment } from '../utils/commentActions';
-import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText } from 'lucide-react';
+import { Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -26,133 +27,14 @@ import ReportExportModal from './ReportExportModal';
 import { CommentsModal } from './TaskDetailsModals';
 import { useAuth } from '../context/AuthContext';
 import { TASK_TAGS } from '../utils/taskUtils';
-
-// Period ladder for the unified report tab: a single day (default) up through the year, plus a
-// custom range driven by the date pickers. 'day' shows the daily timeline; the rest show the
-// detailed work summary for the resolved date range.
-const PERIOD_PRESETS = [
-    { id: 'day', label: 'Ši diena' },
-    { id: 'week', label: 'Ši savaitė' },
-    { id: 'month', label: 'Šis mėnuo' },
-    { id: '3months', label: '3 mėnesiai' },
-    { id: 'year', label: 'Šie metai' },
-];
+import { PeriodPicker } from './reports/PeriodPicker';
+import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 
 // Skirtumas (worked − planned) is meaningful only when the plan plausibly covers the worked span;
 // a token plan against a full month produces a fake "+164:00 surplus". A worker counts as "planned"
 // only when their plan is at least this fraction of worked time. Shared by the CSV Skirtumas gate
 // and the on-screen coverage indicator so the two surfaces never disagree on who has a usable plan.
 const PLAN_COVERAGE_FLOOR = 0.25;
-
-// Period picker that fits as many preset chips inline as the row width allows, hiding the rest
-// behind an expander. A hidden measuring row carries every chip at its natural width; an observer
-// recomputes how many lead chips fit whenever the visible row resizes. The expander panel reveals
-// ALL presets plus the custom from/to range, so nothing the inline row clips is ever unreachable.
-// One component drives both the work-report and calendar-history pickers, keeping them identical.
-function PeriodPicker({ presets, activeId, onChoose, open, onToggle, label, children }) {
-    const wrapRef = useRef(null);
-    const measureRef = useRef(null);
-    const [visibleCount, setVisibleCount] = useState(presets.length);
-
-    useLayoutEffect(() => {
-        const wrapEl = wrapRef.current;
-        const measureEl = measureRef.current;
-        if (!wrapEl || !measureEl) return;
-        const GAP = 8; // matches gap-2 between chips
-        const compute = () => {
-            const avail = wrapEl.clientWidth;
-            // The picker can mount while its tab panel is still zero-width (hidden tab, pre-layout
-            // pass). Measuring then would wrongly conclude "nothing fits" and lock the row to a
-            // single chip even after it becomes wide. Skip until we have a real width — the
-            // ResizeObserver re-fires with the true size once the panel lays out.
-            if (avail <= 0) return;
-            const chips = Array.from(measureEl.children);
-            let used = 0;
-            let count = 0;
-            for (let i = 0; i < chips.length; i++) {
-                used += chips[i].offsetWidth + (i > 0 ? GAP : 0);
-                if (used <= avail) count++;
-                else break;
-            }
-            setVisibleCount(Math.max(1, count));
-        };
-        compute();
-        const ro = new ResizeObserver(compute);
-        ro.observe(wrapEl);
-        return () => ro.disconnect();
-    }, [presets]);
-
-    const hiddenCount = presets.length - visibleCount;
-    const chipClass = (id) =>
-        `shrink-0 inline-flex items-center justify-center min-h-touch px-3 rounded-control text-body font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
-            activeId === id
-                ? 'bg-brand text-on-brand border-brand'
-                : 'bg-surface-card text-ink-strong border-line hover:bg-surface-sunken'
-        }`;
-
-    return (
-        <div className="bg-surface-card rounded-card shadow-sm border border-line">
-            {/* The bar matches the export button's height exactly: one min-h-touch row with no extra
-                vertical padding, so the chips (also min-h-touch) define the height. The old calendar
-                icon + "Laikotarpis" caption are dropped — the chips are self-describing, and removing
-                them frees the full width for as many presets as fit inline. */}
-            <div role="group" aria-label={label} className="flex items-center gap-2 px-2 min-h-touch">
-                {/* Inline chips: only those that fit on one line; the rest live in the panel below. */}
-                <div ref={wrapRef} className="relative flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
-                    {/* Hidden row at natural width — the single source of truth for chip widths. */}
-                    <div ref={measureRef} aria-hidden="true" className="absolute left-0 top-0 flex items-center gap-2 opacity-0 pointer-events-none">
-                        {presets.map((p) => (
-                            <span key={p.id} className={chipClass(p.id)}>{p.label}</span>
-                        ))}
-                    </div>
-                    {presets.slice(0, visibleCount).map((p) => (
-                        <button key={p.id} type="button" onClick={() => onChoose(p.id)} className={chipClass(p.id)}>
-                            {p.label}
-                        </button>
-                    ))}
-                </div>
-
-                <button
-                    type="button"
-                    onClick={onToggle}
-                    aria-expanded={open}
-                    aria-label={open ? 'Suskleisti laikotarpio parinktis' : 'Daugiau laikotarpio parinkčių'}
-                    className="shrink-0 inline-flex items-center gap-1 min-h-touch px-2 rounded-control text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                >
-                    {!open && hiddenCount > 0 && (
-                        <span className="text-caption font-bold text-ink-strong">+{hiddenCount}</span>
-                    )}
-                    {open
-                        ? <ChevronUp className="w-4 h-4" aria-hidden="true" />
-                        : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
-                </button>
-            </div>
-
-            {open && (
-                <div className="border-t border-line p-3 space-y-3 animate-in fade-in slide-in-from-top-2">
-                    {/* Only the presets that did NOT fit inline — the visible ones already sit in the
-                        bar above, so repeating every preset here would be redundant. The panel always
-                        still carries the custom from/to range (children). */}
-                    {hiddenCount > 0 && (
-                        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                            {presets.slice(visibleCount).map((p) => (
-                                <Button
-                                    key={p.id}
-                                    variant={activeId === p.id ? 'primary' : 'secondary'}
-                                    onClick={() => onChoose(p.id)}
-                                    className="justify-center"
-                                >
-                                    {p.label}
-                                </Button>
-                            ))}
-                        </div>
-                    )}
-                    {children}
-                </div>
-            )}
-        </div>
-    );
-}
 
 export default function Reports({ users, canExport = false, viewRole }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
@@ -766,48 +648,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         }
     };
 
-    // Resolve a period preset to a from/to range. All math is pure date-string arithmetic
-    // (addDaysToDateString is DST-safe), weeks are Monday-started per Lithuanian convention, and
-    // every range ends "today" so the report always runs up to the current day. Pure (returns the
-    // range) so both the work-report and calendar-history pickers can share one source of truth.
-    const resolvePresetRange = (preset) => {
-        const today = getLithuanianDateString();
-        const pad = (n) => String(n).padStart(2, '0');
-        const dayOfWeek = (dateStr) => {
-            const [y, m, d] = dateStr.split('-').map(Number);
-            return new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun … 6=Sat
-        };
-        const firstOfMonth = (dateStr) => `${dateStr.slice(0, 7)}-01`;
-        const mondayOffset = (dayOfWeek(today) + 6) % 7; // days since this week's Monday
-        const [y, m] = today.split('-').map(Number);
-
-        let start;
-        const end = today;
-        switch (preset) {
-            case 'day':
-                start = today;
-                break;
-            case 'week':
-                start = addDaysToDateString(today, -mondayOffset);
-                break;
-            case 'month':
-                start = firstOfMonth(today);
-                break;
-            case '3months': {
-                // Current month plus the two preceding it = 3 calendar months through today.
-                const d = new Date(Date.UTC(y, m - 1 - 2, 1));
-                start = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-01`;
-                break;
-            }
-            case 'year':
-                start = `${today.slice(0, 4)}-01-01`;
-                break;
-            default:
-                return null;
-        }
-        return { start, end };
-    };
-
     const applyPreset = (preset) => {
         const range = resolvePresetRange(preset);
         if (range) setDateRange(range);
@@ -1109,39 +949,53 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 viewing their OWN data via viewRole="worker") there is just one view, so the
                 whole switcher is dropped. */}
             {isManagerRole(userRole) && (
-                <div role="tablist" aria-label="Ataskaitų skiltys" className="flex border-b border-line overflow-x-auto">
-
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab === 'report'}
-                        onClick={() => setActiveTab('report')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
-                            }`}
-                    >
-                        Darbo ataskaita
-                    </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab === 'approval'}
-                        onClick={() => setActiveTab('approval')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
-                            }`}
-                    >
-                        Patvirtinimas
-                    </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab === 'calendar-history'}
-                        onClick={() => setActiveTab('calendar-history')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
-                            }`}
-                    >
-                        Kalendoriaus pakeitimų istorija
-                    </button>
-
+                <div role="tablist" aria-label="Ataskaitų skiltys">
+                    {/* Segmented switcher — same control as the Komandos darbai sub-tabs
+                        (ManagerView). Labels wrap to multiple lines on a narrow screen
+                        instead of forcing a horizontal scroll. */}
+                    <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'report'}
+                            onClick={() => setActiveTab('report')}
+                            className={cn(
+                                'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                activeTab === 'report' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            Darbo ataskaita
+                        </button>
+                        <div className="w-px bg-line" aria-hidden="true" />
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'approval'}
+                            onClick={() => setActiveTab('approval')}
+                            className={cn(
+                                'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                activeTab === 'approval' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            Patvirtinimas
+                        </button>
+                        <div className="w-px bg-line" aria-hidden="true" />
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'calendar-history'}
+                            onClick={() => setActiveTab('calendar-history')}
+                            className={cn(
+                                'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                activeTab === 'calendar-history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            Kalendoriaus pakeitimų istorija
+                        </button>
+                    </div>
                 </div>
             )}
 

@@ -2,8 +2,8 @@ import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setD
 import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
-import { normalizePriority } from './priority';
 import { logError } from './errorLog';
+import { createTask, reopenTask, humanActor, MODES } from '../domain';
 
 /**
  * Updates the user's work status in Firestore.
@@ -455,35 +455,30 @@ export const setTemplateAssignee = async (templateId, assignedUserId, user) => {
  * @returns {Promise<string>} the new task id
  */
 export const createManagerTask = async (fields, user) => {
-    const nowIso = new Date().toISOString();
-    const assignee = fields.assignedUserId || '';
     const managerId = fields.managerId || user.uid;
-    const estimatedTime = fields.estimatedTime || '';
-    const payload = {
-        title: (fields.title || '').trim() || 'Darbas',
+    // Assemble the caller-owned fields; createTask canonicalizes priority/estimate, stamps
+    // provenance from the actor (createdBy/creatorName), defaults status='pending', mints the id,
+    // writes the doc, and records ONE decision_log entry (ADR 0015, increment 3). The previous
+    // inline addDoc is gone — task creation now has a single, audited path.
+    const taskFields = {
+        title: fields.title,
         description: fields.description || '',
-        priority: normalizePriority(fields.priority),
-        estimatedTime,
-        estimatedTimeMinutes: parseTimeStringToMinutes(estimatedTime),
-        assignedUserId: assignee,
+        priority: fields.priority,
+        estimatedTime: fields.estimatedTime || '',
+        assignedUserId: fields.assignedUserId || '',
         managerId,
         taskAuditor: managerId,
         deadline: fields.deadline || '',
         tag: fields.tag || '',
-        links: Array.isArray(fields.links) ? fields.links : [],
-        checklist: Array.isArray(fields.checklist) ? fields.checklist : [],
-        comments: [],
-        status: 'pending',
-        completed: false,
-        createdAt: nowIso,
-        createdBy: user.uid,
-        creatorName: user.displayName || user.email,
-        assignedAt: nowIso,
-        updatedAt: nowIso,
+        links: fields.links,
+        checklist: fields.checklist,
     };
-    if (fields.sourceTemplateId) payload.sourceTemplateId = fields.sourceTemplateId;
-    const ref = await addDoc(collection(db, 'tasks'), payload);
-    return ref.id;
+    if (fields.sourceTemplateId) taskFields.sourceTemplateId = fields.sourceTemplateId;
+    const result = await createTask(
+        { fields: taskFields },
+        { actor: humanActor(user), mode: MODES.COMMIT, reason: 'created via manager convenience' },
+    );
+    return result.targetId;
 };
 
 /**
@@ -597,27 +592,12 @@ export const deleteTask = async (task, userId, options = { keepWorkHours: false 
  * @param {Object} task - The task to revert.
  * @returns {Promise<void>}
  */
-export const revertTask = async (task) => {
+export const revertTask = async (task, user) => {
     if (!task || !task.id) return;
-
-    try {
-        await updateDoc(doc(db, 'tasks', task.id), {
-            status: 'pending',
-            completed: false,
-            completedAt: null,
-            completedBy: null,
-            confirmedBy: null,
-            confirmedAt: null,
-            isDeleted: false,
-            deletedAt: null,
-            deletedBy: null,
-            timerStatus: task.timerMinutes > 0 ? 'paused' : null,
-            updatedAt: new Date().toISOString()
-        });
-    } catch (err) {
-        console.error("Error reverting task:", err);
-        throw err;
-    }
+    // Routed through the audited reopenTask command (ADR 0015, increment 4): the same status/
+    // completion/deletion reset, now plus a decision_log entry naming who reopened it. The previous
+    // inline updateDoc is gone.
+    await reopenTask({ task }, { actor: humanActor(user), mode: MODES.COMMIT, reason: 'reverted to active' });
 };
 
 export const extendTaskTime = async (taskId, additionalTimeString, extendedBy) => {

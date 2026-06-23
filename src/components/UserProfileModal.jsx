@@ -12,6 +12,10 @@ import Avatar from './ui/Avatar';
 import StatusPill from './ui/StatusPill';
 import Badge from './ui/Badge';
 import EmptyState from './ui/EmptyState';
+import DatePicker from './ui/DatePicker';
+import { PeriodPicker } from './reports/PeriodPicker';
+import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
+import { getLithuanianDateString } from '../utils/timeUtils';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 
 // The day-report drill-down is heavy (its own Firestore listeners), so it only mounts when a
@@ -50,12 +54,28 @@ export default function UserProfileModal({ userId, onClose }) {
     const { achievements } = useAchievements(userId);
     const [tab, setTab] = useState('achievements');
 
+    // "Statistika" period selector — the same ladder (day → year + custom) the team report uses,
+    // sitting in its own row above the day report. 'day' keeps DailyStatistics in its live single-
+    // day mode (its own stepper); any other preset resolves a from/to range and switches the embedded
+    // report to its aggregated span view. Mirrors Reports.jsx so the two surfaces behave identically.
+    const [statsPeriod, setStatsPeriod] = useState('day');
+    const [statsPeriodOpen, setStatsPeriodOpen] = useState(false);
+    const [statsRange, setStatsRange] = useState(() => {
+        const today = getLithuanianDateString();
+        return { start: `${today.slice(0, 7)}-01`, end: today };
+    });
+    const chooseStatsPeriod = (period) => {
+        setStatsPeriod(period);
+        setStatsPeriodOpen(false);
+        if (period !== 'day') {
+            const range = resolvePresetRange(period);
+            if (range) setStatsRange(range);
+        }
+    };
+
     const user = usersMap?.[userId];
     const name = formatDisplayName(user?.displayName || user?.email || 'Narys');
     const role = ROLE_META[user?.role] || ROLE_META.worker;
-    const memberSince = user?.createdAt
-        ? new Date(user.createdAt).toLocaleDateString('lt-LT', { year: 'numeric', month: 'long' })
-        : null;
 
     // May the signed-in viewer see this member's work statistics? Whole-team viewers see anyone;
     // a scoped overseer (scoped manager or senior manager) only their own subtree. Never for one's
@@ -80,21 +100,11 @@ export default function UserProfileModal({ userId, onClose }) {
             // member card reads as a full surface, and widen further when the day report is shown.
             className={clsx('h-[92vh] max-h-[92vh]', showStats && 'max-w-4xl')}
         >
-            <div className="text-center">
-                <div className="mx-auto mb-3 h-20 w-20">
-                    <Avatar src={user?.photoURL || null} name={user?.displayName} email={user?.email} size="lg" />
-                </div>
-                <p className="text-h3 font-semibold text-ink-strong">{name}</p>
-                <div className="mt-2 flex justify-center">
-                    <StatusPill tone={role.tone} icon={ROLE_GLYPHS[user?.role]}>{role.label}</StatusPill>
-                </div>
-                {memberSince && <p className="mt-2 text-caption text-ink-muted">Narys nuo {memberSince}</p>}
-            </div>
-
-            {/* Tab switch — only a manager who oversees this member gets the statistics view. */}
+            {/* Tab switch — sits ABOVE the identity block. Only a manager who oversees this member
+                gets the statistics view. */}
             {canViewStats && (
                 <div
-                    className="mt-5 flex justify-center"
+                    className="mb-5 flex justify-center"
                     role="tablist"
                     aria-label="Profilio rodinys"
                 >
@@ -147,8 +157,63 @@ export default function UserProfileModal({ userId, onClose }) {
                 </div>
             )}
 
+            {/* Identity block — full (large centered avatar + role) on the achievements view; a
+                compact left-aligned row (small avatar + name only) once a stats/summary tab is open
+                so the data surface gets the room. */}
+            {tab === 'achievements' ? (
+                <div className="text-center">
+                    <div className="mx-auto mb-3 h-20 w-20">
+                        <Avatar src={user?.photoURL || null} name={user?.displayName} email={user?.email} size="lg" />
+                    </div>
+                    <p className="text-h3 font-semibold text-ink-strong">{name}</p>
+                    <div className="mt-2 flex justify-center">
+                        <StatusPill tone={role.tone} icon={ROLE_GLYPHS[user?.role]}>{role.label}</StatusPill>
+                    </div>
+                </div>
+            ) : (
+                <div className="flex items-center gap-3">
+                    <div className="h-10 w-10 shrink-0">
+                        <Avatar src={user?.photoURL || null} name={user?.displayName} email={user?.email} size="md" />
+                    </div>
+                    <p className="text-h3 font-semibold text-ink-strong">{name}</p>
+                </div>
+            )}
+
             {showStats ? (
-                <div className="mt-5">
+                <div className="mt-5 space-y-4">
+                    {/* Period selector in its own row, separate from the report's hour totals —
+                        same chip ladder + custom range as the team "Darbo ataskaita" tab. */}
+                    <PeriodPicker
+                        presets={PERIOD_PRESETS}
+                        activeId={statsPeriod}
+                        onChoose={chooseStatsPeriod}
+                        open={statsPeriodOpen}
+                        onToggle={() => setStatsPeriodOpen((o) => !o)}
+                        label="Laikotarpis"
+                    >
+                        <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
+                            <div className="flex-1">
+                                <label htmlFor="stats-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
+                                <DatePicker
+                                    id="stats-from"
+                                    value={statsRange.start}
+                                    max={statsRange.end}
+                                    onChange={(v) => { setStatsPeriod('custom'); setStatsRange((prev) => ({ ...prev, start: v })); }}
+                                />
+                            </div>
+                            <div className="flex-1">
+                                <label htmlFor="stats-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
+                                <DatePicker
+                                    id="stats-to"
+                                    value={statsRange.end}
+                                    min={statsRange.start}
+                                    max={getLithuanianDateString()}
+                                    onChange={(v) => { setStatsPeriod('custom'); setStatsRange((prev) => ({ ...prev, end: v })); }}
+                                />
+                            </div>
+                        </div>
+                    </PeriodPicker>
+
                     <Suspense
                         fallback={<div className="py-12 text-center text-body text-ink-muted">Kraunama dienos ataskaita…</div>}
                     >
@@ -157,6 +222,7 @@ export default function UserProfileModal({ userId, onClose }) {
                             userRole={userRole}
                             users={activeUsers}
                             forceUserId={userId}
+                            dateRange={statsPeriod === 'day' ? null : statsRange}
                             embedded
                         />
                     </Suspense>
