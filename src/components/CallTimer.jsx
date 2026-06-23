@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
 import { getSessionColors } from '../utils/sessionColors';
+import { CALL_CONTACT_TYPES } from '../utils/callContacts';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
@@ -16,15 +17,16 @@ import IconButton from './ui/IconButton';
 // Separate memoized modal component to prevent re-renders from timer updates
 const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting }) {
     const textareaRef = useRef(null);
+    // Who was on the call — required (single-select). The call cannot be saved until one is
+    // chosen, so reports can always group calls by audience. Notes are free-text and optional.
+    const [contactType, setContactType] = useState(null);
     const totalDisplay = formatMinutesToTimeString(currentSessionMinutes);
     const { supported: dictationSupported, isListening, toggle: toggleDictation } = useSpeechDictation(textareaRef);
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        const titleFromTextarea = textareaRef.current?.value || '';
-        if (titleFromTextarea.trim()) {
-            onSubmit(titleFromTextarea);
-        }
+        if (!contactType) return;
+        onSubmit({ contactType, notes: textareaRef.current?.value || '' });
     };
 
     return (
@@ -33,27 +35,57 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
             onClose={onClose}
             title="Skambučio pabaiga"
             size="md"
-            initialFocusRef={textareaRef}
         >
             <form onSubmit={handleSubmit} className="flex flex-col">
-                {/* Content */}
-                <p className="text-body text-ink-muted mb-4">Įveskite skambučio aprašymą</p>
-
                 <div className="mb-5 bg-session-call-surface rounded-card p-4 border border-session-call-soft flex items-center justify-between">
                     <span className="text-body-lg font-semibold text-session-call-accent">Užfiksuotas laikas:</span>
                     <span className="text-4xl font-mono font-bold text-session-call-accent">{totalDisplay}</span>
                 </div>
 
+                {/* Required: who was on the call. Color is never the sole signal — the chosen chip
+                    also carries a check icon and an accessible pressed state (WCAG 1.4.1). */}
+                <fieldset className="mb-5">
+                    <legend className="block text-caption font-bold text-ink-strong mb-2 uppercase tracking-wide">
+                        Su kuo kalbėjote?
+                    </legend>
+                    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Su kuo kalbėjote">
+                        {CALL_CONTACT_TYPES.map(({ id, chip, Icon }) => {
+                            const selected = contactType === id;
+                            return (
+                                <button
+                                    key={id}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={selected}
+                                    onClick={() => setContactType(id)}
+                                    className={clsx(
+                                        'inline-flex items-center gap-2 min-h-touch px-3 py-2 rounded-control border-2 text-left transition-all active:scale-95',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        selected
+                                            ? 'bg-session-call-surface border-session-call-accent text-session-call-accent font-semibold'
+                                            : 'bg-surface-card border-line text-ink hover:bg-surface-sunken'
+                                    )}
+                                >
+                                    {selected
+                                        ? <Check className="w-5 h-5 shrink-0" aria-hidden="true" />
+                                        : <Icon className="w-5 h-5 shrink-0 text-ink-muted" aria-hidden="true" />}
+                                    <span className="text-body">{chip}</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                </fieldset>
+
                 <div>
                     <label htmlFor="callTextarea" className="block text-caption font-bold text-ink-strong mb-2 uppercase tracking-wide">
-                        Skambučio aprašymas
+                        Pastabos
                     </label>
                     <div className="relative">
                         <textarea
                             ref={textareaRef}
                             id="callTextarea"
-                            name="callDescription"
-                            placeholder="Trumpai aprašykite skambutį..."
+                            name="callNotes"
+                            placeholder="Trumpos pastabos apie skambutį (neprivaloma)..."
                             rows={4}
                             className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
                             style={{
@@ -65,7 +97,6 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                                 direction: 'ltr',
                                 textAlign: 'left'
                             }}
-                            required
                         />
                         {/* Voice dictation — feature-detected; hidden where the Web Speech API is
                             absent. Listening state is signalled by color AND a label change AND the
@@ -97,12 +128,14 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                         <Button type="button" variant="secondary" onClick={onClose}>
                             Atšaukti
                         </Button>
-                        <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
+                        <Button type="submit" variant="primary" loading={isSubmitting} icon={Check} disabled={!contactType}>
                             {isSubmitting ? 'Saugoma...' : 'Išsaugoti skambutį'}
                         </Button>
                     </div>
-                    {/* Defer naming: log the call now without a description so the worker can name it
-                        later. Subordinate (ghost) so the type-now primary stays dominant (§8). */}
+                    {/* Defer naming: log the call now without classifying or describing it, so the
+                        worker isn't blocked at the stop screen. It records a plain "Skambutis"
+                        (no contactType). Subordinate (ghost) so the classify-now primary stays
+                        dominant (§8); it stays available even before a type is picked. */}
                     <Button type="button" variant="ghost" icon={Clock} onClick={onDefer} disabled={isSubmitting} className="self-end">
                         Vėliau aprašysiu
                     </Button>
@@ -173,10 +206,11 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         setShowTitleModal(true);
     };
 
-    // Shared end-of-call flow. `customTitle` carries the worker's description on the type-now
-    // path; the defer path passes undefined so endSession logs the call without a name. Either
-    // way the same paused-session restore logic runs.
-    const finishCall = useCallback(async (customTitle) => {
+    // Shared end-of-call flow. On the classify-now path it carries the chosen counterpart type
+    // and optional notes; the defer path passes neither, so endSession logs a plain "Skambutis"
+    // (contactType null) and the worker isn't blocked at the stop screen. Either way the same
+    // paused-session restore logic runs.
+    const finishCall = useCallback(async ({ contactType = null, notes = '' } = {}) => {
         setIsSubmitting(true);
         setError('');
         try {
@@ -205,10 +239,10 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             // Optimistic UI Update: Instantly assume call ended and paused session restored
             setOptimisticUserData(optimistic);
 
-            // End session. With a title it logs a described call; without one (defer) it logs a
-            // plain "Skambutis" so the worker isn't blocked at the stop screen.
-            const overrides = customTitle ? { customTitle } : {};
-            await endSession(currentUser.uid, null, overrides);
+            // End session. The logger (handleLegacyLogging) derives the call title from
+            // contactType ("Skambutis – Klientas", or plain "Skambutis" when null on the defer
+            // path) and folds the optional notes into the description.
+            await endSession(currentUser.uid, null, { contactType, callNotes: (notes || '').trim() });
             setShowTitleModal(false);
         } catch (err) {
             console.error("Error completing call:", err);
@@ -219,13 +253,14 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         }
     }, [currentUser, userData, setOptimisticUserData]);
 
-    const handleCompleteCall = useCallback((taskTitle) => {
-        if (!taskTitle || !taskTitle.trim()) return;
-        return finishCall(taskTitle.trim());
+    // Classify-now: the modal hands over the required contactType + optional notes.
+    const handleCompleteCall = useCallback(({ contactType, notes }) => {
+        if (!contactType) return;
+        return finishCall({ contactType, notes });
     }, [finishCall]);
 
-    // "Vėliau aprašysiu": log the call now with no description.
-    const handleDeferCall = useCallback(() => finishCall(undefined), [finishCall]);
+    // "Vėliau aprašysiu": log the call now without classifying or describing it.
+    const handleDeferCall = useCallback(() => finishCall(), [finishCall]);
 
     const handleToggleCall = async () => {
         if (!currentUser || isDisabled) return;
