@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp } from 'lucide-react';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp, Eye } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
@@ -27,6 +27,7 @@ import { addComment, updateComment, deleteComment } from '../utils/commentAction
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
 import SessionTypeIcon from './SessionTypeIcon';
+import { isSelfDirectedTask } from '../utils/selfDirectedTask';
 
 // ---------------------------------------------------------------------------------------------
 // Desktop data-grid header controls. Rendered only when the parent passes `gridControls`; without
@@ -598,9 +599,25 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </Button>
                                 )}
                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
-                                    <Button variant="primary" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
-                                        Priimti
-                                    </Button>
+                                    isSelfDirectedTask(task) ? (
+                                        // Self-directed work: same confirm path, distinct tone. The amber
+                                        // "review" framing (Eye icon + "savarankišką darbą" copy) reads as
+                                        // "self-directed, give it a glance" rather than a normal hand-off, so
+                                        // the manager still vets work that would otherwise have closed silently.
+                                        <Button
+                                            variant="secondary"
+                                            size="md"
+                                            icon={Eye}
+                                            className="border-feedback-warning-border bg-feedback-warning-soft text-feedback-warning-text hover:bg-feedback-warning-soft hover:brightness-95"
+                                            onClick={() => handleConfirmTask(task.id)}
+                                        >
+                                            Peržiūrėti savarankišką darbą
+                                        </Button>
+                                    ) : (
+                                        <Button variant="primary" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
+                                            Patvirtinti atlikimą
+                                        </Button>
+                                    )
                                 )}
                                 {canManage && task.status === 'unapproved' && (
                                     <Button variant="primary" size="md" onClick={() => handleApproveTask(task.id)}>
@@ -841,7 +858,22 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     <IconButton icon={Pencil} label="Redaguoti" variant="default" onClick={() => onEdit(task)} />
                                                 )}
                                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
-                                                    <IconButton icon={CheckCircle2} label="Priimti" variant="primary" onClick={() => handleConfirmTask(task.id)} />
+                                                    // A completed self-directed job is confirmed through the SAME path as a
+                                                    // normal hand-off, but surfaced distinctly (amber "review" tone + Eye)
+                                                    // so the manager treats it as "self-directed, give it a glance" rather
+                                                    // than a normal hand-off — see isSelfDirectedTask. Mutually exclusive
+                                                    // with the standard confirm. Icon-only here to match the row's action set.
+                                                    isSelfDirectedTask(task) ? (
+                                                        <IconButton
+                                                            icon={Eye}
+                                                            label="Peržiūrėti savarankišką darbą"
+                                                            variant="default"
+                                                            className="border border-feedback-warning-border bg-feedback-warning-soft text-feedback-warning-text hover:bg-feedback-warning-soft hover:brightness-95"
+                                                            onClick={() => handleConfirmTask(task.id)}
+                                                        />
+                                                    ) : (
+                                                        <IconButton icon={CheckCircle2} label="Patvirtinti atlikimą" variant="primary" onClick={() => handleConfirmTask(task.id)} />
+                                                    )
                                                 )}
                                                 {canManage && task.status === 'unapproved' && (
                                                     <IconButton icon={CheckCircle2} label="Patvirtinti" variant="primary" onClick={() => handleApproveTask(task.id)} />

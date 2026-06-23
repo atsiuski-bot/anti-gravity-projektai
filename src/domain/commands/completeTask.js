@@ -2,6 +2,7 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { logError } from '../../utils/errorLog';
 import { isManagerRole } from '../../utils/formatters';
+import { isSelfDirectedTask } from '../../utils/selfDirectedTask';
 import { defineCommand, MODES } from '../command';
 import { isAgent } from '../actor';
 
@@ -17,6 +18,14 @@ import { isAgent } from '../actor';
  * The caller (the completion util) still stops a running timer BEFORE invoking this, so the command
  * stays a pure status write (and avoids importing the timer code — which would cycle back here).
  *
+ * Self-directed exception: a task the worker created FOR THEMSELVES with no distinct overseer
+ * (`isSelfDirectedTask`) has managerId === the assignee, so the "own manager" arm below would make
+ * the worker auto-confirm their OWN work — the silent self-sign-off the team board's review
+ * affordance exists to prevent. So the "own manager" auto-confirm is suppressed for a self-directed
+ * task: it lands as 'completed' (awaiting a real manager's glance). A genuine manager/admin role
+ * still auto-confirms (they ARE the review authority and need no self-review), and an own-manager of
+ * SOMEONE ELSE's task is not self-directed, so that auto-confirm is untouched.
+ *
  * Input:  { task }  (the actor supplies the acting user's id + role)
  * Effect: the task's completion/confirmation fields; one decision_log entry.
  */
@@ -24,7 +33,8 @@ import { isAgent } from '../actor';
 const buildPlan = (input, actor) => {
   const task = input && input.task;
   if (!task || !task.id) throw new Error('completeTask: a task with an id is required');
-  const isManagerOrAdmin = isManagerRole(actor.role) || actor.id === task.managerId;
+  const isOwnManager = actor.id === task.managerId && !isSelfDirectedTask(task);
+  const isManagerOrAdmin = isManagerRole(actor.role) || isOwnManager;
   const nowIso = new Date().toISOString();
   const status = isManagerOrAdmin ? 'confirmed' : 'completed';
 
