@@ -895,7 +895,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 })}
                 {tasks.length === 0 && (
                     <li className="bg-surface-card rounded-card border border-line px-6 py-8 text-center text-body text-ink-muted">
-                        Nėra užduočių.
+                        Pagal pasirinktą laikotarpį užduočių nėra.
                     </li>
                 )}
             </ul>

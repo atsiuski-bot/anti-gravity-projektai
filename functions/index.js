@@ -17,6 +17,7 @@
 
 const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const logger = require('firebase-functions/logger');
 const { initializeApp } = require('firebase-admin/app');
@@ -761,3 +762,137 @@ exports.backfillTeamStamps = onCall(async (request) => {
     logger.info('backfillTeamStamps done', { users, rows });
     return { users, rows };
 });
+
+// ---------------------------------------------------------------------------
+// Data integrity monitor (durability safety net)
+// ---------------------------------------------------------------------------
+//
+// A scheduled daily pass that does TWO independent things and records ONE report doc at
+// integrity_reports/{YYYY-MM-DD} (manager/admin-readable; client-immutable — see firestore.rules):
+//
+//   1. VOLUME CANARY — the strongest signal that "an agent or a bug destroyed the data". It counts
+//      each critical collection (cheap count() aggregation) and compares against the previous run
+//      stored in integrity_reports/_counts. A drop beyond DROP_ALERT_RATIO (a row count falling
+//      >30% day-over-day) is flagged CRITICAL: normal activity only ADDS sessions, so a large net
+//      DECREASE means a mass delete/overwrite — the exact disaster PITR + scheduled backups exist to
+//      undo (recovery: docs/runbooks/firestore-backup-recovery.md). The baseline is advanced only
+//      AFTER the report is written, so a drop is reported once against the last good baseline rather
+//      than silently absorbed into it.
+//
+//   2. ANOMALY SCAN — corrupt VALUES that slipped past (or predate) the rules guardrails. Scans
+//      sessions created in the last LOOKBACK_DAYS (createdAt is an ISO string → range query, served
+//      by the automatic single-field index, no composite needed) for: out-of-range/non-numeric
+//      durationMinutes, end<start, missing owner. work_hours has no createdAt, so it is covered by
+//      the volume canary only.
+//
+// Read-only over the data apart from its own report docs. Region inherits europe-west1.
+
+const MONITORED_COLLECTIONS = ['work_sessions', 'break_sessions', 'work_hours', 'tasks'];
+const DROP_ALERT_RATIO = 0.3;   // a >30% day-over-day row drop in a monitored collection is critical
+const LOOKBACK_DAYS = 2;        // anomaly scan window (catch fresh corruption); cheap and timely
+const SAMPLE_LIMIT = 20;        // cap offending-id samples kept in a report (never store unbounded)
+
+async function collectionCount(name) {
+    try {
+        const snap = await db.collection(name).count().get();
+        return snap.data().count;
+    } catch (err) {
+        logger.warn('collectionCount failed', { name, err: err.message });
+        return null;
+    }
+}
+
+// ISO cutoff LOOKBACK_DAYS ago. (Date.now() is fine in a function — only the workflow sandbox bans it.)
+function lookbackCutoffIso() {
+    return new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+// Scan one session collection's recently-created rows for corrupt values.
+async function scanSessionAnomalies(name) {
+    const cutoff = lookbackCutoffIso();
+    let snap;
+    try {
+        snap = await db.collection(name).where('createdAt', '>=', cutoff).get();
+    } catch (err) {
+        logger.warn('scanSessionAnomalies query failed', { name, err: err.message });
+        return { scanned: 0, anomalies: 0, samples: [] };
+    }
+    let anomalies = 0;
+    const samples = [];
+    snap.forEach((docSnap) => {
+        const d = docSnap.data();
+        const reasons = [];
+        const dur = d.durationMinutes;
+        if (typeof dur !== 'number' || Number.isNaN(dur)) reasons.push('duration-not-number');
+        else if (dur < 0) reasons.push('duration-negative');
+        else if (dur > 960) reasons.push('duration-over-clamp'); // above the client's 16h clamp = suspect
+        if (d.startTime && d.endTime && new Date(d.endTime) < new Date(d.startTime)) reasons.push('end-before-start');
+        if (!d.userId) reasons.push('missing-userId');
+        if (reasons.length) {
+            anomalies += 1;
+            if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, reasons });
+        }
+    });
+    return { scanned: snap.size, anomalies, samples };
+}
+
+exports.dailyIntegrityScan = onSchedule(
+    { schedule: 'every day 06:00', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const nowIso = new Date().toISOString();
+        const day = lithuanianDay(new Date()); // reuse the Vilnius-day formatter defined above
+
+        // (1) Volume canary — compare current counts against the previous stored snapshot.
+        const counts = {};
+        await Promise.all(MONITORED_COLLECTIONS.map(async (name) => {
+            counts[name] = await collectionCount(name);
+        }));
+        const countsRef = db.collection('integrity_reports').doc('_counts');
+        const prevSnap = await countsRef.get();
+        const prev = prevSnap.exists ? (prevSnap.data().counts || {}) : {};
+        const drops = [];
+        MONITORED_COLLECTIONS.forEach((name) => {
+            const before = prev[name];
+            const after = counts[name];
+            if (typeof before === 'number' && typeof after === 'number' && before > 0 &&
+                after < before * (1 - DROP_ALERT_RATIO)) {
+                drops.push({ collection: name, before, after, lost: before - after });
+            }
+        });
+
+        // (2) Anomaly scan over recently-created sessions.
+        const anomalyReport = {};
+        let totalAnomalies = 0;
+        for (const name of ['work_sessions', 'break_sessions']) {
+            const r = await scanSessionAnomalies(name);
+            anomalyReport[name] = r;
+            totalAnomalies += r.anomalies;
+        }
+
+        const critical = drops.length > 0;
+        const report = {
+            day,
+            ranAt: nowIso,
+            severity: critical ? 'critical' : (totalAnomalies > 0 ? 'warning' : 'ok'),
+            counts,
+            drops,
+            anomalies: anomalyReport,
+            totalAnomalies
+        };
+
+        try {
+            await db.collection('integrity_reports').doc(day).set(report, { merge: true });
+            await countsRef.set({ counts, updatedAt: nowIso }, { merge: true });
+        } catch (err) {
+            logger.error('dailyIntegrityScan write failed', { err: err.message });
+        }
+
+        if (critical) {
+            logger.error('INTEGRITY: volume drop detected — possible data loss', { drops, counts });
+        } else if (totalAnomalies > 0) {
+            logger.warn('INTEGRITY: value anomalies detected', { totalAnomalies, anomalyReport });
+        } else {
+            logger.info('INTEGRITY: clean', { counts });
+        }
+    }
+);
