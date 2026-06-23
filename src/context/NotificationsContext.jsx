@@ -58,6 +58,8 @@ function copyFor(n) {
         // Admin → worker: their logged (paid) time was corrected / removed.
         case 'session_edited': return { title: 'Pakoreguotas darbo laikas', body: n.day || 'Darbo laikas' };
         case 'session_deleted': return { title: 'Pašalintas darbo laikas', body: n.day || 'Darbo laikas' };
+        // Worker → manager: a logged-time error report.
+        case 'session_correction_request': return { title: 'Pranešimas apie darbo laiko klaidą', body: n.commentText ? `${n.day || 'Darbo laikas'}: ${n.commentText}` : (n.day || 'Darbo laikas') };
         default: return { title: 'Naujas pranešimas', body: task };
     }
 }

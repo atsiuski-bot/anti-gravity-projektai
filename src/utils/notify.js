@@ -37,6 +37,8 @@ export const NOTIFICATION_CATEGORY = {
     calendar_decision: 'info',          // the manager approved/declined a calendar request
     session_edited: 'info',             // an admin corrected the worker's logged (paid) time
     session_deleted: 'info',            // an admin removed one of the worker's logged sessions
+    // ── Worker → manager (new, two-way) ──────────────────────────────────────
+    session_correction_request: 'action', // worker flagged a logged-time error → manager resolves it
     // ── System → manager ─────────────────────────────────────────────────────
     recurring_reassign: 'action',       // a recurring job's usual assignee is away — reassign it
 };

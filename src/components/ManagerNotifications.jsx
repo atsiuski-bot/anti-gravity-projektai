@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useNavigation } from '../context/NavigationContext';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus } from 'lucide-react';
@@ -36,6 +37,7 @@ import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyp
  */
 export default function ManagerNotifications({ onClose }) {
     const { currentUser, userRole } = useAuth();
+    const { setActiveTab } = useNavigation();
     const isManager = isManagerRole(userRole);
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
@@ -444,6 +446,17 @@ export default function ManagerNotifications({ onClose }) {
         }
     };
 
+    // --- Session-correction request (worker → manager) ---
+    // "Spręsti": send the manager to the reports tab (which hosts the per-worker day report and the
+    // admin SessionEditModal they already use to correct logged time), dismiss the request, and
+    // close the bell. We navigate rather than deep-link a specific day because the report view owns
+    // the worker/day selection — the manager lands where the fix is made with the context they have.
+    const handleResolveCorrection = async (notif) => {
+        await handleDismissTask(notif.id);
+        onClose?.();
+        setActiveTab?.('reports');
+    };
+
     const allNotifications = [...calendarNotifications, ...calendarRequests, ...taskNotifications];
 
     // Action-required items must float above informational ones regardless of arrival order:
@@ -807,6 +820,41 @@ export default function ManagerNotifications({ onClose }) {
                         );
                     }
 
+                    // Worker → manager ACTION: a logged-time error report ("Pranešti apie klaidą").
+                    // Shows who, which day, and the worker's note; "Spręsti" takes the manager to the
+                    // report where they correct the session. This REPLACES the old destructive
+                    // fallback that rendered the wrong "assigned you as vadovas" copy + a broken
+                    // "Ištrinti" button for this type.
+                    if (notif.type === 'session_correction_request') {
+                        return (
+                            <div key={notif.id} className="rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <div className="flex items-start gap-3">
+                                    <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
+                                        <p className="font-medium leading-relaxed">
+                                            <UserChip userId={notif.userId || notif.createdBy} name={notif.userName || notif.createdByName} className="font-semibold" />{' '}
+                                            praneša apie įrašyto darbo laiko klaidą.
+                                        </p>
+                                        {notif.day && <p className="mt-1">Diena: <span className="font-semibold">{notif.day}</span></p>}
+                                        {notif.commentText && (
+                                            <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2">
+                                                &quot;{notif.commentText}&quot;
+                                            </p>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                                    <Button variant="secondary" size="md" icon={X} onClick={() => handleDismissTask(notif.id)}>
+                                        Pažymėti skaitytu
+                                    </Button>
+                                    <Button variant="primary" size="md" icon={Edit} onClick={() => handleResolveCorrection(notif)}>
+                                        Spręsti
+                                    </Button>
+                                </div>
+                            </div>
+                        );
+                    }
+
                     if (notif.type === 'new_comment') {
                         return (
                             <div key={notif.id} className="bg-feedback-info-soft border border-feedback-info-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
@@ -988,56 +1036,91 @@ export default function ManagerNotifications({ onClose }) {
                         );
                     }
 
-                // Default fallback for task assignments / approvals
-                return (
-                    <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                // A genuine task approval (the worker submitted a task for the assigned manager to
+                // approve). This is the ONLY type whose destructive "Ištrinti" is correct — it owns a
+                // real taskId, and every action here (approve / edit-approve / delete) operates on it.
+                // Gating to task_approval is what defuses the old bug: an UNKNOWN type used to fall
+                // into this card and render a delete button wired to a missing taskId.
+                if (notif.type === 'task_approval') {
+                    return (
+                        <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
 
-                        <div className="flex flex-col gap-3">
-                            <div className="flex items-start gap-3">
-                                <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
-                                <div>
-                                    <div className="text-sm text-feedback-warning-text">
-                                        <p><UserChip userId={notif.createdById} name={notif.createdByName} className="font-semibold" /> priskyrė Jus vadovu užduočiai:</p>
-                                        <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
-                                        {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
-                                        {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}
+                            <div className="flex flex-col gap-3">
+                                <div className="flex items-start gap-3">
+                                    <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <div className="text-sm text-feedback-warning-text">
+                                            <p><UserChip userId={notif.createdById} name={notif.createdByName} className="font-semibold" /> priskyrė Jus vadovu užduočiai:</p>
+                                            <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
+                                            {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
+                                            {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}
+                                        </div>
                                     </div>
                                 </div>
+
+                                <div className="mt-3 mb-1 flex flex-wrap items-center gap-2">
+                                    <Button
+                                        variant="success"
+                                        size="md"
+                                        icon={Check}
+                                        className="whitespace-nowrap"
+                                        onClick={() => handleApproveTask(notif)}
+                                        title="Patvirtinti užduotį"
+                                    >
+                                        Patvirtinti
+                                    </Button>
+
+                                    <Button
+                                        variant="primary"
+                                        size="md"
+                                        icon={Edit}
+                                        className="whitespace-nowrap"
+                                        onClick={() => handleEditAndApprove(notif)}
+                                        title="Patvirtinti ir redaguoti užduotį"
+                                    >
+                                        Redaguoti
+                                    </Button>
+
+                                    <Button
+                                        variant="danger"
+                                        size="md"
+                                        icon={Trash2}
+                                        className="whitespace-nowrap"
+                                        onClick={() => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle)}
+                                        title="Ištrinti užduotį"
+                                    >
+                                        Ištrinti
+                                    </Button>
+                                </div>
                             </div>
+                        </div>
+                    );
+                }
 
-                            <div className="mt-3 mb-1 flex flex-wrap items-center gap-2">
-                                <Button
-                                    variant="success"
-                                    size="md"
-                                    icon={Check}
-                                    className="whitespace-nowrap"
-                                    onClick={() => handleApproveTask(notif)}
-                                    title="Patvirtinti užduotį"
-                                >
-                                    Patvirtinti
-                                </Button>
-
-                                <Button
-                                    variant="primary"
-                                    size="md"
-                                    icon={Edit}
-                                    className="whitespace-nowrap"
-                                    onClick={() => handleEditAndApprove(notif)}
-                                    title="Patvirtinti ir redaguoti užduotį"
-                                >
-                                    Redaguoti
-                                </Button>
-
-                                <Button
-                                    variant="danger"
-                                    size="md"
-                                    icon={Trash2}
-                                    className="whitespace-nowrap"
-                                    onClick={() => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle)}
-                                    title="Ištrinti užduotį"
-                                >
-                                    Ištrinti
-                                </Button>
+                // SAFE fallback for any UNKNOWN or future request_notification type. Never
+                // destructive: it has no task-mutating buttons (the old fallback shipped an
+                // "Ištrinti" wired to a possibly-missing taskId). It shows whatever the notification
+                // carried — a title and any user-authored note — and offers only a dismiss, so a new
+                // type added by another branch degrades to a readable info row instead of a hazard.
+                return (
+                    <div key={notif.id} className="rounded-card border border-line bg-surface-card p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl relative">
+                        <IconButton
+                            icon={X}
+                            label="Pažymėti skaitytu"
+                            variant="ghost"
+                            onClick={() => handleDismissTask(notif.id)}
+                            className="absolute top-2 right-2 text-ink-muted hover:text-ink"
+                        />
+                        <div className="flex items-start gap-3 pr-6">
+                            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                            <div className="min-w-0 flex-1 text-sm text-ink">
+                                <p className="font-medium leading-relaxed">Naujas pranešimas</p>
+                                {notif.taskTitle && <p className="mt-1 font-medium">&quot;{notif.taskTitle}&quot;</p>}
+                                {notif.commentText && (
+                                    <p className="mt-2 text-xs italic opacity-80 border-l-2 border-line pl-2">
+                                        &quot;{notif.commentText}&quot;
+                                    </p>
+                                )}
                             </div>
                         </div>
                     </div>
