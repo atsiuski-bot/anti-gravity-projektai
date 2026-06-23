@@ -21,7 +21,8 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
-import { approveTask, humanActor, MODES } from '../domain';
+import { approveTask, completeTask, reopenTask, humanActor, MODES } from '../domain';
+import { useUndoableAction } from '../hooks/useUndoableAction';
 import { isManagerRole } from '../utils/formatters';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
@@ -112,6 +113,7 @@ function HeaderCell({ label, sortMode, sort, filter, filterLabel }) {
 
 const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown, hideCheckboxes, gridControls }) => {
     const { currentUser, userRole, userData } = useAuth();
+    const runUndoable = useUndoableAction();
     // Data-grid header wiring (see helpers above). Derived once per render; harmless no-ops when
     // `gridControls` is absent.
     const gc = gridControls;
@@ -130,7 +132,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     // Confirmation dialog targets (replace window.confirm — §8). Each destructive action gates
     // its own state so rapid clicks on different tasks can't race a single shared dialog.
     const [commentDeleteTarget, setCommentDeleteTarget] = useState(null); // { taskId, commentKey }
-    const [completeTarget, setCompleteTarget] = useState(null);        // taskId (marking completed)
     const [revertTarget, setRevertTarget] = useState(null);            // task object
     const [reverting, setReverting] = useState(false);
 
@@ -188,34 +189,29 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         }
     };
 
-    const performToggleComplete = async (taskId) => {
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-            await toggleTaskCompletion(task, currentUser, userRole);
-        } catch (err) {
-            console.error("Error toggling task completion:", err);
-        }
+    // Completion is a cleanly REVERSIBLE state flip, so it no longer gates behind a confirm dialog
+    // (friction before a cheap-to-undo action). It commits immediately and offers an undo for a few
+    // seconds (DESIGN_SYSTEM §8). The inverse is the audited mirror command — reopenTask undoes a
+    // completion, completeTask undoes an un-check — so the undo is itself a first-class decision.
+    const handleToggleComplete = (taskId) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        const willComplete = !task.completed;
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
+        runUndoable({
+            run: () => toggleTaskCompletion(task, currentUser, userRole),
+            undo: () => (willComplete
+                ? reopenTask({ task }, { actor, mode: MODES.COMMIT, reason: 'undo completion' })
+                : completeTask({ task }, { actor, mode: MODES.COMMIT, reason: 'undo reopen' })),
+            message: willComplete ? 'Užduotis pažymėta atlikta.' : 'Užduotis grąžinta į sąrašą.',
+            undoneMessage: willComplete ? 'Atšaukta — užduotis grąžinta į sąrašą.' : 'Atšaukta — užduotis vėl pažymėta atlikta.',
+        });
     };
 
-    const handleToggleComplete = (taskId, currentStatus) => {
-        // Marking a task complete requires confirmation (reversible → primary, not danger);
-        // un-checking proceeds directly, preserving the original behaviour.
-        if (!currentStatus) {
-            setCompleteTarget(taskId);
-            return;
-        }
-        performToggleComplete(taskId);
-    };
-
-    const confirmComplete = async () => {
-        if (!completeTarget) return;
-        const taskId = completeTarget;
-        setCompleteTarget(null);
-        await performToggleComplete(taskId);
-    };
-
-    const handleConfirmTask = async (taskId) => {
+    // Confirming finished work (completed -> confirmed) is a cleanly reversible sign-off, so it is
+    // immediate + undoable; undo restores the exact prior state. The table pings no one, so there is
+    // no notification to defer.
+    const handleConfirmTask = (taskId) => {
         // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
         // Task-level managers (who are not system managers) cannot confirm.
         if (!isManagerRole(userRole)) {
@@ -223,46 +219,44 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             return;
         }
         setError('');
-
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-
-            const taskData = {
-                ...task,
-                status: 'confirmed',
-                confirmedBy: currentUser.uid,
-                confirmedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-
-            // Sanitize data to remove undefined values
-            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
-
-            // Do NOT archive immediately
-            await updateDoc(doc(db, 'tasks', taskId), taskData);
-        } catch (err) {
-            console.error("Error confirming task:", err);
-        }
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        const prior = { status: task.status ?? 'completed', confirmedBy: task.confirmedBy ?? null, confirmedAt: task.confirmedAt ?? null };
+        runUndoable({
+            run: async () => {
+                const now = new Date().toISOString();
+                await updateDoc(doc(db, 'tasks', taskId), { status: 'confirmed', confirmedBy: currentUser.uid, confirmedAt: now, updatedAt: now });
+            },
+            undo: () => updateDoc(doc(db, 'tasks', taskId), { status: prior.status, confirmedBy: prior.confirmedBy, confirmedAt: prior.confirmedAt, updatedAt: new Date().toISOString() }),
+            message: 'Atlikimas patvirtintas.',
+            undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
+            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite vėliau.',
+        });
     };
 
     // Manual archiving removed per request. Archive only via nightly automation.
 
-    const handleApproveTask = async (taskId) => {
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-            // Approving an unapproved task clears the approval gate → status 'approved'
-            // ("Patvirtintas"), the canonical value the notification hub already writes. The worker
-            // then sees it is approved and may start it. (Was 'pending', which lost the signal.)
-            await approveTask(
-                { task },
-                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }), mode: MODES.COMMIT, reason: 'approved from task table' },
-            );
-        } catch (err) {
-            logError(err, { source: 'TaskTable.handleApproveTask' });
-            setError('Nepavyko patvirtinti užduoties. Bandykite vėliau.');
-        }
+    // Approving clears the approval gate → status 'approved' ("Patvirtintas"). Reversible, so it is
+    // immediate + undoable; undo restores the exact prior status. The table pings no one (unlike the
+    // bell's approve, whose worker ping is deferred for the undo window).
+    const handleApproveTask = (taskId) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        const prior = { status: task.status ?? null, isApproved: !!task.isApproved };
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
+        runUndoable({
+            run: () => approveTask({ task }, { actor, mode: MODES.COMMIT, reason: 'approved from task table' }),
+            undo: () => updateDoc(doc(db, 'tasks', taskId), {
+                status: prior.status ?? 'pending',
+                isApproved: prior.isApproved,
+                approvedAt: null,
+                approvedBy: null,
+                updatedAt: new Date().toISOString(),
+            }),
+            message: 'Užduotis patvirtinta.',
+            undoneMessage: 'Atšaukta — patvirtinimas atšauktas.',
+            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite vėliau.',
+        });
     };
 
     const handleDeleteTask = (taskId, taskTitle) => {
@@ -481,7 +475,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             {/* Metadata */}
                             <div className="mt-3 flex flex-wrap items-center gap-2">
                                 {task.assignedUserName && (
-                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[160px]" />
+                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} ring showColor={false} className="max-w-[160px]" />
                                 )}
                                 <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
                                 {task.tag && (
@@ -593,7 +587,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         checked={task.completed || false}
                                         onChange={() => {
                                             if (isAssignedToMe) {
-                                                handleToggleComplete(task.id, task.completed);
+                                                handleToggleComplete(task.id);
                                             }
                                         }}
                                         disabled={checkboxDisabled}
@@ -677,7 +671,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.tag)}>
                                 {gc ? <HeaderCell label="Žymos" sortMode={sortCols.tag} sort={gc.sort} filter={filters.tag} filterLabel="Filtruoti pagal žymą" /> : 'Žymos'}
                             </th>
-                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-44">Veik.</th>
+                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-56">Veik.</th>
                         </tr>
                     </thead>
                     <tbody className="bg-surface-card divide-y divide-line">
@@ -726,7 +720,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 onClick={(e) => e.stopPropagation()}
                                                 onChange={() => {
                                                     if (isAssignedToMe) {
-                                                        handleToggleComplete(task.id, task.completed);
+                                                        handleToggleComplete(task.id);
                                                     }
                                                 }}
                                                 disabled={!isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved'}
@@ -746,13 +740,20 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             type="button"
                                             onClick={(e) => { e.stopPropagation(); openDetail(task); }}
                                             className={clsx(
-                                                "block w-full break-words rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                // flex + items-start keeps the leading status marker glued to the
+                                                // FIRST line of the title (a wrapping title no longer lets the
+                                                // marker drift to the block's vertical centre); the small top
+                                                // nudge on the marker optically centres it on that line. Replaces
+                                                // the old inline align-[-0.2em] that let it sink below the row.
+                                                "flex w-full items-start gap-1.5 rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
                                                 task.isDeleted ? "text-ink-muted line-through" : task.completed ? "text-ink" : "text-ink-strong"
                                             )}
                                         >
-                                            {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
-                                            {task.title}
-                                            {task.isDeleted && <DeletedBadge inline className="ml-2" />}
+                                            {!task.isDeleted && <CompletedMarker task={task} className="mt-[0.2em]" />}
+                                            <span className="min-w-0 flex-1 break-words">
+                                                {task.title}
+                                                {task.isDeleted && <DeletedBadge inline className="ml-2" />}
+                                            </span>
                                         </button>
                                         {/* One muted line: the indicators lead, the manager closes it — so a
                                             deadline / urgent / comment glyph rides IN FRONT of "Vadovas" instead
@@ -797,7 +798,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </td>
                                     <td className="px-1 py-3 align-top">
                                         {task.assignedUserName && (
-                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={task.assignedWorkerColor} ring className="max-w-[110px]" />
+                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} ring showColor={false} className="max-w-[110px]" />
                                         )}
                                     </td>
                                     <td className="px-1 py-3 align-top whitespace-nowrap">
@@ -830,39 +831,41 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             </span>
                                         )}
                                     </td>
-                                    {/* Veik. — only the contextual confirm/approve (shown when there is something
-                                        to act on) plus the worker's timer. Edit / revert / delete moved into the
-                                        detail sheet that the row opens. */}
+                                    {/* Veik. — the SAME action set the mobile card shows, but icon-only
+                                        (no text labels) and laid out in one wrapping row together with Grąžinti:
+                                        edit, confirm/approve, comments, revert, delete. The worker's timer sits
+                                        below them. (DESIGN_SYSTEM §8 — icon-only controls keep their accessible
+                                        name via `label`.) */}
                                     <td className="px-1 py-3 align-top" onClick={(e) => e.stopPropagation()}>
-                                        {(() => {
-                                            const canConfirmRow = canManage && task.status === 'completed';
-                                            const canApproveRow = canManage && task.status === 'unapproved';
-                                            const canRevertRow = canManage && (task.completed || task.isDeleted);
-                                            return (
-                                                <div className="flex flex-col items-stretch gap-2">
-                                                    {(canRevertRow || canConfirmRow || canApproveRow) && (
-                                                        <div className="flex flex-wrap items-center justify-end gap-1">
-                                                            {/* Grąžinti sits to the LEFT of Patvirtinti — the manager can send a
-                                                                finished/confirmed task back without first opening the sheet. */}
-                                                            {canRevertRow && (
-                                                                <IconButton icon={Undo2} label="Grąžinti" variant="default" onClick={() => setRevertTarget(task)} />
-                                                            )}
-                                                            {canConfirmRow && (
-                                                                <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
-                                                                    Patvirtinti
-                                                                </Button>
-                                                            )}
-                                                            {canApproveRow && (
-                                                                <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleApproveTask(task.id)}>
-                                                                    Patvirtinti
-                                                                </Button>
-                                                            )}
-                                                        </div>
-                                                    )}
-                                                    <TaskTimerControls task={task} role={role} />
-                                                </div>
-                                            );
-                                        })()}
+                                        <div className="flex flex-col items-end gap-2">
+                                            <div className="flex flex-wrap items-center justify-end gap-1">
+                                                {onEdit && (
+                                                    <IconButton icon={Pencil} label="Redaguoti" variant="default" onClick={() => onEdit(task)} />
+                                                )}
+                                                {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
+                                                    <IconButton icon={CheckCircle2} label="Patvirtinti atlikimą" variant="primary" onClick={() => handleConfirmTask(task.id)} />
+                                                )}
+                                                {canManage && task.status === 'unapproved' && (
+                                                    <IconButton icon={CheckCircle2} label="Patvirtinti" variant="primary" onClick={() => handleApproveTask(task.id)} />
+                                                )}
+                                                <IconButton
+                                                    icon={MessageSquare}
+                                                    label={`Komentarai${task.comments?.length ? ` (${task.comments.length})` : ''}`}
+                                                    variant="default"
+                                                    className="text-feedback-success hover:text-feedback-success"
+                                                    onClick={() => setActiveModal({ type: 'comments', taskId: task.id })}
+                                                />
+                                                {/* Grąžinti sits to the LEFT of Ištrinti — the manager can send a
+                                                    finished/confirmed task back without first opening the sheet. */}
+                                                {(task.completed || task.isDeleted) && canManage && (
+                                                    <IconButton icon={Undo2} label="Grąžinti" variant="default" onClick={() => setRevertTarget(task)} />
+                                                )}
+                                                {(canManage || !isWorker) && (
+                                                    <IconButton icon={Trash2} label="Ištrinti" variant="danger" onClick={() => handleDeleteTask(task.id, task.title)} />
+                                                )}
+                                            </div>
+                                            <TaskTimerControls task={task} role={role} />
+                                        </div>
                                     </td>
                                 </tr>
                             );
@@ -948,18 +951,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                 taskTitle={deleteModalTask?.title || ''}
             />
 
-            {/* Confirm: mark a task complete (reversible → primary) */}
-            {completeTarget && (
-                <ConfirmDialog
-                    open
-                    title="Užbaigti užduotį?"
-                    message="Patvirtinkite, kad šią užduotį norite žymėti atlikta."
-                    confirmLabel="Užbaigti"
-                    variant="primary"
-                    onConfirm={confirmComplete}
-                    onCancel={() => setCompleteTarget(null)}
-                />
-            )}
+            {/* Marking a task complete is now an immediate, undoable action (see handleToggleComplete)
+                — no confirm dialog. Revert/delete keep their confirm because their inverse is
+                dual-case/destructive. */}
 
             {/* Confirm: revert (restore) a completed/deleted task */}
             {revertTarget && (

@@ -23,6 +23,7 @@ import { logError } from '../utils/errorLog';
 import { STATUS_STYLES } from '../utils/taskConstants';
 import { deriveTaskStatus } from '../utils/taskStatus';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
+import { useUndoableAction } from '../hooks/useUndoableAction';
 
 /**
  * STATUS_ICON_TONE — color for the standalone leading status glyph, mirroring StatusPill's
@@ -97,16 +98,15 @@ function useOneLineActions() {
  * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the edit
  * button opens the create/edit form directly, bypassing the preview.
  */
-const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) => {
+const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown, onConfirmed, onReverted, onDeleted }) => {
     const { currentUser, userRole } = useAuth();
+    const runUndoable = useUndoableAction();
     const [activeModal, setActiveModal] = useState(null); // 'checklist' | 'timeAdjustments'
     const [showDetail, setShowDetail] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
     const [spentMinutes, setSpentMinutes] = useState(0);
     const [confirmRevert, setConfirmRevert] = useState(false);
     const [revertError, setRevertError] = useState('');
-    const [confirmApprove, setConfirmApprove] = useState(false);
-    const [confirmComplete, setConfirmComplete] = useState(false);
     const [actionError, setActionError] = useState('');
     // One-shot completion celebration: fires only on a live not-done -> done transition while
     // the card is mounted, so already-finished cards (history) never replay it.
@@ -117,32 +117,43 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         try {
             await revertTask(task, currentUser);
             setConfirmRevert(false);
+            // Optional post-action hook: the notification feed dismisses its card and tells the
+            // worker their task came back for rework. Undefined (a no-op) in the plain task list.
+            await onReverted?.(task);
         } catch (err) {
             console.error('Error reverting task:', err);
             setRevertError('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
         }
     };
 
-    const performApprove = async () => {
-        try {
-            // Approving an unapproved task clears the approval gate → status 'approved'
-            // ("Patvirtintas"), the canonical value the notification hub and the table use. The old
-            // 'in-progress' read as "Pristabdyta" (paused) via deriveTaskStatus — wrong for a task
-            // nobody has started. The worker then sees it is approved and may start it.
-            await approveTask(
-                { task },
-                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }), mode: MODES.COMMIT, reason: 'approved from task card' },
-            );
-            setConfirmApprove(false);
-        } catch (err) {
-            console.error('Error approving task:', err);
-        }
+    // Approving an unapproved task clears the approval gate → status 'approved' ("Patvirtintas"), the
+    // canonical value the notification hub and the table use. A cleanly reversible decision, so it is
+    // now immediate + undoable (no confirm dialog); undo restores the exact prior status. (The card
+    // path pings no one, so there is no notification to defer — unlike the bell's approve.)
+    const performApprove = () => {
+        const prior = { status: task.status ?? null, isApproved: !!task.isApproved };
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
+        return runUndoable({
+            run: () => approveTask({ task }, { actor, mode: MODES.COMMIT, reason: 'approved from task card' }),
+            undo: () => updateDoc(doc(db, 'tasks', task.id), {
+                status: prior.status ?? 'pending',
+                isApproved: prior.isApproved,
+                approvedAt: null,
+                approvedBy: null,
+                updatedAt: new Date().toISOString(),
+            }),
+            message: 'Užduotis patvirtinta.',
+            undoneMessage: 'Atšaukta — patvirtinimas atšauktas.',
+            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite dar kartą.',
+        });
     };
 
     // Confirm finished work (completed -> confirmed). Mirrors the manager table so a manager can
-    // sign off a done task straight from the mobile preview, not only on desktop.
-    const performConfirm = async () => {
-        try {
+    // sign off a done task straight from the mobile preview, not only on desktop. Confirming is a
+    // cleanly reversible sign-off, so it is now immediate + undoable instead of gated behind a
+    // confirm dialog; undo returns it to "awaiting confirmation".
+    const performConfirm = () => runUndoable({
+        run: async () => {
             const now = new Date().toISOString();
             await updateDoc(doc(db, 'tasks', task.id), {
                 status: 'confirmed',
@@ -150,12 +161,23 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 confirmedAt: now,
                 updatedAt: now,
             });
-            setConfirmComplete(false);
-        } catch (err) {
-            logError(err, { source: 'TaskCard.performConfirm' });
-            setActionError('Nepavyko patvirtinti atlikimo. Bandykite dar kartą.');
-        }
-    };
+        },
+        // Post-action hook (notification feed): dismiss the card + ping the worker. DEFERRED for the
+        // undo window so an undo leaves the worker nothing to see; a no-op in the plain task list.
+        deferredEffect: () => onConfirmed?.(task),
+        undo: async () => {
+            const now = new Date().toISOString();
+            await updateDoc(doc(db, 'tasks', task.id), {
+                status: 'completed',
+                confirmedBy: null,
+                confirmedAt: null,
+                updatedAt: now,
+            });
+        },
+        message: 'Atlikimas patvirtintas.',
+        undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
+        errorMessage: 'Nepavyko patvirtinti atlikimo. Bandykite dar kartą.',
+    });
 
     const displayColor = task.assignedWorkerColor;
     const isManager = isManagerRole(role) || isManagerRole(userRole);
@@ -232,6 +254,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
             setActionError('');
             await deleteTask(task, currentUser.uid, { keepWorkHours });
             setShowDeleteModal(false);
+            // Optional post-action hook: the notification feed dismisses its card. Undefined
+            // (a no-op) in the plain task list.
+            await onDeleted?.(task);
         } catch (err) {
             logError(err, { source: 'handler:deleteTask' });
             setActionError('Nepavyko ištrinti užduoties. Bandykite dar kartą.');
@@ -294,11 +319,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     });
     if (canApprove) actions.push({
         key: 'approve', label: 'Patvirtinti', icon: CheckCircle2, variant: 'success',
-        onClick: (e) => { e.stopPropagation(); setConfirmApprove(true); },
+        onClick: (e) => { e.stopPropagation(); performApprove(); },
     });
     if (canConfirm) actions.push({
         key: 'confirm', label: 'Patvirtinti', icon: CheckCircle2, variant: 'success',
-        onClick: (e) => { e.stopPropagation(); setConfirmComplete(true); },
+        onClick: (e) => { e.stopPropagation(); performConfirm(); },
     });
     if (onEdit) actions.push({
         key: 'edit', label: 'Redaguoti', icon: Edit, variant: 'primary',
@@ -515,7 +540,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 onEdit={onEdit ? (t) => { setShowDetail(false); onEdit(t); } : undefined}
                 onDelete={() => { setShowDetail(false); handleDeleteTask(); }}
                 onRevert={() => { setShowDetail(false); setRevertError(''); setConfirmRevert(true); }}
-                onApprove={() => { setShowDetail(false); setConfirmApprove(true); }}
+                onApprove={() => { setShowDetail(false); performApprove(); }}
                 onConfirm={isManager ? () => { setShowDetail(false); performConfirm(); } : undefined}
                 onOpenChecklist={() => { setShowDetail(false); setActiveModal('checklist'); }}
                 onOpenTimeAdjustments={isManager ? () => { setShowDetail(false); setActiveModal('timeAdjustments'); } : undefined}
@@ -557,29 +582,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 />
             )}
 
-            {confirmApprove && (
-                <ConfirmDialog
-                    open
-                    title="Patvirtinti užduotį?"
-                    message="Užduotis bus patvirtinta ir perkelta į aktyvias užduotis."
-                    confirmLabel="Patvirtinti"
-                    variant="primary"
-                    onConfirm={performApprove}
-                    onCancel={() => setConfirmApprove(false)}
-                />
-            )}
 
-            {confirmComplete && (
-                <ConfirmDialog
-                    open
-                    title="Patvirtinti atliktą darbą?"
-                    message="Užduoties atlikimas bus patvirtintas."
-                    confirmLabel="Patvirtinti"
-                    variant="primary"
-                    onConfirm={performConfirm}
-                    onCancel={() => setConfirmComplete(false)}
-                />
-            )}
         </>
     );
 };
