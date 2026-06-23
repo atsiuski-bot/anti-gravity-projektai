@@ -4,7 +4,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, Calendar, MessageSquare, Sparkles, User, Pencil } from 'lucide-react';
+import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, Calendar, MessageSquare, Sparkles, User, Pencil, LayoutTemplate } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
@@ -172,6 +172,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const [templateSuggestion, setTemplateSuggestion] = useState(null);
     // Category chosen in the save view (empty = let it be inferred from the title on save).
     const [templateCategory, setTemplateCategory] = useState('');
+    // The browse/manage hub: lists existing templates (apply / edit / delete) and offers
+    // "save current as template". Replaces the old header loader + the inline list in the save view.
+    const [isPickingTemplate, setIsPickingTemplate] = useState(false);
+    // When set, the save view is editing THIS existing template (update by id) rather than
+    // creating a new one; `templateEditData` holds that template's stored field values so the
+    // field checkboxes act on the template's own data, not the in-progress task form.
+    const [editingTemplateId, setEditingTemplateId] = useState(null);
+    const [templateEditData, setTemplateEditData] = useState(null);
     const [selectedTemplateFields, setSelectedTemplateFields] = useState({
         title: true,
         priority: true,
@@ -207,24 +215,23 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         });
     }, [templates, workers]);
 
-    // Loader options grouped under category section headings (Select renders `isGroup` rows as
-    // non-selectable headers). Category order follows TEMPLATE_CATEGORIES; empty ones are omitted;
-    // within a category templates keep the sortedTemplates order.
-    const groupedTemplateOptions = useMemo(() => {
+    // Templates grouped under their category for the picker hub. Category order follows
+    // TEMPLATE_CATEGORIES; empty categories are omitted; within a category templates keep the
+    // sortedTemplates order. Full template objects are kept so each row can apply / edit / delete.
+    const groupedTemplates = useMemo(() => {
         const byCat = new Map();
         for (const t of sortedTemplates) {
             const cat = getTemplateCategory(t);
             if (!byCat.has(cat)) byCat.set(cat, []);
             byCat.get(cat).push(t);
         }
-        const opts = [];
+        const groups = [];
         for (const { id, label } of TEMPLATE_CATEGORIES) {
             const items = byCat.get(id);
             if (!items || items.length === 0) continue;
-            opts.push({ isGroup: true, label });
-            for (const t of items) opts.push({ value: t.id, label: t.templateName });
+            groups.push({ id, label, items });
         }
-        return opts;
+        return groups;
     }, [sortedTemplates]);
 
     const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.role === 'seniorManager' || w.id === currentUser.uid);
@@ -451,12 +458,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         if (data.assignedUserId && data.assignedUserId !== currentUser?.uid) setShowAssigneePicker(true);
     };
 
-    const handleLoadTemplate = (templateId) => {
-        const template = templates.find(t => t.id === templateId);
-        handleApplyTemplate(template);
-    };
-
     const handleSaveTemplateClick = () => {
+        setFormError('');
+        // Saving the CURRENT task as a brand-new template — not editing an existing one.
+        setEditingTemplateId(null);
+        setTemplateEditData(null);
         setIsSavingTemplate(true);
         // IMPORTANT: Clear the template name so users can type a new one or select existing
         setTemplateName('');
@@ -480,6 +486,47 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         setTemplateToDelete({ id: templateId, name });
     };
 
+    // Open the save view in EDIT mode for an existing template: seed the name, category and
+    // field checkboxes from the template's own stored data. The checkboxes act on
+    // `templateEditData` (the template's values), so the manager re-chooses which parts the
+    // template carries without touching the in-progress task form.
+    const handleEditTemplate = (template) => {
+        if (!template) return;
+        setFormError('');
+        const data = template.data || {};
+        // Legacy templates stored the assignee under `assignedWorkerId`; normalise so the
+        // checkbox + saved value both use the canonical key.
+        const editData = { ...data };
+        if (editData.assignedUserId === undefined && editData.assignedWorkerId !== undefined) {
+            editData.assignedUserId = editData.assignedWorkerId;
+        }
+        delete editData.assignedWorkerId;
+        const has = (v) => v !== undefined && v !== '' && v !== null;
+        setEditingTemplateId(template.id);
+        setTemplateEditData(editData);
+        setTemplateName(template.templateName || '');
+        setTemplateCategory(getTemplateCategory(template));
+        setSelectedTemplateFields({
+            title: has(editData.title),
+            priority: has(editData.priority),
+            estimatedTime: has(editData.estimatedTime),
+            description: has(editData.description),
+            assignedUserId: has(editData.assignedUserId),
+            managerId: has(editData.managerId),
+            deadline: has(editData.deadline),
+        });
+        setIsPickingTemplate(false);
+        setIsSavingTemplate(true);
+    };
+
+    // Leave the save view, clearing any edit context, and return to the task form.
+    const closeTemplateSaveView = () => {
+        setIsSavingTemplate(false);
+        setEditingTemplateId(null);
+        setTemplateEditData(null);
+        setFormError('');
+    };
+
     const confirmDeleteTemplate = async () => {
         if (!templateToDelete) return;
         try {
@@ -493,12 +540,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }
     };
 
-    const buildTemplateData = () => {
+    // Build the template's `data` from the checked fields. The source is the in-progress task
+    // form when creating, or the template's own stored values when editing. Undefined values are
+    // skipped so Firestore never receives an undefined field.
+    const buildTemplateData = (source = formData) => {
         const dataToSave = {};
-        // Copy only selected fields
         Object.keys(selectedTemplateFields).forEach(key => {
-            if (selectedTemplateFields[key]) {
-                dataToSave[key] = formData[key];
+            if (selectedTemplateFields[key] && source[key] !== undefined) {
+                dataToSave[key] = source[key];
             }
         });
         return dataToSave;
@@ -508,6 +557,29 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         setFormError('');
         if (!templateName.trim()) {
             setFormError('Prašome įvesti šablono pavadinimą!');
+            return;
+        }
+
+        // EDIT mode — update the same template in place (a rename to an existing name is allowed;
+        // it simply renames this one). Field values come from the template's own stored data.
+        if (editingTemplateId) {
+            setLoading(true);
+            try {
+                await updateTaskTemplate(
+                    editingTemplateId,
+                    templateName,
+                    buildTemplateData(templateEditData || {}),
+                    currentUser,
+                    templateCategory || inferTemplateCategory({ templateName, data: { title: templateName } })
+                );
+                await fetchTemplates();
+                closeTemplateSaveView();
+            } catch (error) {
+                console.error("Failed to update template", error);
+                setFormError('Nepavyko atnaujinti šablono. Bandykite dar kartą.');
+            } finally {
+                setLoading(false);
+            }
             return;
         }
 
@@ -874,6 +946,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             rememberDismissedTitle(templateSuggestion.title);
             setTemplateSuggestion(null);
         }
+        // Drop any open template hub / edit context so it never reappears on the next open.
+        setIsPickingTemplate(false);
+        setEditingTemplateId(null);
+        setTemplateEditData(null);
         onClose();
     };
 
@@ -940,7 +1016,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-b border-line flex-shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
                         <h2 id="task-modal-title" className="text-lg font-bold text-ink-strong truncate min-w-0">
-                            {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Naujas darbas')}
+                            {isSavingTemplate ? (editingTemplateId ? 'Redaguoti šabloną' : 'Išsaugoti šabloną') : (task ? 'Redaguoti užduotį' : 'Naujas darbas')}
                         </h2>
                         {/* Read-only status — the form previously showed none; now it carries the same
                             Patvirtinta / Nepatvirtinta / Ištrinta the task shows on every other surface. */}
@@ -952,16 +1028,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     </div>
                     <div className="flex items-center gap-1 min-w-0">
                         {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
-                            <Select
-                                value=""
-                                onChange={handleLoadTemplate}
-                                options={groupedTemplateOptions}
-                                label="Šablonai"
-                                placeholder="Užkrauti šabloną..."
-                                ariaLabel="Užkrauti šabloną"
-                                alwaysSheet
-                                className="min-w-0 max-w-[10rem]"
-                            />
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setIsPickingTemplate(true)}
+                                title="Peržiūrėti, užkrauti, keisti ar ištrinti šablonus"
+                            >
+                                <LayoutTemplate className="h-4 w-4" aria-hidden="true" />
+                                Šablonai
+                            </Button>
                         )}
                         <IconButton icon={X} label="Uždaryti" onClick={handleClose} className="-mr-1.5" />
                     </div>
@@ -1001,30 +1076,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     aria-label="Šablono pavadinimas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand"
                                 />
-                                {templates.length > 0 && (
-                                    <div className="mt-3">
-                                        <p className="text-xs text-ink-muted mb-1">Egzistuojantys šablonai (paspauskite norėdami pasirinkti):</p>
-                                        <div className="max-h-40 overflow-y-auto border border-line rounded-lg bg-surface-sunken">
-                                            {sortedTemplates.map(t => (
-                                                <div key={t.id} className="flex justify-between items-center p-2 hover:bg-surface-sunken border-b last:border-b-0 border-line transition-colors">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setTemplateName(t.templateName)}
-                                                        className="min-h-touch text-sm text-left flex-1 truncate text-ink hover:text-brand font-medium rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                                    >
-                                                        {t.templateName}
-                                                    </button>
-                                                    <IconButton
-                                                        icon={Trash2}
-                                                        label="Ištrinti šabloną"
-                                                        variant="danger"
-                                                        onClick={() => handleDeleteTemplate(t.id, t.templateName)}
-                                                    />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                             <div>
                                 <span className="mb-1 block text-body font-medium text-ink">Kategorija</span>
@@ -1467,12 +1518,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             <Button
                                 variant="secondary"
                                 size="md"
-                                onClick={() => (templateSuggestion ? handleClose() : setIsSavingTemplate(false))}
+                                onClick={() => (templateSuggestion ? handleClose() : closeTemplateSaveView())}
                             >
                                 {templateSuggestion ? 'Ne, ačiū' : 'Atšaukti'}
                             </Button>
                             <Button variant="primary" size="md" onClick={handleConfirmSaveTemplate} loading={loading}>
-                                Išsaugoti šabloną
+                                {editingTemplateId ? 'Atnaujinti šabloną' : 'Išsaugoti šabloną'}
                             </Button>
                         </>
                     ) : (
@@ -1482,9 +1533,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     <Button
                                         variant="ghost"
                                         size="md"
-                                        onClick={handleSaveTemplateClick}
-                                        title="Išsaugoti, keisti ar ištrinti šabloną"
+                                        onClick={() => setIsPickingTemplate(true)}
+                                        title="Peržiūrėti, išsaugoti, keisti ar ištrinti šablonus"
                                     >
+                                        <LayoutTemplate className="h-4 w-4" aria-hidden="true" />
                                         Šablonai
                                     </Button>
                                 )}
@@ -1498,6 +1550,71 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         </>
                     )}
                 </div>
+
+                {/* Template hub — browse existing templates (apply / edit / delete) and save the
+                    current task as a new one. Rendered as a sibling portal after the task modal, so
+                    its scrim layers above the task card; the delete confirm renders after it in turn
+                    and so stacks above the hub (same z-level, later in the DOM wins). */}
+                <Modal
+                    open={isPickingTemplate}
+                    onClose={() => setIsPickingTemplate(false)}
+                    title="Šablonai"
+                    size="md"
+                >
+                    <div className="space-y-5">
+                        <Button
+                            variant="secondary"
+                            size="md"
+                            fullWidth
+                            onClick={() => { setIsPickingTemplate(false); handleSaveTemplateClick(); }}
+                        >
+                            <Plus className="h-4 w-4" aria-hidden="true" />
+                            Išsaugoti dabartinį darbą kaip šabloną
+                        </Button>
+
+                        {groupedTemplates.length === 0 ? (
+                            <p className="py-6 text-center text-body text-ink-muted">
+                                Šablonų dar nėra. Išsaugokite dabartinį darbą kaip šabloną, kad kitą kartą būtų greičiau.
+                            </p>
+                        ) : (
+                            <div className="space-y-4">
+                                {groupedTemplates.map((group) => (
+                                    <div key={group.id}>
+                                        <p className="px-1 pb-1 text-caption font-semibold uppercase tracking-wide text-ink-muted">
+                                            {group.label}
+                                        </p>
+                                        <ul className="divide-y divide-line overflow-hidden rounded-card border border-line">
+                                            {group.items.map((t) => (
+                                                <li key={t.id} className="flex items-center gap-1 pr-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { handleApplyTemplate(t); setIsPickingTemplate(false); }}
+                                                        className="min-h-touch flex-1 truncate rounded px-3 py-2.5 text-left text-body text-ink hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                                        title={`Užkrauti šabloną „${t.templateName}“`}
+                                                    >
+                                                        {t.templateName}
+                                                    </button>
+                                                    <IconButton
+                                                        icon={Pencil}
+                                                        label="Redaguoti šabloną"
+                                                        variant="ghost"
+                                                        onClick={() => handleEditTemplate(t)}
+                                                    />
+                                                    <IconButton
+                                                        icon={Trash2}
+                                                        label="Ištrinti šabloną"
+                                                        variant="danger"
+                                                        onClick={() => handleDeleteTemplate(t.id, t.templateName)}
+                                                    />
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </Modal>
 
                 <ConfirmDialog
                     open={!!templateToDelete}
