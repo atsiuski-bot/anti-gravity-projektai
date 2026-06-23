@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useId, useMemo } from 'react';
+import clsx from 'clsx';
 import {
     Pencil, Trash2, Undo2, CheckCircle2, Check, Clock, MessageSquare, ListChecks,
     Link as LinkIcon, ImageIcon, ImagePlus, Send, X, ChevronDown,
@@ -18,7 +19,7 @@ import AssigneeChip from './AssigneeChip';
 import TimeChangedWarning from './TimeChangedWarning';
 import SessionTypeIcon from '../SessionTypeIcon';
 import UserChip from '../UserChip';
-import { formatMinutesToTimeString, calculateCurrentTotalMinutes } from '../../utils/timeUtils';
+import { formatMinutesToTimeString, calculateCurrentTotalMinutes, relativeDeadline } from '../../utils/timeUtils';
 import { getChecklistProgress } from '../../utils/checklistActions';
 import { addComment, updateComment, deleteComment, getCommentKey } from '../../utils/commentActions';
 import { uploadAttachments, MAX_ATTACHMENTS } from '../../utils/attachmentUpload';
@@ -55,16 +56,17 @@ import { preventEnterSubmit } from '../../utils/formUtils';
  * @param {Function} [props.onOpenChecklist]
  * @param {Function} [props.onOpenTimeAdjustments]
  */
+// Deadline rendering is delegated to the shared relativeDeadline() helper so this modal and the
+// TaskCard always speak with one voice ("Šiandien" / "Rytoj" / "Vėluoja N d." / "MM.DD d.").
+// Returns the helper's { label, tone } (or null) directly; the JSX maps the tone to a colour.
+const DEADLINE_TONE = {
+    neutral: 'text-ink',
+    warning: 'text-feedback-warning-text font-semibold',
+    danger: 'text-feedback-danger-text font-semibold',
+};
+
 function formatDeadline(dateStr) {
-    if (!dateStr) return null;
-    try {
-        const date = new Date(dateStr);
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        return `${month}.${day} d.`;
-    } catch {
-        return dateStr;
-    }
+    return relativeDeadline(dateStr);
 }
 
 export default function TaskDetailModal({
@@ -274,7 +276,11 @@ export default function TaskDetailModal({
                             {deadline && (
                                 <span className="inline-flex items-center gap-1.5">
                                     <Calendar className="h-4 w-4 text-ink-muted" aria-hidden="true" />
-                                    Atlikti iki <span className="font-medium">{deadline}</span>
+                                    {/* "Atlikti iki" only fronts an absolute future date; the relative
+                                        labels ("Šiandien" / "Rytoj" / "Vėluoja N d.") read as full
+                                        phrases on their own. */}
+                                    {deadline.tone === 'neutral' && deadline.label !== 'Rytoj' && 'Atlikti iki '}
+                                    <span className={clsx('font-medium', DEADLINE_TONE[deadline.tone] || DEADLINE_TONE.neutral)}>{deadline.label}</span>
                                 </span>
                             )}
                             {task.estimatedTime && (

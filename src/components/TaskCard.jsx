@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
-import { Clock, Calendar, Trash2, ArrowUp, ArrowDown, Undo2, Edit, CheckCircle2 } from 'lucide-react';
+import { Clock, Calendar, Trash2, ArrowUp, ArrowDown, Undo2, Edit, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
 import clsx from 'clsx';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -8,7 +8,8 @@ import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from '.
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { approveTask, humanActor, MODES } from '../domain';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, relativeDeadline } from '../utils/timeUtils';
+import { getChecklistProgress } from '../utils/checklistActions';
 import { isManagerRole } from '../utils/formatters';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
@@ -39,6 +40,19 @@ const STATUS_ICON_TONE = {
     success: 'text-feedback-success-text',
     info: 'text-feedback-info-text',
     danger: 'text-feedback-danger-text',
+};
+
+/**
+ * DEADLINE_TONE — colour for the relative-deadline chip (icon + text together). The tone comes
+ * from relativeDeadline(): 'warning' = due today, 'danger' = overdue, 'neutral' = tomorrow / a
+ * future date. The text label is always self-describing ("Šiandien" / "Vėluoja N d." / a date),
+ * so the colour only reinforces urgency — it is never the sole signal (WCAG 1.4.1). 'danger' and
+ * 'warning' also bump to semibold so the urgent states carry weight beyond hue alone.
+ */
+const DEADLINE_TONE = {
+    neutral: 'text-ink-muted',
+    warning: 'text-feedback-warning-text font-semibold',
+    danger: 'text-feedback-danger-text font-semibold',
 };
 
 /**
@@ -270,6 +284,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const samePerson = !!task.assignedUserId && managerId === task.assignedUserId;
     const showAssignee = task.assignedUserName && (isManager || !isAssignedToMe);
 
+    // Glanceable preview signals — each guarded on field presence so a bare task (the common
+    // case) keeps its short card and these only appear when there is something to show.
+    const deadlineMeta = relativeDeadline(task.deadline);
+    const checklistProgress = task.checklist?.length ? getChecklistProgress(task.checklist) : null;
+    const attachmentCount = Array.isArray(task.attachmentUrls) ? task.attachmentUrls.length : 0;
+    const descriptionPreview = typeof task.description === 'string' ? task.description.trim() : '';
+
     // Leading status glyph (left of the title) — the card's ONLY status signal now that the
     // right-edge pill is gone. deriveTaskStatus is the single source of state; deleted is its own
     // axis (DeletedBadge + strikethrough), so a deleted task shows no lifecycle glyph here.
@@ -376,10 +397,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                             <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
                                 {task.priority && <PriorityBadge priority={task.priority} pill />}
 
-                                {task.deadline && (
-                                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                                {deadlineMeta && (
+                                    <span className={clsx(
+                                        "inline-flex items-center gap-1 whitespace-nowrap",
+                                        DEADLINE_TONE[deadlineMeta.tone] || DEADLINE_TONE.neutral
+                                    )}>
                                         <Calendar className="w-3 h-3" aria-hidden="true" />
-                                        {task.deadline}
+                                        {deadlineMeta.label}
                                     </span>
                                 )}
 
@@ -387,6 +411,67 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                     <span className="inline-flex items-center gap-1 whitespace-nowrap">
                                         <span className="w-1.5 h-1.5 rounded-full bg-ink-muted" aria-hidden="true"></span>
                                         {task.tag}
+                                    </span>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Glanceable preview — a two-line description teaser plus compact
+                            checklist-progress and attachment-count chips. Each is guarded on its
+                            own field, so a task with none of them adds no markup and the card
+                            stays short. The chips carry an icon + text label (and the progress
+                            chip an aria-valued bar), so colour/shape is never the only signal. */}
+                        {descriptionPreview && (
+                            <p className="mb-2 flex items-start gap-1.5 text-caption text-ink-muted">
+                                <AlignLeft className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                <span className="line-clamp-2 leading-snug">{descriptionPreview}</span>
+                            </p>
+                        )}
+
+                        {(checklistProgress || attachmentCount > 0) && (
+                            <div className="mb-2 flex flex-wrap items-center gap-2 text-caption text-ink-muted">
+                                {checklistProgress && (
+                                    <span
+                                        className="inline-flex items-center gap-1.5 whitespace-nowrap"
+                                        title={`Sąrašas: atlikta ${checklistProgress.done} iš ${checklistProgress.total}`}
+                                    >
+                                        <ListChecks
+                                            className={clsx(
+                                                "h-3.5 w-3.5 shrink-0",
+                                                checklistProgress.allDone ? "text-feedback-success-text" : "text-ink-muted"
+                                            )}
+                                            aria-hidden="true"
+                                        />
+                                        <span className={clsx(checklistProgress.allDone && "text-feedback-success-text font-medium")}>
+                                            Sąrašas {checklistProgress.done}/{checklistProgress.total}
+                                        </span>
+                                        <span
+                                            className="h-1.5 w-12 overflow-hidden rounded-full bg-surface-sunken"
+                                            role="progressbar"
+                                            aria-valuenow={checklistProgress.done}
+                                            aria-valuemin={0}
+                                            aria-valuemax={checklistProgress.total}
+                                            aria-label={`Sąrašo eiga: ${checklistProgress.done} iš ${checklistProgress.total}`}
+                                        >
+                                            <span
+                                                className={clsx(
+                                                    "block h-full rounded-full transition-all duration-base",
+                                                    checklistProgress.allDone ? "bg-feedback-success" : "bg-brand"
+                                                )}
+                                                style={{ width: `${checklistProgress.total > 0 ? Math.round((checklistProgress.done / checklistProgress.total) * 100) : 0}%` }}
+                                            />
+                                        </span>
+                                    </span>
+                                )}
+
+                                {attachmentCount > 0 && (
+                                    <span
+                                        className="inline-flex items-center gap-1 whitespace-nowrap"
+                                        title={`${attachmentCount} priedų`}
+                                    >
+                                        <Paperclip className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                                        {attachmentCount}
+                                        <span className="sr-only"> priedų</span>
                                     </span>
                                 )}
                             </div>
