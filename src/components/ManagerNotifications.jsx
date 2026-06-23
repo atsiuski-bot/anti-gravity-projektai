@@ -242,7 +242,8 @@ export default function ManagerNotifications({ onClose }) {
                 status: 'approved',
                 isApproved: true, // Redundant but explicit
                 approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid
+                approvedBy: currentUser.uid,
+                updatedAt: new Date().toISOString()
             });
 
             // 2. Dismiss notification + tell the worker
@@ -265,7 +266,8 @@ export default function ManagerNotifications({ onClose }) {
                 status: 'approved',
                 isApproved: true,
                 approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid
+                approvedBy: currentUser.uid,
+                updatedAt: new Date().toISOString()
             });
 
             // 2. Dismiss notification + tell the worker
@@ -617,6 +619,48 @@ export default function ManagerNotifications({ onClose }) {
                                 <Icon className={`mt-0.5 h-5 w-5 flex-shrink-0 ${tone}`} aria-hidden="true" />
                                 <p className="min-w-0 flex-1 text-body text-ink">{text}</p>
                                 <IconButton icon={X} label="Pažymėti skaitytu" variant="ghost" onClick={() => handleDismissTask(notif.id)} className="-mr-1 -mt-1" />
+                            </div>
+                        );
+                    }
+
+                    // System → manager ACTION: a recurring job's usual assignee is away — reassign.
+                    if (notif.type === 'recurring_reassign') {
+                        const task = notif.taskTitle ? `„${notif.taskTitle}“` : 'pasikartojantis darbas';
+                        return (
+                            <div key={notif.id} className="rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <div className="flex items-start gap-3">
+                                    <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
+                                        <p className="font-medium leading-relaxed">
+                                            Pasikartojantis darbas {task}: įprastas vykdytojas šiandien nepasiekiamas (atostogos / nebuvimas). Priskirkite kitą vykdytoją.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+                                    <Button variant="secondary" size="md" icon={X} onClick={() => handleDismissTask(notif.id)}>
+                                        Pažymėti skaitytu
+                                    </Button>
+                                    <Button
+                                        variant="primary"
+                                        size="md"
+                                        icon={Edit}
+                                        onClick={async () => {
+                                            // Dismiss, then open the generated task so the manager can reassign it.
+                                            await handleDismissTask(notif.id);
+                                            try {
+                                                const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
+                                                if (taskSnap.exists()) {
+                                                    onClose?.();
+                                                    window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                                                }
+                                            } catch (e) {
+                                                console.error('Failed to load recurring task for reassign:', e);
+                                            }
+                                        }}
+                                    >
+                                        Priskirti kitą
+                                    </Button>
+                                </div>
                             </div>
                         );
                     }

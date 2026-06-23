@@ -137,6 +137,9 @@ function copyForRequestNotification(n) {
         // Manager → worker
         case 'task_assigned':
             return { title: 'Nauja užduotis', body: title };
+        case 'recurring_reassign':
+            // System → manager: the recurring job's usual assignee is away; pick someone else.
+            return { title: 'Priskirkite kitą vykdytoją', body: title };
         case 'task_approved':
             return { title: 'Užduotis patvirtinta', body: title };
         case 'task_confirmed':
@@ -896,3 +899,249 @@ exports.dailyIntegrityScan = onSchedule(
         }
     }
 );
+
+// ---------------------------------------------------------------------------
+// Recurring tasks — scheduled generator + on-demand "run now"
+// ---------------------------------------------------------------------------
+//
+// A task_template may carry a `recurrence` descriptor (see src/utils/recurrence.js). Each morning
+// generateRecurringTasks materializes a real task in `tasks` for every active rule that fires today
+// (Vilnius). IDEMPOTENT: the generated task's id is deterministic (`rec_<templateId>_<YYYY-MM-DD>`),
+// so a retry, redeploy, OR a manual "run now" can never double-create — the prior 247-corrupt-
+// break_sessions incident is exactly the unguarded-write class this design forecloses. Each task
+// carries `sourceTemplateId` + `generatedForDate` (the provenance the data analysis had to infer).
+//
+// ABSENCE: if the baked assignee is on an absence (work_hours.isVacation) that buckets to the target
+// day, the task is STILL created (the work isn't lost) but flagged `needsReassignment` and the
+// template's manager is notified to assign someone else (request_notifications → FCM push + in-app).
+//
+// The created task is a normal `tasks` doc, so stampTeamOnTaskWrite denormalizes its teamManagerIds
+// and the approval/timer/archival flows all work unchanged — this generator reuses, it doesn't fork.
+
+// Canonical UPPERCASE priority — MIRROR of src/utils/priority.js normalizePriority.
+const RECURRING_PRIORITIES = ['URGENT', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW'];
+function normalizeRecurringPriority(p) {
+    const up = String(p || '').toUpperCase();
+    return RECURRING_PRIORITIES.includes(up) ? up : 'MEDIUM';
+}
+
+// Parse a free-text estimate to minutes — MIRROR of src/utils/timeUtils.js parseTimeStringToMinutes
+// (handles comma decimals "1,5h" and the Lithuanian "val" suffix). Keep in lockstep.
+function parseEstimateMinutes(str) {
+    if (!str || typeof str !== 'string') return 0;
+    const norm = str.trim().toLowerCase().replace(',', '.');
+    const m = norm.match(/^(?:(\d+(?:\.\d+)?)\s*(?:h|val))?\s*(?:(\d+)\s*(?:m|min))?$/);
+    if (!m) return 0;
+    let total = 0;
+    const hours = m[1] ? parseFloat(m[1]) : 0;
+    const mins = m[2] ? parseInt(m[2], 10) : 0;
+    if (Number.isFinite(hours) && hours >= 0) total += hours * 60;
+    if (Number.isFinite(mins) && mins >= 0) total += mins;
+    return Number.isFinite(total) ? total : 0;
+}
+
+function recurringIsoWeekday(dateStr) {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    if (!y || !m || !d) return null;
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    return dow === 0 ? 7 : dow;
+}
+function recurringDaysInMonth(year, month) {
+    return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+// MIRROR of src/utils/recurrence.js recurrenceFiresOn — keep both copies identical.
+function recurringFiresOn(recurrence, dateStr) {
+    if (!recurrence || recurrence.active === false) return false;
+    if (Array.isArray(recurrence.skipDates) && recurrence.skipDates.includes(dateStr)) return false;
+    const wd = recurringIsoWeekday(dateStr);
+    if (!wd) return false;
+    switch (recurrence.freq) {
+        case 'daily':
+            return true;
+        case 'weekly':
+            return Array.isArray(recurrence.byWeekday) && recurrence.byWeekday.includes(wd);
+        case 'monthly': {
+            const [y, m, d] = dateStr.split('-').map(Number);
+            const target = Math.min(recurrence.byMonthDay || 1, recurringDaysInMonth(y, m));
+            return d === target;
+        }
+        default:
+            return false;
+    }
+}
+
+// Is the user on an absence (any kind) that buckets to the given Vilnius day? Reads work_hours by
+// userId (the automatic single-field index) and checks isVacation (the absence gate). Off the hot
+// path (only at generation time), so the client-side day-bucket filter is fine.
+async function isUserAbsentOn(uid, dayStr) {
+    if (!uid) return false;
+    try {
+        const snap = await db.collection('work_hours').where('userId', '==', uid).get();
+        let absent = false;
+        snap.forEach((d) => {
+            const wh = d.data();
+            if (!wh || wh.isVacation !== true || !wh.start) return;
+            if (lithuanianDay(new Date(wh.start)) === dayStr) absent = true;
+        });
+        return absent;
+    } catch (err) {
+        logger.warn('isUserAbsentOn failed', { uid, err: err.message });
+        return false;
+    }
+}
+
+// Materialize one template's task for `dayStr` (Vilnius). Idempotent via the deterministic id.
+// `force` (run-now) bypasses the fires-today / paused checks so a manager can fire on demand.
+async function generateOneRecurring(templateId, template, dayStr, force) {
+    const recurrence = template.recurrence || null;
+    if (!force) {
+        if (!recurrence) return { created: false, reason: 'no-recurrence' };
+        if (recurrence.active === false) return { created: false, reason: 'paused' };
+        if (!recurringFiresOn(recurrence, dayStr)) return { created: false, reason: 'not-due' };
+    }
+
+    const data = template.data || {};
+    const assignee = data.assignedUserId || data.assignedWorkerId || '';
+    const managerId = data.managerId || template.createdBy || null;
+
+    // Resolve the assignee's display name (the app denormalizes assignedUserName onto task rows).
+    let assignedUserName = '';
+    if (assignee) {
+        try {
+            const us = await db.collection('users').doc(assignee).get();
+            if (us.exists) assignedUserName = us.data().displayName || us.data().email || '';
+        } catch (err) {
+            logger.warn('recurring assignee name lookup failed', { assignee, err: err.message });
+        }
+    }
+
+    const absent = assignee ? await isUserAbsentOn(assignee, dayStr) : false;
+
+    // Deterministic id → at most one task per template per Vilnius day, no matter how many runs.
+    const taskId = `rec_${templateId}_${dayStr}`;
+    const ref = db.collection('tasks').doc(taskId);
+
+    const result = await db.runTransaction(async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists) return { created: false, deduped: true, taskId };
+
+        const nowIso = new Date().toISOString();
+        const task = {
+            title: data.title || template.templateName || 'Pasikartojantis darbas',
+            description: data.description || '',
+            priority: normalizeRecurringPriority(data.priority),
+            estimatedTime: data.estimatedTime || '',
+            estimatedTimeMinutes: parseEstimateMinutes(data.estimatedTime || ''),
+            assignedUserId: assignee,
+            assignedUserName,
+            managerId,
+            taskAuditor: managerId,
+            tag: data.tag || '',
+            links: Array.isArray(data.links) ? data.links : [],
+            checklist: Array.isArray(data.checklist) ? data.checklist : [],
+            comments: [],
+            status: 'pending',
+            completed: false,
+            createdAt: nowIso,
+            createdBy: 'system_recurring',
+            creatorName: 'Pasikartojantis darbas',
+            assignedAt: nowIso,
+            updatedAt: nowIso,
+            // Provenance — makes recurring-vs-adhoc reporting exact instead of inferred.
+            sourceTemplateId: templateId,
+            generatedForDate: dayStr,
+            isRecurringInstance: true,
+            ...(absent ? { needsReassignment: true, reassignReason: 'assignee-absent' } : {}),
+        };
+        tx.set(ref, task);
+        return { created: true, taskId, needsReassignment: absent };
+    });
+
+    // Notify the manager to reassign when the usual assignee is away (outside the transaction).
+    if (result.created && result.needsReassignment && managerId) {
+        try {
+            await db.collection('request_notifications').add({
+                recipientId: managerId,
+                type: 'recurring_reassign',
+                taskId: result.taskId,
+                taskTitle: data.title || template.templateName || 'Pasikartojantis darbas',
+                userId: assignee,
+                isRead: false,
+                createdAt: new Date().toISOString(),
+                createdBy: 'system_recurring',
+            });
+        } catch (err) {
+            logger.warn('recurring reassign notify failed', { templateId, err: err.message });
+        }
+    }
+    return result;
+}
+
+exports.generateRecurringTasks = onSchedule(
+    // 05:00 Vilnius — before the managers' ~09:00 creation peak, after the 03:00 work-day flip.
+    { schedule: 'every day 05:00', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const dayStr = lithuanianDay(new Date());
+        let scanned = 0;
+        let created = 0;
+        let deduped = 0;
+        let reassign = 0;
+
+        let snap;
+        try {
+            snap = await db.collection('task_templates').get(); // small collection — full scan is fine
+        } catch (err) {
+            logger.error('generateRecurringTasks list failed', { err: err.message });
+            return;
+        }
+
+        for (const docSnap of snap.docs) {
+            const template = docSnap.data();
+            const recurrence = template.recurrence;
+            if (!recurrence || recurrence.active === false) continue;
+            if (!recurringFiresOn(recurrence, dayStr)) continue;
+            scanned += 1;
+            try {
+                const r = await generateOneRecurring(docSnap.id, template, dayStr, false);
+                if (r.created) {
+                    created += 1;
+                    if (r.needsReassignment) reassign += 1;
+                    // Observability only (the deterministic id, not this field, is the dedup).
+                    await docSnap.ref.update({ 'recurrence.lastGeneratedDate': dayStr }).catch(() => {});
+                } else if (r.deduped) {
+                    deduped += 1;
+                }
+            } catch (err) {
+                logger.error('generateRecurringTasks one failed', { id: docSnap.id, err: err.message });
+            }
+        }
+
+        logger.info('generateRecurringTasks done', { dayStr, scanned, created, deduped, reassign });
+    }
+);
+
+// On-demand "Sukurti dabar" — the manager's manual trigger over the SAME generation logic (shared
+// dedup / provenance / absence-notify). Manager+ only. force=true so it fires regardless of the
+// rule's schedule/pause, but the deterministic id still prevents a same-day duplicate.
+exports.runRecurringTasksNow = onCall(async (request) => {
+    const callerUid = request.auth && request.auth.uid;
+    if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
+    const callerSnap = await db.collection('users').doc(callerUid).get();
+    const role = callerSnap.exists ? callerSnap.data().role : '';
+    if (!['admin', 'Administratorius', 'manager', 'seniorManager'].includes(role)) {
+        throw new HttpsError('permission-denied', 'Managers only.');
+    }
+    const templateId = request.data && request.data.templateId;
+    if (!templateId) throw new HttpsError('invalid-argument', 'templateId required.');
+
+    const tSnap = await db.collection('task_templates').doc(templateId).get();
+    if (!tSnap.exists) throw new HttpsError('not-found', 'Template not found.');
+
+    const dayStr = lithuanianDay(new Date());
+    try {
+        return await generateOneRecurring(templateId, tSnap.data(), dayStr, true);
+    } catch (err) {
+        logger.error('runRecurringTasksNow failed', { templateId, err: err.message });
+        throw new HttpsError('internal', 'Generation failed.');
+    }
+});

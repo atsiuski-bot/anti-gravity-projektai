@@ -4,6 +4,7 @@ import AssigneeChip from './AssigneeChip';
 import PriorityBadge from './PriorityBadge';
 import DeletedBadge from './DeletedBadge';
 import TaskStatusPill from './TaskStatusPill';
+import TaskAnomalyBadge from './TaskAnomalyBadge';
 
 /**
  * TaskRow — the one dense desktop "report row" shared by the manager report tables
@@ -81,6 +82,9 @@ export default function TaskRow({
             </td>
             <td className="px-1 py-2 whitespace-nowrap align-top">
                 {deleted ? <DeletedBadge /> : <TaskStatusPill task={task} />}
+                {/* Read-only runaway-timer flag: surfaces a 3x+ over-estimate (or an unbounded
+                    abandoned timer) so a manager can correct it. Manager-only by where TaskRow lives. */}
+                <TaskAnomalyBadge task={task} className="flex" />
             </td>
             <td className="px-1 py-2 text-center align-top">
                 <IconButton label="Peržiūrėti komentarus" onClick={() => onOpenComments?.(task)}>

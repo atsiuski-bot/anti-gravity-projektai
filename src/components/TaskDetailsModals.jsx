@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useId } from 'react';
 import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
 import { getChecklistProgress } from '../utils/checklistActions';
+import { getCommentKey } from '../utils/commentActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
@@ -65,9 +66,10 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
     const [optimisticComments, setOptimisticComments] = React.useState([]);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
 
-    // Inline edit state — a comment's author (or a manager) edits in place, the same affordance
-    // the desktop row used to carry before comments consolidated into this one modal.
-    const [editingIndex, setEditingIndex] = React.useState(null);
+    // Inline edit state — a comment's author (or a manager) edits in place. Keyed by the comment's
+    // stable identity (getCommentKey), not a positional index, so a concurrent add/delete that
+    // shifts the array can't move the open editor onto a different comment.
+    const [editingKey, setEditingKey] = React.useState(null);
     const [editText, setEditText] = React.useState('');
     const canEditComments = !!(onUpdateComment || onDeleteComment);
 
@@ -76,18 +78,27 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
         setOptimisticComments([]);
     }, [comments]);
 
-    const startEdit = (index, text) => {
-        setEditingIndex(index);
+    // If the comment being edited was removed out from under us (a concurrent delete), close the
+    // editor so its text can't be saved onto whatever comment shifted into that slot.
+    React.useEffect(() => {
+        if (editingKey != null && !(comments || []).some((c) => getCommentKey(c) === editingKey)) {
+            setEditingKey(null);
+            setEditText('');
+        }
+    }, [comments, editingKey]);
+
+    const startEdit = (key, text) => {
+        setEditingKey(key);
         setEditText(text);
     };
     const cancelEdit = () => {
-        setEditingIndex(null);
+        setEditingKey(null);
         setEditText('');
     };
-    const saveEdit = async (index) => {
+    const saveEdit = async (commentKey) => {
         const text = editText.trim();
         if (!text) return;
-        await onUpdateComment?.(index, text);
+        await onUpdateComment?.(commentKey, text);
         cancelEdit();
     };
 
@@ -128,11 +139,11 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                 <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {displayComments.length > 0 ? (
                         displayComments.map((comment, idx) => {
-                            const isEditing = editingIndex === idx;
+                            const isEditing = editingKey === getCommentKey(comment);
                             const mayEdit = canEditComments && !comment.isOptimistic
                                 && (canManage || (comment.userId && comment.userId === currentUserId));
                             return (
-                                <div key={idx} className={`bg-surface-sunken p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
+                                <div key={getCommentKey(comment) ?? idx} className={`bg-surface-sunken p-4 rounded-lg transition-opacity ${comment.isOptimistic ? 'opacity-60' : 'opacity-100'}`}>
                                     <div className="flex justify-between items-start mb-2 gap-2">
                                         <span className="font-medium text-ink-strong">
                                             {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : <UserChip userId={comment.userId} name={comment.user} />}
@@ -144,10 +155,10 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                                             {mayEdit && !isEditing && (
                                                 <>
                                                     {onUpdateComment && (
-                                                        <IconButton icon={Pencil} label="Redaguoti komentarą" variant="ghost" onClick={() => startEdit(idx, comment.text)} />
+                                                        <IconButton icon={Pencil} label="Redaguoti komentarą" variant="ghost" onClick={() => startEdit(getCommentKey(comment), comment.text)} />
                                                     )}
                                                     {onDeleteComment && (
-                                                        <IconButton icon={Trash2} label="Ištrinti komentarą" variant="danger" onClick={() => onDeleteComment(idx)} />
+                                                        <IconButton icon={Trash2} label="Ištrinti komentarą" variant="danger" onClick={() => onDeleteComment(getCommentKey(comment))} />
                                                     )}
                                                 </>
                                             )}
@@ -165,7 +176,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                                             />
                                             <div className="mt-2 flex justify-end gap-2">
                                                 <IconButton icon={X} label="Atšaukti" variant="ghost" onClick={cancelEdit} />
-                                                <IconButton icon={Check} label="Išsaugoti" variant="primary" onClick={() => saveEdit(idx)} disabled={!editText.trim()} />
+                                                <IconButton icon={Check} label="Išsaugoti" variant="primary" onClick={() => saveEdit(getCommentKey(comment))} disabled={!editText.trim()} />
                                             </div>
                                         </div>
                                     ) : (
@@ -356,8 +367,8 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
     );
 }
 
-export function ImageModal({ isOpen, onClose, imageUrls }) {
-    const [currentIndex, setCurrentIndex] = useState(0);
+export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
+    const [currentIndex, setCurrentIndex] = useState(initialIndex);
     const [zoom, setZoom] = useState(1);
 
     // Drag state

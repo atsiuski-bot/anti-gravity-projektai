@@ -12,7 +12,7 @@ import { notify } from '../utils/notify';
 import { getPriorityOptions, getPriorityLabel, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
@@ -674,10 +674,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
             const taskData = {
                 ...formData,
-                // Persist priority in the one canonical (UPPERCASE) form. Historically the form
-                // seeded 'Medium' while normalizePriority emits 'MEDIUM', so the same field was
-                // stored two ways; normalising on every write ends that split going forward.
+                // Canonicalize at the write boundary so the stored priority is ALWAYS one of the
+                // UPPERCASE PRIORITIES tokens, regardless of which entry path set it (chip,
+                // default seed, loaded legacy value). Read-side already normalizes; this stops
+                // new mixed-casing from being minted. Idempotent (normalizePriority('MEDIUM')==='MEDIUM').
                 priority: normalizePriority(formData.priority),
+                // Persist the parsed numeric estimate alongside the human string so the time-limit
+                // monitor and every report read a clean number instead of re-parsing free text.
+                // estimatedTime is required (guarded above), so this is always a real value here.
+                estimatedTimeMinutes: parseTimeStringToMinutes(formData.estimatedTime),
                 attachmentUrl: primaryAttachmentUrl,
                 attachmentUrls: currentAttachmentUrls,
                 managerName: selectedManager ? (selectedManager.displayName || selectedManager.email) : '',
