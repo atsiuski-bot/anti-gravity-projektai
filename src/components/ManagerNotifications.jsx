@@ -5,12 +5,12 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus, Ban, UserPlus } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
-import { deleteTask } from '../utils/taskActions';
+import { deleteTask, extendTaskTime } from '../utils/taskActions';
 import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { logCalendarChange } from '../utils/calendarNotifications';
@@ -98,7 +98,9 @@ export default function ManagerNotifications({ onClose }) {
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
     const [bulkConfirming, setBulkConfirming] = useState(false); // batch "approve all completions" in flight
+    const [bulkApprovingCal, setBulkApprovingCal] = useState(false); // batch "approve all calendar requests" in flight
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
+    const [grantingExt, setGrantingExt] = useState(null); // notif.id of an in-flight one-tap time grant
     const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
 
 
@@ -273,6 +275,33 @@ export default function ManagerNotifications({ onClose }) {
         }
     };
 
+    // Only add/edit calendar requests are low-risk enough to batch-approve. A `delete` removes a
+    // work_hours entry outright (destructive, irreversible from the bell), so it stays a deliberate
+    // per-card decision — never swept into a one-tap bulk action.
+    const bulkApprovableCalRequests = calendarRequests.filter(r => r.type === 'add' || r.type === 'edit');
+    const calBatchEligible = bulkApprovableCalRequests.length >= 2 &&
+        bulkApprovableCalRequests.length === calendarRequests.length;
+
+    // Batch-approve every pending (add/edit) calendar request in one action — the calendar-side
+    // mirror of handleConfirmAllCompletions. Loops the existing per-item handler, so each approval
+    // still writes work_hours, flips the request, logs the change, and notifies the worker exactly
+    // as a single tap would. Deletes are excluded by construction (calBatchEligible gates the bar).
+    const handleApproveAllCalendarRequests = async () => {
+        if (!calBatchEligible) return;
+        setBulkApprovingCal(true);
+        setActionError(null);
+        try {
+            for (const request of bulkApprovableCalRequests) {
+                await handleApproveCalendarRequest(request);
+            }
+        } catch (err) {
+            console.error('Error approving all calendar requests:', err);
+            setActionError('Nepavyko patvirtinti visų užklausų. Bandykite dar kartą.');
+        } finally {
+            setBulkApprovingCal(false);
+        }
+    };
+
 
     // Notify the worker who submitted a task that it was approved (they may start). The submitter
     // is the notification's author (createdBy); a manager self-submitting gets no echo.
@@ -387,6 +416,34 @@ export default function ManagerNotifications({ onClose }) {
         await notify({ recipientId: notif.userId, type: 'extension_denied', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
     };
 
+    // One-tap grant: extend the task's estimate by a fixed amount, tell the worker (the same
+    // extension_granted notice the "Redaguoti užduotį" path produces), then dismiss the request.
+    // Collapses the ~6-step edit-modal round-trip into a single tap for the common case (a small,
+    // standard bump); "Redaguoti užduotį" stays as the escape hatch for a precise custom amount.
+    const handleGrantExtension = async (notif, additionalTimeString) => {
+        const taskId = notif?.taskId;
+        if (!taskId || grantingExt) return;
+        setGrantingExt(notif.id);
+        setActionError(null);
+        try {
+            await extendTaskTime(taskId, additionalTimeString, currentUser.uid);
+            await notify({
+                recipientId: notif.userId,
+                type: 'extension_granted',
+                taskId,
+                taskTitle: notif.taskTitle,
+                actorUid: currentUser.uid,
+                actorName: currentUser.displayName || currentUser.email,
+            });
+            await handleDismissTask(notif.id);
+        } catch (err) {
+            console.error('Error granting time extension:', err);
+            setActionError('Nepavyko pratęsti laiko. Bandykite dar kartą.');
+        } finally {
+            setGrantingExt(null);
+        }
+    };
+
     // --- Task Completion Handlers ---
     // State write only — confirm a finished task (completed -> confirmed). The worker "confirmed"
     // ping is NOT sent here: it is deferred for the undo window (see below) so an undo never leaves a
@@ -450,6 +507,33 @@ export default function ManagerNotifications({ onClose }) {
         await handleDismissTask(notif.id);
         // Tell the worker their task came back for rework (action item in their bell).
         await notify({ recipientId: notif.userId, type: 'task_reverted', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+    };
+
+    // --- Account approval (system → admin) ---
+    // Flip a pending sign-up's status, mirroring UserManagement's block/approve write EXACTLY:
+    //   approve → { isDisabled:false, status:'active' }; block → { isDisabled:true, status:'blocked' }
+    // (status:'blocked' clears the 'pending' flag so the account no longer reads as awaiting
+    // approval). The first admin to act flips the shared user doc; we then dismiss only THIS admin's
+    // own notification (each admin received their own), matching the per-recipient model.
+    const [decidingAccount, setDecidingAccount] = useState(null); // notif.id of an in-flight decision
+    const handleAccountDecision = async (notif, approve) => {
+        const targetUid = notif?.targetUserId;
+        if (!targetUid || decidingAccount) return;
+        setDecidingAccount(notif.id);
+        setActionError(null);
+        try {
+            await updateDoc(doc(db, 'users', targetUid), approve
+                ? { isDisabled: false, status: 'active' }
+                : { isDisabled: true, status: 'blocked' });
+            await handleDismissTask(notif.id);
+        } catch (err) {
+            console.error('Error deciding account approval:', err);
+            setActionError(err.code === 'permission-denied'
+                ? 'Neturite teisių atlikti šį veiksmą.'
+                : 'Nepavyko atnaujinti vartotojo statuso. Bandykite dar kartą.');
+        } finally {
+            setDecidingAccount(null);
+        }
     };
 
     const allNotifications = [...calendarNotifications, ...calendarRequests, ...taskNotifications];
@@ -535,6 +619,19 @@ export default function ManagerNotifications({ onClose }) {
                     </span>
                     <Button variant="success" size="md" icon={Check} loading={bulkConfirming} onClick={handleConfirmAllCompletions}>
                         Priimti visas
+                    </Button>
+                </div>
+            )}
+
+            {/* Batch-approve bar for calendar requests — only when EVERY pending request is a low-risk
+                add/edit (a delete keeps its own per-card decision) and there are several of them. */}
+            {calBatchEligible && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-feedback-info-border bg-feedback-info-soft px-4 py-2 max-w-xl">
+                    <span className="text-sm font-medium text-feedback-info-text">
+                        Kalendoriaus užklausos: {bulkApprovableCalRequests.length}
+                    </span>
+                    <Button variant="success" size="md" icon={Check} loading={bulkApprovingCal} onClick={handleApproveAllCalendarRequests}>
+                        Patvirtinti visas
                     </Button>
                 </div>
             )}
@@ -761,6 +858,91 @@ export default function ManagerNotifications({ onClose }) {
                         );
                     }
 
+                    // Worker-facing INFO: an admin corrected or removed the worker's logged (paid)
+                    // time. A clear card (not a one-line row) because it changes payable time — the
+                    // worker should see WHICH day, the before→after, and WHY.
+                    if (notif.type === 'session_edited' || notif.type === 'session_deleted') {
+                        const isDelete = notif.type === 'session_deleted';
+                        const who = formatDisplayName(notif.createdByName) || 'Administratorius';
+                        const Icon = isDelete ? Trash2 : Edit;
+                        const headline = isDelete
+                            ? `${who} pašalino Jūsų įrašytą darbo laiką`
+                            : `${who} pakoregavo Jūsų įrašytą darbo laiką`;
+                        return (
+                            <div key={notif.id} className="rounded-card border border-feedback-info-border bg-feedback-info-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl relative">
+                                <IconButton
+                                    icon={X}
+                                    label="Pažymėti skaitytu"
+                                    variant="ghost"
+                                    onClick={() => handleDismissTask(notif.id)}
+                                    className="absolute top-2 right-2 text-ink-muted hover:text-feedback-info"
+                                />
+                                <div className="flex items-start gap-3 pr-6">
+                                    <Icon className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-info" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1 text-sm text-feedback-info-text">
+                                        <p className="font-medium leading-relaxed">{headline}</p>
+                                        {notif.day && <p className="mt-1">Diena: <span className="font-semibold">{notif.day}</span></p>}
+                                        {notif.summary && !isDelete && (
+                                            <p className="mt-1">Trukmė: <span className="font-semibold font-mono">{notif.summary}</span></p>
+                                        )}
+                                        {notif.reason && (
+                                            <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-info-border pl-2">
+                                                Priežastis: {notif.reason}
+                                            </p>
+                                        )}
+                                        <p className="mt-2 text-xs text-feedback-info-text/90">
+                                            Jei manote, kad tai klaida, susisiekite su vadovu.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    // System → admin ACTION: a new sign-up is pending approval. Inline Patvirtinti /
+                    // Užblokuoti flip the user's status (mirroring User Management) without leaving
+                    // the bell. Created server-side (admin SDK) because the new user is signed out
+                    // before the client can write.
+                    if (notif.type === 'account_approval') {
+                        const inFlight = decidingAccount === notif.id;
+                        return (
+                            <div key={notif.id} className="rounded-card border border-feedback-info-border bg-feedback-info-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <div className="flex items-start gap-3">
+                                    <UserPlus className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-info" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1 text-sm text-feedback-info-text">
+                                        <p className="font-medium leading-relaxed">
+                                            Naujas vartotojas laukia patvirtinimo:
+                                        </p>
+                                        <p className="mt-1 font-semibold">{notif.targetUserName || notif.targetUserEmail || 'Nežinomas vartotojas'}</p>
+                                        {notif.targetUserName && notif.targetUserEmail && (
+                                            <p className="mt-0.5 text-xs opacity-80">{notif.targetUserEmail}</p>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+                                    <Button
+                                        variant="danger"
+                                        size="md"
+                                        icon={Ban}
+                                        disabled={inFlight}
+                                        onClick={() => handleAccountDecision(notif, false)}
+                                    >
+                                        Užblokuoti
+                                    </Button>
+                                    <Button
+                                        variant="success"
+                                        size="md"
+                                        icon={Check}
+                                        loading={inFlight}
+                                        onClick={() => handleAccountDecision(notif, true)}
+                                    >
+                                        Patvirtinti
+                                    </Button>
+                                </div>
+                            </div>
+                        );
+                    }
+
                     if (notif.type === 'new_comment') {
                         return (
                             <div key={notif.id} className="bg-feedback-info-soft border border-feedback-info-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
@@ -884,6 +1066,34 @@ export default function ManagerNotifications({ onClose }) {
                                     </div>
                                 </div>
 
+                                {/* Quick-grant chips — one tap extends the estimate and tells the worker,
+                                    instead of the multi-step edit-modal round-trip. The success-toned icon
+                                    pairs the meaning with shape, so color is never the sole signal. */}
+                                <div className="flex items-center gap-2 flex-wrap mt-3">
+                                    <Button
+                                        variant="success"
+                                        size="md"
+                                        icon={TimeGrantedGlyph}
+                                        className="whitespace-nowrap"
+                                        loading={grantingExt === notif.id}
+                                        disabled={!!grantingExt}
+                                        onClick={() => handleGrantExtension(notif, '30min')}
+                                    >
+                                        Pratęsti +30 min
+                                    </Button>
+                                    <Button
+                                        variant="success"
+                                        size="md"
+                                        icon={TimeGrantedGlyph}
+                                        className="whitespace-nowrap"
+                                        loading={grantingExt === notif.id}
+                                        disabled={!!grantingExt}
+                                        onClick={() => handleGrantExtension(notif, '1h')}
+                                    >
+                                        Pratęsti +1 val.
+                                    </Button>
+                                </div>
+
                                 {/* Action Buttons */}
                                 <div className="flex items-center justify-end mt-4 mb-1 gap-3 flex-wrap">
                                     {/* Do Not Extend */}
@@ -892,17 +1102,19 @@ export default function ManagerNotifications({ onClose }) {
                                         size="md"
                                         icon={X}
                                         className="whitespace-nowrap"
+                                        disabled={!!grantingExt}
                                         onClick={() => handleDismissExtension(notif)}
                                     >
                                         Nepratęsti
                                     </Button>
 
-                                    {/* Edit Task To Extend */}
+                                    {/* Edit Task To Extend — escape hatch for a precise custom amount. */}
                                     <Button
                                         variant="primary"
                                         size="md"
                                         icon={Edit}
                                         className="whitespace-nowrap"
+                                        disabled={!!grantingExt}
                                         onClick={async () => {
                                             // Dismiss the request, then open the task so the manager can extend the
                                             // estimate (saving a longer time fires the worker's extension_granted notice).
@@ -925,56 +1137,91 @@ export default function ManagerNotifications({ onClose }) {
                         );
                     }
 
-                // Default fallback for task assignments / approvals
-                return (
-                    <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                // A genuine task approval (the worker submitted a task for the assigned manager to
+                // approve). This is the ONLY type whose destructive "Ištrinti" is correct — it owns a
+                // real taskId, and every action here (approve / edit-approve / delete) operates on it.
+                // Gating to task_approval is what defuses the old bug: an UNKNOWN type used to fall
+                // into this card and render a delete button wired to a missing taskId.
+                if (notif.type === 'task_approval') {
+                    return (
+                        <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
 
-                        <div className="flex flex-col gap-3">
-                            <div className="flex items-start gap-3">
-                                <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
-                                <div>
-                                    <div className="text-sm text-feedback-warning-text">
-                                        <p><UserChip userId={notif.createdById} name={notif.createdByName} className="font-semibold" /> priskyrė Jus vadovu užduočiai:</p>
-                                        <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
-                                        {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
-                                        {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}
+                            <div className="flex flex-col gap-3">
+                                <div className="flex items-start gap-3">
+                                    <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
+                                    <div>
+                                        <div className="text-sm text-feedback-warning-text">
+                                            <p><UserChip userId={notif.createdById} name={notif.createdByName} className="font-semibold" /> priskyrė Jus vadovu užduočiai:</p>
+                                            <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
+                                            {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
+                                            {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}
+                                        </div>
                                     </div>
                                 </div>
+
+                                <div className="mt-3 mb-1 flex flex-wrap items-center gap-2">
+                                    <Button
+                                        variant="success"
+                                        size="md"
+                                        icon={Check}
+                                        className="whitespace-nowrap"
+                                        onClick={() => handleApproveTask(notif)}
+                                        title="Patvirtinti užduotį"
+                                    >
+                                        Patvirtinti
+                                    </Button>
+
+                                    <Button
+                                        variant="primary"
+                                        size="md"
+                                        icon={Edit}
+                                        className="whitespace-nowrap"
+                                        onClick={() => handleEditAndApprove(notif)}
+                                        title="Patvirtinti ir redaguoti užduotį"
+                                    >
+                                        Redaguoti
+                                    </Button>
+
+                                    <Button
+                                        variant="danger"
+                                        size="md"
+                                        icon={Trash2}
+                                        className="whitespace-nowrap"
+                                        onClick={() => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle)}
+                                        title="Ištrinti užduotį"
+                                    >
+                                        Ištrinti
+                                    </Button>
+                                </div>
                             </div>
+                        </div>
+                    );
+                }
 
-                            <div className="mt-3 mb-1 flex flex-wrap items-center gap-2">
-                                <Button
-                                    variant="success"
-                                    size="md"
-                                    icon={Check}
-                                    className="whitespace-nowrap"
-                                    onClick={() => handleApproveTask(notif)}
-                                    title="Patvirtinti užduotį"
-                                >
-                                    Patvirtinti
-                                </Button>
-
-                                <Button
-                                    variant="primary"
-                                    size="md"
-                                    icon={Edit}
-                                    className="whitespace-nowrap"
-                                    onClick={() => handleEditAndApprove(notif)}
-                                    title="Patvirtinti ir redaguoti užduotį"
-                                >
-                                    Redaguoti
-                                </Button>
-
-                                <Button
-                                    variant="danger"
-                                    size="md"
-                                    icon={Trash2}
-                                    className="whitespace-nowrap"
-                                    onClick={() => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle)}
-                                    title="Ištrinti užduotį"
-                                >
-                                    Ištrinti
-                                </Button>
+                // SAFE fallback for any UNKNOWN or future request_notification type. Never
+                // destructive: it has no task-mutating buttons (the old fallback shipped an
+                // "Ištrinti" wired to a possibly-missing taskId). It shows whatever the notification
+                // carried — a title and any user-authored note — and offers only a dismiss, so a new
+                // type added by another branch degrades to a readable info row instead of a hazard.
+                return (
+                    <div key={notif.id} className="rounded-card border border-line bg-surface-card p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl relative">
+                        <IconButton
+                            icon={X}
+                            label="Pažymėti skaitytu"
+                            variant="ghost"
+                            onClick={() => handleDismissTask(notif.id)}
+                            className="absolute top-2 right-2 text-ink-muted hover:text-ink"
+                        />
+                        <div className="flex items-start gap-3 pr-6">
+                            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                            <div className="min-w-0 flex-1 text-sm text-ink">
+                                <p className="font-medium leading-relaxed">Naujas pranešimas</p>
+                                {notif.taskTitle && <p className="mt-1 font-medium">&quot;{notif.taskTitle}&quot;</p>}
+                                {notif.commentText && (
+                                    <p className="mt-2 text-xs italic opacity-80 border-l-2 border-line pl-2">
+                                        &quot;{notif.commentText}&quot;
+                                    </p>
+                                )}
                             </div>
                         </div>
                     </div>

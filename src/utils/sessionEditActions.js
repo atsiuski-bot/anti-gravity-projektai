@@ -1,7 +1,13 @@
 import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
-import { getLithuanianDateString, MAX_SESSION_MINUTES } from './timeUtils';
+import { getLithuanianDateString, MAX_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
+import { notify } from './notify';
+
+// The worker's OWN durationMinutes before an edit (the value already credited to their day). Used
+// to phrase the "before → after" summary the worker sees when an admin corrects their paid time.
+const sessionDurationOf = (session) =>
+    typeof session?.durationMinutes === 'number' ? session.durationMinutes : null;
 
 // Admin time-editing operates on work_sessions, the single canonical record of logged time:
 // every report/daily aggregator sums work_sessions.durationMinutes over a Vilnius work-day
@@ -81,6 +87,26 @@ export const editWorkSession = async (session, { startTime, endTime, reason, edi
 
     try {
         await updateDoc(doc(db, 'work_sessions', session.id), updates);
+        // Tell the worker their PAID time was corrected by an admin. The notify() recipient===actor
+        // guard drops an admin editing their OWN session, so this never self-notifies. Best-effort:
+        // a notification failure must never undo the (already-persisted) correction, so it is fired
+        // after the write and swallowed inside notify().
+        const beforeMinutes = sessionDurationOf(session);
+        const afterMinutes = derived.durationMinutes;
+        const summary =
+            beforeMinutes !== null
+                ? `${formatMinutesToTimeString(beforeMinutes)} → ${formatMinutesToTimeString(afterMinutes)}`
+                : `nustatyta trukmė ${formatMinutesToTimeString(afterMinutes)}`;
+        await notify({
+            recipientId: session.userId,
+            type: 'session_edited',
+            actorUid: editor?.uid,
+            actorName: editor?.displayName || editor?.email,
+            day: derived.date,
+            summary,
+            reason: trimmedReason,
+            taskTitle: session.taskTitle || null,
+        });
         return { ok: true, durationMinutes: derived.durationMinutes, date: derived.date };
     } catch (err) {
         logError(err, { source: 'writeFail:editWorkSession', sessionId: session.id });
@@ -105,6 +131,20 @@ export const deleteWorkSession = async (session, { reason, editor } = {}) => {
     };
     try {
         await updateDoc(doc(db, 'work_sessions', session.id), updates);
+        // Tell the worker an admin removed one of their logged (paid) sessions. Same self-edit guard
+        // and best-effort posture as editWorkSession. The day comes from the stored bucket (or the
+        // session's start), so the worker knows which day's total changed.
+        const day = session.date || (session.startTime ? getLithuanianDateString(session.startTime) : null);
+        await notify({
+            recipientId: session.userId,
+            type: 'session_deleted',
+            actorUid: editor?.uid,
+            actorName: editor?.displayName || editor?.email,
+            day,
+            summary: 'pašalinta sesija',
+            reason: trimmedReason || null,
+            taskTitle: session.taskTitle || null,
+        });
         return { ok: true };
     } catch (err) {
         logError(err, { source: 'writeFail:deleteWorkSession', sessionId: session.id });

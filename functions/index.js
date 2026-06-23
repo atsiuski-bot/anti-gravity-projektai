@@ -142,6 +142,9 @@ function copyForRequestNotification(n) {
         case 'recurring_reassign':
             // System → manager: the recurring job's usual assignee is away; pick someone else.
             return { title: 'Priskirkite kitą vykdytoją', body: title };
+        case 'account_approval':
+            // System → admin: a new sign-up awaits approval. Body = the pending user's name/email.
+            return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'WORKZ' };
         case 'task_approved':
             return { title: 'Užduotis patvirtinta', body: title };
         case 'task_confirmed':
@@ -156,6 +159,18 @@ function copyForRequestNotification(n) {
             return {
                 title: n.decision === 'approved' ? 'Kalendoriaus pakeitimas patvirtintas' : 'Kalendoriaus pakeitimas atmestas',
                 body: 'Darbo kalendorius',
+            };
+        case 'session_edited':
+            return { title: 'Pakoreguotas darbo laikas', body: n.day || 'Darbo laikas' };
+        case 'session_deleted':
+            return { title: 'Pašalintas darbo laikas', body: n.day || 'Darbo laikas' };
+        case 'session_correction_request':
+            // Worker → manager: a logged-time error report. Body = the worker's note (clamped) or day.
+            return {
+                title: 'Pranešimas apie darbo laiko klaidą',
+                body: n.commentText
+                    ? String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)
+                    : (n.day || 'Darbo laikas'),
             };
         default:
             return { title: 'WORKZ pranešimas', body: title };
@@ -783,6 +798,66 @@ exports.backfillTeamStamps = onCall(async (request) => {
     }
     logger.info('backfillTeamStamps done', { users, rows });
     return { users, rows };
+});
+
+// ---------------------------------------------------------------------------
+// Account approval — notify admins of a pending sign-up
+// ---------------------------------------------------------------------------
+//
+// A new sign-up lands as { isDisabled:true, status:'pending' } in users/{uid}, and AuthContext
+// signs that user out immediately — so the CLIENT cannot write a notification (it has no
+// authenticated session for the new account, and no other client is watching the users
+// collection for creates). This server-side onCreate closes that gap: it fans an
+// `account_approval` request_notification out to every active admin so the pending account
+// surfaces in the bell with inline Patvirtinti / Užblokuoti (handled in ManagerNotifications).
+//
+// Admin SDK writes here BYPASS firestore.rules entirely, so no rules change is needed for these
+// docs (the client-side create rule's provenance check does not apply to the admin SDK). Each doc
+// carries the target's uid/name/email so the card can act without an extra read, and starts unread.
+exports.notifyAdminsOnPendingSignup = onDocumentCreated('users/{id}', async (event) => {
+    const snap = event.data;
+    if (!snap) return;
+    const u = snap.data();
+    // Only brand-new PENDING sign-ups (a normal admin-created/active user must not alert anyone).
+    if (!u || u.status !== 'pending' || u.isDisabled !== true) return;
+
+    const targetUserId = event.params.id;
+    try {
+        // Every active admin is a recipient. Both legacy role spellings are honored.
+        const adminUids = new Set();
+        for (const role of ['admin', 'Administratorius']) {
+            const adminsSnap = await db.collection('users').where('role', '==', role).get();
+            adminsSnap.forEach((d) => {
+                if (d.id !== targetUserId && d.data().isDisabled !== true) adminUids.add(d.id);
+            });
+        }
+        if (!adminUids.size) {
+            logger.warn('notifyAdminsOnPendingSignup: no active admin to notify', { targetUserId });
+            return;
+        }
+
+        const nowIso = new Date().toISOString();
+        const targetUserName = u.displayName || '';
+        const targetUserEmail = u.email || '';
+        await Promise.all([...adminUids].map((adminUid) =>
+            db.collection('request_notifications').add({
+                recipientId: adminUid,
+                type: 'account_approval',
+                category: 'action',
+                targetUserId,
+                targetUserName,
+                targetUserEmail,
+                isRead: false,
+                createdAt: nowIso,
+                // Provenance: a system-authored notification (no human actor). The admin-SDK write
+                // bypasses the client provenance rule, so this is purely for audit/readability.
+                createdBy: 'system_account_approval',
+            })
+        ));
+        logger.info('notifyAdminsOnPendingSignup done', { targetUserId, admins: adminUids.size });
+    } catch (err) {
+        logger.error('notifyAdminsOnPendingSignup failed', { targetUserId, err: err.message });
+    }
 });
 
 // ---------------------------------------------------------------------------
