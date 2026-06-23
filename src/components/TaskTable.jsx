@@ -208,14 +208,14 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         });
     };
 
-    // Confirming finished work (completed -> confirmed) is a cleanly reversible sign-off, so it is
+    // Accepting finished work (completed -> confirmed) is a cleanly reversible sign-off, so it is
     // immediate + undoable; undo restores the exact prior state. The table pings no one, so there is
     // no notification to defer.
     const handleConfirmTask = (taskId) => {
-        // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
-        // Task-level managers (who are not system managers) cannot confirm.
+        // PERMISSION CHECK: Only explicit Managers or Admins can accept tasks.
+        // Task-level managers (who are not system managers) cannot accept.
         if (!isManagerRole(userRole)) {
-            setError("Tik vadovai gali patvirtinti užduotis.");
+            setError("Tik vadovai gali priimti užduotis.");
             return;
         }
         setError('');
@@ -228,9 +228,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                 await updateDoc(doc(db, 'tasks', taskId), { status: 'confirmed', confirmedBy: currentUser.uid, confirmedAt: now, updatedAt: now });
             },
             undo: () => updateDoc(doc(db, 'tasks', taskId), { status: prior.status, confirmedBy: prior.confirmedBy, confirmedAt: prior.confirmedAt, updatedAt: new Date().toISOString() }),
-            message: 'Atlikimas patvirtintas.',
-            undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
-            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite vėliau.',
+            message: 'Užduotis priimta.',
+            undoneMessage: 'Atšaukta — laukiama priėmimo.',
+            errorMessage: 'Nepavyko priimti užduoties. Bandykite vėliau.',
         });
     };
 
@@ -606,7 +606,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 )}
                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
                                     <Button variant="primary" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
-                                        Patvirtinti atlikimą
+                                        Priimti
                                     </Button>
                                 )}
                                 {canManage && task.status === 'unapproved' && (
@@ -843,7 +843,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     <IconButton icon={Pencil} label="Redaguoti" variant="default" onClick={() => onEdit(task)} />
                                                 )}
                                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
-                                                    <IconButton icon={CheckCircle2} label="Patvirtinti atlikimą" variant="primary" onClick={() => handleConfirmTask(task.id)} />
+                                                    <IconButton icon={CheckCircle2} label="Priimti" variant="primary" onClick={() => handleConfirmTask(task.id)} />
                                                 )}
                                                 {canManage && task.status === 'unapproved' && (
                                                     <IconButton icon={CheckCircle2} label="Patvirtinti" variant="primary" onClick={() => handleApproveTask(task.id)} />

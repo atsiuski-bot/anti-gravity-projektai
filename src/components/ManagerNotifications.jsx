@@ -43,7 +43,7 @@ import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyp
  *
  * The notification carries only taskId/taskTitle, so this wrapper subscribes to the live task doc
  * and feeds it to TaskCard. TaskCard already exposes the manager sign-off buttons for a finished
- * task (Patvirtinti / Grąžinti / Redaguoti / Trinti); the optional post-action hooks below are
+ * task (Priimti / Grąžinti / Redaguoti / Trinti); the optional post-action hooks below are
  * what keep the two-way feed honest — after the card's own write succeeds they dismiss this
  * notification and notify the worker.
  */
@@ -444,9 +444,9 @@ export default function ManagerNotifications({ onClose }) {
             run: async () => { for (const n of completions) await confirmCompletionWrite(n); },
             deferredEffect: async () => { for (const n of completions) await notifyCompletionConfirmed(n); },
             undo: async () => { for (const n of completions) await undoConfirmCompletion(n); },
-            message: completions.length === 1 ? 'Užduotis patvirtinta.' : `Patvirtinta užduočių: ${completions.length}.`,
-            undoneMessage: 'Atšaukta — grąžinta patvirtinimui.',
-            errorMessage: 'Nepavyko patvirtinti visų užduočių. Bandykite dar kartą.',
+            message: completions.length === 1 ? 'Užduotis priimta.' : `Priimta užduočių: ${completions.length}.`,
+            undoneMessage: 'Atšaukta — grąžinta priėmimui.',
+            errorMessage: 'Nepavyko priimti visų užduočių. Bandykite dar kartą.',
         }).finally(() => setBulkConfirming(false));
     };
 
@@ -547,7 +547,7 @@ export default function ManagerNotifications({ onClose }) {
                         Užbaigtos užduotys: {taskNotifications.filter(n => n.type === 'task_completion').length}
                     </span>
                     <Button variant="success" size="md" icon={Check} loading={bulkConfirming} onClick={handleConfirmAllCompletions}>
-                        Patvirtinti visas
+                        Priimti visas
                     </Button>
                 </div>
             )}
@@ -674,7 +674,7 @@ export default function ManagerNotifications({ onClose }) {
                         switch (notif.type) {
                             case 'task_assigned': Icon = ListTodo; tone = 'text-brand'; text = `${who} priskyrė Jums naują užduotį: ${task}`; break;
                             case 'task_approved': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų užduotis patvirtinta — galite pradėti: ${task}`; break;
-                            case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis patvirtinta: ${task}`; break;
+                            case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis priimta: ${task}`; break;
                             case 'extension_granted': Icon = TimeGrantedGlyph; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
                             case 'extension_denied': Icon = TimeDeniedGlyph; tone = 'text-feedback-danger'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
                             case 'calendar_decision': {

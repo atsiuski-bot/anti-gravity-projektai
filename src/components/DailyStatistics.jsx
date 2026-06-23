@@ -484,7 +484,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
 
-    // The "Patvirtinimas" surface (view='approval') shows a manager only the tasks they are
+    // The "Pridavimas" surface (view='approval') shows a manager only the tasks they are
     // responsible for: ones where they are the assigned vadovas (task.managerId), or where they
     // manage the worker who did the task (the worker's managers include them). Admins are NOT
     // narrowed — they oversee the whole company. "Managers of the doer" is read from the task's
@@ -1091,8 +1091,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             )}
 
-            {/* Hours surface (work timeline + day summary). The "Patvirtinimas" tab
-                (view='approval') drops all of this and shows only the task-confirmation
+            {/* Hours surface (work timeline + day summary). The "Pridavimas" tab
+                (view='approval') drops all of this and shows only the task-acceptance
                 sections below. */}
             {view !== 'approval' && (
               <>
@@ -1513,9 +1513,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             )}
 
 
-            {/* Task-confirmation sections. Hidden entirely on the hours-only surface (they move to
-                the "Patvirtinimas" tab); shown plain on the full surface; and as collapsible,
-                manager-scoped sections on the approval surface (today + awaiting-confirmation open
+            {/* Task-acceptance sections. Hidden entirely on the hours-only surface (they move to
+                the "Pridavimas" tab); shown plain on the full surface; and as collapsible,
+                manager-scoped sections on the approval surface (today + awaiting-acceptance open
                 by default, the history archive collapsed). */}
             {view !== 'hours' && (
               <>
@@ -1541,7 +1541,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {shownEarlierTasks.length > 0 && (
                 <TaskListTable
                     tasks={shownEarlierTasks}
-                    title="Užduotys atliktos anksčiau, laukia patvirtinimo"
+                    title="Užduotys atliktos anksčiau, laukia priėmimo"
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
@@ -1582,7 +1582,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             ) && (
                 <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                     {view === 'approval'
-                        ? 'Šiuo metu nėra užduočių, kurias turėtumėte patvirtinti.'
+                        ? 'Šiuo metu nėra užduočių, kurias turėtumėte priimti.'
                         : (isRange ? 'Nėra atliktų užduočių šiam laikotarpiui.' : 'Nėra atliktų užduočių šiai dienai.')}
                 </div>
             )}
@@ -2017,12 +2017,12 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                                 className="w-4 h-4 rounded border-line text-feedback-success focus:ring-feedback-success"
                             />
                             <span className={clsx("text-xs font-medium", isConfirmed ? "text-feedback-success" : "text-ink-muted")}>
-                                {isConfirmed ? "Patvirtinta" : "Nepatvirtinta"}
+                                {isConfirmed ? "Priimtas" : "Laukia priėmimo"}
                             </span>
                         </label>
                     ) : (
                         <span className={clsx("text-xs font-medium", isConfirmed ? "text-feedback-success" : "text-ink-muted")}>
-                            {isConfirmed ? "Būsena: Patvirtinta" : "Būsena: Laukiama patvirtinimo"}
+                            {isConfirmed ? "Būsena: Priimtas" : "Būsena: Laukiama priėmimo"}
                         </span>
                     )}
                 </div>
@@ -2163,7 +2163,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                             confirmChecked={isConfirmed}
                                             confirmDisabled={!!task.archivedAt}
                                             onToggleConfirm={onToggleConfirm}
-                                            confirmAriaLabel="Patvirtinti atlikimą"
+                                            confirmAriaLabel="Priimti užduotį"
                                             assigneeName={userName}
                                             showCompletedAt
                                             completedAtCell={task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}

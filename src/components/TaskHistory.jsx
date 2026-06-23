@@ -299,7 +299,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     description: task.description || '',
                     priority: getPriorityLabel(task.priority),
                     tag: task.tag || '',
-                    status: task.status === 'confirmed' ? 'Patvirtinta' : (task.isDeleted || task.status === 'deleted' ? 'Ištrinta' : 'Atlikta'),
+                    status: task.status === 'confirmed' ? 'Priimta' : (task.isDeleted || task.status === 'deleted' ? 'Ištrinta' : 'Atlikta'),
                     assignedWorker: task.assignedUserName || '',
                     manager: task.managerName || '',
                     creator: task.creatorName || '',
@@ -523,7 +523,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             {task.status !== 'confirmed' && isManagerOrAdmin && (
                 <IconButton
                     icon={UserCheck}
-                    label="Patvirtinti"
+                    label="Priimti"
                     onClick={() => handleConfirm(task)}
                     className="text-feedback-success hover:bg-feedback-success/10"
                 />

@@ -757,10 +757,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                         checked={isConfirmed}
                                         onChange={() => handleToggleConfirm(task)}
                                         disabled={task.isArchived}
-                                        aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
+                                        aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepriimtą` : `Priimti „${task.title}“`}
                                         className="w-5 h-5 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                     />
-                                    <span className="text-caption text-ink">{isConfirmed ? 'Patvirtinta' : 'Nepatvirtinta'}</span>
+                                    <span className="text-caption text-ink">{isConfirmed ? 'Priimtas' : 'Laukia priėmimo'}</span>
                                 </label>
                                 <div className="flex items-center gap-1">
                                     <IconButton
@@ -830,7 +830,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 confirmChecked={isConfirmed}
                                 confirmDisabled={task.isArchived}
                                 onToggleConfirm={handleToggleConfirm}
-                                confirmAriaLabel={isConfirmed ? `Pažymėti „${task.title}“ kaip nepatvirtintą` : `Patvirtinti „${task.title}“`}
+                                confirmAriaLabel={isConfirmed ? `Pažymėti „${task.title}“ kaip nepriimtą` : `Priimti „${task.title}“`}
                                 assigneeName={userName}
                                 commentCount={task.comments?.length || 0}
                                 onOpenComments={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
@@ -987,7 +987,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 activeTab === 'approval' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                             )}
                         >
-                            Patvirtinimas
+                            Pridavimas
                         </button>
                         <div className="w-px bg-line" aria-hidden="true" />
                         <button
@@ -1125,8 +1125,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
                     {/* Day mode → the live daily timeline. Any multi-day range → the same view
                         aggregated over [start, end] (summary cards, sort filters).
-                        On the manager team view the task-confirmation lists and history move to the
-                        dedicated "Patvirtinimas" tab, so this tab shows only the work-hours surface
+                        On the manager team view the task-acceptance lists and history move to the
+                        dedicated "Pridavimas" tab, so this tab shows only the work-hours surface
                         (view='hours'). A personal report (worker, or a manager viewing their own
                         data via viewRole='worker') has no such tab, so it keeps the full surface. */}
                     {reportPeriod === 'day' ? (

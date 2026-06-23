@@ -11,8 +11,8 @@
  * meaning, not a per-surface accent.
  *
  * The two finished states are the split the founder asked for:
- *  - completed (Nepatvirtinta) — thin green RING + green check (finished, not yet confirmed)
- *  - confirmed (Patvirtinta)   — green FILL + white check (manager confirmed)
+ *  - completed (Laukia priėmimo) — thin green RING + green check (finished, not yet accepted)
+ *  - confirmed (Priimtas)        — green FILL + white check (manager accepted)
  *
  * Each component takes `className` (size + color) and spreads the rest onto the <svg> so the
  * caller's `aria-hidden` lands on the element (StatusPill renders `<Icon aria-hidden />`).
@@ -50,7 +50,7 @@ export function StatusPausedGlyph({ className, ...props }) {
     );
 }
 
-// Finished, awaiting manager confirmation (Nepatvirtinta) — thin green ring + green check.
+// Finished, awaiting manager acceptance (Laukia priėmimo) — thin green ring + green check.
 export function StatusCompletedGlyph({ className, ...props }) {
     return (
         <svg {...SVG} fill="none" className={className} {...props}>
@@ -60,7 +60,7 @@ export function StatusCompletedGlyph({ className, ...props }) {
     );
 }
 
-// Manager confirmed (Patvirtinta) — green fill + white check.
+// Manager accepted (Priimtas) — green fill + white check.
 export function StatusConfirmedGlyph({ className, ...props }) {
     return (
         <svg {...SVG} className={className} {...props}>
@@ -70,7 +70,7 @@ export function StatusConfirmedGlyph({ className, ...props }) {
     );
 }
 
-// Approval gate, waiting (Laukia patvirtinimo) — amber ring + hold dot.
+// Creation/approval gate, waiting (Nepatvirtintas) — amber ring + hold dot.
 export function StatusAwaitingGlyph({ className, ...props }) {
     return (
         <svg {...SVG} fill="none" className={className} {...props}>
