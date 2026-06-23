@@ -1,22 +1,98 @@
-import { lazy, Suspense, useState } from 'react';
-import { Trophy, BarChart3, TrendingUp } from 'lucide-react';
+import { lazy, Suspense, useState, useEffect, useMemo, useCallback } from 'react';
+import { Trophy, BarChart3, TrendingUp, UserCog, CheckCircle2, AlertTriangle, ClipboardList } from 'lucide-react';
 import clsx from 'clsx';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useUsers } from '../context/UsersContext';
 import { useAuth } from '../context/AuthContext';
 import { useAchievements } from '../hooks/useAchievements';
 import { formatDisplayName } from '../utils/formatters';
 import { BADGE_ICONS, tierKey } from '../utils/badgeCatalog';
-import { canSeeWholeTeam, isScopedOverseer, isOverseenBy } from '../utils/teamScope';
+import { canSeeWholeTeam, isScopedOverseer, isOverseenBy, scopeRoster } from '../utils/teamScope';
+import { assignTask, humanActor, MODES } from '../domain';
+import { logError } from '../utils/errorLog';
 import Modal from './ui/Modal';
 import Avatar from './ui/Avatar';
 import StatusPill from './ui/StatusPill';
 import Badge from './ui/Badge';
 import EmptyState from './ui/EmptyState';
 import DatePicker from './ui/DatePicker';
+import Button from './ui/Button';
+import Select from './ui/Select';
+import { Spinner } from './ui/Loading';
 import { PeriodPicker } from './reports/PeriodPicker';
 import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 import { getLithuanianDateString } from '../utils/timeUtils';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
+
+// ── Bulk reassign (sick / away) — pure eligibility core ──────────────────────────────────────
+// When a worker is out, an overseer can move their UNFINISHABLE open work onto someone present.
+// "Unfinishable" is deliberately narrow (founder constraint): a task qualifies ONLY when it has a
+// concrete deadline AND that deadline falls while the worker is still away — i.e. the deadline day
+// is on or before the worker's last absence day. A task with no deadline, or a deadline that lands
+// on or after the day the worker is back, is EXCLUDED: the worker can still do it when they return,
+// so moving it would just churn ownership. Everything is compared as Vilnius calendar-day strings
+// (YYYY-MM-DD sorts chronologically), bucketed the same way the rest of the app buckets time.
+
+// Open = still actionable. A worker who is away blocks exactly these; completed/confirmed/archived
+// tasks need no reassignment.
+const OPEN_TASK_STATUSES = ['pending', 'in-progress'];
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export const isOpenTask = (task) => OPEN_TASK_STATUSES.includes(task?.status);
+
+// The worker's last absence day (Vilnius), or null if they have no recorded absence. work_hours has
+// no date field — an absence is an isVacation doc with ISO start/end — so each absence day is the
+// Vilnius bucket of its `start`. We take the MAX: the window "ends" on the last day they are out.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export function absenceWindowEnd(workHoursDocs) {
+    let end = null;
+    for (const doc of workHoursDocs || []) {
+        if (!doc?.isVacation) continue;
+        const stamp = doc.start || doc.end || doc.date;
+        if (!stamp) continue;
+        const day = getLithuanianDateString(new Date(stamp));
+        if (!day) continue;
+        if (end === null || day > end) end = day;
+    }
+    return end;
+}
+
+// A task's deadline as a Vilnius calendar day, or null when it carries no deadline. The stored
+// value may be an ISO timestamp or a bare YYYY-MM-DD; bucketing through getLithuanianDateString
+// normalizes both to the same day the deadline actually lands on in Vilnius.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export function taskDeadlineDay(task) {
+    if (!task?.deadline) return null;
+    const day = getLithuanianDateString(new Date(task.deadline));
+    return day || null;
+}
+
+/**
+ * computeReassignEligibility — split a worker's OPEN tasks into those worth reassigning while they
+ * are away and those that should stay. Pure (exported for unit tests).
+ *
+ * @param {object[]} tasks - the worker's tasks (any status; only open ones are considered).
+ * @param {object[]} workHoursDocs - the worker's work_hours docs (only isVacation ones matter).
+ * @returns {{ windowEnd: string|null, eligible: object[], ineligible: object[] }}
+ *   windowEnd  — last absence day (Vilnius) or null when no absence is recorded.
+ *   eligible   — open tasks with a deadline on/before windowEnd (worker can't finish in time).
+ *   ineligible — the remaining open tasks (no deadline, or deadline once the worker is back).
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export function computeReassignEligibility(tasks, workHoursDocs) {
+    const windowEnd = absenceWindowEnd(workHoursDocs);
+    const eligible = [];
+    const ineligible = [];
+    for (const task of tasks || []) {
+        if (!isOpenTask(task)) continue;
+        const deadlineDay = taskDeadlineDay(task);
+        // Eligible only with a concrete deadline that lands while the worker is still away. No
+        // absence window on record => nothing qualifies (we cannot prove they can't finish in time).
+        if (windowEnd && deadlineDay && deadlineDay <= windowEnd) eligible.push(task);
+        else ineligible.push(task);
+    }
+    return { windowEnd, eligible, ineligible };
+}
 
 // The day-report drill-down is heavy (its own Firestore listeners), so it only mounts when a
 // manager actually switches to the "Statistika" tab — never on the achievements view.
@@ -36,6 +112,269 @@ const ROLE_META = {
     worker: { label: 'Vykdytojas', tone: 'neutral' },
 };
 
+// One eligible-task row: a checkbox + the task title and its deadline. Native checkbox (the app has
+// no canonical Checkbox component); the whole row is the label so the 44px target covers text too.
+function ReassignTaskRow({ task, checked, onToggle }) {
+    const deadlineDay = taskDeadlineDay(task);
+    return (
+        <label className="flex min-h-touch cursor-pointer items-start gap-3 rounded-control border border-line bg-surface-card p-3 hover:bg-surface-sunken/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand">
+            <input
+                type="checkbox"
+                checked={checked}
+                onChange={() => onToggle(task.id)}
+                className="mt-0.5 h-5 w-5 shrink-0 rounded border-line text-brand focus:ring-brand"
+            />
+            <span className="min-w-0 flex-1">
+                <span className="block truncate text-body font-medium text-ink-strong">
+                    {task.title || 'Be pavadinimo'}
+                </span>
+                {deadlineDay && (
+                    <span className="mt-0.5 block text-caption text-ink-muted">Terminas: {deadlineDay}</span>
+                )}
+            </span>
+        </label>
+    );
+}
+
+/**
+ * BulkReassignModal — move an absent worker's UNFINISHABLE open tasks (see computeReassignEligibility)
+ * onto someone who is present. Self-contained: it loads the worker's open tasks and absence window
+ * on open, lets the overseer pick which eligible tasks to move and one in-scope target, then loops
+ * each selected task through the audited assignTask COMMIT command, reporting per-task success/failure.
+ *
+ * Why per-task and not one bulk write: assignTask is the first-class, audited assignment operation
+ * (ADR 0015) — every move leaves its own decision_log entry, and one task failing (e.g. a rule denial)
+ * must not silently take the rest down. The Firestore rules remain the real authority on each write.
+ */
+function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, onClose }) {
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState('');
+    const [eligible, setEligible] = useState([]);
+    const [ineligibleCount, setIneligibleCount] = useState(0);
+    const [windowEnd, setWindowEnd] = useState(null);
+    const [selectedIds, setSelectedIds] = useState(() => new Set());
+    const [targetId, setTargetId] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [results, setResults] = useState(null); // null until a run completes: { ok, failed }
+
+    const workerName = formatDisplayName(worker?.displayName || worker?.email || 'Vykdytojas');
+
+    // Load the worker's open tasks + absence window once on open. The task query mirrors the report
+    // surfaces: filter by assignedUserId, and for a SCOPED overseer also constrain by the subtree
+    // stamp (teamManagerIds array-contains the viewer) so the query never requests a row the rules
+    // would deny. A whole-team viewer (admin / unscoped manager) needs no extra constraint.
+    useEffect(() => {
+        let cancelled = false;
+        if (!worker?.id) return undefined;
+        (async () => {
+            setLoading(true);
+            setLoadError('');
+            try {
+                const scoped = isScopedOverseer(viewerData) && viewerUid
+                    ? [where('teamManagerIds', 'array-contains', viewerUid)]
+                    : [];
+                const tasksQ = query(collection(db, 'tasks'), where('assignedUserId', '==', worker.id), ...scoped);
+                // work_hours has no date field and is world-readable; fetch the worker's docs by userId
+                // and bucket the absence days client-side.
+                const whQ = query(collection(db, 'work_hours'), where('userId', '==', worker.id));
+                const [tasksSnap, whSnap] = await Promise.all([getDocs(tasksQ), getDocs(whQ)]);
+                if (cancelled) return;
+                const tasks = tasksSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                const whDocs = whSnap.docs.map((d) => d.data());
+                const { windowEnd: end, eligible: elig, ineligible } = computeReassignEligibility(tasks, whDocs);
+                setEligible(elig);
+                setIneligibleCount(ineligible.length);
+                setWindowEnd(end);
+                setSelectedIds(new Set(elig.map((t) => t.id))); // default: all eligible pre-checked
+            } catch (err) {
+                if (cancelled) return;
+                logError(err, { source: 'BulkReassignModal.load', workerId: worker.id });
+                setLoadError('Nepavyko užkrauti darbuotojo užduočių. Bandykite dar kartą.');
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [worker?.id, viewerData, viewerUid]);
+
+    // Target candidates: the viewer's in-scope roster MINUS the absent worker themselves and any
+    // disabled account (you cannot hand work to someone who is blocked).
+    const targetOptions = useMemo(() => {
+        return scopeRoster(roster || [], viewerData, viewerUid)
+            .filter((u) => u.id !== worker?.id && !u.isDisabled)
+            .map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email || u.id) }));
+    }, [roster, viewerData, viewerUid, worker?.id]);
+
+    const toggle = useCallback((id) => {
+        setSelectedIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    }, []);
+
+    const allSelected = eligible.length > 0 && selectedIds.size === eligible.length;
+    const toggleAll = () => {
+        setSelectedIds(allSelected ? new Set() : new Set(eligible.map((t) => t.id)));
+    };
+
+    const targetUser = (roster || []).find((u) => u.id === targetId) || null;
+    const targetName = targetUser ? formatDisplayName(targetUser.displayName || targetUser.email || targetId) : '';
+    const canSubmit = !submitting && selectedIds.size > 0 && !!targetId;
+
+    // Loop each chosen task through assignTask COMMIT. Per-task isolation: one refusal/failure is
+    // recorded and the rest proceed. A human viewer is the actor (the agent-commit boundary in the
+    // command would refuse an agent here).
+    const handleSubmit = async () => {
+        if (!canSubmit) return;
+        setSubmitting(true);
+        const actor = humanActor({
+            uid: viewerUid,
+            displayName: viewerUser?.displayName,
+            email: viewerUser?.email,
+            role: viewerData?.role,
+        });
+        const chosen = eligible.filter((t) => selectedIds.has(t.id));
+        const ok = [];
+        const failed = [];
+        for (const task of chosen) {
+            try {
+                const res = await assignTask(
+                    { task: { id: task.id, title: task.title, assignedUserId: task.assignedUserId }, worker: { id: targetId, name: targetName } },
+                    { actor, mode: MODES.COMMIT, reason: `Bulk reassign: ${workerName} away` },
+                );
+                if (res?.ok) ok.push(task);
+                else failed.push({ task, reason: res?.reason || 'atmesta' });
+            } catch (err) {
+                logError(err, { source: 'BulkReassignModal.assign', taskId: task.id });
+                failed.push({ task, reason: 'klaida' });
+            }
+        }
+        setResults({ ok: ok.length, failed });
+        setSubmitting(false);
+    };
+
+    const footer = results ? (
+        <Button variant="primary" fullWidth onClick={onClose}>Uždaryti</Button>
+    ) : (
+        <div className="flex flex-col gap-2">
+            <Button
+                variant="primary"
+                fullWidth
+                icon={UserCog}
+                loading={submitting}
+                disabled={!canSubmit}
+                onClick={handleSubmit}
+            >
+                {selectedIds.size > 0 ? `Perskirti (${selectedIds.size})` : 'Perskirti'}
+            </Button>
+            <Button variant="secondary" fullWidth disabled={submitting} onClick={onClose}>Atšaukti</Button>
+        </div>
+    );
+
+    return (
+        <Modal
+            open
+            onClose={submitting ? undefined : onClose}
+            title={`Perskirti darbus — ${workerName}`}
+            size="lg"
+            dismissible={!submitting}
+            closeOnBackdrop={false}
+            footer={footer}
+        >
+            {loading ? (
+                <Spinner label="Kraunamos užduotys…" />
+            ) : loadError ? (
+                <div className="flex items-start gap-2 rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">
+                    <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden="true" />
+                    <span>{loadError}</span>
+                </div>
+            ) : results ? (
+                // Post-run report: how many moved, and which (if any) failed and why.
+                <div className="space-y-3">
+                    <div className="flex items-start gap-2 rounded-control bg-feedback-success-soft p-3 text-body text-feedback-success-text">
+                        <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+                        <span>{`Perskirta užduočių: ${results.ok} ${targetName ? `→ ${targetName}` : ''}`}</span>
+                    </div>
+                    {results.failed.length > 0 && (
+                        <div className="space-y-1 rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">
+                            <p className="flex items-center gap-2 font-medium">
+                                <AlertTriangle className="h-5 w-5 shrink-0" aria-hidden="true" />
+                                {`Nepavyko perskirti: ${results.failed.length}`}
+                            </p>
+                            <ul className="ml-7 list-disc space-y-0.5">
+                                {results.failed.map((f) => (
+                                    <li key={f.task.id}>{f.task.title || 'Be pavadinimo'}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            ) : eligible.length === 0 ? (
+                <EmptyState
+                    icon={ClipboardList}
+                    title="Nėra perskirstytinų darbų"
+                    description={
+                        windowEnd
+                            ? 'Visi atviri darbai turi terminą po darbuotojo grįžimo arba neturi termino — juos darbuotojas spės atlikti pats.'
+                            : 'Darbuotojas neturi pažymėto nebuvimo laikotarpio, todėl perskirstytinų darbų nustatyti negalima.'
+                    }
+                />
+            ) : (
+                <div className="space-y-4">
+                    <p className="text-body text-ink-muted">
+                        {`Šie atviri darbai turi terminą, kurio darbuotojas nespės įvykdyti iki grįžimo${windowEnd ? ` (nebuvimas iki ${windowEnd})` : ''}. Pasirinkite, ką perskirti, ir kam.`}
+                    </p>
+
+                    <div>
+                        <label htmlFor="reassign-target" className="mb-1 block text-caption font-medium text-ink-muted">
+                            Kam perskirti
+                        </label>
+                        <Select
+                            id="reassign-target"
+                            value={targetId}
+                            onChange={setTargetId}
+                            options={targetOptions}
+                            label="Vykdytojas"
+                            placeholder="Pasirinkite vykdytoją…"
+                            alwaysSheet
+                        />
+                    </div>
+
+                    <div>
+                        <div className="mb-2 flex items-center justify-between">
+                            <span className="text-caption font-medium text-ink-muted">{`Darbai (${eligible.length})`}</span>
+                            <button
+                                type="button"
+                                onClick={toggleAll}
+                                className="inline-flex min-h-touch items-center rounded-control px-2 text-body font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            >
+                                {allSelected ? 'Nuimti visus' : 'Pažymėti visus'}
+                            </button>
+                        </div>
+                        <div className="space-y-2">
+                            {eligible.map((task) => (
+                                <ReassignTaskRow
+                                    key={task.id}
+                                    task={task}
+                                    checked={selectedIds.has(task.id)}
+                                    onToggle={toggle}
+                                />
+                            ))}
+                        </div>
+                    </div>
+
+                    {ineligibleCount > 0 && (
+                        <p className="text-caption text-ink-muted">
+                            {`Dar ${ineligibleCount} atvir(as/i) darb(as/ai) liko nepasiūlyti — be termino arba su terminu po grįžimo.`}
+                        </p>
+                    )}
+                </div>
+            )}
+        </Modal>
+    );
+}
+
 /**
  * UserProfileModal — the READ-ONLY peer profile (P2). Opened from any UserChip via the
  * ProfileViewer context. Shows identity (resolved from the live users map, no extra fetch) plus
@@ -53,6 +392,9 @@ export default function UserProfileModal({ userId, onClose }) {
     const { currentUser, userData, userRole } = useAuth();
     const { achievements } = useAchievements(userId);
     const [tab, setTab] = useState('achievements');
+    // Bulk "Perskirti darbus" flow — opens a self-contained modal that loads this worker's open
+    // tasks + absence window and reassigns the unfinishable ones onto someone present.
+    const [reassignOpen, setReassignOpen] = useState(false);
 
     // "Statistika" period selector — the same ladder (day → year + custom) the team report uses,
     // sitting in its own row above the day report. 'day' keeps DailyStatistics in its live single-
@@ -87,10 +429,16 @@ export default function UserProfileModal({ userId, onClose }) {
         (canSeeWholeTeam(userData) ||
             (isScopedOverseer(userData) && isOverseenBy(user, currentUser?.uid)));
 
+    // The same overseer who may view this member's stats may also redistribute their work — but only
+    // for a WORKER (the Vykdytojas, who carries assignable field tasks). The human-only commit
+    // boundary in assignTask is the backstop; this just gates the entry point.
+    const canReassign = canViewStats && user?.role === 'worker';
+
     const showStats = canViewStats && tab === 'stats';
     const showSummary = canViewStats && tab === 'summary';
 
     return (
+        <>
         <Modal
             open
             onClose={onClose}
@@ -179,6 +527,17 @@ export default function UserProfileModal({ userId, onClose }) {
                 </div>
             )}
 
+            {/* Overseer action — redistribute this worker's unfinishable open tasks while they are
+                away. Shown on the achievements view (the at-a-glance profile) so it sits with the
+                member's identity, not buried under a data tab. */}
+            {canReassign && tab === 'achievements' && (
+                <div className="mt-4 flex justify-center">
+                    <Button variant="secondary" icon={UserCog} onClick={() => setReassignOpen(true)}>
+                        Perskirti darbus
+                    </Button>
+                </div>
+            )}
+
             {showStats ? (
                 <div className="mt-5 space-y-4">
                     {/* Period selector in its own row, separate from the report's hour totals —
@@ -260,5 +619,17 @@ export default function UserProfileModal({ userId, onClose }) {
                 </div>
             )}
         </Modal>
+
+        {reassignOpen && (
+            <BulkReassignModal
+                worker={user}
+                viewerUser={currentUser}
+                viewerData={userData}
+                viewerUid={currentUser?.uid}
+                roster={activeUsers}
+                onClose={() => setReassignOpen(false)}
+            />
+        )}
+        </>
     );
 }

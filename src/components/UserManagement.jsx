@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe, Sparkles, Coins, ChevronDown } from 'lucide-react';
+import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe, Sparkles, Coins, ChevronDown, Search, X, SearchX } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
@@ -10,6 +10,7 @@ import { hasPayRate } from '../utils/payRate';
 import { getContrastingTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
+import { scoreFields, tokenizeQuery } from '../utils/taskSearch';
 import UserChip from './UserChip';
 import Card from './ui/Card';
 import Button from './ui/Button';
@@ -18,6 +19,7 @@ import StatusPill from './ui/StatusPill';
 import Modal from './ui/Modal';
 import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
+import EmptyState from './ui/EmptyState';
 import PayRateModal from './PayRateModal';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 
@@ -314,16 +316,10 @@ function LastActiveBadge({ user }) {
 const NEW_FOR_DAYS = 14;
 
 // "Naujas" badge for a recently-joined active worker. Same gating as the staleness badge (workers
-// only, never disabled/test); the two cannot both show — a brand-new worker isn't stale yet.
+// only, never disabled/test); the two cannot both show — a brand-new worker isn't stale yet. The
+// recency test itself lives in `isNewUser` so the badge and the default roster sort agree on it.
 function NewUserBadge({ user }) {
-    if (user.role !== 'worker' || user.isDisabled || user.isTest) return null;
-    const ts = user.createdAt;
-    if (!ts) return null;
-    const created = new Date(ts).getTime();
-    if (!Number.isFinite(created)) return null;
-    const days = Math.floor((Date.now() - created) / (1000 * 60 * 60 * 24));
-    if (days > NEW_FOR_DAYS) return null;
-    return <StatusPill tone="info" icon={Sparkles}>Naujas</StatusPill>;
+    return isNewUser(user) ? <StatusPill tone="info" icon={Sparkles}>Naujas</StatusPill> : null;
 }
 
 // Per-worker weekly hours baseline. Feeds the report's Planuota fallback so Skirtumas has a real
@@ -524,6 +520,87 @@ function hasOpenSession(user) {
     );
 }
 
+// ── Roster triage: search · filter · sort ───────────────────────────────────────────────────
+// Pure, client-side over the already-loaded users array — no new query, no rules change. A long
+// roster was a bare document-order map; triage now floats what needs attention (pending approvals,
+// brand-new joiners) to the top, with a fuzzy name/email search and role/state quick filters.
+
+// Quick-filter chips. `match` is a pure predicate over a user row, so the chip set is the single
+// source of truth for both the buttons and the filtering. 'all' is the no-op default.
+const ROSTER_FILTERS = [
+    { id: 'all', label: 'Visi', match: () => true },
+    { id: 'workers', label: 'Vykdytojai', match: (u) => u.role === 'worker' },
+    { id: 'managers', label: 'Vadovai', match: (u) => u.role === 'manager' || u.role === 'seniorManager' || u.role === 'admin' },
+    { id: 'pending', label: 'Laukia', match: (u) => isPendingUser(u) },
+    { id: 'blocked', label: 'Užblokuoti', match: (u) => u.isDisabled && !isPendingUser(u) },
+];
+
+// Default-sort priority band (lower sorts first). Pending approvals are the manager's most urgent
+// triage, then brand-new joiners (same window the "Naujas" badge uses); everyone else keeps the
+// roster's incoming (document) order via a stable sort. Disabled-but-not-pending sinks to the
+// bottom so blocked accounts don't clutter the live roster.
+function rosterSortRank(user) {
+    if (isPendingUser(user)) return 0;
+    if (isNewUser(user)) return 1;
+    if (user.isDisabled) return 3; // blocked (non-pending) — least relevant day-to-day
+    return 2;
+}
+
+// Whether a worker still reads as a recent joiner — shared by the "Naujas" badge and the default
+// sort so the two agree on what "new" means (createdAt within NEW_FOR_DAYS, active workers only).
+function isNewUser(user) {
+    if (user.role !== 'worker' || user.isDisabled || user.isTest) return false;
+    const ts = user.createdAt;
+    if (!ts) return false;
+    const created = new Date(ts).getTime();
+    if (!Number.isFinite(created)) return false;
+    return Math.floor((Date.now() - created) / (1000 * 60 * 60 * 24)) <= NEW_FOR_DAYS;
+}
+
+// Searchable identity of a roster row — the two things an admin actually types: display name and
+// email. Weighted so a name hit outranks an email hit (people search by who, not by address).
+function getUserMatchFields(user) {
+    return [
+        { text: user.displayName, weight: 1.0 },
+        { text: user.email, weight: 0.8 },
+    ];
+}
+
+/**
+ * filterSortUsers — the pure triage pipeline behind the roster (exported for unit tests).
+ * 1) keep only rows matching the active quick filter, 2) keep only rows the search query ranks
+ * (diacritic-folding, typo-tolerant — reuses the shared task-search core over name + email),
+ * 3) sort: with a query, by descending search relevance; without one, by the triage band
+ * (pending → new → rest → blocked), stable within a band so document order is the tie-break.
+ *
+ * @param {object[]} users
+ * @param {string} query - raw search input.
+ * @param {string} filterId - one of ROSTER_FILTERS ids.
+ * @returns {object[]}
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests; co-located with the roster it serves.
+export function filterSortUsers(users, query, filterId) {
+    const filter = ROSTER_FILTERS.find((f) => f.id === filterId) || ROSTER_FILTERS[0];
+    const tokens = tokenizeQuery(query);
+    const searching = tokens.length > 0;
+
+    const rows = [];
+    for (let i = 0; i < users.length; i += 1) {
+        const user = users[i];
+        if (!filter.match(user)) continue;
+        const score = searching ? scoreFields(getUserMatchFields(user), tokens) : 0;
+        if (searching && score <= 0) continue; // AND search — a non-matching row drops out
+        rows.push({ user, score, i });
+    }
+
+    rows.sort((a, b) => {
+        if (searching) return (b.score - a.score) || (a.i - b.i); // relevance, stable on ties
+        const rank = rosterSortRank(a.user) - rosterSortRank(b.user);
+        return rank || (a.i - b.i); // triage band, stable within a band
+    });
+    return rows.map((r) => r.user);
+}
+
 export default function UserManagement() {
     const { currentUser, userRole } = useAuth();
     const [users, setUsers] = useState([]);
@@ -555,6 +632,11 @@ export default function UserManagement() {
             return next;
         });
     const isAdmin = userRole === 'admin';
+
+    // Roster triage state — a fuzzy name/email search and a role/state quick filter, both purely
+    // client-side over the loaded users array. The displayed list runs through `filterSortUsers`.
+    const [search, setSearch] = useState('');
+    const [roleFilter, setRoleFilter] = useState('all');
 
     useEffect(() => {
         let unsubscribe = () => { };
@@ -593,6 +675,24 @@ export default function UserManagement() {
     const seniorCandidates = users.filter((u) => u.role === 'seniorManager' && !u.isDisabled);
     // Id → user lookup for the read-only overseer summary on collapsed mobile cards.
     const usersById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
+
+    // The triaged roster actually rendered: quick-filtered, search-ranked, default-sorted. Recomputes
+    // only when the roster, the query, or the active filter changes (cheap — tens-to-low-hundreds of
+    // rows). Both the mobile cards and the desktop table map over this single derived list.
+    const visibleUsers = useMemo(
+        () => filterSortUsers(users, search, roleFilter),
+        [users, search, roleFilter]
+    );
+    // Per-chip counts so a filter shows how many rows it holds before you commit to it. Computed off
+    // the unfiltered roster (counts are absolute, independent of the active chip or the search).
+    const filterCounts = useMemo(() => {
+        const counts = {};
+        for (const f of ROSTER_FILTERS) counts[f.id] = 0;
+        for (const u of users) {
+            for (const f of ROSTER_FILTERS) if (f.match(u)) counts[f.id] += 1;
+        }
+        return counts;
+    }, [users]);
 
     const countAdmins = () => {
         return users.filter(u => u.role === 'admin' && !u.isDisabled).length;
@@ -896,11 +996,78 @@ export default function UserManagement() {
                 </div>
             )}
 
+            {/* Roster triage toolbar — sticky so search + filters stay reachable while a long roster
+                scrolls. Search ranks name + email (diacritic-folding, typo-tolerant); the chips quick-
+                filter by role/state. Both are purely client-side over the loaded list. */}
+            <div className="sticky top-0 z-10 space-y-3 border-b border-line bg-surface-card/95 p-3 backdrop-blur supports-[backdrop-filter]:bg-surface-card/80">
+                <div className="relative">
+                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" aria-hidden="true" />
+                    <input
+                        type="search"
+                        value={search}
+                        onChange={(e) => setSearch(e.target.value)}
+                        placeholder="Ieškoti pagal vardą ar el. paštą…"
+                        aria-label="Ieškoti vartotojų"
+                        className="min-h-touch w-full rounded-input border border-line bg-surface-card py-2.5 pl-9 pr-10 text-body-lg text-ink placeholder:text-ink-muted focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    />
+                    {search && (
+                        <button
+                            type="button"
+                            onClick={() => setSearch('')}
+                            aria-label="Išvalyti paiešką"
+                            className="absolute right-1.5 top-1/2 inline-flex min-h-touch min-w-touch -translate-y-1/2 items-center justify-center rounded-full text-ink-muted hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        >
+                            <X className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                    )}
+                </div>
+                <div className="flex flex-wrap gap-2" role="group" aria-label="Filtruoti vartotojus">
+                    {ROSTER_FILTERS.map((f) => {
+                        const active = roleFilter === f.id;
+                        return (
+                            <button
+                                key={f.id}
+                                type="button"
+                                aria-pressed={active}
+                                onClick={() => setRoleFilter(f.id)}
+                                className={cn(
+                                    'inline-flex min-h-touch items-center gap-1.5 rounded-full border px-3 text-body font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                    active ? 'border-brand bg-brand text-white' : 'border-line bg-surface-card text-ink hover:bg-surface-sunken/60'
+                                )}
+                            >
+                                {f.label}
+                                <span className={cn('text-caption tabular-nums', active ? 'text-white/80' : 'text-ink-muted')}>
+                                    {filterCounts[f.id]}
+                                </span>
+                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+
+            {/* Empty triage result — search/filter matched nothing. Shown once for both layouts so a
+                blank roster always explains itself and offers the way back. */}
+            {users.length > 0 && visibleUsers.length === 0 && (
+                <EmptyState
+                    icon={SearchX}
+                    title="Nieko nerasta"
+                    description="Pagal pasirinktą filtrą ar paiešką vartotojų nėra."
+                    action={
+                        <Button
+                            variant="secondary"
+                            onClick={() => { setSearch(''); setRoleFilter('all'); }}
+                        >
+                            Išvalyti filtrus
+                        </Button>
+                    }
+                />
+            )}
+
             {/* Mobile / touch: one distinct card per user — laid on a sunken backdrop with gaps,
                 border, shadow and a left accent in the user's own color so each user reads as a
                 separate card, not a divider-separated row (never a horizontal table — §9). */}
-            <ul className="space-y-3 bg-surface-sunken/40 p-3 md:hidden">
-                {users.map((user) => {
+            <ul className={cn('space-y-3 bg-surface-sunken/40 p-3 md:hidden', visibleUsers.length === 0 && 'hidden')}>
+                {visibleUsers.map((user) => {
                     const expanded = expandedIds.has(user.id);
                     return (
                     <li
@@ -998,7 +1165,7 @@ export default function UserManagement() {
                 is a single line tall instead of a vertical stack: the role SELECT lives in the Rolė
                 column (no separate read-only badge to duplicate it), the weekly quota gets a compact
                 Norma column, and Veiksmai holds only the 44px icon toolbar. */}
-            <div className="hidden overflow-x-auto md:block">
+            <div className={cn('hidden overflow-x-auto md:block', visibleUsers.length === 0 && 'md:hidden')}>
                 <table className="min-w-full divide-y divide-line">
                     <thead className="bg-surface-sunken">
                         <tr>
@@ -1013,7 +1180,7 @@ export default function UserManagement() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-line bg-surface-card">
-                        {users.map((user) => (
+                        {visibleUsers.map((user) => (
                             <tr key={user.id} className={user.isDisabled ? 'bg-surface-sunken/60' : ''}>
                                 <td className="whitespace-nowrap px-4 py-2.5 align-top">
                                     <div className="flex flex-wrap items-center gap-2 text-body font-medium text-ink-strong">
