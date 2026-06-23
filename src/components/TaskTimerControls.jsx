@@ -241,7 +241,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     const sessionDate = getLithuanianDateString(now);
                     addDoc(collection(db, 'work_sessions'), {
                         taskId: task.id,
-                        taskTitle: task.title || 'Unknown Task',
+                        taskTitle: task.title || 'Nežinoma užduotis',
                         userId: task.assignedUserId,
                         userName: currentUser.displayName || currentUser.email,
                         startTime: start.toISOString(),
