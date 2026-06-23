@@ -222,6 +222,10 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
 
         const now = getLithuanianNow();
         const start = new Date(session.startTime);
+        // Raw (unclamped) delta, kept ONLY so the caller can tell whether the clamp below
+        // actually reduced the credited time — that drives the "16h cap fired" wording in the
+        // crash-recovery notice. Never logged or accumulated.
+        const rawMinutes = (now - start) / (1000 * 60);
         // Sanitize through the shared clamp before this value is logged AND accumulated
         // into breakState.dailyAccumulatedMinutes: a backward device clock would otherwise
         // write a NEGATIVE duration into the permanent work_sessions/sessions log and
@@ -388,6 +392,16 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
             }
         }
 
+        // Surface the credited duration + whether the clamp reduced it, so the crash-recovery
+        // hook can show an accurate "timer recovered" notice. `wasCapped` ignores sub-minute
+        // float noise so only a genuine overflow (the 16h ceiling) reads as capped. The session
+        // type rides along so the notice can name what was recovered.
+        return {
+            type: session.type || null,
+            creditedMinutes: durationMinutes,
+            rawMinutes,
+            wasCapped: rawMinutes - durationMinutes > 1,
+        };
     } catch (err) {
         // endSession swallowed its failure (no rethrow) and never logged it, so a failed
         // critical user-doc update left the session in limbo with no durable trace. Record it.

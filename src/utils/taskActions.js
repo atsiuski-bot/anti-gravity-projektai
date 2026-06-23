@@ -95,13 +95,17 @@ const pauseInFlight = new Set();
  * @returns {Promise<void>}
  */
 export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => {
-    if (!task.timerStartedAt || task.timerStatus !== 'running') return;
-    if (pauseInFlight.has(task.id)) return; // a concurrent pause for this task is already running
+    if (!task.timerStartedAt || task.timerStatus !== 'running') return null;
+    if (pauseInFlight.has(task.id)) return null; // a concurrent pause for this task is already running
     pauseInFlight.add(task.id);
 
     try {
         const now = getLithuanianNow();
         const start = new Date(task.timerStartedAt);
+        // Raw (unclamped) wall-clock delta, kept ONLY so the caller can tell whether the clamp
+        // below actually had to cut the credited time down — that is what the crash-recovery
+        // notice reports as "the 16h cap fired". It is never used as a credited or logged value.
+        const rawMinutes = (now - start) / (1000 * 60);
         // Sanitize the elapsed delta through the shared clamp: a future/invalid start
         // (clock skew) collapses to 0, and an implausibly large value — e.g. a timer
         // left running across a crash/reload before this pause — is capped to
@@ -166,7 +170,15 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
 
         await Promise.all(parallelOps);
 
-
+        // Surface the credited duration + whether the clamp actually reduced it, so the
+        // crash-recovery hook can show the worker an accurate "timer recovered" notice. The
+        // clamp fired when the unclamped delta exceeded the bounded credit (a genuine overflow,
+        // ignoring sub-minute float noise). A clean, in-bounds pause reports wasCapped:false.
+        return {
+            creditedMinutes: elapsedMinutes,
+            rawMinutes,
+            wasCapped: rawMinutes - elapsedMinutes > 1,
+        };
     } catch (err) {
         console.error("Error pausing task:", err);
         // Durable-log the pause failure: a failed pause is what leaves the timer running and
