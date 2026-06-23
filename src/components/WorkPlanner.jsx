@@ -123,7 +123,7 @@ const CustomToolbar = (toolbar) => {
             {/* Usage tips tucked behind an info icon, left of the primary create action. */}
             <InfoPopover label="Instrukcija" align="right">
                 <p className="mb-1.5 font-bold text-brand">Instrukcija:</p>
-                <ul className="list-inside list-disc space-y-1">
+                <ul className="list-disc space-y-1 pl-5 marker:text-ink-muted">
                     <li>Tempkite kalendoriuje laikui žymėti</li>
                     <li>Naudokite &quot;Pridėti&quot; rankiniu būdu</li>
                     <li>Bakstelėkite įrašą trynimui</li>
