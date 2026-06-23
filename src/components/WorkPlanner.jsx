@@ -818,15 +818,13 @@ export default function WorkPlanner() {
                     {manualIsVacation && (
                         <label className="mt-3 block">
                             <span className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</span>
-                            <select
+                            <Select
                                 value={manualAbsenceType}
-                                onChange={(e) => setManualAbsenceType(e.target.value)}
-                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
-                            >
-                                {ABSENCE_TYPES.map((a) => (
-                                    <option key={a.value} value={a.value}>{a.label}</option>
-                                ))}
-                            </select>
+                                onChange={setManualAbsenceType}
+                                options={ABSENCE_TYPES.map((a) => ({ value: a.value, label: a.label }))}
+                                label="Nebuvimo tipas"
+                                ariaLabel="Nebuvimo tipas"
+                            />
                         </label>
                     )}
                     <div className="flex gap-2 mt-4">
@@ -967,15 +965,14 @@ export default function WorkPlanner() {
                                 {editingEvent.isVacation && (
                                     <label className="mt-3 block">
                                         <span className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</span>
-                                        <select
+                                        <Select
                                             value={editingEvent.absenceType || 'vacation'}
-                                            onChange={(e) => setEditingEvent({ ...editingEvent, absenceType: e.target.value })}
-                                            className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none bg-surface-card appearance-none"
-                                        >
-                                            {ABSENCE_TYPES.map((a) => (
-                                                <option key={a.value} value={a.value}>{a.label}</option>
-                                            ))}
-                                        </select>
+                                            onChange={(val) => setEditingEvent({ ...editingEvent, absenceType: val })}
+                                            options={ABSENCE_TYPES.map((a) => ({ value: a.value, label: a.label }))}
+                                            label="Nebuvimo tipas"
+                                            ariaLabel="Nebuvimo tipas"
+                                            alwaysSheet
+                                        />
                                     </label>
                                 )}
 

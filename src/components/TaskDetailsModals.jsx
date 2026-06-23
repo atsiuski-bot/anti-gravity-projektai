@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useId } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
 import { useModalA11y } from '../hooks/useModalA11y';
@@ -9,42 +9,25 @@ import Modal from './ui/Modal';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
-    const dialogRef = useRef(null);
     const titleId = useId();
 
-    // Focus-in, focus restore, Escape, and a Tab focus-trap (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
-
-    if (!isOpen) return null;
-
+    // Content dialog on the canonical Modal (bare): Modal supplies the scrim, focus-trap,
+    // Escape, backdrop-dismiss, z-ladder and portal (DESIGN_SYSTEM §8), while this keeps the
+    // bespoke icon + bordered header and a scrolling body. size="xl" preserves the prior
+    // max-w-2xl width; the flex-1 body replaces the old sticky-header-in-scroll-box pattern.
     return (
-        <div
-            className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4"
-            onClick={onClose}
-            onTouchEnd={(e) => { e.stopPropagation(); onClose(); }}
-        >
-            <div
-                ref={dialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={titleId}
-                tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto focus:outline-none"
-                onClick={(e) => e.stopPropagation()}
-                onTouchEnd={(e) => e.stopPropagation()}
-            >
-                <div className="flex justify-between items-center p-4 border-b border-line sticky top-0 bg-surface-card z-10">
-                    <div className="flex items-center gap-2">
-                        {Icon && <Icon className="w-5 h-5 text-brand" />}
-                        <h3 id={titleId} className="text-lg font-semibold text-ink-strong">{title}</h3>
-                    </div>
-                    <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
+        <Modal open={isOpen} bare size="xl" ariaLabelledby={titleId} onClose={onClose}>
+            <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-line p-4">
+                <div className="flex items-center gap-2">
+                    {Icon && <Icon className="w-5 h-5 text-brand" />}
+                    <h3 id={titleId} className="text-lg font-semibold text-ink-strong">{title}</h3>
                 </div>
-                <div className="p-6">
-                    {children}
-                </div>
+                <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
             </div>
-        </div>
+            <div className="flex-1 min-h-0 overflow-y-auto p-6">
+                {children}
+            </div>
+        </Modal>
     );
 }
 
@@ -369,6 +352,10 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
     );
 }
 
+// Intentional exception to the canonical-Modal rule (DESIGN_SYSTEM §8): this is a full-bleed
+// black image viewer with drag-to-pan + zoom, not a content card centred on a scrim. It still
+// uses the shared useModalA11y hook (focus-trap, Escape, focus restore) and portals to <body>,
+// so it inherits the same a11y plumbing without fighting Modal's centred-card layout.
 export function ImageModal({ isOpen, onClose, imageUrls }) {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [zoom, setZoom] = useState(1);

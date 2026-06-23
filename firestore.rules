@@ -235,7 +235,17 @@ service cloud.firestore {
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && overseesUser(request.resource.data.userId))
                             );
-      allow update, delete: if isUserActive() && (
+      // Update may NOT re-point the record's owner — the same pin as /work_hours (see there
+      // for the full rationale). Without it an owner (or whole-team manager) could rewrite
+      // userId to a colleague and graft this session onto another user's reports. Delete is
+      // split out because it carries no request.resource to compare against.
+      allow update:        if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && inCallerTeam())
+                            )
+                            && request.resource.data.get('userId', '') == resource.data.get('userId', '');
+      allow delete:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
@@ -248,7 +258,17 @@ service cloud.firestore {
       allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
       // Breaks are self-logged only (no manager-create path), unchanged.
       allow create:        if isUserActive() && createOwnsUserId();
-      allow update, delete: if isUserActive() && (
+      // Update may NOT re-point the record's owner — the same pin as /work_hours (see there
+      // for the full rationale). Without it an owner (or whole-team manager) could rewrite
+      // userId to a colleague and graft this break onto another user's reports. Delete is
+      // split out because it carries no request.resource to compare against.
+      allow update:        if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && inCallerTeam())
+                            )
+                            && request.resource.data.get('userId', '') == resource.data.get('userId', '');
+      allow delete:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
