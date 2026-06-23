@@ -320,11 +320,14 @@ export const archiveTask = async (task, userId) => {
  * @param {Object} user - The current user object.
  * @returns {Promise<void>}
  */
-export const saveTaskTemplate = async (templateName, selectedData, user) => {
+export const saveTaskTemplate = async (templateName, selectedData, user, category = '') => {
     try {
         await addDoc(collection(db, 'task_templates'), {
             templateName,
             data: selectedData,
+            // Top-level (not inside `data`) so it groups templates without ever leaking into the
+            // task form when the template is applied.
+            category: category || '',
             createdBy: user.uid,
             creatorName: user.displayName || user.email,
             createdAt: new Date().toISOString()
@@ -372,11 +375,12 @@ export const deleteTaskTemplate = async (templateId) => {
  * @param {Object} user - The current user object.
  * @returns {Promise<void>}
  */
-export const updateTaskTemplate = async (templateId, templateName, selectedData, user) => {
+export const updateTaskTemplate = async (templateId, templateName, selectedData, user, category = '') => {
     try {
         await updateDoc(doc(db, 'task_templates', templateId), {
             templateName,
             data: selectedData,
+            category: category || '',
             updatedBy: user.uid,
             updatedByName: user.displayName || user.email,
             updatedAt: new Date().toISOString()
