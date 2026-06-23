@@ -22,12 +22,13 @@ import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import Select from './ui/Select';
 import { Spinner } from './ui/Loading';
+import TaskModal from './TaskModal';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} d.` }));
 
 // One template's recurrence editor + quick actions. Kept as a child so each row's draft/expander
 // state is local and editing one row never re-renders the others.
-function RecurringTemplateRow({ template, assignableUsers, currentUser, onChanged }) {
+function RecurringTemplateRow({ template, assignableUsers, currentUser, onChanged, onEdit }) {
     const baked = template.data?.assignedUserId || template.data?.assignedWorkerId || '';
     const recurrence = template.recurrence || null;
     const isRecurring = !!recurrence && recurrence.active !== false;
@@ -170,17 +171,27 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
 
     return (
         <li className="rounded-control border border-line bg-surface-card">
-            <div className="flex items-center gap-3 p-3">
-                <Repeat className={cn('h-5 w-5 shrink-0', isRecurring ? 'text-brand' : 'text-ink-muted')} aria-hidden="true" />
-                <div className="min-w-0 flex-1">
-                    <p className="truncate text-body font-semibold text-ink-strong">{template.templateName || template.data?.title || 'Šablonas'}</p>
-                    <p className="text-caption text-ink-muted">
-                        {isRecurring ? describeRecurrence(recurrence) : 'Nepasikartojantis'}
-                        {' · '}
-                        <span className="text-ink">{assigneeName}</span>
-                        {next && <> · Kita: <span className="font-mono">{next}</span></>}
-                    </p>
-                </div>
+            <div className="flex items-center gap-1 p-3">
+                {/* The task itself is clickable — opens the standard task dialog in template-edit
+                    mode so the manager can change title / priority / deadline / people / time. The
+                    cadence (when it repeats) stays behind "Tvarkyti". */}
+                <button
+                    type="button"
+                    onClick={() => onEdit?.(template)}
+                    title="Redaguoti šabloną"
+                    className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-control p-1 text-left hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                >
+                    <Repeat className={cn('h-5 w-5 shrink-0', isRecurring ? 'text-brand' : 'text-ink-muted')} aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                        <span className="block truncate text-body font-semibold text-ink-strong">{template.templateName || template.data?.title || 'Šablonas'}</span>
+                        <span className="block text-caption text-ink-muted">
+                            {isRecurring ? describeRecurrence(recurrence) : 'Nepasikartojantis'}
+                            {' · '}
+                            <span className="text-ink">{assigneeName}</span>
+                            {next && <> · Kita: <span className="font-mono">{next}</span></>}
+                        </span>
+                    </span>
+                </button>
                 {!isRecurring && (
                     <Button
                         variant="secondary"
@@ -322,13 +333,15 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
  * as a dedicated sub-tab panel where the surrounding tab switcher already provides the heading.
  */
 export default function RecurringTasksPanel({ embedded = false }) {
-    const { currentUser, userData } = useAuth();
+    const { currentUser, userData, userRole } = useAuth();
     const { activeUsers } = useUsers();
 
     const [templates, setTemplates] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [collapsed, setCollapsed] = useState(true);
+    // The template currently open in the standard task dialog (template-edit mode), or null.
+    const [editingTemplate, setEditingTemplate] = useState(null);
 
     const assignableUsers = useMemo(() => {
         const roster = scopeRoster(activeUsers || [], userData, currentUser?.uid);
@@ -378,9 +391,21 @@ export default function RecurringTasksPanel({ embedded = false }) {
                             assignableUsers={assignableUsers}
                             currentUser={currentUser}
                             onChanged={load}
+                            onEdit={setEditingTemplate}
                         />
                     ))}
                 </ul>
+            )}
+
+            {/* Standard task dialog reused to edit the template's content. On close, reload so the
+                row reflects the new title / assignee immediately. */}
+            {editingTemplate && (
+                <TaskModal
+                    isOpen
+                    editTemplate={editingTemplate}
+                    role={userRole}
+                    onClose={() => { setEditingTemplate(null); load(); }}
+                />
             )}
         </>
     );

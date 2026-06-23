@@ -293,6 +293,46 @@ Binding rules:
   (pending / running / done / waiting), not a single neutral gray for everything. Status
   labels are short (`Pradėtas`, not a sentence).
 
+### `Toast` / Undo snackbar — and the guard-matches-reversibility rule
+
+One transient top notification (`ToastProvider` / `useToast`), already on the shared tokens
+(`z.toast`, slide-in-from-top, `role="status"` + `aria-live="polite"`). Beyond the foreground
+"new notification" alert it carries the app's **undo affordance**.
+
+**The control-logic principle it encodes (binding):** match the *guard* to the *cost of being
+wrong*, not to how consequential the action feels.
+
+- **Irreversible / destructive / hard-to-undo** (a hard delete that removes the doc, anything that
+  credits time, a bulk write you can't cleanly reverse) → **confirm before.** Stop the action with
+  `ConfirmDialog`; an "undo" there would be a lie.
+- **Cleanly reversible one-tap state flips** (complete ↔ reopen, a manager's sign-off
+  completed ↔ confirmed, …) → **act immediately, offer undo after.** No dialog friction; the safety
+  net is a compensating inverse the user fires from a snackbar that lasts a few seconds.
+- **Continuous timer control** (start/stop quick-work/call/break) → **no undo.** The loud
+  whole-screen session color *is* the live, reversible feedback; the correction is to toggle again.
+- **Trivially repeatable micro-edits** (checklist tick) → no undo; just toggle again.
+
+**Mechanism — never a deferred write.** WORKZ is realtime + multi-device, so the forward action
+**commits now** and the undo applies the **inverse** (deferring the write would desync other devices
+and lose the pending op on reload). Where the audited command layer (ADR 0015) has the inverse verb
+(`completeTask` ↔ `reopenTask`), the undo routes through it, so the undo is itself a first-class,
+audited decision.
+
+**One way to do it — `useUndoableAction`** ([src](../../src/hooks/useUndoableAction.js)): pass
+`{ run, undo, message, undoneMessage }`; it runs the action, shows the undo snackbar, and on tap
+runs the inverse + an "Atšaukta" confirmation. The snackbar renders a discrete, **≥44 px,
+brand-tinted "Atšaukti" pill** (undo icon + label) plus a thin **draining countdown bar**
+(`transform: scaleX`, GPU-safe per §12, reduced-motion-neutralised — decorative; the JS timer owns
+dismissal) so the closing window is visible. Never hand-roll an undo button or a bespoke
+auto-dismiss banner — route it through `useToast`'s `action` slot.
+
+**Notification-coupled actions — defer the outbound ping (`deferredEffect`).** When the only
+outward effect is a notification to *someone else* (a manager approving/confirming a worker's task),
+the local state still commits now, but the worker ping is **held for the undo window** and fires
+only if the manager does *not* undo. So an undo is perfectly clean: the worker is never pinged and
+then contradicted. The undo also re-surfaces the manager's own request item (the bell listener
+filters `isRead==false`). This is the right shape for the bell's approve / confirm / confirm-all.
+
 ### `EmptyState` and `Loading`
 - `EmptyState`: icon + one line of what's there + one **actionable** next step (e.g.
   "Užduočių dar nėra — paspauskite *Sukurti* arba pradėkite *Greitą darbą*").
@@ -361,6 +401,8 @@ Binding rules:
 - [ ] Every interactive control ≥ 44 px and has a visible focus ring + accessible name.
 - [ ] Any stateful color is paired with text/icon.
 - [ ] Destructive/confirm flows use `ConfirmDialog`, not `window.confirm`/`alert`.
+- [ ] Guard matches reversibility (§8 "Toast / Undo"): irreversible → confirm before; cleanly
+  reversible one-tap flip → immediate + `useUndoableAction` undo, never a hand-rolled undo button.
 - [ ] On a phone, data is cards — not a horizontally-scrolling table.
 - [ ] Copy is Lithuanian, formal "Jūs", no raw error text, no English leakage.
 - [ ] Reused the canonical component (§8) instead of a new bespoke shell.
