@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useId } from 'react';
-import { createPortal } from 'react-dom';
 import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
-import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
@@ -11,20 +9,26 @@ import UserChip from './UserChip';
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
     const titleId = useId();
 
-    // Content dialog on the canonical Modal (bare): Modal supplies the scrim, focus-trap,
-    // Escape, backdrop-dismiss, z-ladder and portal (DESIGN_SYSTEM §8), while this keeps the
-    // bespoke icon + bordered header and a scrolling body. size="xl" preserves the prior
-    // max-w-2xl width; the flex-1 body replaces the old sticky-header-in-scroll-box pattern.
+    // Routed through the canonical Modal (DESIGN_SYSTEM §8): the scrim, z-ladder, portal,
+    // focus-trap and dismissal (backdrop tap + Escape) are all shared. `bare` + a block scroll
+    // container preserve the bordered, sticky icon header this details modal has always shown.
     return (
-        <Modal open={isOpen} bare size="xl" ariaLabelledby={titleId} onClose={onClose}>
-            <div className="flex flex-shrink-0 items-center justify-between gap-2 border-b border-line p-4">
+        <Modal
+            open={isOpen}
+            onClose={onClose}
+            ariaLabelledby={titleId}
+            size="xl"
+            bare
+            className="block max-h-[80vh] overflow-y-auto"
+        >
+            <div className="flex justify-between items-center p-4 border-b border-line sticky top-0 bg-surface-card z-10">
                 <div className="flex items-center gap-2">
                     {Icon && <Icon className="w-5 h-5 text-brand" />}
                     <h3 id={titleId} className="text-lg font-semibold text-ink-strong">{title}</h3>
                 </div>
                 <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-6">
+            <div className="p-6">
                 {children}
             </div>
         </Modal>
@@ -352,10 +356,6 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
     );
 }
 
-// Intentional exception to the canonical-Modal rule (DESIGN_SYSTEM §8): this is a full-bleed
-// black image viewer with drag-to-pan + zoom, not a content card centred on a scrim. It still
-// uses the shared useModalA11y hook (focus-trap, Escape, focus restore) and portals to <body>,
-// so it inherits the same a11y plumbing without fighting Modal's centred-card layout.
 export function ImageModal({ isOpen, onClose, imageUrls }) {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [zoom, setZoom] = useState(1);
@@ -367,7 +367,6 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     const [scrollLeft, setScrollLeft] = useState(0);
     const [scrollTop, setScrollTop] = useState(0);
     const containerRef = React.useRef(null);
-    const dialogRef = React.useRef(null);
     const isDragOccurred = React.useRef(false);
 
     const hasMultiple = imageUrls && imageUrls.length > 1;
@@ -386,9 +385,6 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
     }, [isOpen, hasMultiple, imageUrls]);
-
-    // Move focus into the viewer, restore on close, Escape closes, and trap Tab (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
 
     if (!isOpen || !imageUrls || imageUrls.length === 0) return null;
 
@@ -454,17 +450,24 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
         containerRef.current.scrollTop = scrollTop - walkY;
     };
 
-    const modalContent = (
-        <div
-            ref={dialogRef}
-            className="fixed inset-0 z-top flex items-center justify-center bg-black/95 focus:outline-none"
-            onClick={onClose}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Nuotraukos peržiūra"
-            tabIndex={-1}
+    // Routed through the canonical Modal (DESIGN_SYSTEM §8) for the shared focus-trap, Escape,
+    // portal and dialog stack (so it sits cleanly above an already-open task modal via
+    // level="top"). `bare` + a full-bleed black dialog reproduce the edge-to-edge lightbox;
+    // the dialog covers the scrim, so click-to-close lives on the dialog surface itself.
+    return (
+        <Modal
+            open={isOpen}
+            onClose={onClose}
+            ariaLabel="Nuotraukos peržiūra"
+            level="top"
+            bare
+            closeOnBackdrop={false}
+            className="h-screen max-h-screen w-screen max-w-none rounded-none bg-black/95 shadow-none"
         >
-            <div className={`relative w-full h-full flex items-center justify-center overflow-hidden`}>
+            <div
+                className="relative w-full h-full flex items-center justify-center overflow-hidden"
+                onClick={onClose}
+            >
                 {/* Controls - Only show when not zoomed or fix them to screen edges */}
                 <button
                     type="button"
@@ -548,21 +551,22 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                     </div>
                 )}
             </div>
-        </div>
+        </Modal>
     );
-
-    return createPortal(modalContent, document.body);
 }
 
-export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error }) {
+export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error, level = 'modal' }) {
     const titleId = useId();
 
     // Destructive confirm on the canonical Modal (bare): it supplies the scrim, focus-trap,
     // Escape and portal, while this keeps its bespoke danger-header + multi-button body.
     // closeOnBackdrop={false} so a stray backdrop tap can't cancel — the choice is made via the
-    // explicit buttons (or Escape).
+    // explicit buttons (or Escape). level="top" lets a caller raise this confirm above another
+    // already-open top-level modal (e.g. WorkPlanner's Edit Event modal, which stays mounted
+    // behind it); the default keeps the standard modal layer, so every other call site is
+    // unaffected.
     return (
-        <Modal open={isOpen} bare size="md" closeOnBackdrop={false} ariaLabelledby={titleId} onClose={onClose}>
+        <Modal open={isOpen} bare size="md" closeOnBackdrop={false} level={level} ariaLabelledby={titleId} onClose={onClose}>
             <div className="flex-1 min-h-0 overflow-y-auto p-6">
                     <div className="flex items-center gap-3 mb-4 text-feedback-danger">
                         <div className="p-2 bg-feedback-danger-soft rounded-full">
