@@ -1232,7 +1232,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                             </span>
                         )}
                         {/* Read-only status — the form previously showed none; now it carries the same
-                            Patvirtinta / Nepatvirtinta / Ištrinta the task shows on every other surface. */}
+                            Priimtas / Laukia priėmimo / Ištrinta the task shows on every other surface. */}
                         {task && !isSavingTemplate && (
                             (task.isDeleted || task.status === 'deleted')
                                 ? <DeletedBadge />

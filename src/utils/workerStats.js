@@ -432,7 +432,7 @@ export const STAT_GROUPS = [
             { key: 'avgTaskDuration', label: 'Vid. užduoties trukmė', kind: 'minutes', goodWhen: 'neutral' },
             { key: 'estimateAccuracyPct', label: 'Plano tikslumas', kind: 'pct', goodWhen: 'neutral', hint: 'Faktinis laikas prieš numatytą (100% = tiksliai pataikyta).' },
             { key: 'onEstimatePct', label: 'Telpa į planą', kind: 'pct', goodWhen: 'up', hint: 'Užduotys, neviršijusios numatyto laiko.' },
-            { key: 'approvalPct', label: 'Patvirtinta vadovo', kind: 'pct', goodWhen: 'up' },
+            { key: 'approvalPct', label: 'Priimta vadovo', kind: 'pct', goodWhen: 'up' },
         ],
     },
     {

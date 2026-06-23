@@ -123,10 +123,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         });
     };
 
-    // Confirm finished work (completed -> confirmed). Mirrors the manager table so a manager can
-    // sign off a done task straight from the mobile preview, not only on desktop. Confirming is a
+    // Accept finished work (completed -> confirmed). Mirrors the manager table so a manager can
+    // sign off a done task straight from the mobile preview, not only on desktop. Accepting is a
     // cleanly reversible sign-off, so it is now immediate + undoable instead of gated behind a
-    // confirm dialog; undo returns it to "awaiting confirmation".
+    // confirm dialog; undo returns it to "awaiting acceptance".
     const performConfirm = () => {
         // Both the forward sign-off AND the undo are audited commands (ADR 0015) — so the undo can no
         // longer silently contradict the decision_log.
@@ -137,9 +137,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
             // undo window so an undo leaves the worker nothing to see; a no-op in the plain task list.
             deferredEffect: () => onConfirmed?.(task),
             undo: () => unconfirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirm undone from task card' }),
-            message: 'Atlikimas patvirtintas.',
-            undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
-            errorMessage: 'Nepavyko patvirtinti atlikimo. Bandykite dar kartą.',
+            message: 'Užduotis priimta.',
+            undoneMessage: 'Atšaukta — laukiama priėmimo.',
+            errorMessage: 'Nepavyko priimti užduoties. Bandykite dar kartą.',
         });
     };
 
@@ -260,7 +260,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const showAssignee = task.assignedUserName && (isManager || !isAssignedToMe);
 
     // Manager sign-off actions, mirroring TaskDetailModal so the card and the preview agree:
-    // a finished task ("Nepatvirtinta") can be confirmed OR sent back, an unapproved task can be
+    // a finished task ("Laukia priėmimo") can be accepted OR sent back, an unapproved task can be
     // approved, and any finished/deleted task can be reverted.
     const canConfirm = isManager && taskStatus === 'completed';
     const canApprove = isManager && taskStatus === 'unapproved';
@@ -280,7 +280,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         onClick: (e) => { e.stopPropagation(); performApprove(); },
     });
     if (canConfirm) actions.push({
-        key: 'confirm', label: 'Patvirtinti', icon: CheckCircle2, variant: 'success',
+        key: 'confirm', label: 'Priimti', icon: CheckCircle2, variant: 'success',
         onClick: (e) => { e.stopPropagation(); performConfirm(); },
     });
     if (onEdit) actions.push({
