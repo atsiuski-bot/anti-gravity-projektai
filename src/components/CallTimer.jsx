@@ -36,7 +36,7 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                 {/* Content */}
                 <p className="text-body text-ink-muted mb-4">Įveskite skambučio aprašymą</p>
 
-                <div className="mb-5 bg-session-call-surface rounded-card p-4 border border-blue-200 flex items-center justify-between">
+                <div className="mb-5 bg-session-call-surface rounded-card p-4 border border-session-call-soft flex items-center justify-between">
                     <span className="text-body-lg font-semibold text-session-call-accent">Užfiksuotas laikas:</span>
                     <span className="text-4xl font-mono font-bold text-session-call-accent">{totalDisplay}</span>
                 </div>
