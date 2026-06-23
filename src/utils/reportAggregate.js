@@ -251,6 +251,10 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
     const team = {
         workerCount: builtWorkers.length,
         totalHours: Math.round(sum((w) => w.current.totalHours) * 10) / 10,
+        // Exact team-wide work/break minutes — the on-screen summary renders Darbas/Pertraukos/Viso
+        // from these (one source of truth) so the merged card never disagrees with itself.
+        totalWorkMinutes: sum((w) => w.current.totalWorkMinutes),
+        totalBreakMinutes: sum((w) => w.current.totalBreakMinutes),
         completedTasks: sum((w) => w.current.completedCount),
         avgOnTimePct: onTimeVals.length
             ? Math.round(onTimeVals.reduce((a, b) => a + b, 0) / onTimeVals.length)

@@ -31,7 +31,7 @@ import UserChip from './UserChip';
 import SessionEditModal from './SessionEditModal';
 import SessionEditedBadge from './task/SessionEditedBadge';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', showTestUsers = false }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', showTestUsers = false, periodSummaryAbove = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
@@ -89,6 +89,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const isRange = !!(dateRange && dateRange.start && dateRange.end);
     const rangeStart = isRange ? dateRange.start : selectedDate;
     const rangeEnd = isRange ? dateRange.end : selectedDate;
+    // When a team summary card already sits above this view (manager range report), it owns the
+    // period span + Darbas/Pertraukos/Viso totals. Drop our own duplicate summary chrome (the
+    // desktop toolbar, which in range mode holds nothing else, and the mobile summary card) so the
+    // period reads as one block instead of two. Only ever true for the range instance.
+    const summaryHandledAbove = periodSummaryAbove && isRange;
 
     // Data states
     const [, setDailyStats] = useState(null); // From daily_stats collection (legacy/ref for other stats if any)
@@ -1101,7 +1106,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 In range mode the toolbar's only mobile content is the static date span, which is
                 merged into the summary card below on phones — so hide the whole toolbar on mobile
                 (md+ keeps it, where the totals also live inline). Day mode keeps the stepper here. */}
-            <div className={`bg-surface-card p-2 rounded-card shadow-sm border border-line flex-row flex-wrap gap-2 items-center justify-between ${isRange ? 'hidden md:flex' : 'flex'}`}>
+            <div className={`bg-surface-card p-2 rounded-card shadow-sm border border-line flex-row flex-wrap gap-2 items-center justify-between ${summaryHandledAbove ? 'hidden' : isRange ? 'hidden md:flex' : 'flex'}`}>
 
                 {/* Left group — date control plus, on desktop, the day's totals inline, so on
                     md+ the whole summary collapses into this single toolbar row. */}
@@ -1165,7 +1170,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             </div>
 
-            {hasAnomaly && (
+            {/* The team summary card above already flags the same clamped sessions as actionable
+                "Patikrintinos sesijos" chips (computeDataTrust counts the same — and stricter — set),
+                so skip this generic banner in that composition to avoid a third stacked warning. */}
+            {hasAnomaly && !summaryHandledAbove && (
                 <div role="alert" className="mb-3 flex items-start gap-2 rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-3 text-caption text-feedback-warning-text">
                     <span aria-hidden="true">⚠</span>
                     <span>Kai kurios šio laikotarpio reikšmės atrodo neįprastos ir buvo apribotos iki 16 val. vienai sesijai. Patikrinkite šiuos įrašus rankiniu būdu.</span>
@@ -1177,7 +1185,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 with the day span as a slim header. Replaces the four full-width stacked cards so
                 the whole day summary fits in the top half of the first screen (§9 dual density:
                 a tuned, denser mobile layout instead of one card per row). */}
-            <div className="md:hidden bg-surface-card rounded-card shadow-sm border border-line p-3">
+            <div className={`${summaryHandledAbove ? 'hidden' : 'md:hidden'} bg-surface-card rounded-card shadow-sm border border-line p-3`}>
                 {/* Range mode: the period span lives in this same card on mobile (the toolbar that
                     holds it on desktop is hidden on phones), centred and a notch larger than the
                     desktop caption so the date and its totals read as one merged block. */}
@@ -1280,6 +1288,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     </dl>
                                 </li>
                             ))}
+                            {/* "Viso komanda" sum — dropped when the merged summary card above already
+                                carries the same team Pertraukos/Darbas/Viso totals (manager range view).
+                                Kept in day mode / personal reports, where it is the only running total. */}
+                            {!summaryHandledAbove && (
                             <li className="bg-surface-sunken p-4">
                                 <p className="mb-2 text-body font-bold text-ink-strong">Viso komanda</p>
                                 <dl className="grid grid-cols-3 gap-2 text-center">
@@ -1297,6 +1309,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     </div>
                                 </dl>
                             </li>
+                            )}
                         </ul>
 
                         {/* Desktop: dense team summary table. Every cell uses the same px-4 py-3
@@ -1352,6 +1365,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         </td>
                                     </tr>
                                 ))}
+                                {/* "Viso komanda" sum — dropped when the merged summary card above
+                                    already carries these same team totals (manager range view); kept in
+                                    day mode / personal reports as the table's only running total. */}
+                                {!summaryHandledAbove && (
                                 <tr className="bg-surface-sunken font-bold">
                                     <td colSpan="3" className="px-4 py-3 text-right text-ink-strong">
                                         Viso komanda:
@@ -1367,6 +1384,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     </td>
                                     <td className="px-4 py-3 text-right text-ink-muted">—</td>
                                 </tr>
+                                )}
                             </tbody>
                         </table>
                     </div>

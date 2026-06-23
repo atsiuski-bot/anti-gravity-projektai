@@ -272,6 +272,11 @@ export function computeWorkerStats(raw, window, opts = {}) {
     return {
         // G1 — Apimtis ir laikas
         totalHours: totalWorkMin > 0 ? totalWorkMin / 60 : (activeDays ? 0 : null),
+        // Exact minutes (work + break) kept alongside the rounded `totalHours` so the on-screen
+        // team summary can render the Darbas/Pertraukos/Viso triplet to the minute, matching the
+        // timeline's own totals. Inert to the export (not a STAT_GROUPS metric key).
+        totalWorkMinutes: totalWorkMin,
+        totalBreakMinutes: totalBreakMin,
         activeDays: dayKeys.length ? activeDays : null,
         weekConsistency: activeDays ? activeDays / weeks : null,
         avgPerDay: activeDays ? totalWorkMin / 60 / activeDays : null,

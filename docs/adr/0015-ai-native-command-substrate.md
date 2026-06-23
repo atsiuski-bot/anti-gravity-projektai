@@ -162,9 +162,9 @@ raised 15 findings; **7 were confirmed and fixed**, 8 dismissed as out-of-scope/
    decision entry are owned by the command; the util keeps the timer-pause + role/actor resolution and
    the 4 call sites (TaskCard/TaskTable/TaskHistory/ManagerNotifications) are unchanged. Review clean
    (0 findings); gate green (297 tests). `extend-time` is N/A — `extendTaskTime` is dead code (no caller).
-   STILL TODO: **confirm** (completed→confirmed — its writes still vary across 4 sites and those sit in
-   the actively-churned approval-unify zone, so reconcile once that settles) and routing the **EDIT**
-   path through one command (retiring increment 2's split — TaskModal is also a hot, parallel-edited zone).
+   **`confirmTask`/`unconfirmTask`/`unapproveTask` since DONE (2026-06-24)** — the confirm sign-off + its
+   undo + the approve undo are now audited across the 3 primary surfaces (forward AND undo). What is left
+   (incl. the EDIT path) is catalogued under **Remaining work** below.
 3. **Formalize the task lifecycle as an explicit state machine** enforced by the commands.
 4. **Promote perception (E):** make `workerStats`/`reportAggregate` callable server-side so an agent
    can read "decision context" without a browser.
@@ -172,4 +172,61 @@ raised 15 findings; **7 were confirmed and fixed**, 8 dismissed as out-of-scope/
    itself, with a kill-switch); then the first real assignment agent in `propose` mode behind the
    approval gate.
 
-**Founder-run:** deploy `firestore.rules` (adds the `decision_log` clause) before follow-up #1.
+## Remaining work — NOT done, planned, parked here (resume point, 2026-06-24)
+
+The command vocabulary is broad and the **primary** task surfaces (TaskCard · TaskTable ·
+ManagerNotifications) now route EVERY create/assign/approve/confirm/delete **forward and undo** through
+audited commands (`assignTask`, `createTask`, `completeTask`, `reopenTask`, `approveTask`, `unapproveTask`,
+`confirmTask`, `unconfirmTask`, `deleteTask`, plus the agent-ready `reprioritizeTask`/`rescheduleTask`).
+The undo↔audit asymmetry and the confirm audit hole are closed. What is **deliberately left** (and why):
+
+**A. Client-layer audit holes still open (lower-risk, route-through-command when convenient):**
+- **`editTask` — route the whole `TaskModal` content-edit save through ONE command** (retiring increment
+  2's non-atomic assignee carve), and at the same time **wire `reprioritizeTask` + `rescheduleTask`** (today
+  priority/deadline change via the edit form, unaudited) and **converge `TaskTimerControls.performFinish`**
+  (the primary "Užbaigti/Finish" button, an unaudited completion that duplicates `completeTask`'s rule) onto
+  `completeTask`. **HIGH risk / HIGH value — DEFERRED because `TaskModal` is a hot, actively parallel-edited
+  zone.** Do this once that churn settles. This is the single largest remaining unaudited human surface.
+- **`DailyStatistics` confirm toggle** — collection-aware (tasks OR archived_tasks) AND preserves
+  `isDeleted`/`deletedAt` when confirming a *deleted* task (a CRITICAL guard so it doesn't reappear active).
+  `confirmTask` must NOT drop that, so it needs an isDeleted-preserving variant before routing. DEFERRED.
+- **Restore-from-archive** (`TaskHistory.handleRestore`, `DailyStatistics.confirmRestore` — duplicated):
+  a collection MOVE (`setDoc` tasks ← `deleteDoc` archived_tasks), not a status reset, so `reopenTask`
+  cannot absorb it — needs a **new `restoreTask` command** that moves + records the decision. DEFERRED.
+- **Quick-work / call task creation** (`sessionActions.js` ×2 — auto-logged tasks born pre-confirmed):
+  bypass `createTask` via raw `addDoc`. Low value (machine auto-logs, not human decisions) and
+  `sessionActions` is timer-credit-sensitive code — DEFERRED on a risk/value basis.
+
+**B. Agent-enablement track (the ORIGINAL goal — connect AI manager agents). "Fazė 0" — the substrate,
+the agent kill-switch (`agentControl.js` + kernel step-0 gate + `system_config/agents` live rules + admin
+toggle), the server-side `system`-actor audit (`functions/decisionLog.js`) and the admin Audit dashboard —
+is DONE on main (built by a parallel session). What remains to make an agent REAL:**
+- **#6 — smallest safe first step (MEDIUM, recommended next): the propose→approve perception loop.** One
+  admin-SDK callable (clone `parseTaskDraft`) that returns ranked assignment suggestions + a roster-load
+  snapshot → surface them as approve/dismiss cards (e.g. in ManagerNotifications) where APPROVE runs the
+  EXISTING human `assignTask` commit (the human is the actor, the agent's rationale rides in `reason`).
+  Delivers "AI proposes / human approves" end-to-end with **ZERO new write rules and ZERO agent-commit
+  risk** — the agent never writes; the human's click is the audited commit.
+- **#7 — server agent-commit surface (HIGH, only when an autonomous agent commit is actually contemplated).**
+  The load-bearing prerequisites, all currently ABSENT: (1) a server execution path — every command's
+  `apply()` is bound to the browser Firebase SDK (`import { db } from '../../firebase'`), so server execution
+  is a real rewrite (transport-agnostic ports or a server command kernel), not a config flip; (2) a
+  **fail-CLOSED, transactional, server-side kill-switch read** (functions/ never reads `system_config`
+  today; the client cache is fail-OPEN + TOCTOU-laggy); (3) an **agent-actor server appender** —
+  `functions/decisionLog.js` hard-codes `actorType:'system'` and has no `actorId`/`actorKind` for an agent
+  principal, and the client rule forbids any non-human client decision write; (4) a **proposals collection +
+  rule + approval inbox**; (5) an **agent principal/identity + a rules clause** permitting it (only the single
+  global brake exists today); (6) **durable cross-process idempotency** (the client kernel mints keys in-memory).
+- **Perception server-callable (ADR follow-up #4):** `workerStats.computeWorkerStats` + `reportAggregate.buildReport`
+  are pure/portable, but their fetch layer (`reportData.gatherReportData`) uses the client SDK + teamScope, so
+  it cannot run under the admin SDK without a rewrite. Unstarted.
+
+**C. Loose ends / drift to tidy:** the ADR's older "not yet wired into the UI / no behaviour change yet"
+status line is now false (6+ commands + the kill-switch are shipped) — the real contract lives in code;
+`AuditDashboard` actor filter has a 200-row page ceiling (an observability limit once agents commit volume);
+the server duplicates four client canonicalizers (priority/time-parse/recurrence/estimate) with a
+`firebaseConsistency.test` now guarding some — keep them in lockstep.
+
+**Founder-run:** deploy `firestore.rules` (adds the `decision_log` clause) before follow-up #1. — Already
+done and verified live (2026-06-23/24); `decision_log` + `system_config` rules confirmed deployed via the
+Firebase MCP.
