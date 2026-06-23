@@ -78,7 +78,7 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
     );
 });
 
-export default function CallTimer({ compact = false }) {
+export default function CallTimer({ compact = false, hideLabel = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
 
@@ -238,8 +238,12 @@ export default function CallTimer({ compact = false }) {
                     )}
                 </button>
 
-                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1) */}
-                <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Skambutis</span>
+                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1).
+                    Suppressed only in the collapsed side rail (`hideLabel`), where the icon SHAPE
+                    differs by state and the button keeps its aria-label + title tooltip. */}
+                {!hideLabel && (
+                    <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Skambutis</span>
+                )}
 
                 {error && (
                     <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2" role="alert">
