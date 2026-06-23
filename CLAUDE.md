@@ -81,6 +81,18 @@ npm run build    # must succeed
 Run the app with `npm run dev` (network host is enabled for phone testing). For UI, verify on
 a ~360 px viewport, not just desktop.
 
+### Visual QA — how to actually log in and look
+
+The app signs in **only** through a Google popup, which an automated browser cannot drive — which
+is why so much shipped "not visually QA'd". For a popup-free, admin-level login each session, use
+the **dev-only test account**: a dashed "DEV testavimas" panel on the Login page (shown only in
+`npm run dev`, dead-code-eliminated from production) signs in with credentials from `.env.local`.
+Full procedure (one-time setup, per-session loop, security model, teardown when dev is done) —
+[`docs/runbooks/visual-qa-test-account.md`](./docs/runbooks/visual-qa-test-account.md)
+([ADR 0014](./docs/adr/0014-dev-test-login-and-visual-qa.md)). The account is `role: admin` +
+`isTest: true` (excluded from reports) and is kept **disabled at rest**; `.env.local` is gitignored
+(this repo is public — never commit the credentials).
+
 ## Folder structure
 
 ```
