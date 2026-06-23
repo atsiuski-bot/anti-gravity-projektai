@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
-import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe, Sparkles } from 'lucide-react';
+import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, FlaskConical, Star, Users, Globe, Sparkles, Coins } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
 import { formatDisplayName } from '../utils/formatters';
+import { hasPayRate } from '../utils/payRate';
 import { getContrastingTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
@@ -17,6 +18,7 @@ import StatusPill from './ui/StatusPill';
 import Modal from './ui/Modal';
 import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
+import PayRateModal from './PayRateModal';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 
 // Role display metadata. Tone avoids the reserved session blue (call) — admin reads as the
@@ -426,6 +428,43 @@ function DeleteButton({ user, isSelf, onRequest, fullWidth, iconOnly }) {
     );
 }
 
+// Per-worker pay-rate entry point. Admin-only (firestore.rules gates the write — ADR 0012) and
+// shown only for workers (the Vykdytojas, who finish tasks and see the earnings popup). The "on"
+// state (a rate is set) is signalled by a check badge over the coins glyph, not by color alone (§5).
+function PayRateButton({ user, onEdit, fullWidth, iconOnly }) {
+    const has = hasPayRate(user.payRate);
+    if (iconOnly) {
+        return (
+            <IconButton
+                variant={has ? 'primary' : 'default'}
+                aria-pressed={has}
+                label={has ? 'Keisti įkainį' : 'Nustatyti įkainį'}
+                onClick={() => onEdit(user)}
+            >
+                <span className="relative inline-flex">
+                    <Coins className="h-5 w-5" aria-hidden="true" />
+                    {has && (
+                        <span className="absolute -right-1 -top-1 inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white">
+                            <Check className="h-2.5 w-2.5 text-brand" strokeWidth={3} aria-hidden="true" />
+                        </span>
+                    )}
+                </span>
+            </IconButton>
+        );
+    }
+    return (
+        <Button
+            variant={has ? 'primary' : 'secondary'}
+            size="md"
+            icon={Coins}
+            fullWidth={fullWidth}
+            onClick={() => onEdit(user)}
+        >
+            {has ? 'Įkainis ✓' : 'Nustatyti įkainį'}
+        </Button>
+    );
+}
+
 function ColorSlider({ label, labelClass, value, onChange, track, accent }) {
     return (
         <div>
@@ -480,6 +519,8 @@ export default function UserManagement() {
     // separate from the reversible block toggle, so it never sits on the same button (§8).
     const [deleteTarget, setDeleteTarget] = useState(null);
     const [deleting, setDeleting] = useState(false);
+    // Pay-rate editor target (admin-only). Holds the user whose tiered rate is being edited.
+    const [payRateUser, setPayRateUser] = useState(null);
     const isAdmin = userRole === 'admin';
 
     useEffect(() => {
@@ -674,6 +715,12 @@ export default function UserManagement() {
             setError('Nepavyko pažymėti bandomojo vartotojo. Bandykite dar kartą.');
         }
     };
+
+    // Persist a worker's tiered pay rate (or clear it with null). Returns the write promise so the
+    // PayRateModal can await it and surface its own error/saving state. Admin-only — enforced by
+    // firestore.rules (ADR 0012); the editor button is also admin-gated in the UI.
+    const handleSavePayRate = (userId, payRate) =>
+        updateDoc(doc(db, 'users', userId), { payRate });
 
     // Persist a worker's weekly hours baseline (or clear it with null). The report falls back to
     // this when the worker has no calendar plan for the span, so Skirtumas stops being garbage.
@@ -876,6 +923,9 @@ export default function UserManagement() {
                                 />
                             </div>
                             <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
+                            {isAdmin && user.role === 'worker' && (
+                                <PayRateButton user={user} onEdit={setPayRateUser} fullWidth />
+                            )}
                             <TestButton user={user} onToggle={handleToggleTest} fullWidth />
                             <BlockButton
                                 user={user}
@@ -963,6 +1013,9 @@ export default function UserManagement() {
                                                 iconOnly
                                             />
                                             <TestButton user={user} onToggle={handleToggleTest} iconOnly />
+                                            {isAdmin && user.role === 'worker' && (
+                                                <PayRateButton user={user} onEdit={setPayRateUser} iconOnly />
+                                            )}
                                             {isAdmin && (
                                                 <DeleteButton
                                                     user={user}
@@ -1061,6 +1114,14 @@ export default function UserManagement() {
                     onCancel={() => setBlockTarget(null)}
                 />
             )}
+
+            {/* Pay-rate editor (admin-only) — tiered NET hourly rates + derived gross (ADR 0012) */}
+            <PayRateModal
+                open={!!payRateUser}
+                user={payRateUser}
+                onClose={() => setPayRateUser(null)}
+                onSave={(payRate) => handleSavePayRate(payRateUser.id, payRate)}
+            />
 
             {/* Permanent delete confirmation (irreversible — admin-only) */}
             {deleteTarget && (

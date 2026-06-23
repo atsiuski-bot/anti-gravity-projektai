@@ -555,15 +555,18 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     );
 }
 
-export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error }) {
+export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error, level = 'modal' }) {
     const titleId = useId();
 
     // Destructive confirm on the canonical Modal (bare): it supplies the scrim, focus-trap,
     // Escape and portal, while this keeps its bespoke danger-header + multi-button body.
     // closeOnBackdrop={false} so a stray backdrop tap can't cancel — the choice is made via the
-    // explicit buttons (or Escape).
+    // explicit buttons (or Escape). level="top" lets a caller raise this confirm above another
+    // already-open top-level modal (e.g. WorkPlanner's Edit Event modal, which stays mounted
+    // behind it); the default keeps the standard modal layer, so every other call site is
+    // unaffected.
     return (
-        <Modal open={isOpen} bare size="md" closeOnBackdrop={false} ariaLabelledby={titleId} onClose={onClose}>
+        <Modal open={isOpen} bare size="md" closeOnBackdrop={false} level={level} ariaLabelledby={titleId} onClose={onClose}>
             <div className="flex-1 min-h-0 overflow-y-auto p-6">
                     <div className="flex items-center gap-3 mb-4 text-feedback-danger">
                         <div className="p-2 bg-feedback-danger-soft rounded-full">

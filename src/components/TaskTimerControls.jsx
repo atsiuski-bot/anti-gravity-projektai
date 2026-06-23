@@ -5,6 +5,7 @@ import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
+import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
@@ -339,6 +340,12 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             if (task.assignedUserId === currentUser.uid) {
                 showToast('Užduotis užbaigta.', { title: 'Puikus darbas!', tone: 'success' });
                 try { SoundManager.playQuickTaskSound(); } catch { /* audio is best-effort */ }
+                // Show the earnings popup (gross/net) for the worker's OWN completed task, but only
+                // when a pay rate is set — otherwise there is nothing to compute. WorkerView listens
+                // for this and renders EarningsModal, which stacks this task on the month's hours.
+                if (hasPayRate(userData?.payRate)) {
+                    window.dispatchEvent(new CustomEvent('task-earnings', { detail: { task, totalMinutes } }));
+                }
             } else {
                 showToast('Užduotis užbaigta.', { tone: 'success' });
             }
