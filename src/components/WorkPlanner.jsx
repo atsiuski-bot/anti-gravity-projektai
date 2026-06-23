@@ -10,7 +10,7 @@ import { isManagerRole } from '../utils/formatters';
 import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { preventEnterSubmit } from '../utils/formUtils';
-import { ABSENCE_TYPES, absenceLabel, absenceTypeForWrite } from '../utils/absence';
+import { absenceLabel, absenceTypeForWrite, ABSENCE_GENERIC_LABEL } from '../utils/absence';
 import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
@@ -199,8 +199,13 @@ export default function WorkPlanner() {
     const [editingEvent, setEditingEvent] = useState(null);
     const [manualIsWorkFromHome, setManualIsWorkFromHome] = useState(false);
     const [manualIsVacation, setManualIsVacation] = useState(false);
-    const [manualAbsenceType, setManualAbsenceType] = useState('vacation');
     const [showDeleteModal, setShowDeleteModal] = useState(false);
+
+    // Absence (reason-agnostic "not working") sub-form. An absence may span a date RANGE — booking a
+    // week off is one action — and may be marked "visą dieną" (whole-day, 00:00–24:00) so the worker
+    // need not invent start/end clock times for a day they simply are not available.
+    const [manualEndDate, setManualEndDate] = useState('');
+    const [manualAllDay, setManualAllDay] = useState(true);
 
     // Approval workflow states
     const [showReasonModal, setShowReasonModal] = useState(false);
@@ -345,7 +350,7 @@ export default function WorkPlanner() {
     // Name the entry an action collides with, so the overlap error points at the real culprit
     // instead of a generic "something overlaps" the worker then has to hunt for.
     const describeEvent = (ev) => {
-        const typeLabel = ev.isVacation ? (absenceLabel(ev) || 'Atostogos') : (ev.isWorkFromHome ? 'Darbas iš namų' : 'Darbas');
+        const typeLabel = ev.isVacation ? (absenceLabel(ev) || ABSENCE_GENERIC_LABEL) : (ev.isWorkFromHome ? 'Darbas iš namų' : 'Darbas');
         return `${typeLabel} ${format(ev.start, 'MM-dd HH:mm')}–${format(ev.end, 'HH:mm')}`;
     };
     const overlapMessage = (ev) => `Pasirinktas laikas persidengia su įrašu: ${describeEvent(ev)}.`;
@@ -550,14 +555,133 @@ export default function WorkPlanner() {
         }
     };
 
-    const handleManualSubmit = async (e) => {
-        e.preventDefault();
-        if (!currentUser || !manualDate || !manualStart || !manualEnd) {
+    // Build one absence work_hours payload for a single calendar day. All-day uses the whole local
+    // day (00:00 → next-day 00:00) so a day-off needs no invented clock times; otherwise the chosen
+    // start/end clock is applied to that day. Every payload still carries the load-bearing
+    // isVacation:true gate + the neutral default absenceType (reason-agnostic model), so report
+    // exclusions, server aggregation and workerStats absence counting all keep reading it unchanged.
+    const buildAbsenceDayData = (dateStr) => {
+        const start = manualAllDay
+            ? new Date(`${dateStr}T00:00`)
+            : new Date(`${dateStr}T${manualStart}`);
+        const end = manualAllDay
+            ? new Date(`${dateStr}T00:00`)
+            : new Date(`${dateStr}T${manualEnd}`);
+        if (manualAllDay) end.setDate(end.getDate() + 1); // exclusive end at next local midnight
+        return {
+            start,
+            end,
+            data: {
+                id: null,
+                start: start.toISOString(),
+                end: end.toISOString(),
+                title: absenceLabel({ isVacation: true }) || ABSENCE_GENERIC_LABEL,
+                isWorkFromHome: false,
+                isVacation: true,
+                // absenceTypeForWrite(true, undefined) -> the neutral default, so the worker never
+                // picks a reason yet legacy readers keep a valid type to bucket on.
+                absenceType: absenceTypeForWrite(true, undefined),
+            },
+        };
+    };
+
+    // Submit the absence sub-form: generate one work_hours doc PER DAY across [manualDate, manualEndDate]
+    // inclusive. Each day runs the same overlap + approval routing as a single add, so booking a week
+    // off is one action without weakening either guard. If any day needs approval, the whole batch is
+    // routed through approval (one reason for the span); otherwise all days are saved directly.
+    const handleAbsenceSubmit = async () => {
+        const endDateStr = manualEndDate || manualDate;
+        if (endDateStr < manualDate) {
+            setError('Pabaigos data turi būti ne ankstesnė už pradžios datą.');
+            return;
+        }
+        if (!manualAllDay && (!manualStart || !manualEnd)) {
             setError('Užpildykite visus laukus.');
             return;
         }
 
+        // Collect each day's payload, validating clock order + overlaps against existing events AND
+        // the days already queued in THIS submit (so two days in the range can't collide either).
+        const days = [];
+        const queued = []; // {start, end} accumulators for in-batch overlap detection
+        let cursor = manualDate;
+        // Guard the loop against a pathological range; a year of days is far beyond any real booking.
+        for (let guard = 0; guard < 400 && cursor <= endDateStr; guard += 1) {
+            const day = buildAbsenceDayData(cursor);
+            if (day.end <= day.start) {
+                setError('Pabaigos laikas turi būti vėlesnis už pradžios laiką.');
+                return;
+            }
+            const conflict = events.find((ev) => day.start < ev.end && day.end > ev.start)
+                || queued.find((q) => day.start < q.end && day.end > q.start);
+            if (conflict && conflict.start !== undefined && conflict.title !== undefined) {
+                setError(overlapMessage(conflict));
+                return;
+            }
+            if (conflict) {
+                setError('Pasirinktas laikotarpis persidengia su esamu įrašu.');
+                return;
+            }
+            days.push(day);
+            queued.push({ start: day.start, end: day.end });
+            // Advance one local day via the yyyy-MM-dd string (date math avoids DST drift).
+            const next = new Date(`${cursor}T00:00`);
+            next.setDate(next.getDate() + 1);
+            cursor = format(next, 'yyyy-MM-dd');
+        }
+
+        if (days.length === 0) {
+            setError('Užpildykite visus laukus.');
+            return;
+        }
+
+        // The span needs approval if ANY day touches past/current time; a fully-future span is direct.
+        const needsApproval = days.some((d) => actionNeedsApproval({ type: 'add', start: d.start }));
+
+        if (needsApproval) {
+            // Route the whole span through one approval request (the existing single-action path).
+            // The reason modal applies one reason to the batch; on approve, every day is written.
+            setPendingAction({ type: 'add', data: days.map((d) => d.data), batch: true });
+            setShowReasonModal(true);
+            setShowManualInput(false);
+        } else {
+            for (const d of days) {
+                await executeDirectCalendarUpdate({ type: 'add', data: d.data });
+            }
+            setShowManualInput(false);
+        }
+    };
+
+    const handleManualSubmit = async (e) => {
+        e.preventDefault();
+        if (!currentUser) return;
+
         try {
+            // Absence path: reason-agnostic, optionally multi-day / all-day. Delegated wholesale so
+            // the work path below stays the simple single-shift add it always was.
+            if (manualIsVacation) {
+                if (!manualDate) {
+                    setError('Užpildykite visus laukus.');
+                    return;
+                }
+                await handleAbsenceSubmit();
+                // Reset form
+                setManualDate('');
+                setManualEndDate('');
+                setManualStart('');
+                setManualEnd('');
+                setManualAllDay(true);
+                setManualIsWorkFromHome(false);
+                setManualIsVacation(false);
+                setError('');
+                return;
+            }
+
+            if (!manualDate || !manualStart || !manualEnd) {
+                setError('Užpildykite visus laukus.');
+                return;
+            }
+
             const startDateTime = new Date(`${manualDate}T${manualStart}`);
             const endDateTime = new Date(`${manualDate}T${manualEnd}`);
 
@@ -574,20 +698,16 @@ export default function WorkPlanner() {
                 return;
             }
 
-            const title = manualIsVacation
-                ? absenceLabel({ isVacation: true, absenceType: manualAbsenceType })
-                : 'Darbas';
-
             const actionDetails = {
                 type: 'add',
                 data: {
                     id: null,
                     start: startDateTime.toISOString(),
                     end: endDateTime.toISOString(),
-                    title: title,
+                    title: 'Darbas',
                     isWorkFromHome: manualIsWorkFromHome || false,
-                    isVacation: manualIsVacation || false,
-                    absenceType: absenceTypeForWrite(manualIsVacation, manualAbsenceType)
+                    isVacation: false,
+                    absenceType: null
                 }
             };
 
@@ -602,11 +722,12 @@ export default function WorkPlanner() {
 
             // Reset form
             setManualDate('');
+            setManualEndDate('');
             setManualStart('');
             setManualEnd('');
+            setManualAllDay(true);
             setManualIsWorkFromHome(false);
             setManualIsVacation(false);
-            setManualAbsenceType('vacation');
             setError('');
         } catch (err) {
             console.error("Error preparing manual work hours:", err);
@@ -627,6 +748,55 @@ export default function WorkPlanner() {
             const managerIds = Array.isArray(userData?.teamManagerIds) && userData.teamManagerIds.length
                 ? userData.teamManagerIds
                 : (managerId ? [managerId] : []);
+
+            // A multi-day absence arrives as a BATCH (pendingAction.data is an array of per-day adds).
+            // We emit ONE standard calendar_request per day so the manager-side approval flow — which
+            // reads a single requestedEvent object — stays untouched; the worker only had to give one
+            // reason for the whole span. Auto-approval (manager booking their own) writes each day's
+            // work_hours immediately, exactly like the single-add path.
+            if (pendingAction.batch) {
+                const selfApprove = isManagerOrAdmin && managerId === currentUser.uid;
+                const baseRequest = {
+                    userId: currentUser.uid,
+                    userName: userData?.displayName || currentUser.displayName || currentUser.email,
+                    managerId: managerId,
+                    managerIds: managerIds,
+                    type: 'add',
+                    reason: reasonValue,
+                    userDismissed: false,
+                    createdAt: new Date().toISOString(),
+                    originalEvent: null,
+                };
+                for (const dayData of pendingAction.data) {
+                    const req = { ...baseRequest, requestedEvent: dayData };
+                    if (selfApprove) {
+                        const addData = { ...dayData, userId: currentUser.uid, type: 'planned' };
+                        delete addData.id;
+                        await addDoc(collection(db, 'work_hours'), addData);
+                        req.status = 'approved';
+                        req.approvedAt = new Date().toISOString();
+                        req.approvedBy = currentUser.uid;
+                    } else {
+                        req.status = 'pending';
+                    }
+                    await addDoc(collection(db, 'calendar_requests'), JSON.parse(JSON.stringify(req)));
+                    if (selfApprove) {
+                        await logCalendarChange(
+                            currentUser,
+                            'add',
+                            new Date(dayData.start),
+                            new Date(dayData.end)
+                        );
+                    }
+                }
+                setShowReasonModal(false);
+                setReasonValue('');
+                setPendingAction(null);
+                setError('');
+                setFeedbackVariant(selfApprove ? 'approved' : 'sent');
+                setShowApprovalFeedback(true);
+                return;
+            }
 
             const requestData = {
                 userId: currentUser.uid,
@@ -721,7 +891,17 @@ export default function WorkPlanner() {
     // Per-form approval preview: the save buttons + footnotes reflect whether THIS specific entry
     // will be saved directly (future plan, or weekend window) or submitted for approval. The manual
     // form is always an add; the edit modal is an edit or an add depending on whether it has an id.
-    const manualStartDate = (manualDate && manualStart) ? new Date(`${manualDate}T${manualStart}`) : null;
+    // For an absence the relevant instant is the FIRST day's start (all-day -> that day's midnight,
+    // else the chosen start clock); a span is approved if its earliest day already needs approval.
+    const manualStartDate = (() => {
+        if (!manualDate) return null;
+        if (manualIsVacation) {
+            return manualAllDay
+                ? new Date(`${manualDate}T00:00`)
+                : (manualStart ? new Date(`${manualDate}T${manualStart}`) : null);
+        }
+        return manualStart ? new Date(`${manualDate}T${manualStart}`) : null;
+    })();
     const manualNeedsApproval = manualStartDate
         ? actionNeedsApproval({ type: 'add', start: manualStartDate })
         : false;
@@ -744,7 +924,7 @@ export default function WorkPlanner() {
             // near-black block (color is never the sole signal, §5).
             const isVacation = event.isVacation;
             const isWfh = !isVacation && event.isWorkFromHome;
-            const absLabel = absenceLabel(event) || 'Atostogos';
+            const absLabel = absenceLabel(event) || ABSENCE_GENERIC_LABEL;
             const stateLabel = isVacation ? absLabel : isWfh ? 'Iš namų' : 'Dirbtuvėse';
             const eventAriaLabel = `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, redaguoti`;
             return (
@@ -815,37 +995,62 @@ export default function WorkPlanner() {
 
             {showManualInput && (
                 <form onSubmit={handleManualSubmit} onKeyDown={preventEnterSubmit} className="mb-4 p-3 bg-surface-base rounded-card border border-line shadow-inner">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* Date row. For an absence the worker may book a whole RANGE (Nuo … Iki), so a
+                        second "Iki" date appears; for work it stays a single day. The time columns
+                        below collapse to one date column when an all-day absence makes clock times
+                        irrelevant. */}
+                    <div className={clsx(
+                        'grid grid-cols-1 gap-3',
+                        manualIsVacation
+                            ? (manualAllDay ? 'sm:grid-cols-2' : 'sm:grid-cols-4')
+                            : 'sm:grid-cols-3'
+                    )}>
                         <div>
-                            <label htmlFor="manualDate" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Data</label>
+                            <label htmlFor="manualDate" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">
+                                {manualIsVacation ? 'Nuo' : 'Data'}
+                            </label>
                             <DatePicker
                                 id="manualDate"
                                 value={manualDate}
                                 onChange={setManualDate}
                             />
                         </div>
-                        <div>
-                            <label htmlFor="manualStart" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Pradžia</label>
-                            <input
-                                id="manualStart"
-                                type="time"
-                                value={manualStart}
-                                onChange={(e) => setManualStart(e.target.value)}
-                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
-                                required
-                            />
-                        </div>
-                        <div>
-                            <label htmlFor="manualEnd" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Pabaiga</label>
-                            <input
-                                id="manualEnd"
-                                type="time"
-                                value={manualEnd}
-                                onChange={(e) => setManualEnd(e.target.value)}
-                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
-                                required
-                            />
-                        </div>
+                        {manualIsVacation && (
+                            <div>
+                                <label htmlFor="manualEndDate" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Iki</label>
+                                <DatePicker
+                                    id="manualEndDate"
+                                    value={manualEndDate}
+                                    onChange={setManualEndDate}
+                                    min={manualDate || undefined}
+                                    placeholder="Ta pati diena"
+                                />
+                            </div>
+                        )}
+                        {!(manualIsVacation && manualAllDay) && (
+                            <>
+                                <div>
+                                    <label htmlFor="manualStart" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Pradžia</label>
+                                    <input
+                                        id="manualStart"
+                                        type="time"
+                                        value={manualStart}
+                                        onChange={(e) => setManualStart(e.target.value)}
+                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="manualEnd" className="block text-caption uppercase tracking-wider font-bold text-ink-muted mb-1">Pabaiga</label>
+                                    <input
+                                        id="manualEnd"
+                                        type="time"
+                                        value={manualEnd}
+                                        onChange={(e) => setManualEnd(e.target.value)}
+                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
+                                    />
+                                </div>
+                            </>
+                        )}
                     </div>
                     <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
                         <label className="flex min-h-touch items-center gap-2 cursor-pointer">
@@ -860,6 +1065,8 @@ export default function WorkPlanner() {
                             />
                             <span className="text-body font-medium text-ink">Darbas iš namų</span>
                         </label>
+                        {/* Reason-agnostic absence: one neutral "I'm not working" toggle — the worker
+                            never has to declare WHY (vacation / sick / …), only THAT they are off. */}
                         <label className="flex min-h-touch items-center gap-2 cursor-pointer">
                             <input
                                 type="checkbox"
@@ -870,20 +1077,25 @@ export default function WorkPlanner() {
                                 }}
                                 className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
                             />
-                            <span className="text-body font-medium text-ink">Atostogos</span>
+                            <span className="text-body font-medium text-ink">Pažymėti, kad nedirbu</span>
                         </label>
                     </div>
                     {manualIsVacation && (
                         <div className="mt-3">
-                            <label htmlFor="manualAbsenceType" className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</label>
-                            <Select
-                                id="manualAbsenceType"
-                                value={manualAbsenceType}
-                                onChange={setManualAbsenceType}
-                                options={ABSENCE_TYPES}
-                                label="Nebuvimo tipas"
-                                ariaLabel="Nebuvimo tipas"
-                            />
+                            <label className="flex min-h-touch items-center gap-2 cursor-pointer w-fit">
+                                <input
+                                    type="checkbox"
+                                    checked={manualAllDay}
+                                    onChange={(e) => setManualAllDay(e.target.checked)}
+                                    className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
+                                />
+                                <span className="text-body font-medium text-ink">Visą dieną</span>
+                            </label>
+                            <p className="mt-1 text-caption text-ink-muted">
+                                {(manualEndDate && manualEndDate > manualDate)
+                                    ? 'Bus pažymėta, kad nedirbate kiekvieną dieną nuo pasirinktos pradžios iki pabaigos.'
+                                    : 'Pažymėkite „Iki", jei nedirbsite kelias dienas iš eilės.'}
+                            </p>
                         </div>
                     )}
                     <div className="flex gap-2 mt-4">
@@ -1012,6 +1224,10 @@ export default function WorkPlanner() {
                                         />
                                         <span className="text-body font-medium text-ink">Darbas iš namų</span>
                                     </label>
+                                    {/* Reason-agnostic: one neutral "not working" toggle, no kind picker.
+                                        Editing a legacy typed absence preserves its original absenceType
+                                        on save (handleUpdateEvent reads editingEvent.absenceType), so old
+                                        Liga/Šventė entries keep their label and never get rewritten. */}
                                     <label className="flex min-h-touch items-center gap-2 cursor-pointer">
                                         <input
                                             type="checkbox"
@@ -1023,23 +1239,9 @@ export default function WorkPlanner() {
                                             })}
                                             className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
                                         />
-                                        <span className="text-body font-medium text-ink">Atostogos</span>
+                                        <span className="text-body font-medium text-ink">Nedirbu</span>
                                     </label>
                                 </div>
-                                {editingEvent.isVacation && (
-                                    <div className="mt-3">
-                                        <label htmlFor="editAbsenceType" className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</label>
-                                        <Select
-                                            id="editAbsenceType"
-                                            value={editingEvent.absenceType || 'vacation'}
-                                            onChange={(val) => setEditingEvent({ ...editingEvent, absenceType: val })}
-                                            options={ABSENCE_TYPES}
-                                            label="Nebuvimo tipas"
-                                            ariaLabel="Nebuvimo tipas"
-                                            alwaysSheet
-                                        />
-                                    </div>
-                                )}
 
 
                                 <div className="flex items-center justify-between gap-3 pt-4">
