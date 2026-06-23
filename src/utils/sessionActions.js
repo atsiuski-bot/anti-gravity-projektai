@@ -211,11 +211,16 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
 
         const session = { ...userData?.activeSession, ...sessionOverrides };
 
-        // Fallback for legacy states if no activeSession and no force override
+        // Fallback for legacy states if no activeSession and no force override.
+        // An orphan held ONLY in the per-type flags (break/call/quick-work, no activeSession) is
+        // closed here. endLegacySession now returns the SAME {type,creditedMinutes,rawMinutes,
+        // wasCapped} shape as the main path, so useOrphanedSessionRecovery can surface the
+        // recovered/clamped minutes for these legacy-flag-only sessions too — previously this
+        // branch returned undefined and the banner never showed for them.
         if (!userData?.activeSession && !sessionOverrides.force) {
-            if (userData?.breakState?.isTakingBreak) await endLegacySession(userId, 'break', userData);
-            else if (userData?.callState?.isCalling) await endLegacySession(userId, 'call', userData);
-            else if (userData?.quickWorkState?.isQuickWorking) await endLegacySession(userId, 'quickWork', userData);
+            if (userData?.breakState?.isTakingBreak) return await endLegacySession(userId, 'break', userData);
+            else if (userData?.callState?.isCalling) return await endLegacySession(userId, 'call', userData);
+            else if (userData?.quickWorkState?.isQuickWorking) return await endLegacySession(userId, 'quickWork', userData);
             return;
         }
 
@@ -223,6 +228,10 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
 
         const now = getLithuanianNow();
         const start = new Date(session.startTime);
+        // Raw (unclamped) delta, kept ONLY so the caller can tell whether the clamp below
+        // actually reduced the credited time — that drives the "16h cap fired" wording in the
+        // crash-recovery notice. Never logged or accumulated.
+        const rawMinutes = (now - start) / (1000 * 60);
         // Sanitize through the shared clamp before this value is logged AND accumulated
         // into breakState.dailyAccumulatedMinutes: a backward device clock would otherwise
         // write a NEGATIVE duration into the permanent work_sessions/sessions log and
@@ -389,6 +398,16 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
             }
         }
 
+        // Surface the credited duration + whether the clamp reduced it, so the crash-recovery
+        // hook can show an accurate "timer recovered" notice. `wasCapped` ignores sub-minute
+        // float noise so only a genuine overflow (the 16h ceiling) reads as capped. The session
+        // type rides along so the notice can name what was recovered.
+        return {
+            type: session.type || null,
+            creditedMinutes: durationMinutes,
+            rawMinutes,
+            wasCapped: rawMinutes - durationMinutes > 1,
+        };
     } catch (err) {
         // endSession swallowed its failure (no rethrow) and never logged it, so a failed
         // critical user-doc update left the session in limbo with no durable trace. Record it.
@@ -396,7 +415,14 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
     }
 };
 
-// Helper: End legacy session types if we drift out of sync
+// Helper: End legacy session types if we drift out of sync.
+//
+// Returns the SAME {type, creditedMinutes, rawMinutes, wasCapped} shape as the main endSession
+// path so the orphan-recovery hook can surface the recovered/clamped minutes for a session held
+// ONLY in the per-type flags (no activeSession). `rawMinutes` is the unclamped wall-clock delta,
+// kept solely so the caller can tell whether the 16h clamp actually cut the credited time down —
+// it is never logged or accumulated. A missing/invalid startTime credits nothing (a clean,
+// uncapped zero), matching how the main path treats a sub-minute or backward-clock orphan.
 const endLegacySession = async (userId, type, userData) => {
     try {
         // Construct a fake session object to pass to legacy logger
@@ -406,12 +432,15 @@ const endLegacySession = async (userId, type, userData) => {
         else if (type === 'quickWork') startTime = userData.quickWorkState?.lastStartedAt;
 
         let duration = 0;
+        let rawMinutes = 0;
         const nowMoment = getLithuanianNow();
         let now = nowMoment;
 
         if (startTime) {
             const fakeSession = { type, startTime };
             now = getLithuanianNow(); // Update now
+            // Raw (unclamped) delta first, so we can report whether the clamp below reduced it.
+            rawMinutes = (now - new Date(startTime)) / (1000 * 60);
             duration = clampSessionMinutes((now - new Date(startTime)) / (1000 * 60));
 
             // Log session (safely)
@@ -440,6 +469,15 @@ const endLegacySession = async (userId, type, userData) => {
             await updateDoc(userRef, updates);
         }
 
+        // Mirror the main endSession return contract so the recovery hook can stamp the notice
+        // for a legacy-flag-only orphan. `wasCapped` ignores sub-minute float noise so only a
+        // genuine 16h-ceiling overflow reads as capped.
+        return {
+            type,
+            creditedMinutes: duration,
+            rawMinutes,
+            wasCapped: rawMinutes - duration > 1,
+        };
     } catch (err) {
         console.error("Error in endLegacySession:", err);
     }

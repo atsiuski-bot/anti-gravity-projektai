@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { endSession } from '../utils/sessionActions';
+import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 
 // Captured once when the app/tab boots. A secondary session (break / call / quick-work) whose
@@ -64,8 +65,25 @@ export function useOrphanedSessionRecovery(currentUser) {
 
         handledRef.current = true;
 
-        endSession(currentUser.uid, userData, {}, true).catch((e) =>
-            logError(e, { source: 'orphanRecovery:endSession', userId: currentUser.uid, sessionType: session.type })
-        );
+        const uid = currentUser.uid;
+        endSession(uid, userData, {}, true)
+            .then((result) => {
+                // Stamp a one-time notice so the worker is told their forgotten timer was
+                // auto-closed and HOW MUCH was credited — recovery was previously silent, which
+                // is exactly why a capped/recovered session later read as "unexplained hours".
+                // Only worth surfacing if real time was actually credited; a sub-minute or
+                // backward-clock orphan (creditedMinutes ~ 0) closes invisibly, as before.
+                if (result && result.creditedMinutes > 0) {
+                    addRecoveryNotice(uid, {
+                        kind: 'session',
+                        sessionType: session.type,
+                        minutes: result.creditedMinutes,
+                        wasCapped: !!result.wasCapped,
+                    });
+                }
+            })
+            .catch((e) =>
+                logError(e, { source: 'orphanRecovery:endSession', userId: uid, sessionType: session.type })
+            );
     }, [currentUser, userData]);
 }
