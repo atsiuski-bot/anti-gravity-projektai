@@ -759,7 +759,10 @@ export default function WorkPlanner() {
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
                         // Vacation = calm indigo "free" state (brand, not a session colour);
                         // work events keep the calendar's own (blue) fill, so white text reads.
-                        isVacation ? 'bg-brand-soft text-brand-hover' : 'text-white'
+                        // text-brand (not -hover) so the dark-theme foreground-decoupling in
+                        // index.css lightens it to indigo-300 — indigo-700 was illegible on the
+                        // dark indigo-950 brand-soft wash. Light theme keeps indigo-600 on indigo-50.
+                        isVacation ? 'bg-brand-soft text-brand' : 'text-white'
                     )}
                 >
                     <span className="text-caption font-mono font-semibold tabular-nums">

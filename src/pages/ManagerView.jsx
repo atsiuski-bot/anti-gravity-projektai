@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Filter, Search, X, Activity, ListChecks } from 'lucide-react';
+import { ArrowUpDown, Filter, X, Activity, ListChecks } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -10,6 +10,7 @@ import DailyWorkProgress from '../components/DailyWorkProgress';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
+import SearchBox from '../components/ui/SearchBox';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -55,6 +56,7 @@ export default function ManagerView() {
         filterPriority, setFilterPriority,
         filterTag, setFilterTag,
         searchText, setSearchText,
+        searchSuggestions,
         sortBy, setSortBy
     } = useTaskFiltering(tasks, manualTaskOrder);
 
@@ -235,17 +237,14 @@ export default function ManagerView() {
                     // everything collapses to one inline row with sort pushed to the right.
                     return (
                         <div className="grid grid-cols-2 gap-2 mb-4 lg:flex lg:flex-wrap lg:items-center lg:gap-3">
-                            <div className="relative col-span-2 lg:col-auto lg:w-64">
-                                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                                <input
-                                    type="search"
-                                    value={searchText}
-                                    onChange={(e) => setSearchText(e.target.value)}
-                                    placeholder="Ieškoti užduočių…"
-                                    aria-label="Ieškoti užduočių"
-                                    className="w-full pl-10 pr-4 py-2.5 min-h-touch border border-line rounded-input text-body text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                                />
-                            </div>
+                            <SearchBox
+                                value={searchText}
+                                onChange={setSearchText}
+                                suggestions={searchSuggestions}
+                                placeholder="Ieškoti užduočių…"
+                                ariaLabel="Ieškoti užduočių"
+                                className="col-span-2 lg:col-auto lg:w-64"
+                            />
                             <Select
                                 value={filterUser}
                                 onChange={setFilterUser}

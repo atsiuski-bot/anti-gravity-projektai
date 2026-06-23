@@ -175,6 +175,66 @@
 }
 
 /* =====================================================================
+   Calendar theming (ADR 0008). react-big-calendar ships a hard-coded
+   LIGHT stylesheet: its grid hairlines (#ddd), the pale-blue "today"
+   column (#eaf6ff), the half-hour ticks (#f7f7f7), the green now-line
+   (#74ad31) and the show-more popup all ignore our data-theme palette
+   swap — so in dark mode they punch light cells through the dark canvas
+   (and the bright today column even hid the near-white header text on
+   top of it). Re-express the grid in our variable-backed tokens so it
+   tracks the theme; ONE block is then correct in BOTH themes. (Month /
+   agenda / resource views aren't used here — only week + day.)
+   ===================================================================== */
+
+/* Every divider rbc draws inside the time grid is the same literal #ddd.
+   Recolor the whole subtree to the themed hairline at once — border-color
+   is inert on the many zero-width edges, so this can't miss a selector and
+   can't add a line. */
+.rbc-time-view,
+.rbc-time-view * {
+  border-color: rgb(var(--line));
+}
+
+/* Preserve the vendor's hierarchy: the half-hour ticks stay fainter than
+   the solid hour lines (vendor used a near-white #f7f7f7 for exactly this). */
+.rbc-day-slot .rbc-time-slot {
+  border-top-color: rgb(var(--line) / 0.45);
+}
+
+/* "Today" column — a calm brand wash instead of the bright #eaf6ff, a touch
+   stronger in dark so it still reads as "now" against the deep canvas while
+   keeping the white header label legible on top of it. */
+.rbc-today {
+  background-color: rgb(var(--brand) / 0.06);
+}
+[data-theme="dark"] .rbc-today {
+  background-color: rgb(var(--brand) / 0.16);
+}
+
+/* Now-line: themed brand accent (2px for presence) replacing the vendor green. */
+.rbc-current-time-indicator {
+  background-color: rgb(var(--brand));
+  height: 2px;
+}
+
+/* Show-more ("+ Dar N") popup → themed card surface + legible brand link. */
+.rbc-overlay {
+  background-color: rgb(var(--surface-card));
+  border-color: rgb(var(--line));
+  color: rgb(var(--ink));
+}
+.rbc-overlay-header {
+  border-bottom-color: rgb(var(--line));
+}
+.rbc-show-more {
+  background-color: transparent;
+  color: rgb(var(--brand));
+}
+[data-theme="dark"] .rbc-show-more {
+  color: rgb(var(--brand-ring));
+}
+
+/* =====================================================================
    Motion system — subtle, purposeful animation (DESIGN_SYSTEM §7).
    Implemented locally (no animation dependency) so the timings track the
    motion tokens and stay under our control. EVERY animation defined here
