@@ -138,9 +138,19 @@ raised 15 findings; **7 were confirmed and fixed**, 8 dismissed as out-of-scope/
    `TaskModal`'s create branch calls it instead of an inline `addDoc` — killing the dual-create drift
    the analysis flagged. The kernel result gained `targetId` for a clean new-id accessor. Verified
    live in prod (real auth): the created doc is field-equivalent to the prior path and a matching
-   `createTask` decision entry (before: null) is written. STILL TODO: complete/approve, reprioritize,
-   reschedule, reopen, and routing the EDIT path through one command (which retires increment 2's
-   non-atomic split).
+   `createTask` decision entry (before: null) is written.
+   **`completeTask` + `reopenTask` DONE (increment 4, same worktree):** task completion and reopen are
+   now audited lifecycle transitions. `completeTask` applies the manager auto-confirm (a manager / the
+   task's own manager → `confirmed`, else `completed`); `reopenTask` resets completion + confirmation +
+   soft-delete flags back to `pending`. The existing utils delegate to them — `toggleTaskCompletion`
+   (the running timer is still paused in the util first, so the command needn't import the timer code
+   and cycle) and `revertTask` (now carrying the acting user for attribution); the dead one-way
+   `completeTask` util + `sanitizeTaskData` were removed. Adversarial review clean (0 confirmed of 4
+   raised — the only deltas, e.g. a reopened zero-time task's `timerStatus` going `paused`→`null`, were
+   judged benign). Verified live in prod: a full create→complete→reopen cycle leaves the task `pending`
+   and writes the three matching decision entries (the lifecycle's "how it got here" trail).
+   STILL TODO: approve (unapproved→approved), reprioritize, reschedule, extend-time, delete, and routing
+   the EDIT path through one command (which retires increment 2's non-atomic split).
 3. **Formalize the task lifecycle as an explicit state machine** enforced by the commands.
 4. **Promote perception (E):** make `workerStats`/`reportAggregate` callable server-side so an agent
    can read "decision context" without a browser.

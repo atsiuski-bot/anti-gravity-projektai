@@ -114,7 +114,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
     const performRevert = async () => {
         try {
-            await revertTask(task);
+            await revertTask(task, currentUser);
             setConfirmRevert(false);
         } catch (err) {
             console.error('Error reverting task:', err);
