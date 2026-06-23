@@ -11,7 +11,7 @@ import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
 import { deleteTask } from '../utils/taskActions';
-import { approveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
+import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
@@ -314,13 +314,10 @@ export default function ManagerNotifications({ onClose }) {
             },
             deferredEffect: () => notifyTaskApproved(notif),
             undo: async () => {
-                await updateDoc(doc(db, 'tasks', taskId), {
-                    status: prior.status ?? 'pending',
-                    isApproved: prior.isApproved,
-                    approvedAt: null,
-                    approvedBy: null,
-                    updatedAt: new Date().toISOString(),
-                });
+                await unapproveTask(
+                    { task: { id: taskId, title: notif.taskTitle }, priorStatus: prior.status, priorIsApproved: prior.isApproved },
+                    { actor, mode: MODES.COMMIT, reason: 'approval undone from notification' },
+                );
                 await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
             },
             message: 'Užduotis patvirtinta.',

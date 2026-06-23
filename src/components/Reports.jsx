@@ -1001,7 +1001,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 activeTab === 'calendar-history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                             )}
                         >
-                            Kalendoriaus pakeitimų istorija
+                            Kalendoriaus istorija
                         </button>
                     </div>
                 </div>
@@ -1036,7 +1036,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         icon+label on desktop) and appears only for a multi-day range (day mode
                         has no export). The button reveals the range ladder (week → month →
                         3 months → year) and a custom date picker. */}
-                    <div className="flex items-start gap-2">
+                    <div className="flex items-stretch gap-2">
                         <div className="flex-1 min-w-0">
                         <PeriodPicker
                             presets={PERIOD_PRESETS}

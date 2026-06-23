@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { Clock, Calendar, Trash2, ArrowUp, ArrowDown, Undo2, Edit, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
-import { approveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
+import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { isManagerRole } from '../utils/formatters';
 import Button from './ui/Button';
@@ -118,13 +116,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
         return runUndoable({
             run: () => approveTask({ task }, { actor, mode: MODES.COMMIT, reason: 'approved from task card' }),
-            undo: () => updateDoc(doc(db, 'tasks', task.id), {
-                status: prior.status ?? 'pending',
-                isApproved: prior.isApproved,
-                approvedAt: null,
-                approvedBy: null,
-                updatedAt: new Date().toISOString(),
-            }),
+            undo: () => unapproveTask({ task, priorStatus: prior.status, priorIsApproved: prior.isApproved }, { actor, mode: MODES.COMMIT, reason: 'approval undone from task card' }),
             message: 'Užduotis patvirtinta.',
             undoneMessage: 'Atšaukta — patvirtinimas atšauktas.',
             errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite dar kartą.',
