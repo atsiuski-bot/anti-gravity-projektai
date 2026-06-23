@@ -261,7 +261,7 @@ export default function TaskDetailModal({
                             )}
                             {showManagerLine && managerName && !samePerson && (
                                 <span className="inline-flex items-center gap-1.5 text-caption text-ink-muted">
-                                    Vadovas:
+                                    Vad.
                                     <UserChip userId={managerId} name={managerName} className="font-medium text-feedback-info-text" />
                                 </span>
                             )}

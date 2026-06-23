@@ -393,7 +393,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     const canManage = isManagerRole(userRole);
     const canDelete = canManage || !isWorker;
 
-    // "Vadovas: X" repeats on every row when a list belongs to a single manager — pure noise.
+    // "Vad. X" repeats on every row when a list belongs to a single manager — pure noise.
     // Show it only when the list actually mixes managers (then it disambiguates); otherwise it
     // lives in the detail sheet. This is what kills the most-repeated cell in the screenshot.
     const showManagerLine = new Set(
@@ -459,7 +459,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </div>
                                     {(task.managerName || task.creatorName) && (
                                         <div className="text-caption text-feedback-info-text font-medium mt-0.5">
-                                            Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
+                                            Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
                                         </div>
                                     )}
                                 </div>
@@ -671,13 +671,14 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.priority)}>
                                 {gc ? <HeaderCell label="Prior." sortMode={sortCols.priority} sort={gc.sort} filter={filters.priority} filterLabel="Filtruoti pagal prioritetą" /> : 'Prior.'}
                             </th>
-                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">
-                                {gc ? <HeaderCell label="Žymos" filter={filters.tag} filterLabel="Filtruoti pagal žymą" /> : 'Žymos'}
-                            </th>
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" aria-sort={ariaSortFor(sortCols.status)}>
                                 {gc ? <HeaderCell label="Būsena" sortMode={sortCols.status} sort={gc.sort} /> : 'Būsena'}
                             </th>
                             <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" title="Sugaišta / numatyta">Laikas</th>
+                            {/* Žymos sits as far right as possible — directly before the actions block. */}
+                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">
+                                {gc ? <HeaderCell label="Žymos" filter={filters.tag} filterLabel="Filtruoti pagal žymą" /> : 'Žymos'}
+                            </th>
                             <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-44">Veik.</th>
                         </tr>
                     </thead>
@@ -789,7 +790,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 )}
                                                 {showManagerLine && (task.managerName || task.creatorName) && (
                                                     <span className="inline-flex items-center font-medium text-feedback-info-text">
-                                                        Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} className="ml-1" />
+                                                        Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} className="ml-1" />
                                                     </span>
                                                 )}
                                             </div>
@@ -803,13 +804,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </td>
                                     <td className="px-1 py-3 align-top whitespace-nowrap">
                                         <PriorityBadge priority={task.priority} />
-                                    </td>
-                                    <td className="px-1 py-3 align-top">
-                                        {task.tag && (
-                                            <span className="inline-flex items-center rounded-md border border-feedback-info-border bg-feedback-info-soft px-1.5 py-0.5 text-caption font-semibold text-feedback-info-text">
-                                                {task.tag}
-                                            </span>
-                                        )}
                                     </td>
                                     <td className="px-1 py-3 align-top whitespace-nowrap">
                                         <TaskStatusPill task={task} isRunning={isTaskRunning(task)} doneIcon />
@@ -828,6 +822,14 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     <div className="text-ink-muted">{showSpent ? `/ ${task.estimatedTime}` : task.estimatedTime}</div>
                                                 )}
                                             </div>
+                                        )}
+                                    </td>
+                                    {/* Žymos — moved to the far right, directly before the actions cell. */}
+                                    <td className="px-1 py-3 align-top">
+                                        {task.tag && (
+                                            <span className="inline-flex items-center rounded-md border border-feedback-info-border bg-feedback-info-soft px-1.5 py-0.5 text-caption font-semibold text-feedback-info-text">
+                                                {task.tag}
+                                            </span>
                                         )}
                                     </td>
                                     {/* Veik. — only the contextual confirm/approve (shown when there is something
