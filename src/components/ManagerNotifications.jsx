@@ -8,7 +8,7 @@ import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCirc
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
-import { deleteTask } from '../utils/taskActions';
+import { deleteTask, extendTaskTime } from '../utils/taskActions';
 import { approveTask, humanActor, MODES } from '../domain';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
@@ -44,6 +44,7 @@ export default function ManagerNotifications({ onClose }) {
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
     const [bulkConfirming, setBulkConfirming] = useState(false); // batch "approve all completions" in flight
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
+    const [grantingExt, setGrantingExt] = useState(null); // notif.id of an in-flight one-tap time grant
     const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
 
 
@@ -311,6 +312,34 @@ export default function ManagerNotifications({ onClose }) {
     const handleDismissExtension = async (notif) => {
         await handleDismissTask(notif.id);
         await notify({ recipientId: notif.userId, type: 'extension_denied', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+    };
+
+    // One-tap grant: extend the task's estimate by a fixed amount, tell the worker (the same
+    // extension_granted notice the "Redaguoti užduotį" path produces), then dismiss the request.
+    // Collapses the ~6-step edit-modal round-trip into a single tap for the common case (a small,
+    // standard bump); "Redaguoti užduotį" stays as the escape hatch for a precise custom amount.
+    const handleGrantExtension = async (notif, additionalTimeString) => {
+        const taskId = notif?.taskId;
+        if (!taskId || grantingExt) return;
+        setGrantingExt(notif.id);
+        setActionError(null);
+        try {
+            await extendTaskTime(taskId, additionalTimeString, currentUser.uid);
+            await notify({
+                recipientId: notif.userId,
+                type: 'extension_granted',
+                taskId,
+                taskTitle: notif.taskTitle,
+                actorUid: currentUser.uid,
+                actorName: currentUser.displayName || currentUser.email,
+            });
+            await handleDismissTask(notif.id);
+        } catch (err) {
+            console.error('Error granting time extension:', err);
+            setActionError('Nepavyko pratęsti laiko. Bandykite dar kartą.');
+        } finally {
+            setGrantingExt(null);
+        }
     };
 
     // Batch-confirm every pending task completion in one action. Each completion is a simple,
@@ -806,6 +835,34 @@ export default function ManagerNotifications({ onClose }) {
                                     </div>
                                 </div>
 
+                                {/* Quick-grant chips — one tap extends the estimate and tells the worker,
+                                    instead of the multi-step edit-modal round-trip. The success-toned icon
+                                    pairs the meaning with shape, so color is never the sole signal. */}
+                                <div className="flex items-center gap-2 flex-wrap mt-3">
+                                    <Button
+                                        variant="success"
+                                        size="md"
+                                        icon={TimeGrantedGlyph}
+                                        className="whitespace-nowrap"
+                                        loading={grantingExt === notif.id}
+                                        disabled={!!grantingExt}
+                                        onClick={() => handleGrantExtension(notif, '30min')}
+                                    >
+                                        Pratęsti +30 min
+                                    </Button>
+                                    <Button
+                                        variant="success"
+                                        size="md"
+                                        icon={TimeGrantedGlyph}
+                                        className="whitespace-nowrap"
+                                        loading={grantingExt === notif.id}
+                                        disabled={!!grantingExt}
+                                        onClick={() => handleGrantExtension(notif, '1h')}
+                                    >
+                                        Pratęsti +1 val.
+                                    </Button>
+                                </div>
+
                                 {/* Action Buttons */}
                                 <div className="flex items-center justify-end mt-4 mb-1 gap-3 flex-wrap">
                                     {/* Do Not Extend */}
@@ -814,17 +871,19 @@ export default function ManagerNotifications({ onClose }) {
                                         size="md"
                                         icon={X}
                                         className="whitespace-nowrap"
+                                        disabled={!!grantingExt}
                                         onClick={() => handleDismissExtension(notif)}
                                     >
                                         Nepratęsti
                                     </Button>
 
-                                    {/* Edit Task To Extend */}
+                                    {/* Edit Task To Extend — escape hatch for a precise custom amount. */}
                                     <Button
                                         variant="primary"
                                         size="md"
                                         icon={Edit}
                                         className="whitespace-nowrap"
+                                        disabled={!!grantingExt}
                                         onClick={async () => {
                                             // Dismiss the request, then open the task so the manager can extend the
                                             // estimate (saving a longer time fires the worker's extension_granted notice).
