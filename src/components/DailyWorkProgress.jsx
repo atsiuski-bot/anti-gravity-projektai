@@ -212,7 +212,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
         return 'Pradėk dieną — pirmas žingsnis svarbiausias';
     };
 
-    const renderGoal = (label, current, total, opts) => {
+    const renderGoal = (label, current, total, breakHours, opts) => {
         const { Icon, fillClass, ringClass } = opts;
         // When no shift hours are planned (total === 0) there is no goal to measure against, so a
         // "X / 0h 0m" bar reads as a broken tracker. Show a distinct, friendly "plan your hours"
@@ -222,6 +222,11 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
         const reached = hasPlan && percent >= 100;
         const remaining = Math.max(total - current, 0);
         const live = currentSessionHours > 0 && label.includes('Dienos');
+        // Worked fill width (clamped + a 4% floor so a sliver of progress is visible). Breaks are
+        // NEVER folded into the goal numerator — they ride the bar as a separate amber segment
+        // stacked right after the worked fill, mirroring the team weekly-hours chart.
+        const workedPct = Math.max(Math.min(percent, 100), current > 0 ? 4 : 0);
+        const breakPct = hasPlan ? (breakHours / total) * 100 : 0;
 
         return (
             <div className={cn(
@@ -259,7 +264,11 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                             </span>
                             {hasPlan && (
                                 <span className="shrink-0 font-medium tabular-nums text-ink-muted">
-                                    {formatTime(current)}<span className="text-ink-muted/70"> / {formatTime(total)}</span>
+                                    {formatTime(current)}
+                                    {breakHours > 0 && (
+                                        <span className="text-session-break-accent"> +{formatTime(breakHours)}</span>
+                                    )}
+                                    <span className="text-ink-muted/70"> / {formatTime(total)}</span>
                                     {live && <span className="ml-1 text-session-task-accent">•vyksta</span>}
                                 </span>
                             )}
@@ -274,13 +283,23 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                                 'h-full rounded-full transition-all duration-700 ease-out',
                                 reached ? 'bg-feedback-success' : fillClass
                             )}
-                            style={{ width: `${Math.max(Math.min(percent, 100), current > 0 ? 4 : 0)}%` }}
+                            style={{ width: `${workedPct}%` }}
                             role="progressbar"
                             aria-valuenow={Math.round(percent)}
                             aria-valuemin={0}
                             aria-valuemax={100}
                             aria-label={`${label}: ${Math.round(percent)}%`}
                         />
+                        {/* Break segment — stacked right after the worked fill, clipped by the
+                            pill's overflow-hidden. Amber, never green: it is time off-task, shown
+                            for context but explicitly outside the goal measurement. */}
+                        {breakHours > 0 && (
+                            <div
+                                className="absolute top-0 h-full bg-session-break-accent transition-all duration-700 ease-out"
+                                style={{ left: `${Math.min(workedPct, 100)}%`, width: `${breakPct}%` }}
+                                aria-hidden="true"
+                            />
+                        )}
                     </div>
                 ) : (
                     <p className="mt-1.5 text-caption text-ink-muted">
@@ -302,6 +321,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                     "Dienos tikslas",
                     totalDayWorked,
                     dayPlanned,
+                    dayBreakHours,
                     { Icon: Sun, fillClass: 'bg-brand', ringClass: 'bg-brand-soft text-brand' }
                 )}
 
@@ -310,19 +330,10 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                     "Savaitės tikslas",
                     totalWeekWorked,
                     weekPlanned,
+                    weekBreakHours,
                     { Icon: CalendarDays, fillClass: 'bg-session-task-accent', ringClass: 'bg-session-task-surface text-session-task-accent' }
                 )}
             </div>
-
-            {/* Breaks — shown separately and explicitly NOT counted toward the goal above. */}
-            {(dayBreakHours > 0 || weekBreakHours > 0) && (
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-1 border-t border-line pt-3 text-xs text-ink-muted">
-                    <span>Pertraukos (neįskaičiuotos į tikslą)</span>
-                    <span className="font-medium text-ink">
-                        Šiandien {formatTime(dayBreakHours)} · Savaitę {formatTime(weekBreakHours)}
-                    </span>
-                </div>
-            )}
         </div>
     );
 }

@@ -169,5 +169,21 @@ State plainly:
 - **No Firestore/Storage rules deploy.** `firestore.rules` / `storage.rules` ship via a
   separate, human-run `firebase deploy --only firestore:rules` (see the deploy runbook and
   CLAUDE.md) — a code push to main does not deploy rules.
+- **No composite-index deploy.** `firestore.indexes.json` is **not** shipped by a code push.
+  If this change added a compound query (`where`+`orderBy`, two `where`, or `collectionGroup`)
+  that needs a new index, the index must be deployed separately
+  (`firebase deploy --only firestore:indexes`, human-run) **before** the query runs in prod —
+  otherwise it fails at runtime with `FAILED_PRECONDITION` even though the code shipped clean.
+- **No Cloud Functions deploy.** The `functions/` subtree (callables `parseTaskDraft`,
+  `runRecurringTasksNow`, FCM senders, Storage cleanup) deploys via a separate, human-run
+  `firebase deploy --only functions` — a code push to main runs only the **client** on
+  Cloudflare; an undeployed functions change leaves stale code in prod. Verify the live runtime
+  via the Firebase MCP, not the deploy log.
 - **No silent test skip.** The test gate (step 5) is part of the gate now; if the runner is
   unavailable it STOPs with remediation rather than pushing untested ([ADR 0013](../../docs/adr/0013-test-gate-for-time-credit.md)).
+
+> **Before `/ship`, consider `/debug`.** `/ship` is a fail-fast lint+build+test gate on the
+> *code*; it does not reason about **blast radius** — a new index/callable/rule the push
+> won't deploy, a rules-field the write will be rejected for, a session-color or design-system
+> regression. `/debug` is the diff-scoped change-impact sweep that surfaces exactly those
+> deploy-coupling gaps before they reach prod. Run `/debug`, clear the 🔴s, then `/ship`.

@@ -109,7 +109,14 @@ export default function Layout({ children }) {
             <div className={cn(isDesktop && 'flex items-start')}>
                 {isDesktop && <SideRail />}
 
-                <div className={cn('min-w-0', isDesktop && 'flex-1')}>
+                {/* Clear the landscape notch in the installed PWA: viewport-fit=cover makes the side
+                    safe-area insets real. Padding the CONTENT wrapper (not the session-shell root)
+                    keeps the bold whole-screen shell colour bleeding edge-to-edge while the header +
+                    main content stay clear of the notch. env() = 0 in portrait/desktop → no-op there. */}
+                <div
+                    className={cn('min-w-0', isDesktop && 'flex-1')}
+                    style={{ paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}
+                >
                     {/* Calm top bar: active-session pill + notification bell + profile avatar.
                         Replaces the old floating avatar bubble AND the full-width session strip —
                         the pill still pairs the session colour with a label+icon (DESIGN_SYSTEM

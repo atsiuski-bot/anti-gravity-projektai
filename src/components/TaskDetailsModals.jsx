@@ -5,6 +5,7 @@ import { getCommentKey } from '../utils/commentActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
+import ConfirmDialog from './ui/ConfirmDialog';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
@@ -216,6 +217,8 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
 export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, onToggle, onAdd, onDelete }) {
     const [newItem, setNewItem] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    // Removing a checklist item writes through to Firestore, so it is gated behind a confirm.
+    const [pendingDelete, setPendingDelete] = useState(null);
 
     const items = Array.isArray(checklist) ? checklist : [];
     const { total, done } = getChecklistProgress(items);
@@ -289,7 +292,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                                         icon={Trash2}
                                         label="Ištrinti punktą"
                                         variant="danger"
-                                        onClick={() => onDelete?.(item.id)}
+                                        onClick={() => setPendingDelete(item)}
                                     />
                                 )}
                             </li>
@@ -313,6 +316,17 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                     </form>
                 )}
             </div>
+
+            <ConfirmDialog
+                open={!!pendingDelete}
+                onConfirm={() => { onDelete?.(pendingDelete.id); setPendingDelete(null); }}
+                onCancel={() => setPendingDelete(null)}
+                title="Ištrinti punktą"
+                message={pendingDelete ? `Ar tikrai norite ištrinti punktą „${pendingDelete.text}“?` : ''}
+                confirmLabel="Ištrinti"
+                cancelLabel="Atšaukti"
+                variant="danger"
+            />
         </DetailsModal>
     );
 }
@@ -484,7 +498,10 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                     type="button"
                     onClick={onClose}
                     aria-label="Uždaryti"
-                    className="absolute top-4 right-4 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    // Inset by the safe area so the close control never hides under the notch /
+                    // status bar in the edge-to-edge (viewport-fit=cover) standalone viewer.
+                    style={{ top: 'calc(env(safe-area-inset-top) + 1rem)', right: 'calc(env(safe-area-inset-right) + 1rem)' }}
+                    className="absolute inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                 >
                     <X className="w-8 h-8" aria-hidden="true" />
                 </button>
@@ -495,7 +512,8 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                     onClick={(e) => { e.stopPropagation(); setZoom((z) => (z > 1 ? 1 : 3.5)); }}
                     aria-label={zoom > 1 ? 'Sumažinti nuotrauką' : 'Padidinti nuotrauką'}
                     aria-pressed={zoom > 1}
-                    className="absolute top-4 left-4 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    style={{ top: 'calc(env(safe-area-inset-top) + 1rem)', left: 'calc(env(safe-area-inset-left) + 1rem)' }}
+                    className="absolute inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                 >
                     {zoom > 1 ? <ZoomOut className="w-7 h-7" aria-hidden="true" /> : <ZoomIn className="w-7 h-7" aria-hidden="true" />}
                 </button>
@@ -535,7 +553,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                 >
                     <img
                         src={imageUrls[validIndex]}
-                        alt={`Attachment ${validIndex + 1}`}
+                        alt={`Priedas ${validIndex + 1}`}
                         style={{
                             width: zoom > 1 ? '350%' : 'auto',
                             maxWidth: zoom > 1 ? 'none' : '100%',
@@ -545,7 +563,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                             pointerEvents: 'auto', // Allow native touch interactions
                             cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'
                         }}
-                        className={`rounded shadow-2xl selectable-none select-none m-auto ${zoom <= 1 ? 'max-w-full max-h-[90vh]' : ''}`}
+                        className={`rounded shadow-xl selectable-none select-none m-auto ${zoom <= 1 ? 'max-w-full max-h-[90vh]' : ''}`}
                         onClick={(e) => {
                             // Verify clicking image toggles zoom
                             if (!isDragging) {
@@ -557,7 +575,12 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                 </div>
 
                 {imageUrls.length > 1 && (
-                    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-white bg-black/50 px-3 py-1 rounded-full text-sm z-top">
+                    // Inset by the bottom safe area so the counter clears the iOS home indicator in
+                    // the edge-to-edge (viewport-fit=cover) viewer — mirrors the close/zoom buttons.
+                    <div
+                        style={{ bottom: 'calc(env(safe-area-inset-bottom) + 1rem)' }}
+                        className="absolute left-1/2 -translate-x-1/2 text-white bg-black/50 px-3 py-1 rounded-full text-sm z-top"
+                    >
                         {validIndex + 1} / {imageUrls.length}
                     </div>
                 )}

@@ -173,6 +173,29 @@ service cloud.firestore {
              data.get('end', '') is string;
     }
 
+    // A task's priority (if present) must be one of the canonical UPPERCASE tokens, and
+    // estimatedTimeMinutes (if present) a non-negative number within a sane ceiling (1000h). Mirrors
+    // the write-path canonicalization (priority.js / timeUtils) so a future code path cannot
+    // re-introduce the priority casing split or a string-typed numeric estimate. Permissive: an
+    // ABSENT field passes, so quick-work's minimal shape and legacy rows are never blocked. Applied
+    // to /tasks only (NOT /archived_tasks — the client archives legacy rows verbatim).
+    function taskFieldsOk(data) {
+      return (!('priority' in data) ||
+              data.priority in ['URGENT', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW']) &&
+             (!('estimatedTimeMinutes' in data) ||
+              (data.estimatedTimeMinutes is number &&
+               data.estimatedTimeMinutes >= 0 &&
+               data.estimatedTimeMinutes <= 60000));
+    }
+    // On UPDATE, enforce only when this write CHANGES priority/estimate — so a status/timer/title
+    // edit that leaves them untouched, AND the remediation of an already-non-canonical legacy row,
+    // both pass. (The app's edit path rewrites priority canonically on every save anyway.)
+    function taskFieldsOkForUpdate() {
+      return (request.resource.data.get('priority', '') == resource.data.get('priority', '') &&
+              request.resource.data.get('estimatedTimeMinutes', 0) == resource.data.get('estimatedTimeMinutes', 0))
+             || taskFieldsOk(request.resource.data);
+    }
+
     // ---- USERS --------------------------------------------------------------
     match /users/{userId} {
       // Read OWN doc unconditionally (first-login bootstrap before the doc has an
@@ -235,15 +258,16 @@ service cloud.firestore {
       // Create: a worker self-assigns (covers normal create + call/quick-work auto-logs);
       // whole-team viewers may assign to anyone; a scoped overseer may assign ONLY within their
       // subtree (overseesUser checks the assignee's closure — also covers RESTORE of a team task).
-      allow create: if isUserActive() && (
+      allow create: if isUserActive() && taskFieldsOk(request.resource.data) && (
                       request.resource.data.assignedUserId == request.auth.uid ||
                       canSeeWholeTeam() ||
                       (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
                     );
       // Update: whole-team viewers edit any; a scoped manager edits their team's tasks and may
       // only reassign within their team; the assignee edits their own but may NOT flip the
-      // manager-only approval fields.
-      allow update: if isUserActive() && (
+      // manager-only approval fields. taskFieldsOkForUpdate adds the priority/estimate shape guard
+      // (enforced only when this write changes those fields).
+      allow update: if isUserActive() && taskFieldsOkForUpdate() && (
                       canSeeWholeTeam() ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
@@ -473,6 +497,41 @@ service cloud.firestore {
     // Entries are immutable; only admins may clear them.
     match /error_logs/{logId} {
       allow create: if isAuthenticated();
+      allow read:   if isManagerOrAdmin();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
+    // ---- DECISION LOG (AI-native command audit / event spine) ---------------
+    // Append-only audit of every consequential command run through the command layer (ADR 0015):
+    // who decided (actorType/actorId/actorName), what command against which target, why, and a
+    // compact before/after. This is the seam that makes an action — human OR agent — attributable
+    // and reversible, and the surface an analysis agent reads to reconstruct events.
+    //
+    // CREATE: any active user may APPEND, but ONLY as a HUMAN acting as themselves — the doc must
+    //   stamp the caller's uid as `actorId` AND declare `actorType:'human'`. Pinning the TYPE (not
+    //   just the id) is what stops a human from LAUNDERING a decision as if an AI agent or system job
+    //   made it — the attribution boundary ADR 0015 exists to harden. A non-human commit (agent/
+    //   system) runs server-side via the admin SDK, which bypasses these rules and stamps its own
+    //   actorType. Minimal, permissive shape guards (the request_notifications idiom) keep the audit
+    //   spine from being poisoned by a malformed/oversized free-form entry; the appender's payload
+    //   passes them unchanged (a null `reason` is tolerated; an absent field defaults-passes).
+    // UPDATE: false — entries are IMMUTABLE. The doc id is the command's idempotency key, so a
+    //   retried command re-issues setDoc against the same id, which evaluates as an update and is
+    //   DENIED here; the client appender swallows that denial (best-effort), leaving the original
+    //   entry intact rather than duplicating it.
+    // READ: managers/admins, so the audit trail is visible in-app. DELETE: admin only (log hygiene).
+    match /decision_log/{opId} {
+      allow create: if isUserActive()
+                    && request.resource.data.get('actorId', '') == request.auth.uid
+                    && request.resource.data.get('actorType', '') == 'human'
+                    && request.resource.data.get('command', '') is string
+                    && request.resource.data.get('command', '').size() > 0
+                    && request.resource.data.get('mode', '') is string
+                    && (!('reason' in request.resource.data) ||
+                        request.resource.data.reason == null ||
+                        (request.resource.data.reason is string &&
+                         request.resource.data.reason.size() <= 2000));
       allow read:   if isManagerOrAdmin();
       allow update: if false;
       allow delete: if isAdmin();

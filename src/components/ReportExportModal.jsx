@@ -10,6 +10,7 @@ import { formatDisplayName } from '../utils/formatters';
 import { getLithuanianDateString, addDaysToDateString } from '../utils/timeUtils';
 import { gatherReportData, reportFilename } from '../utils/reportData';
 import { buildReport, renderReportMarkdown, renderReportJSON, renderTimesheetCSV } from '../utils/reportAggregate';
+import { downloadTextFile } from '../utils/download';
 
 // Calendar-style presets (familiar from the report tab). Each resolves a [start, end] ending today.
 const PERIOD_PRESETS = [
@@ -57,19 +58,13 @@ function detectPreset(range) {
 const FORMATS = [
     { id: 'md', label: 'Markdown — AI analizei', hint: 'Apskaičiuotos metrikos + Δ, paruošta įkelti į LLM', icon: FileText, recommended: true },
     { id: 'json', label: 'JSON — struktūrinis', hint: 'Tas pats objektas mašininiam apdorojimui', icon: Braces },
-    { id: 'csv', label: 'CSV — val./diena', hint: 'Timesheet: eilutė / darbuotoją-dieną skaičiuoklei', icon: Table2 },
+    { id: 'csv', label: 'CSV — val./diena', hint: 'Timesheet: eilutė / vykdytoją-dieną skaičiuoklei', icon: Table2 },
 ];
 
+// Thin wrapper over the shared, cross-browser-safe downloader (handles the iOS-standalone
+// navigate-away quirk and the Safari/Firefox revoke race — see src/utils/download.js).
 function triggerDownload(content, filename, mime) {
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadTextFile(content, filename, mime);
 }
 
 /**
@@ -177,7 +172,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
         setError('');
         const ids = candidates.filter((c) => selectedIds.has(c.id)).map((c) => c.id);
         if (!ids.length) {
-            setError('Pasirinkite bent vieną darbuotoją.');
+            setError('Pasirinkite bent vieną vykdytoją.');
             return;
         }
         if (range.start > range.end) {
@@ -200,8 +195,8 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                 ids.length === candidates.length
                     ? `Visi (${ids.length})`
                     : ids.length === 1
-                      ? workers[0]?.name || '1 darbuotojas'
-                      : `${ids.length} darbuotojai`;
+                      ? workers[0]?.name || '1 vykdytojas'
+                      : `${ids.length} vykdytojai`;
             let content;
             let mime;
             if (format === 'csv') {
@@ -323,7 +318,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                 {showPicker && (
                     <div>
                         <div className="mb-2 flex items-center justify-between">
-                            <p className={sectionLabel}>Darbuotojai</p>
+                            <p className={sectionLabel}>Vykdytojai</p>
                             <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-caption font-bold text-brand">
                                 {selectedCount} pasirinkti
                             </span>
@@ -334,8 +329,8 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                 type="text"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                placeholder="Ieškoti darbuotojo…"
-                                aria-label="Ieškoti darbuotojo"
+                                placeholder="Ieškoti vykdytojo…"
+                                aria-label="Ieškoti vykdytojo"
                                 className="w-full bg-transparent py-2 text-body text-ink placeholder:text-ink-muted focus:outline-none"
                             />
                         </div>
@@ -345,7 +340,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                     type="checkbox"
                                     checked={allVisibleSelected}
                                     onChange={toggleAllVisible}
-                                    aria-label="Pažymėti visus matomus darbuotojus"
+                                    aria-label="Pažymėti visus matomus vykdytojus"
                                     className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                 />
                                 <span className="text-body font-semibold text-ink">Visi (matomi)</span>

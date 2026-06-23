@@ -52,6 +52,7 @@ export function InlineEditModal({ isOpen, onClose, task, field, label }) {
         <Modal
             open={isOpen}
             onClose={onClose}
+            closeOnBackdrop={false}
             title={label}
             size="md"
             footer={

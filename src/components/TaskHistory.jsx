@@ -11,6 +11,7 @@ import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
+import { downloadTextFile } from '../utils/download';
 import { DeleteConfirmationModal, CommentsModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import SessionTypeIcon from './SessionTypeIcon';
 import { addComment } from '../utils/commentActions';
@@ -224,10 +225,15 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         };
 
         const unsubscribe = onSnapshot(q, (snapshot) => {
+            setError(''); // a recovered snapshot clears any stale listener-error banner
             teamRows = snapshot.docs.map(mapDoc);
             recompute();
         }, (error) => {
             console.error("Error subscribing to archived tasks:", error);
+            // Surface the failure instead of silently rendering an empty "Istorija tuščia" —
+            // a swallowed listener error (e.g. a still-building index) otherwise reads as a
+            // genuinely empty archive.
+            setError('Nepavyko užkrauti istorijos. Patikrinkite ryšį ir bandykite dar kartą.');
             setLoading(false);
         });
 
@@ -242,10 +248,13 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         if (scoped && currentUser?.uid) {
             const vadovasQ = query(collection(db, 'archived_tasks'), where('managerId', '==', currentUser.uid));
             unsubVadovas = onSnapshot(vadovasQ, (snapshot) => {
+                setError(''); // a recovered snapshot clears any stale listener-error banner
                 vadovasRows = snapshot.docs.map(mapDoc);
                 recompute();
             }, (error) => {
                 console.error("Error subscribing to vadovas archived tasks:", error);
+                setError('Nepavyko užkrauti istorijos. Patikrinkite ryšį ir bandykite dar kartą.');
+                setLoading(false);
             });
         }
 
@@ -312,14 +321,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             const exportData = await Promise.all(exportDataPromises);
 
             const dataStr = JSON.stringify(exportData, null, 2);
-            const blob = new Blob([dataStr], { type: "application/json" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `ai_task_analysis_${dateFrom}_to_${dateTo}.json`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            downloadTextFile(dataStr, `ai_task_analysis_${dateFrom}_to_${dateTo}.json`, 'application/json');
         } catch (err) {
             console.error("Error generating AI export:", err);
             setError("Nepavyko paruošti AI analizės duomenų. Bandykite dar kartą.");
@@ -385,15 +387,8 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         });
 
         const csvContent = [headers.join(','), ...rows].join('\n');
-        // Add BOM for Excel UTF-8 recognition
-        const blob = new Blob(['\uFEFF' + csvContent], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `task_history_${dateFrom}_to_${dateTo}.csv`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // Leading BOM keeps Excel reading it as UTF-8.
+        downloadTextFile('\uFEFF' + csvContent, `task_history_${dateFrom}_to_${dateTo}.csv`, 'text/csv;charset=utf-8;');
     };
 
 
@@ -616,9 +611,9 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 )}
             </div>
 
-            {historyOpen && (
-            <>
-            {/* Friendly error banner — replaces the banned alert() with mapped LT copy (§10) */}
+            {/* Friendly error banner — OUTSIDE the historyOpen gate so a listener failure surfaces
+                even when the archive panel is collapsed (the default), instead of reading as an
+                empty archive. Mapped LT copy, replaces the banned alert() (§10). */}
             {error && (
                 <div className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-4" role="alert">
                     <AlertCircle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
@@ -631,6 +626,9 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     </button>
                 </div>
             )}
+
+            {historyOpen && (
+            <>
 
             {/* Filters — a nested accordion inside the history panel. Collapsed by default so
                 the panel stays compact; the chevron reveals the date/user/tag/sort controls. */}
