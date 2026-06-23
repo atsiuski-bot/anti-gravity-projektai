@@ -198,42 +198,85 @@ export default function ManagerView() {
                 The weekly planned-vs-worked summary that used to head this tab now lives in
                 Kom. kalendorius, next to the calendar it summarises. */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
-                <div role="tablist" aria-label="Komandos darbų rodinys" className="mb-4">
-                    <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
-                        <button
-                            type="button"
-                            role="tab"
-                            id="team-active-tab"
-                            aria-selected={teamTasksSubTab === 'active'}
-                            aria-controls="team-active-panel"
-                            onClick={() => setTeamTasksSubTab('active')}
-                            className={cn(
-                                'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
-                            )}
-                        >
-                            <Activity className="h-4 w-4 shrink-0" aria-hidden="true" />
-                            Aktyvūs darbai
-                        </button>
-                        <div className="w-px bg-line" aria-hidden="true" />
-                        <button
-                            type="button"
-                            role="tab"
-                            id="team-list-tab"
-                            aria-selected={teamTasksSubTab === 'list'}
-                            aria-controls="team-list-panel"
-                            onClick={() => setTeamTasksSubTab('list')}
-                            className={cn(
-                                'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
-                            )}
-                        >
-                            <ListChecks className="h-4 w-4 shrink-0" aria-hidden="true" />
-                            Užduočių sąrašas
-                        </button>
+                <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+                    <div role="tablist" aria-label="Komandos darbų rodinys">
+                        <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                            <button
+                                type="button"
+                                role="tab"
+                                id="team-active-tab"
+                                aria-selected={teamTasksSubTab === 'active'}
+                                aria-controls="team-active-panel"
+                                onClick={() => setTeamTasksSubTab('active')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <Activity className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                Aktyvūs darbai
+                            </button>
+                            <div className="w-px bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
+                                id="team-list-tab"
+                                aria-selected={teamTasksSubTab === 'list'}
+                                aria-controls="team-list-panel"
+                                onClick={() => setTeamTasksSubTab('list')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <ListChecks className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                Užduočių sąrašas
+                            </button>
+                        </div>
                     </div>
+
+                    {/* Užduočių sąrašas toolbar lifted onto the tab row (desktop only) and split
+                        off with a vertical divider, so it reads as a separate control cluster — not
+                        part of the tab switcher. md+ only; mobile keeps the full toolbar in-panel
+                        below. Rendered only on the list sub-tab — Aktyvūs darbai has no filters. */}
+                    {teamTasksSubTab === 'list' && (
+                        <div className="hidden items-center gap-2 md:ml-auto md:flex md:border-l md:border-line md:pl-4">
+                            <SearchPopover
+                                value={searchText}
+                                onChange={setSearchText}
+                                suggestions={searchSuggestions}
+                                placeholder="Ieškoti užduočių…"
+                                label="Ieškoti užduočių"
+                            />
+                            <Select
+                                value={MORE_SORT_VALUES.includes(sortBy) && sortBy !== 'none' ? sortBy : ''}
+                                onChange={setSortBy}
+                                options={moreSortOptions}
+                                label="Daugiau rūšiavimo"
+                                placeholder="Daugiau rūšiavimo"
+                                ariaLabel="Daugiau rūšiavimo"
+                                icon={ArrowUpDown}
+                                className="w-auto min-w-[12rem]"
+                            />
+                            {activeAdvancedSortLabel && (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-sunken px-2.5 py-1 text-caption text-ink-muted">
+                                    Rūšiuojama:&nbsp;<span className="font-medium text-ink">{activeAdvancedSortLabel}</span>
+                                </span>
+                            )}
+                            {hasActiveFilters && (
+                                <button
+                                    type="button"
+                                    onClick={clearFilters}
+                                    className="inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                >
+                                    <X className="w-4 h-4" aria-hidden="true" />
+                                    Išvalyti filtrus
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Sub-tab 1 — Aktyvūs darbai */}
@@ -254,11 +297,11 @@ export default function ManagerView() {
                     className={cn(teamTasksSubTab !== 'list' && 'hidden')}
                 >
                 {/* Filter & sort controls.
-                    Mobile (<md): the full toolbar — search spans the width, the four classifiers
-                    form a 2x2 grid, sort below. Desktop (md+): sort and per-column filters live ON
-                    the table headers (TaskTable `gridControls`); only collapsed search, the
-                    non-column "Daugiau rūšiavimo" launcher, an active-advanced-sort hint, and a
-                    global clear remain in this slim strip. */}
+                    Mobile (<md): the full toolbar below — search spans the width, the four
+                    classifiers form a 2x2 grid, sort below. Desktop (md+): sort and per-column
+                    filters live ON the table headers (TaskTable `gridControls`); collapsed search,
+                    the non-column "Daugiau rūšiavimo" launcher, the active-advanced-sort hint and a
+                    global clear sit on the tab row above (lifted next to the sub-tab switcher). */}
                 <div className="grid grid-cols-2 gap-2 mb-4 md:hidden">
                     <SearchBox
                         value={searchText}
@@ -305,41 +348,6 @@ export default function ManagerView() {
                             type="button"
                             onClick={clearFilters}
                             className="col-span-2 inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                        >
-                            <X className="w-4 h-4" aria-hidden="true" />
-                            Išvalyti filtrus
-                        </button>
-                    )}
-                </div>
-
-                <div className="mb-4 hidden items-center gap-2 md:flex">
-                    <SearchPopover
-                        value={searchText}
-                        onChange={setSearchText}
-                        suggestions={searchSuggestions}
-                        placeholder="Ieškoti užduočių…"
-                        label="Ieškoti užduočių"
-                    />
-                    <Select
-                        value={MORE_SORT_VALUES.includes(sortBy) && sortBy !== 'none' ? sortBy : ''}
-                        onChange={setSortBy}
-                        options={moreSortOptions}
-                        label="Daugiau rūšiavimo"
-                        placeholder="Daugiau rūšiavimo"
-                        ariaLabel="Daugiau rūšiavimo"
-                        icon={ArrowUpDown}
-                        className="w-auto min-w-[12rem]"
-                    />
-                    {activeAdvancedSortLabel && (
-                        <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-sunken px-2.5 py-1 text-caption text-ink-muted">
-                            Rūšiuojama:&nbsp;<span className="font-medium text-ink">{activeAdvancedSortLabel}</span>
-                        </span>
-                    )}
-                    {hasActiveFilters && (
-                        <button
-                            type="button"
-                            onClick={clearFilters}
-                            className="ml-auto inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <X className="w-4 h-4" aria-hidden="true" />
                             Išvalyti filtrus

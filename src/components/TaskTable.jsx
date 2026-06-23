@@ -58,6 +58,11 @@ function SortableHeaderButton({ label, mode, sort }) {
     );
 }
 
+// The per-column filter funnel. A compact, dense trigger (NOT the 44px IconButton) so the
+// whole "label + sort + funnel" cluster fits inside a narrow data-grid column instead of
+// overflowing into the neighbour — this is what made it ambiguous which funnel owned which
+// column. Desktop-only header (md:block, mouse-driven), so a sub-44px target is acceptable
+// under §9 dual density, matching SortableHeaderButton's footprint. Active = filled brand.
 function ColumnFilter({ filter, label }) {
     const active = filter.value !== '' && filter.value != null;
     const selectedLabel = active ? (filter.options.find((o) => o.value === filter.value)?.label ?? '') : '';
@@ -69,20 +74,36 @@ function ColumnFilter({ filter, label }) {
             options={filter.options}
             ariaLabel={name}
             alwaysSheet
+            className="shrink-0"
             renderTrigger={({ triggerProps }) => (
-                <IconButton {...triggerProps} icon={Filter} label={name} variant={active ? 'primary' : 'ghost'} />
+                <button
+                    {...triggerProps}
+                    aria-label={name}
+                    title={name}
+                    className={clsx(
+                        'inline-flex shrink-0 items-center justify-center rounded p-1 transition-colors',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                        active ? 'bg-brand text-white' : 'text-ink-muted hover:bg-surface-sunken hover:text-ink'
+                    )}
+                >
+                    <Filter className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                </button>
             )}
         />
     );
 }
 
+// Each interactive column header bundles its label, sort toggle and filter funnel into one
+// bordered chip. The chip is the "which funnel belongs to which column" cue: the controls are
+// visibly boxed together and each column's chip is separated from its neighbours by the cell
+// gap, so a funnel can no longer read as belonging to the column beside it.
 function HeaderCell({ label, sortMode, sort, filter, filterLabel }) {
     const hasSort = !!sortMode;
     const hasFilter = !!filter;
     if (!hasSort && !hasFilter) return label;
     return (
-        <span className="flex items-center gap-1">
-            {hasSort ? <SortableHeaderButton label={label} mode={sortMode} sort={sort} /> : <span>{label}</span>}
+        <span className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-line bg-surface-card px-1.5 py-0.5">
+            {hasSort ? <SortableHeaderButton label={label} mode={sortMode} sort={sort} /> : <span className="px-1">{label}</span>}
             {hasFilter && <ColumnFilter filter={filter} label={filterLabel} />}
         </span>
     );
@@ -640,7 +661,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.user)}>
                                 {gc ? <HeaderCell label="Darb." sortMode={sortCols.user} sort={gc.sort} filter={filters.user} filterLabel="Filtruoti pagal vykdytoją" /> : 'Darb.'}
                             </th>
-                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-20" aria-sort={ariaSortFor(sortCols.priority)}>
+                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.priority)}>
                                 {gc ? <HeaderCell label="Prior." sortMode={sortCols.priority} sort={gc.sort} filter={filters.priority} filterLabel="Filtruoti pagal prioritetą" /> : 'Prior.'}
                             </th>
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">
