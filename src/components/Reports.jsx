@@ -904,7 +904,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
         const evt = item.requestedEvent || item.originalEvent || {};
         let TypeIcon = Briefcase;
-        let typeLabel = "Darbas ofise";
+        let typeLabel = "Veikla";
         let typeColor = "text-ink-muted";
         if (evt.isVacation) {
             TypeIcon = null;
@@ -912,7 +912,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
             typeColor = "text-feedback-warning";
         } else if (evt.isWorkFromHome) {
             TypeIcon = null;
-            typeLabel = "Nuotolinis darbas";
+            typeLabel = "Veikla namuose";
             typeColor = "text-feedback-info";
         }
 
