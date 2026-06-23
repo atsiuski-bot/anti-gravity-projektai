@@ -12,7 +12,9 @@ const APP_LOAD_TIME = Date.now();
 // Resolve an active secondary session's (type, startTime) from either the canonical
 // activeSession or the legacy per-type flags. Tasks are deliberately ignored here — they have
 // their own recovery (useOrphanedTaskRecovery) and a different end path (pauseTask).
-const getSecondarySession = (userData) => {
+// Exported (pure, no side effects) so the "what gets recovered" decision is unit-testable
+// without a React renderer — see useOrphanedSessionRecovery.test.js.
+export const getSecondarySession = (userData) => {
     const as = userData?.activeSession;
     if (as && (as.type === 'break' || as.type === 'call' || as.type === 'quickWork') && as.startTime) {
         return { type: as.type, startTime: as.startTime };
