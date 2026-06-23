@@ -5,6 +5,7 @@ import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTot
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints } from '../utils/teamScope';
 import { absenceLabel } from '../utils/absence';
+import { cn } from '../utils/cn';
 import { addComment } from '../utils/commentActions';
 import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText } from 'lucide-react';
 
@@ -1121,39 +1122,53 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 viewing their OWN data via viewRole="worker") there is just one view, so the
                 whole switcher is dropped. */}
             {isManagerRole(userRole) && (
-                <div role="tablist" aria-label="Ataskaitų skiltys" className="flex border-b border-line overflow-x-auto">
-
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab === 'report'}
-                        onClick={() => setActiveTab('report')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
-                            }`}
-                    >
-                        Darbo ataskaita
-                    </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab === 'approval'}
-                        onClick={() => setActiveTab('approval')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
-                            }`}
-                    >
-                        Patvirtinimas
-                    </button>
-                    <button
-                        type="button"
-                        role="tab"
-                        aria-selected={activeTab === 'calendar-history'}
-                        onClick={() => setActiveTab('calendar-history')}
-                        className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
-                            }`}
-                    >
-                        Kalendoriaus pakeitimų istorija
-                    </button>
-
+                <div role="tablist" aria-label="Ataskaitų skiltys">
+                    {/* Segmented switcher — same control as the Komandos darbai sub-tabs
+                        (ManagerView). Labels wrap to multiple lines on a narrow screen
+                        instead of forcing a horizontal scroll. */}
+                    <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'report'}
+                            onClick={() => setActiveTab('report')}
+                            className={cn(
+                                'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                activeTab === 'report' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            Darbo ataskaita
+                        </button>
+                        <div className="w-px bg-line" aria-hidden="true" />
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'approval'}
+                            onClick={() => setActiveTab('approval')}
+                            className={cn(
+                                'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                activeTab === 'approval' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            Patvirtinimas
+                        </button>
+                        <div className="w-px bg-line" aria-hidden="true" />
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={activeTab === 'calendar-history'}
+                            onClick={() => setActiveTab('calendar-history')}
+                            className={cn(
+                                'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                activeTab === 'calendar-history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            Kalendoriaus pakeitimų istorija
+                        </button>
+                    </div>
                 </div>
             )}
 
