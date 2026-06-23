@@ -498,7 +498,11 @@ function ColorSlider({ label, labelClass, value, onChange, track, accent }) {
                 onChange={(e) => onChange(parseInt(e.target.value, 10))}
                 aria-label={label}
                 className={cn(
-                    'h-2 w-full cursor-pointer appearance-none rounded-full',
+                    // `wz-range` supplies the thumb: `appearance-none` strips the native handle in
+                    // every engine, and `accent-color` is inert once it's gone — so without an
+                    // explicit ::-webkit-slider-thumb / ::-moz-range-thumb (see index.css) the
+                    // handle is invisible in Chrome, Safari AND Firefox.
+                    'wz-range h-2 w-full cursor-pointer appearance-none rounded-full',
                     track,
                     accent,
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2'
@@ -828,7 +832,7 @@ export default function UserManagement() {
         } catch (err) {
             console.error("Error updating user status:", err);
             if (err.code === 'permission-denied') {
-                setError(`Neturite teisių. Jūsų rolė: ${userRole}.`);
+                setError('Neturite teisių atlikti šį veiksmą.');
             } else {
                 setError('Nepavyko atnaujinti vartotojo statuso. Bandykite dar kartą.');
             }
@@ -873,7 +877,7 @@ export default function UserManagement() {
         } catch (err) {
             console.error("Error deleting user:", err);
             if (err.code === 'permission-denied') {
-                setError(`Neturite teisių. Jūsų rolė: ${userRole}.`);
+                setError('Neturite teisių atlikti šį veiksmą.');
             } else {
                 setError('Nepavyko ištrinti vartotojo. Bandykite dar kartą.');
             }
@@ -914,6 +918,7 @@ export default function UserManagement() {
                                         userId={user.id}
                                         name={user.displayName || 'Be vardo'}
                                         size="md"
+                                        block
                                         className="min-w-0 text-body font-semibold text-ink-strong"
                                     />
                                     <DisabledPill user={user} />
@@ -1016,6 +1021,7 @@ export default function UserManagement() {
                                             userId={user.id}
                                             name={user.displayName || 'Be vardo'}
                                             size="md"
+                                            block
                                         />
                                         <DisabledPill user={user} />
                                         <NewUserBadge user={user} />

@@ -53,33 +53,33 @@ class ErrorBoundary extends React.Component {
 
         return `
 ═══════════════════════════════════════════════════
-APPLICATION ERROR REPORT
+PROGRAMOS KLAIDOS ATASKAITA
 ═══════════════════════════════════════════════════
 
-Time: ${timestamp ? new Date(timestamp).toLocaleString() : 'N/A'}
+Laikas: ${timestamp ? new Date(timestamp).toLocaleString() : 'N/A'}
 URL: ${window.location.href}
-User Agent: ${navigator.userAgent}
+Naršyklė: ${navigator.userAgent}
 
 ╔═══════════════════════════════════════════════════╗
-║ ERROR MESSAGE                                      ║
+║ KLAIDOS PRANEŠIMAS                                 ║
 ╚═══════════════════════════════════════════════════╝
 
-${error ? error.toString() : 'Unknown error'}
+${error ? error.toString() : 'Nežinoma klaida'}
 
 ╔═══════════════════════════════════════════════════╗
-║ STACK TRACE                                        ║
+║ DĖKLO PĖDSAKAS (STACK TRACE)                       ║
 ╚═══════════════════════════════════════════════════╝
 
-${error && error.stack ? error.stack : 'No stack trace available'}
+${error && error.stack ? error.stack : 'Dėklo pėdsako nėra'}
 
 ╔═══════════════════════════════════════════════════╗
-║ COMPONENT STACK                                    ║
+║ KOMPONENTŲ DĖKLAS (COMPONENT STACK)                ║
 ╚═══════════════════════════════════════════════════╝
 
-${errorInfo && errorInfo.componentStack ? errorInfo.componentStack : 'No component stack available'}
+${errorInfo && errorInfo.componentStack ? errorInfo.componentStack : 'Komponentų dėklo nėra'}
 
 ═══════════════════════════════════════════════════
-END OF ERROR REPORT
+ATASKAITOS PABAIGA
 ═══════════════════════════════════════════════════
 `.trim();
     };

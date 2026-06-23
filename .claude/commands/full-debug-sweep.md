@@ -1,14 +1,14 @@
 ---
-description: Autonomous whole-project audit of WORKZ. Deterministic gates (lint/build/deps/firebase-rules-diff) run sequentially; the reasoning phases delegate to the triage-sweep Workflow (parallel finders + adversarial verify). Read-only. NOT a replacement for a diff-scoped review or a pre-ship gate.
+description: Autonomous whole-project audit of WORKZ. Deterministic gates (lint/build/vitest/deps/firebase-rules+index-diff/functions-lint) run sequentially; the reasoning phases delegate to the triage-sweep Workflow (parallel finders + adversarial verify). Read-only. NOT a replacement for a diff-scoped review (/debug) or a pre-ship gate (/ship).
 allowed-tools: Bash, Grep, Read, Glob, Write, Agent, Workflow
 ---
 
 Autonomous whole-project audit of WORKZ, structured as **two tracks**:
 
-- **Deterministic track** (sequential, cheap): lint, build, deps audit, Firestore/
-  Storage rules diff. No LLM judgement — run and parse. (WORKZ has **no TypeScript**
-  and **no test runner**, so there is no `tsc` and no test step — the *absence* of
-  automated tests is itself recorded as a finding, not silently skipped.)
+- **Deterministic track** (sequential, cheap): lint, build, **vitest suite**, deps audit,
+  Firestore/Storage rules + index diff, Cloud Functions lint. No LLM judgement — run and
+  parse. (WORKZ has **no TypeScript**, so there is no `tsc` typecheck step; but it **does**
+  run a **vitest** test suite — failing or missing-coverage tests are recorded as findings.)
 - **Reasoning track** (parallel + verified): delegated to the **`triage-sweep`
   Workflow**, which fans out one read-only finder per dimension, dedups, then has N
   skeptics adversarially verify each finding (strict majority). The verify stage is
@@ -46,8 +46,9 @@ Triggers (run even if the user did not type `/full-debug-sweep`): "whole-project
 4. **README.md skeleton** with: Git SHA · branch · worktree path · node/npm version ·
    started ts.
 
-> `.env` does NOT need quarantining — WORKZ has no test runner, so there is no
-> test-env Firebase collision to guard against. Leave `.env` in place.
+> `.env` does NOT need quarantining — the vitest suite is **pure unit tests** of `src/utils/*`
+> (time math, session/report logic) that never touch a live Firebase, so there is no test-env
+> Firebase collision to guard against. Leave `.env` in place.
 
 ---
 
@@ -62,18 +63,22 @@ file per the [FULL_SWEEP_PLAN.md](../../docs/audits/FULL_SWEEP_PLAN.md) template
 2. **Build** — `npm run build 2>&1 | tee build-raw.txt` → `05-build.md`. Non-zero exit →
    🔴 "build broken". Copy `dist/.vite/manifest.json` to `05-build-stats.json` and flag
    oversized chunks / unoptimized assets / PWA-precache bloat for the perf dimension.
-3. **Deps** — `npm outdated`, `npm audit --json` → `19-deps.md`. (No `functions/` subtree
-   in WORKZ — a single root package.json.)
-4. **Firebase deterministic diff** — `firestore.rules` + `storage.rules` only (there is
-   **no `firestore.indexes.json`** and **no Cloud Functions** in this repo). Check rules
-   freshness vs the live project (`DEPLOY_FIRESTORE_RULES.md` notes a manual deploy may be
-   pending) and the EU-region/`darbo-planavimas` project context via the Firebase MCP
-   reads (`firestore_get_security_rules`, `firestore_list_indexes`) if available →
-   `06-firebase.md`. (Rules privilege-escalation + coupling *reasoning* belongs to the
-   reasoning track, not here.)
-5. **Test-coverage gate** — there is no test script and no test files. Record this as a
-   standing ℹ️→🟠 finding in `04-tests.md`: "WORKZ has zero automated test coverage; the
-   time-tracking, session, and crash-safety logic is unguarded against regression."
+3. **Deps** — `npm outdated`, `npm audit --json` at the root → `19-deps.md`. WORKZ now also
+   has a **`functions/` subtree** (Cloud Functions, its own `package.json`) — run
+   `npm --prefix functions run lint` and record its result too.
+4. **Firebase deterministic diff** — `firestore.rules`, `storage.rules`, **and
+   `firestore.indexes.json`** (the repo now ships ~11 composite indexes) + the **`functions/`**
+   subtree. Check rules + index freshness vs the live project via the Firebase MCP reads
+   (`firestore_get_security_rules`, `firestore_list_indexes`, `functions_list_functions`) and
+   the EU-region/`darbo-planavimas` project context → `06-firebase.md`. A local index or
+   function not yet deployed is a latent prod outage (a compound query hits
+   `FAILED_PRECONDITION`; a stale callable runs old code). Deploy itself is human-only. (Rules
+   privilege-escalation + coupling *reasoning* belongs to the reasoning track, not here.)
+5. **Test gate** — WORKZ runs a **vitest** suite (`npm test` → `vitest run`, ~20+ co-located
+   `*.test.js` files). Run it → `04-tests.md`. Any failing test → 🔴 with the test name. Then
+   record the **coverage gaps** as findings: time-tracking / session / crash-safety paths
+   without a guarding suite are 🟠 "unguarded against regression" — the absence is named
+   per-module, not as a blanket "no tests" (that is no longer true).
 
 ---
 
@@ -132,7 +137,7 @@ estimate. Update the README with finished ts + totals.
 ```
 ═══ FULL SWEEP COMPLETE ═══
 Duration: <hh:mm>   Output: docs/audits/full-sweep-<DATE>/
-Deterministic: lint <n> · build <ok?> · deps <n> · rules <n>   (tests: none — see 04-tests.md)
+Deterministic: lint <n> · build <ok?> · vitest <pass/fail> · deps <n> · rules+indexes <n> · fns-lint <ok?>
 Reasoning (verified): 🔴 X · 🟠 Y · 🟡 Z   (false positives filtered: <n>)
 Reasoning cost (measured): ~<tokens.total> output tok  (find <tokens.find> · verify <tokens.verify>)
 Read 00-SYNTHESIS.md for the prioritized fix list. The sweep changed nothing.
@@ -157,10 +162,13 @@ Read 00-SYNTHESIS.md for the prioritized fix list. The sweep changed nothing.
 - **Why two tracks:** deterministic gates (lint/build/deps/rules) have no LLM value — run
   and parse them. The reasoning dimensions go through `triage-sweep`, whose
   adversarial-verify stage filters the noise and runs in parallel.
-- **What WORKZ does NOT have** (and why dimensions differ from a TypeScript repo): no
-  TypeScript (no `tsc`), no test runner (no vitest), no Cloud Functions, no RTDB, no
-  `firestore.indexes.json`. The missing index file makes every compound query a runtime
-  `FAILED_PRECONDITION` risk — the `firebase-coupling` dimension hunts those.
+- **What WORKZ does / does NOT have** (so the dimensions stay accurate): **no TypeScript**
+  (so no `tsc` typecheck — JS only) and **no RTDB**. It **does** have a **vitest** suite, a
+  **`firestore.indexes.json`** (~11 composite indexes), and a **`functions/` Cloud Functions
+  subtree** (callables `parseTaskDraft`, `runRecurringTasksNow`, plus FCM push senders +
+  Storage cleanup). The `firebase-coupling` dimension hunts compound queries whose composite
+  index is missing/undeployed (runtime `FAILED_PRECONDITION`) and callables/functions changed
+  but not yet deployed (stale prod code) — both human-only deploys.
 - **[FULL_SWEEP_PLAN.md](../../docs/audits/FULL_SWEEP_PLAN.md)** is the per-phase detail
   reference (what each deterministic step parses; each dimension's checklist).
   triage-sweep's inline dimension prompts are the condensed form; the plan is the long form.

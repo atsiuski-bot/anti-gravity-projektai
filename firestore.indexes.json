@@ -58,6 +58,14 @@
       ]
     },
     {
+      "collectionGroup": "archived_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assignedUserId", "order": "ASCENDING" },
+        { "fieldPath": "archivedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "work_sessions",
       "queryScope": "COLLECTION",
       "fields": [

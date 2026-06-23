@@ -9,36 +9,37 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
-      includeAssets: ['logo.jpg', 'pwa-192x192.png', 'pwa-512x512.png'],
-      // The FCM service worker is a SEPARATE worker (registered by the messaging SDK at its
-      // own scope). Keep Workbox from precaching/serving it so the two never collide.
+      includeAssets: ['logo.jpg', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-192x192-maskable.png', 'pwa-512x512-maskable.png'],
       workbox: {
-        globIgnores: ['**/firebase-messaging-sw.js']
+        // The FCM service worker is a SEPARATE worker (registered by the messaging SDK at its own
+        // scope). Keep Workbox from precaching/serving it so the two never collide. Also skip the
+        // iOS splash set — 20 device-specific PNGs of which any one device only ever uses one, so
+        // precaching them all would bloat the offline cache for no benefit (iOS fetches the matching
+        // splash at launch).
+        globIgnores: ['**/firebase-messaging-sw.js', '**/splash/**']
       },
       manifest: {
         name: 'WORKZ',
         short_name: 'WORKZ',
         description: 'Productivity App',
+        // Pin install identity + scope explicitly (these previously defaulted). `id` keeps the
+        // installed app stable across any future start_url change so browsers treat updates as the
+        // same app, not a second install; scope/start_url anchor the standalone window to the root.
+        id: '/',
+        start_url: '/',
+        scope: '/',
         theme_color: '#ffffff',
         background_color: '#ffffff',
         display: 'standalone',
         icons: [
-          {
-            src: 'pwa-192x192.png',
-            sizes: '192x192',
-            type: 'image/png'
-          },
-          {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png'
-          },
-          {
-            src: 'pwa-512x512.png',
-            sizes: '512x512',
-            type: 'image/png',
-            purpose: 'maskable'
-          }
+          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
+          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
+          // Maskable variants are padded to the safe zone (logo on a full-bleed brand field) so
+          // Android adaptive launchers no longer clip the top "W" / bottom wordmark. The previous
+          // maskable entry pointed at the edge-to-edge pwa-512 and DID clip. Regenerate via
+          // scripts/generate-pwa-assets.cjs.
+          { src: 'pwa-192x192-maskable.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
+          { src: 'pwa-512x512-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
         ]
       },
       devOptions: {
@@ -47,6 +48,10 @@ export default defineConfig({
     })
   ],
   build: {
+    // Pin the JS output floor to mirror package.json "browserslist" (Vite does NOT read browserslist
+    // for build.target on its own). This equals the previous implicit 'modules' default, but is now
+    // explicit and stable — a dependency/Tailwind bump can no longer silently raise the floor.
+    target: ['chrome87', 'edge88', 'firefox78', 'safari14'],
     rollupOptions: {
       output: {
         manualChunks(id) {

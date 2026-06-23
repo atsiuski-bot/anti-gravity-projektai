@@ -15,7 +15,13 @@ export const formatDisplayName = (fullName) => {
     if (parts.length <= 1) return fullName;
     const firstName = parts[0];
     const lastName = parts[parts.length - 1];
-    return `${firstName} ${lastName.charAt(0).toUpperCase()}.`;
+    // Guard against a placeholder surname (a lone "-"/"--"/"." from an SSO profile that
+    // carries no real last name): only append a dotted initial when the surname token
+    // starts with a letter, otherwise show the first name alone. Without this, a stored
+    // name like "Jogile -" rendered as the meaningless "Jogile -." across every name
+    // surface. \p{L} (with the u flag) matches Lithuanian diacritics too.
+    const initial = lastName.match(/^\p{L}/u);
+    return initial ? `${firstName} ${initial[0].toUpperCase()}.` : firstName;
 };
 
 /**

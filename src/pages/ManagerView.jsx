@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Filter, X, Activity, ListChecks } from 'lucide-react';
+import { ArrowUpDown, Filter, X, Activity, ListChecks, Repeat } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -200,8 +200,6 @@ export default function ManagerView() {
                 The weekly planned-vs-worked summary that used to head this tab now lives in
                 Kom. kalendorius, next to the calendar it summarises. */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
-                {/* Recurring-task management: turn shared templates into auto-generated weekly jobs. */}
-                <RecurringTasksPanel />
                 {/* Quick-add: single-line create for the high-volume manager path (skips the modal). */}
                 <QuickAddTaskBar
                     assignableUsers={pickerUsers.map((u) => ({ value: u.id, label: u.displayName || u.email }))}
@@ -218,13 +216,14 @@ export default function ManagerView() {
                                 aria-controls="team-active-panel"
                                 onClick={() => setTeamTasksSubTab('active')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
                             >
                                 <Activity className="h-4 w-4 shrink-0" aria-hidden="true" />
-                                Aktyvūs darbai
+                                <span className="sm:hidden">Aktyvūs</span>
+                                <span className="hidden sm:inline">Aktyvios užduotys</span>
                             </button>
                             <div className="w-px bg-line" aria-hidden="true" />
                             <button
@@ -235,13 +234,32 @@ export default function ManagerView() {
                                 aria-controls="team-list-panel"
                                 onClick={() => setTeamTasksSubTab('list')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
                             >
                                 <ListChecks className="h-4 w-4 shrink-0" aria-hidden="true" />
-                                Užduočių sąrašas
+                                <span className="sm:hidden">Sąrašas</span>
+                                <span className="hidden sm:inline">Sąrašas užduočių</span>
+                            </button>
+                            <div className="w-px bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
+                                id="team-recurring-tab"
+                                aria-selected={teamTasksSubTab === 'recurring'}
+                                aria-controls="team-recurring-panel"
+                                onClick={() => setTeamTasksSubTab('recurring')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'recurring' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <Repeat className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span className="sm:hidden">Pasikartojančios</span>
+                                <span className="hidden sm:inline">Pasikartojančios užduotys</span>
                             </button>
                         </div>
                     </div>
@@ -390,6 +408,18 @@ export default function ManagerView() {
                         gridControls={teamGridControls}
                     />
                 )}
+                </div>
+
+                {/* Sub-tab 3 — Pasikartojančios užduotys: recurring-task management (turn shared
+                    templates into auto-generated jobs). Rendered embedded — the sub-tab switcher
+                    supplies the heading, so the panel drops its own collapsible chrome. */}
+                <div
+                    id="team-recurring-panel"
+                    role="tabpanel"
+                    aria-labelledby="team-recurring-tab"
+                    className={cn(teamTasksSubTab !== 'recurring' && 'hidden')}
+                >
+                    <RecurringTasksPanel embedded />
                 </div>
             </div>
 

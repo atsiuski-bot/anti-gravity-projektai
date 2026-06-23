@@ -15,7 +15,7 @@ import Avatar from './ui/Avatar';
  * interactive element (e.g. a drill-down row that is itself a <button>), to avoid an invalid
  * button-in-button while keeping the avatar + name.
  */
-export default function UserChip({ userId, name, size = 'sm', linkToProfile = true, className }) {
+export default function UserChip({ userId, name, size = 'sm', linkToProfile = true, block = false, className }) {
     const { usersMap } = useUsers();
     const { openProfile } = useProfileViewer();
     const user = userId ? usersMap?.[userId] : null;
@@ -43,6 +43,10 @@ export default function UserChip({ userId, name, size = 'sm', linkToProfile = tr
             className={cn(
                 'inline-flex items-center gap-1.5 rounded-full hover:underline',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                // When the chip is a STANDALONE primary control (e.g. a roster row's open-profile
+                // target) rather than a link inside running text, guarantee the >=44px AA touch
+                // target. The inline-link uses (names in prose/notifications) keep their slim size.
+                block && 'min-h-touch',
                 className
             )}
         >

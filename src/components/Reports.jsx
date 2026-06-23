@@ -6,7 +6,7 @@ import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from
 import { privateScopeConstraints } from '../utils/teamScope';
 import { absenceLabel } from '../utils/absence';
 import { addComment } from '../utils/commentActions';
-import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Calendar, FileText } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -60,8 +60,13 @@ function PeriodPicker({ presets, activeId, onChoose, open, onToggle, label, chil
         if (!wrapEl || !measureEl) return;
         const GAP = 8; // matches gap-2 between chips
         const compute = () => {
-            const chips = Array.from(measureEl.children);
             const avail = wrapEl.clientWidth;
+            // The picker can mount while its tab panel is still zero-width (hidden tab, pre-layout
+            // pass). Measuring then would wrongly conclude "nothing fits" and lock the row to a
+            // single chip even after it becomes wide. Skip until we have a real width — the
+            // ResizeObserver re-fires with the true size once the panel lays out.
+            if (avail <= 0) return;
+            const chips = Array.from(measureEl.children);
             let used = 0;
             let count = 0;
             for (let i = 0; i < chips.length; i++) {
@@ -87,12 +92,11 @@ function PeriodPicker({ presets, activeId, onChoose, open, onToggle, label, chil
 
     return (
         <div className="bg-surface-card rounded-card shadow-sm border border-line">
-            <div className="flex items-center gap-3 px-4 py-3 min-h-touch">
-                <span className="shrink-0 flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
-                    <Calendar className="w-4 h-4" aria-hidden="true" />
-                    <span className="hidden sm:inline">{label}</span>
-                </span>
-
+            {/* The bar matches the export button's height exactly: one min-h-touch row with no extra
+                vertical padding, so the chips (also min-h-touch) define the height. The old calendar
+                icon + "Laikotarpis" caption are dropped — the chips are self-describing, and removing
+                them frees the full width for as many presets as fit inline. */}
+            <div role="group" aria-label={label} className="flex items-center gap-2 px-2 min-h-touch">
                 {/* Inline chips: only those that fit on one line; the rest live in the panel below. */}
                 <div ref={wrapRef} className="relative flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
                     {/* Hidden row at natural width — the single source of truth for chip widths. */}
@@ -126,18 +130,23 @@ function PeriodPicker({ presets, activeId, onChoose, open, onToggle, label, chil
 
             {open && (
                 <div className="border-t border-line p-3 space-y-3 animate-in fade-in slide-in-from-top-2">
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                        {presets.map((p) => (
-                            <Button
-                                key={p.id}
-                                variant={activeId === p.id ? 'primary' : 'secondary'}
-                                onClick={() => onChoose(p.id)}
-                                className="justify-center"
-                            >
-                                {p.label}
-                            </Button>
-                        ))}
-                    </div>
+                    {/* Only the presets that did NOT fit inline — the visible ones already sit in the
+                        bar above, so repeating every preset here would be redundant. The panel always
+                        still carries the custom from/to range (children). */}
+                    {hiddenCount > 0 && (
+                        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                            {presets.slice(visibleCount).map((p) => (
+                                <Button
+                                    key={p.id}
+                                    variant={activeId === p.id ? 'primary' : 'secondary'}
+                                    onClick={() => onChoose(p.id)}
+                                    className="justify-center"
+                                >
+                                    {p.label}
+                                </Button>
+                            ))}
+                        </div>
+                    )}
                     {children}
                 </div>
             )}
@@ -477,16 +486,20 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
             // Convert to array
             const results = Object.values(userMap).sort((a, b) => b.totalMinutes - a.totalMinutes);
+            setError('');
             setWorkData(results);
 
         } catch (error) {
             console.error("Error fetching work hours:", error);
+            // Surface the failure as a friendly banner instead of silently leaving the report
+            // empty — a swallowed fetch error otherwise reads as a genuine "no work" result.
+            setError('Nepavyko užkrauti darbo valandų ataskaitos. Patikrinkite ryšį ir bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
     };
 
-    const fetchTasks = async () => {
+    const fetchTasks = async ({ preserveError = false } = {}) => {
         setLoading(true);
         try {
             const isManager = isManagerRole(userRole);
@@ -585,10 +598,17 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 return timeB - timeA;
             });
 
+            // Don't clear a caller-set banner (e.g. confirmRevert calls fetchTasks() to restore
+            // the optimistically-removed task AFTER a failed revert — the READ succeeds and would
+            // otherwise wipe the revert-failure message).
+            if (!preserveError) setError('');
             setFilteredTasks(sortedTasks);
 
         } catch (error) {
             console.error("Error fetching tasks:", error);
+            // Surface the failure (banner) instead of falling through to the empty-state copy,
+            // which would misread a failed load as "no tasks found".
+            setError('Nepavyko užkrauti užduočių ataskaitos. Patikrinkite ryšį ir bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
@@ -617,8 +637,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
             } else {
                 setCalendarHistory(data);
             }
+            setError('');
         } catch (error) {
             console.error("Error fetching calendar history:", error);
+            setError('Nepavyko užkrauti kalendoriaus istorijos. Patikrinkite ryšį ir bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
@@ -738,7 +760,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
             // Never surface raw err.message to the user (§10) — map to friendly Lithuanian copy.
             setError("Klaida grąžinant užduotį. Bandykite iš naujo arba kontaktuokite vadybą.");
             setRevertTarget(null);
-            fetchTasks(); // Refresh on error
+            fetchTasks({ preserveError: true }); // Refresh on error — keep the revert-failure banner
         } finally {
             setReverting(false);
         }
@@ -1219,7 +1241,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         ).length;
                         return (
                             <p className="mb-3 px-1 text-caption text-ink-muted">
-                                Planą turi {withPlan} iš {rows.length} darbuotojų
+                                Planą turi {withPlan} iš {rows.length} vykdytojų
                                 {withPlan < rows.length ? ' — likusiems „Skirtumas" neskaičiuojamas.' : '.'}
                             </p>
                         );
@@ -1318,7 +1340,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         </div>
                     )}
 
-                    {!loading && calendarHistory.length === 0 && (
+                    {!loading && !error && calendarHistory.length === 0 && (
                         <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                             Pagal pasirinktą laikotarpį nėra išsaugota jokių kalendoriaus pakeitimų istorijoje.
                         </div>
@@ -1516,7 +1538,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 />
                             ))}
 
-                            {groupedTasks.length === 0 && (
+                            {!error && groupedTasks.length === 0 && (
                                 <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
                                     Nerasta užduočių pagal pasirinktus filtrus.
                                 </div>
