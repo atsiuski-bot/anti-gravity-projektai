@@ -1,13 +1,11 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
 import { Clock, Calendar, Trash2, ArrowUp, ArrowDown, Undo2, Edit, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
-import { approveTask, humanActor, MODES } from '../domain';
+import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { isManagerRole } from '../utils/formatters';
 import Button from './ui/Button';
@@ -118,13 +116,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
         return runUndoable({
             run: () => approveTask({ task }, { actor, mode: MODES.COMMIT, reason: 'approved from task card' }),
-            undo: () => updateDoc(doc(db, 'tasks', task.id), {
-                status: prior.status ?? 'pending',
-                isApproved: prior.isApproved,
-                approvedAt: null,
-                approvedBy: null,
-                updatedAt: new Date().toISOString(),
-            }),
+            undo: () => unapproveTask({ task, priorStatus: prior.status, priorIsApproved: prior.isApproved }, { actor, mode: MODES.COMMIT, reason: 'approval undone from task card' }),
             message: 'Užduotis patvirtinta.',
             undoneMessage: 'Atšaukta — patvirtinimas atšauktas.',
             errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite dar kartą.',
@@ -135,32 +127,21 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     // sign off a done task straight from the mobile preview, not only on desktop. Confirming is a
     // cleanly reversible sign-off, so it is now immediate + undoable instead of gated behind a
     // confirm dialog; undo returns it to "awaiting confirmation".
-    const performConfirm = () => runUndoable({
-        run: async () => {
-            const now = new Date().toISOString();
-            await updateDoc(doc(db, 'tasks', task.id), {
-                status: 'confirmed',
-                confirmedBy: currentUser.uid,
-                confirmedAt: now,
-                updatedAt: now,
-            });
-        },
-        // Post-action hook (notification feed): dismiss the card + ping the worker. DEFERRED for the
-        // undo window so an undo leaves the worker nothing to see; a no-op in the plain task list.
-        deferredEffect: () => onConfirmed?.(task),
-        undo: async () => {
-            const now = new Date().toISOString();
-            await updateDoc(doc(db, 'tasks', task.id), {
-                status: 'completed',
-                confirmedBy: null,
-                confirmedAt: null,
-                updatedAt: now,
-            });
-        },
-        message: 'Atlikimas patvirtintas.',
-        undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
-        errorMessage: 'Nepavyko patvirtinti atlikimo. Bandykite dar kartą.',
-    });
+    const performConfirm = () => {
+        // Both the forward sign-off AND the undo are audited commands (ADR 0015) — so the undo can no
+        // longer silently contradict the decision_log.
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
+        return runUndoable({
+            run: () => confirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirmed from task card' }),
+            // Post-action hook (notification feed): dismiss the card + ping the worker. DEFERRED for the
+            // undo window so an undo leaves the worker nothing to see; a no-op in the plain task list.
+            deferredEffect: () => onConfirmed?.(task),
+            undo: () => unconfirmTask({ task }, { actor, mode: MODES.COMMIT, reason: 'confirm undone from task card' }),
+            message: 'Atlikimas patvirtintas.',
+            undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
+            errorMessage: 'Nepavyko patvirtinti atlikimo. Bandykite dar kartą.',
+        });
+    };
 
     const displayColor = task.assignedWorkerColor;
     const isManager = isManagerRole(role) || isManagerRole(userRole);

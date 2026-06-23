@@ -11,7 +11,7 @@ import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
 import { deleteTask, extendTaskTime } from '../utils/taskActions';
-import { approveTask, humanActor, MODES } from '../domain';
+import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
@@ -343,13 +343,10 @@ export default function ManagerNotifications({ onClose }) {
             },
             deferredEffect: () => notifyTaskApproved(notif),
             undo: async () => {
-                await updateDoc(doc(db, 'tasks', taskId), {
-                    status: prior.status ?? 'pending',
-                    isApproved: prior.isApproved,
-                    approvedAt: null,
-                    approvedBy: null,
-                    updatedAt: new Date().toISOString(),
-                });
+                await unapproveTask(
+                    { task: { id: taskId, title: notif.taskTitle }, priorStatus: prior.status, priorIsApproved: prior.isApproved },
+                    { actor, mode: MODES.COMMIT, reason: 'approval undone from notification' },
+                );
                 await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
             },
             message: 'Užduotis patvirtinta.',
@@ -455,14 +452,8 @@ export default function ManagerNotifications({ onClose }) {
     const confirmCompletionWrite = async (notif) => {
         const taskId = notif?.taskId;
         if (!taskId) return;
-        const now = new Date().toISOString();
-        await updateDoc(doc(db, 'tasks', taskId), {
-            status: 'confirmed',
-            isApproved: true,
-            confirmedBy: currentUser.uid,
-            confirmedAt: now,
-            updatedAt: now
-        });
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+        await confirmTask({ task: { id: taskId, title: notif.taskTitle } }, { actor, mode: MODES.COMMIT, reason: 'confirmed from notification (bulk)' });
         await handleDismissTask(notif.id);
     };
 
@@ -476,12 +467,8 @@ export default function ManagerNotifications({ onClose }) {
     // this is a fully clean undo: nothing the worker can see ever happened.
     const undoConfirmCompletion = async (notif) => {
         if (!notif?.taskId) return;
-        await updateDoc(doc(db, 'tasks', notif.taskId), {
-            status: 'completed',
-            confirmedBy: null,
-            confirmedAt: null,
-            updatedAt: new Date().toISOString()
-        });
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+        await unconfirmTask({ task: { id: notif.taskId, title: notif.taskTitle } }, { actor, mode: MODES.COMMIT, reason: 'confirm undone from notification (bulk)' });
         await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
     };
 
