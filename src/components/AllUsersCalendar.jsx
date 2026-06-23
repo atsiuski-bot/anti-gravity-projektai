@@ -4,7 +4,8 @@ import { collection, query, onSnapshot, where } from 'firebase/firestore';
 import { format, addDays, isSameDay, getDay } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, CalendarOff, Home, Palmtree, AlertTriangle } from 'lucide-react';
-import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { formatDisplayName } from '../utils/formatters';
+import { canSeeWholeTeam, isOverseenBy } from '../utils/teamScope';
 import { useUsers } from '../context/UsersContext';
 import { useAuth } from '../context/AuthContext';
 import { getLithuanianDateString } from '../utils/timeUtils';
@@ -14,7 +15,6 @@ import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import EmptyState from './ui/EmptyState';
-import Modal from './ui/Modal';
 import UserChip from './UserChip';
 
 // The day-report drill-down is a heavy component with its own Firestore listeners, so it is
@@ -77,12 +77,16 @@ export default function AllUsersCalendar() {
     }, []);
 
     const { activeUsers, usersMap } = useUsers();
-    const { currentUser, userRole } = useAuth();
+    const { currentUser, userRole, userData } = useAuth();
 
-    // Manager-only drill-down: clicking a worker's shift opens that worker's day report for the
-    // day in view. Workers also see this team calendar, so we never expose a colleague's detailed
-    // time report to them — this mirrors the Reports privacy boundary (workers see only their own).
-    const canDrill = isManagerRole(userRole);
+    // Drill-down access is per-worker: clicking a shift opens that worker's day report — the same
+    // "Darbo valandos" table the team report shows — but only for a viewer who may actually see
+    // that worker. Admins and whole-team managers may drill anyone; a scoped manager / senior may
+    // drill only the workers in their own subtree (overseerIds closure). Plain workers, and a
+    // manager looking at someone outside their scope, get a static bar (no colleague drill-down).
+    // This mirrors the Reports privacy boundary and the Firestore listener scoping.
+    const wholeTeam = canSeeWholeTeam(userData);
+    const canDrillUser = (user) => wholeTeam || isOverseenBy(user, currentUser?.uid);
     const [reportUser, setReportUser] = useState(null); // the worker whose day report modal is open
 
     // using usersMap from context
@@ -310,7 +314,7 @@ export default function AllUsersCalendar() {
                                                 )}
                                             </span>
                                         );
-                                        return canDrill ? (
+                                        return canDrillUser(user) ? (
                                             <button
                                                 key={event.id}
                                                 type="button"
@@ -415,7 +419,7 @@ export default function AllUsersCalendar() {
                                     >
                                         {/* For managers the whole row is a button that opens the
                                             worker's day report; for workers it stays static. */}
-                                        {canDrill ? (
+                                        {canDrillUser(user) ? (
                                             <button
                                                 type="button"
                                                 onClick={() => setReportUser(user)}
@@ -435,28 +439,25 @@ export default function AllUsersCalendar() {
                 )}
             </div>
 
-            {/* Manager drill-down — the clicked worker's report for the day in view. Reuses
-                DailyStatistics scoped to one worker (forceUserId) and embedded (no archive
-                browser), lazy-loaded so the heavy report only loads on demand. */}
+            {/* Manager drill-down — the clicked worker's day report, identical to the table the
+                team report opens (DailyStatistics' WorkerDayDetailModal). workerDetailOnly makes
+                DailyStatistics render ONLY that drill-down (it provides its own modal chrome), so
+                there is no outer Modal and no surrounding dashboard. Lazy-loaded so the heavy report
+                only mounts on demand. */}
             {reportUser && (
-                <Modal
-                    open
-                    onClose={() => setReportUser(null)}
-                    title={reportUser.displayName}
-                    size="xl"
-                    className="max-w-4xl"
-                >
-                    <Suspense fallback={<div className="py-12 text-center text-body text-ink-muted">Kraunama dienos ataskaita…</div>}>
-                        <DailyStatistics
-                            currentUser={currentUser}
-                            userRole={userRole}
-                            users={activeUsers}
-                            forceUserId={reportUser.id}
-                            initialDate={getLithuanianDateString(currentDate)}
-                            embedded
-                        />
-                    </Suspense>
-                </Modal>
+                <Suspense fallback={null}>
+                    <DailyStatistics
+                        currentUser={currentUser}
+                        userRole={userRole}
+                        users={activeUsers}
+                        forceUserId={reportUser.id}
+                        forceUserName={reportUser.displayName}
+                        initialDate={getLithuanianDateString(currentDate)}
+                        embedded
+                        workerDetailOnly
+                        onClose={() => setReportUser(null)}
+                    />
+                </Suspense>
             )}
         </div>
     );
