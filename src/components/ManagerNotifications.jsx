@@ -9,8 +9,10 @@ import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCirc
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
+import TaskCard from './TaskCard';
 import { deleteTask, extendTaskTime } from '../utils/taskActions';
 import { approveTask, humanActor, MODES } from '../domain';
+import { useUndoableAction } from '../hooks/useUndoableAction';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
@@ -35,10 +37,61 @@ import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyp
  * `onClose` lets an action that navigates away (edit-and-approve / open a task) also close the
  * bell panel that hosts this feed.
  */
+/**
+ * NotificationTaskCard — renders a completed-work approval as the SAME spacious TaskCard the team
+ * task list uses, so a manager sees (and acts on) a reported task identically in both places.
+ *
+ * The notification carries only taskId/taskTitle, so this wrapper subscribes to the live task doc
+ * and feeds it to TaskCard. TaskCard already exposes the manager sign-off buttons for a finished
+ * task (Patvirtinti / Grąžinti / Redaguoti / Trinti); the optional post-action hooks below are
+ * what keep the two-way feed honest — after the card's own write succeeds they dismiss this
+ * notification and notify the worker.
+ */
+function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDeleted }) {
+    const [task, setTask] = useState(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        if (!taskId) { setLoading(false); return undefined; }
+        const unsub = onSnapshot(
+            doc(db, 'tasks', taskId),
+            (snap) => {
+                setTask(snap.exists() ? { id: snap.id, ...snap.data() } : null);
+                setLoading(false);
+            },
+            (err) => {
+                console.error('NotificationTaskCard: task listener error:', err);
+                setLoading(false);
+            }
+        );
+        return () => unsub();
+    }, [taskId]);
+
+    if (loading) {
+        return <div className="h-28 max-w-xl animate-pulse rounded-card border border-line bg-surface-card shadow-sm" />;
+    }
+    // Task already gone (deleted/archived): the completion notice is stale — render nothing.
+    if (!task) return null;
+
+    return (
+        <div className="max-w-xl">
+            <TaskCard
+                task={task}
+                role="manager"
+                onEdit={onEdit}
+                onConfirmed={onConfirmed}
+                onReverted={onReverted}
+                onDeleted={onDeleted}
+            />
+        </div>
+    );
+}
+
 export default function ManagerNotifications({ onClose }) {
     const { currentUser, userRole } = useAuth();
     const { setActiveTab } = useNavigation();
     const isManager = isManagerRole(userRole);
+    const runUndoable = useUndoableAction();
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
@@ -263,24 +316,46 @@ export default function ManagerNotifications({ onClose }) {
         });
     };
 
-    const handleApproveTask = async (notif) => {
+    // Approving clears the worker's gate — a cleanly reversible decision — so it is now immediate +
+    // undoable instead of firing irrevocably on one tap. The catch: it pings the worker ("you may
+    // start"). That ping is DEFERRED for the undo window and cancelled on undo, so an undo leaves
+    // nothing for the worker to see; the approval state itself commits now (other managers see it
+    // live). Undo restores the exact prior status + re-surfaces the manager's approval request.
+    const handleApproveTask = (notif) => {
         const taskId = notif?.taskId;
-        if (!taskId) return;
-        try {
-            setActionError(null);
-            // 1. Approve the task (audited approveTask command — ADR 0015, increment 5)
-            await approveTask(
-                { task: { id: taskId, title: notif.taskTitle } },
-                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email }), mode: MODES.COMMIT, reason: 'approved from notification' },
-            );
-
-            // 2. Dismiss notification + tell the worker
-            await handleDismissTask(notif.id);
-            await notifyTaskApproved(notif);
-        } catch (err) {
-            console.error("Error approving task:", err);
-            setActionError("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
-        }
+        if (!taskId) return undefined;
+        setActionError(null);
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+        let prior = { status: null, isApproved: false }; // snapshotted in run, restored in undo
+        return runUndoable({
+            run: async () => {
+                const snap = await getDoc(doc(db, 'tasks', taskId));
+                if (snap.exists()) {
+                    const d = snap.data();
+                    prior = { status: d.status ?? null, isApproved: !!d.isApproved };
+                }
+                // Audited approveTask command — ADR 0015, increment 5 (prior state feeds its audit before/after).
+                await approveTask(
+                    { task: { id: taskId, title: notif.taskTitle, status: prior.status, isApproved: prior.isApproved } },
+                    { actor, mode: MODES.COMMIT, reason: 'approved from notification' },
+                );
+                await handleDismissTask(notif.id);
+            },
+            deferredEffect: () => notifyTaskApproved(notif),
+            undo: async () => {
+                await updateDoc(doc(db, 'tasks', taskId), {
+                    status: prior.status ?? 'pending',
+                    isApproved: prior.isApproved,
+                    approvedAt: null,
+                    approvedBy: null,
+                    updatedAt: new Date().toISOString(),
+                });
+                await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
+            },
+            message: 'Užduotis patvirtinta.',
+            undoneMessage: 'Atšaukta — patvirtinimas atšauktas.',
+            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite dar kartą.',
+        });
     };
 
     const handleEditAndApprove = async (notif) => {
@@ -372,89 +447,79 @@ export default function ManagerNotifications({ onClose }) {
         }
     };
 
-    // Batch-confirm every pending task completion in one action. Each completion is a simple,
-    // homogeneous, low-risk approval, so looping the existing per-item handler turns N taps into
-    // one. Reverts/edits/deletes stay per-card because they are the exception, not the rule.
-    const handleConfirmAllCompletions = async () => {
-        const completions = taskNotifications.filter(n => n.type === 'task_completion');
-        if (completions.length === 0) return;
-        setBulkConfirming(true);
-        setActionError(null);
-        try {
-            for (const n of completions) {
-                await handleConfirmCompletion(n);
-            }
-        } catch (err) {
-            console.error('Error confirming all completions:', err);
-            setActionError('Nepavyko patvirtinti visų užduočių. Bandykite dar kartą.');
-        } finally {
-            setBulkConfirming(false);
-        }
-    };
-
     // --- Task Completion Handlers ---
-    const handleConfirmCompletion = async (notif) => {
+    // State write only — confirm a finished task (completed -> confirmed). The worker "confirmed"
+    // ping is NOT sent here: it is deferred for the undo window (see below) so an undo never leaves a
+    // contradicted notification on the worker's phone. No toast either, so the single and the bulk
+    // handler share it (the bulk action shows ONE undo snackbar instead of N).
+    const confirmCompletionWrite = async (notif) => {
         const taskId = notif?.taskId;
         if (!taskId) return;
-        try {
-            setActionError(null);
-            await updateDoc(doc(db, 'tasks', taskId), {
-                status: 'confirmed',
-                isApproved: true,
-                confirmedBy: currentUser.uid,
-                confirmedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            });
-            await handleDismissTask(notif.id);
-            // Close the loop: tell the worker their finished task was confirmed.
-            await notify({ recipientId: notif.userId, type: 'task_confirmed', taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
-        } catch (err) {
-            console.error('Error confirming task completion:', err);
-            setActionError('Nepavyko patvirtinti užduoties. Bandykite dar kartą.');
-        }
-    };
-
-    const handleRevertTask = async (notif) => {
-        const taskId = notif?.taskId;
-        if (!taskId) return;
-        try {
-            setActionError(null);
-            const managerName = currentUser.displayName || currentUser.email || 'Vadovas';
-            const autoComment = {
-                text: `Vadovas ${managerName} grąžino užduotį į darbų sąrašą tobulinimui.`,
-                user: managerName,
-                userId: currentUser.uid,
-                isSystemComment: true,
-                createdAt: new Date().toISOString()
-            };
-            await updateDoc(doc(db, 'tasks', taskId), {
-                status: 'in-progress',
-                completed: false,
-                completedAt: null,
-                confirmedBy: null,
-                confirmedAt: null,
-                timerStatus: 'paused',
-                updatedAt: new Date().toISOString(),
-                comments: arrayUnion(autoComment)
-            });
-            await handleDismissTask(notif.id);
-            // Tell the worker their task came back for rework (action item in their bell).
-            await notify({ recipientId: notif.userId, type: 'task_reverted', taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: managerName });
-        } catch (err) {
-            console.error('Error reverting task:', err);
-            setActionError('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
-        }
-    };
-
-    // --- Session-correction request (worker → manager) ---
-    // "Spręsti": send the manager to the reports tab (which hosts the per-worker day report and the
-    // admin SessionEditModal they already use to correct logged time), dismiss the request, and
-    // close the bell. We navigate rather than deep-link a specific day because the report view owns
-    // the worker/day selection — the manager lands where the fix is made with the context they have.
-    const handleResolveCorrection = async (notif) => {
+        const now = new Date().toISOString();
+        await updateDoc(doc(db, 'tasks', taskId), {
+            status: 'confirmed',
+            isApproved: true,
+            confirmedBy: currentUser.uid,
+            confirmedAt: now,
+            updatedAt: now
+        });
         await handleDismissTask(notif.id);
-        onClose?.();
-        setActiveTab?.('reports');
+    };
+
+    // Deferred outbound ping — tell the worker their finished task was confirmed. Held for the undo
+    // window; skipped entirely if the manager undoes.
+    const notifyCompletionConfirmed = (notif) =>
+        notify({ recipientId: notif.userId, type: 'task_confirmed', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+
+    // Inverse — return a confirmed task to "awaiting confirmation" AND bring the manager's completion
+    // request back into the feed (the listener filters isRead==false). With the worker ping deferred,
+    // this is a fully clean undo: nothing the worker can see ever happened.
+    const undoConfirmCompletion = async (notif) => {
+        if (!notif?.taskId) return;
+        await updateDoc(doc(db, 'tasks', notif.taskId), {
+            status: 'completed',
+            confirmedBy: null,
+            confirmedAt: null,
+            updatedAt: new Date().toISOString()
+        });
+        await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
+    };
+
+    // (Single per-task confirm now lives on the NotificationTaskCard's own button — TaskCard's
+    // performConfirm, which defers its onConfirmed worker-ping for the undo window. The bulk handler
+    // below stays here because it acts across ALL completion cards at once.)
+
+    // Batch-confirm every pending task completion in one action — the single highest-risk one-tap in
+    // the bell (it signs off ALL finished work at once), so it gets ONE undo snackbar that reverses
+    // the whole batch, and the whole batch of worker pings is deferred together (cancelled on undo).
+    const handleConfirmAllCompletions = () => {
+        const completions = taskNotifications.filter(n => n.type === 'task_completion');
+        if (completions.length === 0) return undefined;
+        setActionError(null);
+        setBulkConfirming(true);
+        return runUndoable({
+            run: async () => { for (const n of completions) await confirmCompletionWrite(n); },
+            deferredEffect: async () => { for (const n of completions) await notifyCompletionConfirmed(n); },
+            undo: async () => { for (const n of completions) await undoConfirmCompletion(n); },
+            message: completions.length === 1 ? 'Užduotis patvirtinta.' : `Patvirtinta užduočių: ${completions.length}.`,
+            undoneMessage: 'Atšaukta — grąžinta patvirtinimui.',
+            errorMessage: 'Nepavyko patvirtinti visų užduočių. Bandykite dar kartą.',
+        }).finally(() => setBulkConfirming(false));
+    };
+
+    // Post-action hooks handed to the completion card's TaskCard. TaskCard performs the actual
+    // task write (confirm via status:'confirmed', revert via reopenTask, delete via deleteTask);
+    // these run AFTER that write succeeds and only do the feed-side bookkeeping the task list has
+    // no need for — dismiss this notification and tell the worker the outcome.
+    const handleCardConfirmed = async (notif) => {
+        await handleDismissTask(notif.id);
+        await notify({ recipientId: notif.userId, type: 'task_confirmed', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+    };
+
+    const handleCardReverted = async (notif) => {
+        await handleDismissTask(notif.id);
+        // Tell the worker their task came back for rework (action item in their bell).
+        await notify({ recipientId: notif.userId, type: 'task_reverted', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
     };
 
     // --- Account approval (system → admin) ---
@@ -847,41 +912,6 @@ export default function ManagerNotifications({ onClose }) {
                         );
                     }
 
-                    // Worker → manager ACTION: a logged-time error report ("Pranešti apie klaidą").
-                    // Shows who, which day, and the worker's note; "Spręsti" takes the manager to the
-                    // report where they correct the session. This REPLACES the old destructive
-                    // fallback that rendered the wrong "assigned you as vadovas" copy + a broken
-                    // "Ištrinti" button for this type.
-                    if (notif.type === 'session_correction_request') {
-                        return (
-                            <div key={notif.id} className="rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
-                                <div className="flex items-start gap-3">
-                                    <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
-                                    <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
-                                        <p className="font-medium leading-relaxed">
-                                            <UserChip userId={notif.userId || notif.createdBy} name={notif.userName || notif.createdByName} className="font-semibold" />{' '}
-                                            praneša apie įrašyto darbo laiko klaidą.
-                                        </p>
-                                        {notif.day && <p className="mt-1">Diena: <span className="font-semibold">{notif.day}</span></p>}
-                                        {notif.commentText && (
-                                            <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2">
-                                                &quot;{notif.commentText}&quot;
-                                            </p>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                                    <Button variant="secondary" size="md" icon={X} onClick={() => handleDismissTask(notif.id)}>
-                                        Pažymėti skaitytu
-                                    </Button>
-                                    <Button variant="primary" size="md" icon={Edit} onClick={() => handleResolveCorrection(notif)}>
-                                        Spręsti
-                                    </Button>
-                                </div>
-                            </div>
-                        );
-                    }
-
                     // System → admin ACTION: a new sign-up is pending approval. Inline Patvirtinti /
                     // Užblokuoti flip the user's status (mirroring User Management) without leaving
                     // the bell. Created server-side (admin SDK) because the new user is signed out
@@ -962,55 +992,68 @@ export default function ManagerNotifications({ onClose }) {
                         );
                     }
 
-                    // --- Task Completion Notification ---
-                    if (notif.type === 'task_completion') {
-                        const completedDate = notif.completedAt
-                            ? format(new Date(notif.completedAt), 'yyyy-MM-dd HH:mm')
-                            : '';
+                    // Worker → manager ACTION: the worker flagged one of their own logged work-time
+                    // rows as wrong. Workers have no session-edit right, so this is a REQUEST, not a
+                    // mutation: the manager resolves it manually in „Kom. ataskaitos“ with the existing
+                    // session editor. The card surfaces the worker's reason (already encoded with the
+                    // day / time span / duration in commentText) and offers a benign dismiss plus a
+                    // navigate-to-reports shortcut — never a task delete (this notif carries no taskId).
+                    if (notif.type === 'session_correction_request') {
                         return (
-                            <div key={notif.id} className="bg-feedback-success-soft border border-feedback-success-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                            <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                                 <div className="flex flex-col gap-3">
                                     <div className="flex items-start gap-3">
-                                        <Check className="w-5 h-5 text-feedback-success mt-0.5 flex-shrink-0" />
-                                        <div className="text-sm text-feedback-success-text">
-                                            <p>
-                                                <UserChip userId={notif.userId} name={notif.userName} className="font-semibold" />
-                                                {' '}baigė užduotį{' '}
-                                                <span className="font-medium">&quot;{notif.taskTitle}&quot;</span>
-                                                {completedDate && <span className="text-feedback-success-text"> {completedDate}</span>}
-                                                .
-                                            </p>
-                                            <p className="mt-1">
-                                                Užduočiai sugaištas laikas:{' '}
-                                                <span className="font-semibold">{notif.actualTime || '—'}</span>.
-                                            </p>
-                                            <p className="mt-1 text-feedback-success-text">Patvirtinkite atlikimą arba grąžinkite užduotį tobulinti.</p>
+                                        <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
+                                        <div className="min-w-0 text-sm text-feedback-warning-text">
+                                            <p><UserChip userId={notif.userId} name={notif.userName} className="font-semibold" /> pranešė apie klaidą darbo laike:</p>
+                                            {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
+                                            <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio darbuotojo dieną.</p>
                                         </div>
                                     </div>
-                                    <div className="flex items-center justify-between mt-2 mb-1 px-2 gap-2">
-                                        <Button
-                                            variant="success"
-                                            size="md"
-                                            icon={Check}
-                                            className="whitespace-nowrap"
-                                            onClick={() => handleConfirmCompletion(notif)}
-                                            title="Patvirtinti užduoties atlikimą"
-                                        >
-                                            Patvirtinti
-                                        </Button>
+                                    <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
                                         <Button
                                             variant="secondary"
                                             size="md"
-                                            icon={RotateCcw}
-                                            className="whitespace-nowrap"
-                                            onClick={() => handleRevertTask(notif)}
-                                            title="Grąžinti į darbų sąrašą"
+                                            onClick={() => handleDismissTask(notif.id)}
+                                            title="Pažymėti perskaitytu"
                                         >
-                                            Sugrąžinti į darbų sąrašą
+                                            Supratau
+                                        </Button>
+                                        <Button
+                                            variant="primary"
+                                            size="md"
+                                            icon={Edit}
+                                            className="whitespace-nowrap"
+                                            onClick={() => { setActiveTab('reports'); onClose?.(); }}
+                                            title="Atidaryti komandos ataskaitas ir pataisyti įrašą"
+                                        >
+                                            Atidaryti ataskaitas
                                         </Button>
                                     </div>
                                 </div>
                             </div>
+                        );
+                    }
+
+                    // --- Task Completion Notification ---
+                    // Rendered as the SAME TaskCard the team task list uses, fed by the live task
+                    // doc, so a reported task looks and behaves identically in both places. The
+                    // post-action hooks dismiss this card and notify the worker (the two-way feed
+                    // bookkeeping the list itself doesn't do); confirm/revert/edit/delete are
+                    // TaskCard's own manager sign-off buttons.
+                    if (notif.type === 'task_completion') {
+                        return (
+                            <NotificationTaskCard
+                                key={notif.id}
+                                taskId={notif.taskId}
+                                onEdit={(t) => {
+                                    onClose?.();
+                                    window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: t } }));
+                                }}
+                                onConfirmed={() => handleCardConfirmed(notif)}
+                                onReverted={() => handleCardReverted(notif)}
+                                onDeleted={() => handleDismissTask(notif.id)}
+                            />
                         );
                     }
                     
