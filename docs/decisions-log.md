@@ -25,6 +25,25 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-06-23** — **"Task people" standard — one visual language to SHOW and to CHOOSE a task's
+  Vykdytojas / Vadovas, plus a rebuilt create form.** Formalised in
+  [`DESIGN_SYSTEM.md`](./design/DESIGN_SYSTEM.md) §8 ("Task people") + the §11 checklist: a person
+  reads the same — avatar + `formatDisplayName` at one calm size — whether *displayed* (`AssigneeChip`
+  for the assignee, with the worker-colour dot; `UserChip` + the `Vad.` label for the manager) or
+  *chosen*. The missing half — choosing — is the new **`PersonSelect`**
+  (`src/components/ui/PersonSelect.jsx`), wrapping the canonical `Select` (extended to carry an
+  optional per-option `leading` avatar on the trigger AND every row) so the picker mirrors the chips.
+  **`TaskModal` rebuilt** to consume it and to cut height: labels above text inputs become
+  placeholders (title → "Ką reikia padaryti?"; deadline → "Atlikti iki… (neprivalomas įrašas)"), the
+  ✨ AI parse button moved onto the title's own row, and the spine reordered **title → priority →
+  deadline → Vykdytojas | Vadovas (side by side) → planned time → Daugiau**. The Vadovas picker was
+  promoted out of "Daugiau" onto the spine, and the self-assigned collapse affordance dropped
+  (assignee is always shown). Defaults unchanged (assignee = self; manager = the creator's default
+  manager, or the creating manager themselves). Client-only — no rules/index/functions/data change.
+  Gate: `lint` + `build` green; **live-QA'd via Preview** at 360 px (placeholder-as-label, AI inline,
+  field order, side-by-side avatar pickers, a 17-person dropdown all carrying avatars, 44 px targets,
+  no horizontal overflow, no console errors).
+
 - **2026-06-23** — **Canonical `Select` dropdown — every native `<select>` migrated.** A new
   `src/components/ui/Select.jsx` is the one single-choice control, replacing all 20 native
   `<select>` across the filters (`ManagerView`, `WorkerView`, `TaskHistory`, `Reports`), the task

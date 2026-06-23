@@ -29,9 +29,11 @@ import Modal from './Modal';
  *
  * @param {string} value - the currently selected option value.
  * @param {(value: string) => void} onChange - called with the chosen option's value.
- * @param {{value: string, label: string, disabled?: boolean, isGroup?: boolean}[]} options - the
- *   choices. An item with `isGroup: true` renders as a non-selectable section heading (keyboard
- *   navigation skips it), letting a long list be grouped under category labels.
+ * @param {{value: string, label: string, disabled?: boolean, isGroup?: boolean,
+ *   leading?: React.ReactNode}[]} options - the choices. An item with `isGroup: true` renders as a
+ *   non-selectable section heading (keyboard navigation skips it), letting a long list be grouped
+ *   under category labels. `leading` is an optional node (e.g. an `Avatar`) shown before the label
+ *   in the row AND, for the selected option, on the trigger — the basis of `PersonSelect`.
  * @param {string} [label] - the field/category name; shown as the panel heading + fallback
  *   accessible name. NEVER duplicated as an option row.
  * @param {string} [placeholder] - trigger text when nothing is selected (a prompt, not a choice).
@@ -241,7 +243,8 @@ export default function Select({
                             className={cn('h-4 w-4 shrink-0', isSel ? 'text-brand' : 'invisible')}
                             aria-hidden="true"
                         />
-                        <span className="min-w-0 flex-1">{opt.label}</span>
+                        {opt.leading && <span className="shrink-0">{opt.leading}</span>}
+                        <span className="min-w-0 flex-1 truncate">{opt.label}</span>
                     </li>
                 );
             })}
@@ -282,7 +285,9 @@ export default function Select({
                         buttonClassName
                     )}
                 >
-                    {Icon && <Icon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />}
+                    {selected?.leading
+                        ? <span className="shrink-0">{selected.leading}</span>
+                        : (Icon && <Icon className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />)}
                     <span className={cn('min-w-0 flex-1 truncate', isPlaceholder && 'text-ink-muted')}>
                         {triggerText}
                     </span>
