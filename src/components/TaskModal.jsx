@@ -9,6 +9,8 @@ import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { notify } from '../utils/notify';
+import { logError } from '../utils/errorLog';
+import { assignTask, humanActor, MODES } from '../domain';
 import { getPriorityOptions, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
@@ -698,6 +700,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             }
 
             let docRef;
+            // True only if the EDIT's separate assignee-move (assignTask) failed AFTER the content
+            // save already committed — gates the assignment notification + the modal close below so a
+            // non-atomic partial failure is surfaced precisely, not as the generic "nothing saved".
+            let reassignmentFailed = false;
             if (task) {
                 docRef = doc(db, 'tasks', task.id);
 
@@ -713,12 +719,57 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 // every OTHER field here, then reconcile the checklist atomically (three-way
                 // merge: manager's items/text + worker's live done-state + worker's adds).
                 const { checklist: authoredChecklist, ...taskDataNoChecklist } = taskData;
-                await updateDoc(docRef, taskDataNoChecklist);
+
+                // Reassignment is now a FIRST-CLASS, audited command (ADR 0015): when an edit hands
+                // the task to a different, non-empty worker, the assignTask command OWNS the assignee
+                // write + its decision-log entry — so keep assignedUserId/assignedAt OUT of this
+                // content save and let the command apply them. (Clearing the assignee, or a self-edit
+                // that doesn't move it, still flows through the content save unchanged; routing the
+                // whole create/edit through commands is a later increment.)
+                const nextAssignee = formData.assignedUserId;
+                const reassignViaCommand = task.assignedUserId !== nextAssignee && !!nextAssignee;
+                const contentData = { ...taskDataNoChecklist };
+                if (reassignViaCommand) {
+                    delete contentData.assignedUserId;
+                    delete contentData.assignedAt;
+                }
+
+                await updateDoc(docRef, contentData);
                 await reconcileChecklist(
                     task.id,
                     (task.checklist || []).map(item => item.id),
                     authoredChecklist || []
                 );
+
+                if (reassignViaCommand) {
+                    const w = assignableWorkers.find((x) => x.id === nextAssignee);
+                    try {
+                        const result = await assignTask(
+                            { task, worker: { id: nextAssignee, name: w ? formatDisplayName(w.displayName || w.email) : null } },
+                            {
+                                actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }),
+                                mode: MODES.COMMIT,
+                                reason: 'reassigned via task editor',
+                            },
+                        );
+                        // A human reassignment is never policy-refused (only an agent commit is);
+                        // handle a soft refusal defensively all the same.
+                        if (result && result.ok === false) {
+                            reassignmentFailed = true;
+                            console.warn('assignTask declined the reassignment:', result.reason);
+                        }
+                    } catch (assignErr) {
+                        // The content edit already committed in the write above; this SECOND write (the
+                        // assignee move + its audit) is non-atomic with it (routing the whole edit
+                        // through one command is increment 3). A failure here must NOT masquerade as the
+                        // generic "nothing saved" — surface a precise message, keep the modal open for a
+                        // retry, and suppress the assignment notification below so the worker is not
+                        // told of an assignment that did not land.
+                        reassignmentFailed = true;
+                        logError(assignErr, { source: 'TaskModal.handleSubmit.reassign' });
+                        setFormError('Turinys išsaugotas, bet nepavyko priskirti vykdytojo. Bandykite priskyrimą dar kartą.');
+                    }
+                }
 
                 // Tell the worker about manager-side edits that concern them. Both are gated on
                 // "assignee is someone other than me" so a self-edit never notifies the author.
@@ -730,8 +781,9 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
                         await notify({ recipientId: assignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
                     }
-                    // The task was (re)assigned to a new worker.
-                    if (task.assignedUserId !== assignee) {
+                    // The task was (re)assigned to a new worker — but only notify if the reassignment
+                    // write actually landed (a failed assignTask must not announce a non-existent move).
+                    if (task.assignedUserId !== assignee && !reassignmentFailed) {
                         await notify({ recipientId: assignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
                 }
@@ -800,6 +852,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             // For a freshly created task, offer to save it as a template if it's clearly recurring;
             // that keeps the modal open on the nudge. Otherwise close as usual.
             if (!task && maybeEnterTemplateSuggestion()) {
+                return;
+            }
+            // A failed reassignment kept the content edit but not the assignee move; keep the modal
+            // open (the precise error is already set) so the user can retry just the assignment.
+            if (reassignmentFailed) {
                 return;
             }
             onClose();
