@@ -9,7 +9,6 @@ import { cn } from '../utils/cn';
 import { addComment } from '../utils/commentActions';
 import { gatherReportData } from '../utils/reportData';
 import { buildReport } from '../utils/reportAggregate';
-import { formatStatValue } from '../utils/workerStats';
 import { Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
@@ -1147,6 +1146,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             dateRange={dateRange}
                             view={isManagerRole(userRole) ? 'hours' : 'full'}
                             showTestUsers={showTestUsers}
+                            // The team summary card above (shown for the same isManagerRole condition)
+                            // already carries the period span + Darbas/Pertraukos/Viso totals, so tell
+                            // the timeline below to drop its own duplicate summary in range mode.
+                            periodSummaryAbove={isManagerRole(userRole)}
                         />
                     )}
 
@@ -1475,7 +1478,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
 // same thing as the per-worker deltas in the downloaded report. `goodWhen` says which direction is
 // an improvement so colour never contradicts the numbers (more hours/tasks = up-good; on-time % up
 // = good). Colour is paired with an arrow + sign, never the sole signal (DESIGN_SYSTEM §5).
-function SummaryStat({ label, value, delta }) {
+function SummaryStat({ label, value, delta, valueClass = 'text-ink-strong', labelClass = 'text-ink-muted' }) {
     let Arrow = Minus;
     let tone = 'text-ink-muted';
     if (delta && delta.pct !== 0) {
@@ -1484,8 +1487,8 @@ function SummaryStat({ label, value, delta }) {
     }
     return (
         <div className="flex flex-col px-1">
-            <span className="text-caption text-ink-muted">{label}</span>
-            <span className="mt-0.5 text-h3 font-bold text-ink-strong tabular-nums">{value}</span>
+            <span className={cn('text-caption', labelClass)}>{label}</span>
+            <span className={cn('mt-0.5 text-h3 font-bold tabular-nums', valueClass)}>{value}</span>
             {delta && (
                 <span className={cn('mt-0.5 flex items-center gap-0.5 text-caption font-semibold tabular-nums', tone)}>
                     <Arrow className="h-3 w-3" aria-hidden="true" />
@@ -1583,13 +1586,34 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
                 <span className="ml-auto font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
             </div>
 
-            <div className="grid grid-cols-2 gap-x-2 gap-y-4 divide-line sm:grid-cols-4 sm:divide-x">
-                <SummaryStat label="Vykdytojų" value={t.workerCount} />
+            {/* Time triplet — the period's worked / break / total hours to the minute, from the same
+                aggregator the rest of the card uses. This is the former standalone
+                Darbas/Pertraukos/Viso bar (previously rendered by DailyStatistics below), folded in so
+                the whole period reads as ONE summary instead of two disconnected blocks. Colour-coded
+                (break = session-break accent, total = brand) but always paired with a text label. */}
+            <div className="grid grid-cols-3 divide-x divide-line">
                 <SummaryStat
-                    label="Viso dirbta"
-                    value={formatStatValue(t.totalHours, 'hours')}
-                    delta={p ? delta(t.totalHours, p.totalHours) : null}
+                    label="Darbas"
+                    value={formatMinutesToTimeString(t.totalWorkMinutes)}
+                    delta={p ? delta(t.totalWorkMinutes, p.totalWorkMinutes) : null}
                 />
+                <SummaryStat
+                    label="Pertraukos"
+                    value={formatMinutesToTimeString(t.totalBreakMinutes)}
+                    valueClass="text-session-break-accent"
+                />
+                <SummaryStat
+                    label="Viso"
+                    value={formatMinutesToTimeString(t.totalWorkMinutes + t.totalBreakMinutes)}
+                    valueClass="text-brand"
+                    labelClass="text-brand"
+                />
+            </div>
+
+            {/* Team KPIs — headline counts and quality, separated from the time triplet by a rule so
+                the two tiers (time · team) read as one card with a clear internal hierarchy. */}
+            <div className="mt-4 grid grid-cols-3 gap-x-2 divide-line border-t border-line pt-4 sm:divide-x">
+                <SummaryStat label="Vykdytojų" value={t.workerCount} />
                 <SummaryStat
                     label="Užbaigta užduočių"
                     value={t.completedTasks}
