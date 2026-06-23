@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useNavigation } from '../context/NavigationContext';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus } from 'lucide-react';
@@ -36,6 +37,7 @@ import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyp
  */
 export default function ManagerNotifications({ onClose }) {
     const { currentUser, userRole } = useAuth();
+    const { setActiveTab } = useNavigation();
     const isManager = isManagerRole(userRole);
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
@@ -725,6 +727,49 @@ export default function ManagerNotifications({ onClose }) {
                                             title="Uždaryti"
                                         >
                                             Supratau
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    }
+
+                    // Worker → manager ACTION: the worker flagged one of their own logged work-time
+                    // rows as wrong. Workers have no session-edit right, so this is a REQUEST, not a
+                    // mutation: the manager resolves it manually in „Kom. ataskaitos“ with the existing
+                    // session editor. The card surfaces the worker's reason (already encoded with the
+                    // day / time span / duration in commentText) and offers a benign dismiss plus a
+                    // navigate-to-reports shortcut — never a task delete (this notif carries no taskId).
+                    if (notif.type === 'session_correction_request') {
+                        return (
+                            <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
+                                <div className="flex flex-col gap-3">
+                                    <div className="flex items-start gap-3">
+                                        <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
+                                        <div className="min-w-0 text-sm text-feedback-warning-text">
+                                            <p><UserChip userId={notif.userId} name={notif.userName} className="font-semibold" /> pranešė apie klaidą darbo laike:</p>
+                                            {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
+                                            <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio darbuotojo dieną.</p>
+                                        </div>
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
+                                        <Button
+                                            variant="secondary"
+                                            size="md"
+                                            onClick={() => handleDismissTask(notif.id)}
+                                            title="Pažymėti perskaitytu"
+                                        >
+                                            Supratau
+                                        </Button>
+                                        <Button
+                                            variant="primary"
+                                            size="md"
+                                            icon={Edit}
+                                            className="whitespace-nowrap"
+                                            onClick={() => { setActiveTab('reports'); onClose?.(); }}
+                                            title="Atidaryti komandos ataskaitas ir pataisyti įrašą"
+                                        >
+                                            Atidaryti ataskaitas
                                         </Button>
                                     </div>
                                 </div>
