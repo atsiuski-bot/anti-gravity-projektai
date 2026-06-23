@@ -15,6 +15,7 @@ import { SoundManager } from '../utils/soundUtils';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import EmptyState from './ui/EmptyState';
+import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyphs';
 
 /**
  * NotificationFeed — the two-way feed rendered inside the notification bell's panel.
@@ -595,8 +596,8 @@ export default function ManagerNotifications({ onClose }) {
                             case 'task_assigned': Icon = ListTodo; tone = 'text-brand'; text = `${who} priskyrė Jums naują užduotį: ${task}`; break;
                             case 'task_approved': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų užduotis patvirtinta — galite pradėti: ${task}`; break;
                             case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis patvirtinta: ${task}`; break;
-                            case 'extension_granted': Icon = Clock; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
-                            case 'extension_denied': Icon = Clock; tone = 'text-ink-muted'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
+                            case 'extension_granted': Icon = TimeGrantedGlyph; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
+                            case 'extension_denied': Icon = TimeDeniedGlyph; tone = 'text-feedback-danger'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
                             case 'calendar_decision': {
                                 const approved = notif.decision === 'approved';
                                 Icon = approved ? CheckCircle2 : XCircle;
@@ -750,7 +751,7 @@ export default function ManagerNotifications({ onClose }) {
                                 <div className="flex flex-col gap-3">
                                     {/* Header */}
                                     <div className="flex items-start gap-3">
-                                        <Clock className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-600" />
+                                        <TimeUpGlyph className="w-5 h-5 mt-0.5 flex-shrink-0 text-red-600" />
                                         <div>
                                             <div className="text-sm text-red-800">
                                                 <p className="font-medium leading-relaxed">

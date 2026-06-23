@@ -10,6 +10,7 @@
  *  - roleInsignia  — role/rank chevron ladder + admin shield (Phase 3)
  *  - connectionGlyphs — offline / syncing feedback (Phase 4)
  *  - metricGlyphs   — reports time-bar (planned / worked / total) (Phase 4)
+ *  - timeGlyphs     — time-extension hourglass family (up / granted / denied) (Phase 5)
  */
 export * from './statusGlyphs';
 export { default as PriorityMeter } from './PriorityMeter';
@@ -17,3 +18,4 @@ export * from './navGlyphs';
 export * from './roleInsignia';
 export * from './connectionGlyphs';
 export * from './metricGlyphs';
+export * from './timeGlyphs';
