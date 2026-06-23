@@ -309,6 +309,39 @@ export default function WorkPlanner() {
         return true;
     };
 
+    // <!-- DECISION 2026-06-23: Approval gate now keys on the AFFECTED TIME, not only the day of
+    // week. A brand-new FUTURE entry is harmless forward planning and is saved directly, even
+    // mid-week; only touching past/current time (the retroactive-gaming risk) still routes through
+    // approval. Previously every weekday action — including adding a future shift — demanded a
+    // manager's sign-off, which mislabelled a new entry as a "Pakeitimas" and blocked plain planning. -->
+    // Approval exists to protect ELAPSED / CURRENT time from retroactive manipulation — not to
+    // gate harmless forward planning. So an action whose affected time is entirely in the FUTURE
+    // is saved directly (auto-approved); anything that touches the past or the current moment
+    // falls back to the weekly planning-window gate above (free Fri 13:00–Sun 21:00, else approval).
+    const isFutureInstant = (d) => d instanceof Date && !Number.isNaN(d.getTime()) && d.getTime() > Date.now();
+
+    // type: 'add' | 'edit' | 'delete'. `start` = the new entry's start; `originalStart` = the
+    // existing entry's start (edit/delete). A future-only touch bypasses approval entirely.
+    const actionNeedsApproval = ({ type, start, originalStart }) => {
+        if (type === 'add' && isFutureInstant(start)) return false;
+        if (type === 'edit' && isFutureInstant(start) && isFutureInstant(originalStart)) return false;
+        if (type === 'delete' && isFutureInstant(originalStart)) return false;
+        return isApprovalFeatureActive();
+    };
+
+    // User-facing nouns kept in one place so add/edit/delete are labelled consistently — the worker
+    // side used to call every action a "Pakeitimas" even when creating a brand-new entry.
+    const ACTION_NOUN_ACC = { add: 'Naują įrašą', edit: 'Pakeitimą', delete: 'Atšaukimą' };
+    const REASON_PROMPT = {
+        add: 'Prašome nurodyti, kodėl pridedate šį įrašą',
+        edit: 'Prašome nurodyti, kodėl darote šį pakeitimą',
+        delete: 'Prašome nurodyti, kodėl atšaukiate šį įrašą',
+    };
+    const approvalFootnote = (needsApproval, type) =>
+        needsApproval
+            ? `${ACTION_NOUN_ACC[type] || 'Įrašą'} turės patvirtinti vadovas — reikės nurodyti priežastį.`
+            : 'Įrašas išsaugomas ir patvirtinamas iš karto.';
+
     // Name the entry an action collides with, so the overlap error points at the real culprit
     // instead of a generic "something overlaps" the worker then has to hunt for.
     const describeEvent = (ev) => {
@@ -373,11 +406,12 @@ export default function WorkPlanner() {
     const executeDirectCalendarUpdate = async (action) => {
         try {
             if (action.type === 'add') {
-                await addDoc(collection(db, 'work_hours'), {
-                    ...action.data,
-                    userId: currentUser.uid,
-                    type: 'planned'
-                });
+                // An add carries a synthetic id:null (a real id exists only for edit/delete). Strip it
+                // so it never lands on the work_hours doc — a future reader doing {id: doc.id, ...data}
+                // would otherwise have its real doc id clobbered to null.
+                const addData = { ...action.data, userId: currentUser.uid, type: 'planned' };
+                delete addData.id;
+                await addDoc(collection(db, 'work_hours'), addData);
             } else if (action.type === 'edit') {
                 await updateDoc(doc(db, 'work_hours', action.data.id), {
                     start: action.data.start,
@@ -463,13 +497,19 @@ export default function WorkPlanner() {
                 originalEvent: editingEvent.id ? events.find(e => e.id === editingEvent.id) : null
             };
 
-            if (isApprovalFeatureActive()) {
+            const needsApproval = actionNeedsApproval({
+                type: actionDetails.type,
+                start: startDateTime,
+                originalStart: actionDetails.originalEvent ? new Date(actionDetails.originalEvent.start) : null
+            });
+
+            if (needsApproval) {
                 setPendingAction(actionDetails);
                 setShowReasonModal(true);
             } else {
                 await executeDirectCalendarUpdate(actionDetails);
             }
-            
+
             setEditingEvent(null);
             setError('');
         } catch (err) {
@@ -500,8 +540,9 @@ export default function WorkPlanner() {
         };
         setShowDeleteModal(false);
         setEditingEvent(null);
-        
-        if (isApprovalFeatureActive()) {
+
+        // Deleting a still-future plan is harmless; deleting past/current logged time keeps the gate.
+        if (actionNeedsApproval({ type: 'delete', start: editingEvent.start, originalStart: editingEvent.start })) {
             setPendingAction(actionDetails);
             setShowReasonModal(true);
         } else {
@@ -550,7 +591,7 @@ export default function WorkPlanner() {
                 }
             };
 
-            if (isApprovalFeatureActive()) {
+            if (actionNeedsApproval({ type: 'add', start: startDateTime })) {
                 setPendingAction(actionDetails);
                 setShowReasonModal(true);
                 setShowManualInput(false);
@@ -606,11 +647,10 @@ export default function WorkPlanner() {
             if (isManagerOrAdmin && managerId === currentUser.uid) {
                 // Auto-approve logic
                 if (pendingAction.type === 'add') {
-                    await addDoc(collection(db, 'work_hours'), {
-                        ...pendingAction.data,
-                        userId: currentUser.uid,
-                        type: 'planned'
-                    });
+                    // Strip the synthetic id:null (see executeDirectCalendarUpdate) before it lands on the doc.
+                    const addData = { ...pendingAction.data, userId: currentUser.uid, type: 'planned' };
+                    delete addData.id;
+                    await addDoc(collection(db, 'work_hours'), addData);
                 } else if (pendingAction.type === 'edit') {
                     await updateDoc(doc(db, 'work_hours', pendingAction.data.id), {
                         start: pendingAction.data.start,
@@ -675,9 +715,27 @@ export default function WorkPlanner() {
         timeOptions.push(`${hour}:30`);
     }
 
-    // Evaluated at render so the save buttons + copy control reflect whether changes will go
-    // straight in (weekend planning window) or be submitted for a manager's approval (week).
+    // Drives only the copy-last-week toolbar control (bulk weekend planning op).
     const approvalActive = isApprovalFeatureActive();
+
+    // Per-form approval preview: the save buttons + footnotes reflect whether THIS specific entry
+    // will be saved directly (future plan, or weekend window) or submitted for approval. The manual
+    // form is always an add; the edit modal is an edit or an add depending on whether it has an id.
+    const manualStartDate = (manualDate && manualStart) ? new Date(`${manualDate}T${manualStart}`) : null;
+    const manualNeedsApproval = manualStartDate
+        ? actionNeedsApproval({ type: 'add', start: manualStartDate })
+        : false;
+
+    const editType = editingEvent?.id ? 'edit' : 'add';
+    const editStartDate = (editingEvent?.dateStr && editingEvent?.startStr)
+        ? new Date(`${editingEvent.dateStr}T${editingEvent.startStr}`)
+        : null;
+    const editOriginalStart = editingEvent?.start instanceof Date
+        ? editingEvent.start
+        : (editingEvent?.start ? new Date(editingEvent.start) : null);
+    const editNeedsApproval = editStartDate
+        ? actionNeedsApproval({ type: editType, start: editStartDate, originalStart: editOriginalStart })
+        : false;
 
     const components = {
         event: ({ event }) => {
@@ -830,16 +888,14 @@ export default function WorkPlanner() {
                     )}
                     <div className="flex gap-2 mt-4">
                         <Button type="submit" variant="primary" size="md">
-                            {approvalActive ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
+                            {manualNeedsApproval ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
                         </Button>
                         <Button type="button" variant="secondary" size="md" onClick={() => setShowManualInput(false)}>
                             Atšaukti
                         </Button>
                     </div>
                     <p className="mt-2 text-caption text-ink-muted">
-                        {approvalActive
-                            ? 'Pakeitimą turės patvirtinti vadovas — reikės nurodyti priežastį.'
-                            : 'Planavimo metu pakeitimai išsaugomi ir patvirtinami iš karto.'}
+                        {approvalFootnote(manualNeedsApproval, 'add')}
                     </p>
                 </form>
             )
@@ -851,6 +907,12 @@ export default function WorkPlanner() {
                 own. On a screen too short to show the whole box, the *page* scrolls (the container
                 simply grows past the viewport) — the calendar no longer traps the scroll. Phones
                 use the day view, which is naturally shorter. */}
+            {/* Card chrome mirrors the team calendar (AllUsersCalendar): a rounded surface-card
+                panel with a subtle line border, so in both themes the personal planner reads as
+                the same component family rather than a bare library grid. The grid stays
+                transparent and inherits this surface; padding gives the toolbar + grid breathing
+                room without eating the fixed height (the inner box keeps its own height). */}
+            <div className="bg-surface-card rounded-card border border-line shadow-lg overflow-hidden p-2 sm:p-3">
             <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[880px]">
                 <Calendar
                     key={isPhone ? 'day' : 'week'}
@@ -878,6 +940,7 @@ export default function WorkPlanner() {
                         showMore: total => `+ Dar ${total}`
                     }}
                 />
+            </div>
             </div>
 
             {/* Edit Event Modal — canonical Modal (bare) keeps the bespoke form chrome while
@@ -1014,14 +1077,12 @@ export default function WorkPlanner() {
                                             </Button>
                                         )}
                                         <Button type="submit" variant="primary" size="md">
-                                            {approvalActive ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
+                                            {editNeedsApproval ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
                                         </Button>
                                     </div>
                                 </div>
                                 <p className="mt-3 text-caption text-ink-muted">
-                                    {approvalActive
-                                        ? 'Pakeitimą turės patvirtinti vadovas — reikės nurodyti priežastį.'
-                                        : 'Planavimo metu pakeitimai išsaugomi ir patvirtinami iš karto.'}
+                                    {approvalFootnote(editNeedsApproval, editType)}
                                 </p>
                             </form>
                         </div>
@@ -1051,12 +1112,12 @@ export default function WorkPlanner() {
                             </div>
                         )}
                         <h3 id="approval-feedback-title" className="text-h2 text-ink-strong mb-2">
-                            {feedbackVariant === 'approved' ? 'Pakeitimas išsaugotas' : 'Užklausa išsiųsta'}
+                            {feedbackVariant === 'approved' ? 'Išsaugota' : 'Užklausa išsiųsta'}
                         </h3>
                         <p className="text-body text-ink-muted mb-6">
                             {feedbackVariant === 'approved'
-                                ? 'Pakeitimas išsaugotas ir automatiškai patvirtintas.'
-                                : 'Jūsų pakeitimus turi patvirtinti vadovas.'}
+                                ? 'Veiksmas atliktas ir automatiškai patvirtintas.'
+                                : 'Jūsų užklausą turi patvirtinti vadovas.'}
                         </p>
                         <Button variant="primary" size="lg" fullWidth onClick={() => setShowApprovalFeedback(false)}>
                             Supratau
@@ -1080,8 +1141,8 @@ export default function WorkPlanner() {
                     }}
                 >
                     <div className="flex-1 min-h-0 overflow-y-auto p-6">
-                        <h3 id="reason-modal-title" className="text-h2 text-ink-strong mb-2">Pakeitimų priežastis</h3>
-                        <label htmlFor="reasonValue" className="block text-body text-ink-muted mb-4">Prašome nurodyti kodėl darote šį pakeitimą (min. 10 simbolių).</label>
+                        <h3 id="reason-modal-title" className="text-h2 text-ink-strong mb-2">Veiksmo priežastis</h3>
+                        <label htmlFor="reasonValue" className="block text-body text-ink-muted mb-4">{REASON_PROMPT[pendingAction?.type] || 'Prašome nurodyti priežastį'} (min. 10 simbolių).</label>
 
                         <textarea
                             id="reasonValue"

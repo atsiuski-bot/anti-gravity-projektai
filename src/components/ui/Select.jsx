@@ -29,7 +29,9 @@ import Modal from './Modal';
  *
  * @param {string} value - the currently selected option value.
  * @param {(value: string) => void} onChange - called with the chosen option's value.
- * @param {{value: string, label: string, disabled?: boolean}[]} options - the choices.
+ * @param {{value: string, label: string, disabled?: boolean, isGroup?: boolean}[]} options - the
+ *   choices. An item with `isGroup: true` renders as a non-selectable section heading (keyboard
+ *   navigation skips it), letting a long list be grouped under category labels.
  * @param {string} [label] - the field/category name; shown as the panel heading + fallback
  *   accessible name. NEVER duplicated as an option row.
  * @param {string} [placeholder] - trigger text when nothing is selected (a prompt, not a choice).
@@ -91,8 +93,8 @@ export default function Select({
 
     const openMenu = useCallback(() => {
         if (disabled) return;
-        const selIdx = options.findIndex((o) => o.value === value && !o.disabled);
-        const startIdx = selIdx >= 0 ? selIdx : options.findIndex((o) => !o.disabled);
+        const selIdx = options.findIndex((o) => o.value === value && !o.disabled && !o.isGroup);
+        const startIdx = selIdx >= 0 ? selIdx : options.findIndex((o) => !o.disabled && !o.isGroup);
         setActiveIndex(startIdx);
         setOpen(true);
     }, [disabled, options, value]);
@@ -103,7 +105,7 @@ export default function Select({
     }, []);
 
     const selectOption = useCallback((opt) => {
-        if (!opt || opt.disabled) return;
+        if (!opt || opt.disabled || opt.isGroup) return;
         if (opt.value !== value) onChange?.(opt.value);
         closeMenu();
     }, [onChange, value, closeMenu]);
@@ -115,7 +117,7 @@ export default function Select({
             let i = curr;
             for (let step = 0; step < n; step += 1) {
                 i = (i + dir + n) % n;
-                if (!options[i].disabled) return i;
+                if (!options[i].disabled && !options[i].isGroup) return i;
             }
             return curr;
         });
@@ -152,12 +154,12 @@ export default function Select({
                 break;
             case 'Home':
                 e.preventDefault();
-                setActiveIndex(options.findIndex((o) => !o.disabled));
+                setActiveIndex(options.findIndex((o) => !o.disabled && !o.isGroup));
                 break;
             case 'End':
                 e.preventDefault();
                 for (let i = options.length - 1; i >= 0; i -= 1) {
-                    if (!options[i].disabled) {
+                    if (!options[i].disabled && !options[i].isGroup) {
                         setActiveIndex(i);
                         break;
                     }
@@ -206,6 +208,17 @@ export default function Select({
             className={cn('overflow-y-auto py-1 focus:outline-none', useSheet ? 'max-h-[60vh]' : 'max-h-72')}
         >
             {options.map((opt, i) => {
+                if (opt.isGroup) {
+                    return (
+                        <li
+                            key={`group-${opt.label}-${i}`}
+                            role="presentation"
+                            className="px-3 pb-1 pt-3 text-caption font-semibold uppercase tracking-wide text-ink-muted first:pt-1"
+                        >
+                            {opt.label}
+                        </li>
+                    );
+                }
                 const isSel = opt.value === value;
                 const isActive = i === activeIndex;
                 return (

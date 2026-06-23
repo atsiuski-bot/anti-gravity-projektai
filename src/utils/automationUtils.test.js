@@ -56,10 +56,12 @@ describe('checkAndPromoteTasks — deadline buckets are computed in Vilnius time
         const count = await checkAndPromoteTasks();
         const pr = promotedPriorities();
 
-        expect(pr.overdue).toBe('Urgent');
-        expect(pr.today).toBe('Urgent');
-        expect(pr.tomorrow).toBe('Urgent');
-        expect(pr.dayAfter).toBe('High');
+        // Promotion now writes the canonical UPPERCASE PRIORITIES tokens (was Title-Case
+        // 'Urgent'/'High'), matching normalizePriority's output so no consumer must re-case.
+        expect(pr.overdue).toBe('URGENT');
+        expect(pr.today).toBe('URGENT');
+        expect(pr.tomorrow).toBe('URGENT');
+        expect(pr.dayAfter).toBe('HIGH');
         expect(pr.far).toBeUndefined(); // 3+ days out -> no update
         expect(count).toBe(4);
     });
@@ -74,7 +76,7 @@ describe('checkAndPromoteTasks — deadline buckets are computed in Vilnius time
         );
 
         await checkAndPromoteTasks();
-        expect(promotedPriorities().boundary).toBe('High');
+        expect(promotedPriorities().boundary).toBe('HIGH');
     });
 
     it('skips tasks with no deadline and tasks already at the target priority', async () => {

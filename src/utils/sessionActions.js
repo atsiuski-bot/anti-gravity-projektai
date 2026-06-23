@@ -4,6 +4,7 @@ import { pauseTask, resumeTask } from './taskActions';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
 import { isManagerRole } from './formatters';
+import { DEFAULT_PRIORITY } from './priority';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
@@ -468,7 +469,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 title: callTitle,
                 description: timeString,
                 status: "confirmed",
-                priority: "Medium",
+                priority: DEFAULT_PRIORITY,
                 assignedUserId: userId,
                 assignedUserName: userData.displayName || 'Nežinomas',
                 createdBy: userId,
@@ -537,7 +538,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 title: title,
                 description: session.customTitle ? timeString : `${timeString} (Automatiškai sukurtas)`,
                 status: isManager ? "confirmed" : "completed",
-                priority: "Medium",
+                priority: DEFAULT_PRIORITY,
                 assignedUserId: userId,
                 assignedUserName: userData.displayName || 'Nežinomas',
                 createdBy: userId,

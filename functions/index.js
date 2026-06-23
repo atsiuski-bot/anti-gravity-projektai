@@ -17,6 +17,7 @@
 
 const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { defineSecret } = require('firebase-functions/params');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const logger = require('firebase-functions/logger');
@@ -137,6 +138,9 @@ function copyForRequestNotification(n) {
         // Manager → worker
         case 'task_assigned':
             return { title: 'Nauja užduotis', body: title };
+        case 'recurring_reassign':
+            // System → manager: the recurring job's usual assignee is away; pick someone else.
+            return { title: 'Priskirkite kitą vykdytoją', body: title };
         case 'task_approved':
             return { title: 'Užduotis patvirtinta', body: title };
         case 'task_confirmed':
@@ -836,6 +840,79 @@ async function scanSessionAnomalies(name) {
     return { scanned: snap.size, anomalies, samples };
 }
 
+// Hard ceiling for a SINGLE continuous running timer — MIRROR of src/utils/timeUtils
+// MAX_SESSION_MINUTES (16h). No real continuous session approaches this; a larger elapsed can only
+// be a timer left running after the app was closed.
+const MAX_RUNNING_TIMER_MINUTES = 16 * 60;
+const STALE_TASK_DAYS = 30;                                   // non-terminal age that warrants review
+const STALE_STATUSES = ['pending', 'in-progress', 'approved', 'unapproved'];
+
+// Stop timers left RUNNING longer than any real continuous session — the forgotten-timer corruption
+// (the 8710-min / 1158-min cases) that the CLIENT clamp structurally cannot reach, because it only
+// fires while the assignee has the app open on that task (autoStopped was 0/471 in the data). The
+// unbounded running interval is DISCARDED (we never credit phantom hours) and the task is flagged
+// autoStopped so a manager can add real time if the worker actually worked. Safe by construction: a
+// genuine continuous session never exceeds 16h, and legitimate long (25-70h) jobs accrue via many
+// PAUSED sessions, never one running run — so this never clips real work. The worker's own
+// activeSession/workStatus is reconciled client-side by the orphan-recovery hook on next app load.
+async function autoStopForgottenTimers() {
+    let snap;
+    try {
+        snap = await db.collection('tasks').where('timerStatus', '==', 'running').get();
+    } catch (err) {
+        logger.warn('autoStopForgottenTimers query failed', { err: err.message });
+        return { scanned: 0, stopped: 0, samples: [] };
+    }
+    const nowMs = Date.now();
+    const nowIso = new Date().toISOString();
+    let stopped = 0;
+    const samples = [];
+    const writer = db.bulkWriter();
+    snap.forEach((docSnap) => {
+        const t = docSnap.data();
+        if (!t.timerStartedAt) return;
+        const startMs = new Date(t.timerStartedAt).getTime();
+        if (Number.isNaN(startMs)) return;
+        const elapsedMin = (nowMs - startMs) / 60000;
+        if (elapsedMin <= MAX_RUNNING_TIMER_MINUTES) return;
+        writer.update(docSnap.ref, {
+            timerStatus: 'paused',
+            timerStartedAt: null,
+            autoStopped: true,
+            autoStopReason: 'forgotten-timer-16h',
+            autoStoppedAt: nowIso,
+            updatedAt: nowIso,
+        });
+        stopped += 1;
+        if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, elapsedMin: Math.round(elapsedMin) });
+    });
+    await writer.close();
+    return { scanned: snap.size, stopped, samples };
+}
+
+// Surface (do NOT mutate) non-terminal tasks sitting unfinished beyond STALE_TASK_DAYS — the
+// backlog the data found (91 tasks >14d, oldest 'pending' 159d). Report-only: a manager decides to
+// finish, reassign, or drop them. createdAt is an ISO string, so the cutoff compares lexically.
+async function scanStaleTasks() {
+    const cutoffIso = new Date(Date.now() - STALE_TASK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    let snap;
+    try {
+        snap = await db.collection('tasks').where('status', 'in', STALE_STATUSES).get();
+    } catch (err) {
+        logger.warn('scanStaleTasks query failed', { err: err.message });
+        return { count: 0, samples: [] };
+    }
+    let count = 0;
+    const samples = [];
+    snap.forEach((docSnap) => {
+        const t = docSnap.data();
+        if (t.isDeleted || !t.createdAt || t.createdAt >= cutoffIso) return;
+        count += 1;
+        if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, status: t.status, createdAt: t.createdAt });
+    });
+    return { count, samples };
+}
+
 exports.dailyIntegrityScan = onSchedule(
     { schedule: 'every day 06:00', timeZone: 'Europe/Vilnius' },
     async () => {
@@ -869,15 +946,22 @@ exports.dailyIntegrityScan = onSchedule(
             totalAnomalies += r.anomalies;
         }
 
+        // (3) Task timer integrity — stop forgotten running timers, and surface the stale backlog.
+        const autoStoppedTimers = await autoStopForgottenTimers();
+        const staleBacklog = await scanStaleTasks();
+
         const critical = drops.length > 0;
+        const warning = totalAnomalies > 0 || autoStoppedTimers.stopped > 0;
         const report = {
             day,
             ranAt: nowIso,
-            severity: critical ? 'critical' : (totalAnomalies > 0 ? 'warning' : 'ok'),
+            severity: critical ? 'critical' : (warning ? 'warning' : 'ok'),
             counts,
             drops,
             anomalies: anomalyReport,
-            totalAnomalies
+            totalAnomalies,
+            autoStoppedTimers,
+            staleBacklog
         };
 
         try {
@@ -889,10 +973,392 @@ exports.dailyIntegrityScan = onSchedule(
 
         if (critical) {
             logger.error('INTEGRITY: volume drop detected — possible data loss', { drops, counts });
-        } else if (totalAnomalies > 0) {
-            logger.warn('INTEGRITY: value anomalies detected', { totalAnomalies, anomalyReport });
+        } else if (warning) {
+            logger.warn('INTEGRITY: anomalies / auto-stops detected', { totalAnomalies, anomalyReport, autoStoppedTimers });
         } else {
             logger.info('INTEGRITY: clean', { counts });
         }
+        if (autoStoppedTimers.stopped > 0) logger.warn('INTEGRITY: auto-stopped forgotten timers', autoStoppedTimers);
+        if (staleBacklog.count > 0) logger.info('INTEGRITY: stale backlog surfaced', { count: staleBacklog.count });
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Recurring tasks — scheduled generator + on-demand "run now"
+// ---------------------------------------------------------------------------
+//
+// A task_template may carry a `recurrence` descriptor (see src/utils/recurrence.js). Each morning
+// generateRecurringTasks materializes a real task in `tasks` for every active rule that fires today
+// (Vilnius). IDEMPOTENT: the generated task's id is deterministic (`rec_<templateId>_<YYYY-MM-DD>`),
+// so a retry, redeploy, OR a manual "run now" can never double-create — the prior 247-corrupt-
+// break_sessions incident is exactly the unguarded-write class this design forecloses. Each task
+// carries `sourceTemplateId` + `generatedForDate` (the provenance the data analysis had to infer).
+//
+// ABSENCE: if the baked assignee is on an absence (work_hours.isVacation) that buckets to the target
+// day, the task is STILL created (the work isn't lost) but flagged `needsReassignment` and the
+// template's manager is notified to assign someone else (request_notifications → FCM push + in-app).
+//
+// The created task is a normal `tasks` doc, so stampTeamOnTaskWrite denormalizes its teamManagerIds
+// and the approval/timer/archival flows all work unchanged — this generator reuses, it doesn't fork.
+
+// Canonical UPPERCASE priority — MIRROR of src/utils/priority.js normalizePriority.
+const RECURRING_PRIORITIES = ['URGENT', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW'];
+function normalizeRecurringPriority(p) {
+    const up = String(p || '').toUpperCase();
+    return RECURRING_PRIORITIES.includes(up) ? up : 'MEDIUM';
+}
+
+// Parse a free-text estimate to minutes — MIRROR of src/utils/timeUtils.js parseTimeStringToMinutes
+// (handles comma decimals "1,5h" and the Lithuanian "val" suffix). Keep in lockstep.
+function parseEstimateMinutes(str) {
+    if (!str || typeof str !== 'string') return 0;
+    const norm = str.trim().toLowerCase().replace(',', '.');
+    const m = norm.match(/^(?:(\d+(?:\.\d+)?)\s*(?:h|val))?\s*(?:(\d+)\s*(?:m|min))?$/);
+    if (!m) return 0;
+    let total = 0;
+    const hours = m[1] ? parseFloat(m[1]) : 0;
+    const mins = m[2] ? parseInt(m[2], 10) : 0;
+    if (Number.isFinite(hours) && hours >= 0) total += hours * 60;
+    if (Number.isFinite(mins) && mins >= 0) total += mins;
+    return Number.isFinite(total) ? total : 0;
+}
+
+function recurringIsoWeekday(dateStr) {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    if (!y || !m || !d) return null;
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    return dow === 0 ? 7 : dow;
+}
+function recurringDaysInMonth(year, month) {
+    return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+// MIRROR of src/utils/recurrence.js recurrenceFiresOn — keep both copies identical.
+function recurringFiresOn(recurrence, dateStr) {
+    if (!recurrence || recurrence.active === false) return false;
+    if (Array.isArray(recurrence.skipDates) && recurrence.skipDates.includes(dateStr)) return false;
+    const wd = recurringIsoWeekday(dateStr);
+    if (!wd) return false;
+    switch (recurrence.freq) {
+        case 'daily':
+            return true;
+        case 'weekly':
+            return Array.isArray(recurrence.byWeekday) && recurrence.byWeekday.includes(wd);
+        case 'monthly': {
+            const [y, m, d] = dateStr.split('-').map(Number);
+            const target = Math.min(recurrence.byMonthDay || 1, recurringDaysInMonth(y, m));
+            return d === target;
+        }
+        default:
+            return false;
+    }
+}
+
+// Is the user on an absence (any kind) that buckets to the given Vilnius day? Reads work_hours by
+// userId (the automatic single-field index) and checks isVacation (the absence gate). Off the hot
+// path (only at generation time), so the client-side day-bucket filter is fine.
+async function isUserAbsentOn(uid, dayStr) {
+    if (!uid) return false;
+    try {
+        const snap = await db.collection('work_hours').where('userId', '==', uid).get();
+        let absent = false;
+        snap.forEach((d) => {
+            const wh = d.data();
+            if (!wh || wh.isVacation !== true || !wh.start) return;
+            if (lithuanianDay(new Date(wh.start)) === dayStr) absent = true;
+        });
+        return absent;
+    } catch (err) {
+        logger.warn('isUserAbsentOn failed', { uid, err: err.message });
+        return false;
+    }
+}
+
+// Materialize one template's task for `dayStr` (Vilnius). Idempotent via the deterministic id.
+// `force` (run-now) bypasses the fires-today / paused checks so a manager can fire on demand.
+async function generateOneRecurring(templateId, template, dayStr, force) {
+    const recurrence = template.recurrence || null;
+    if (!force) {
+        if (!recurrence) return { created: false, reason: 'no-recurrence' };
+        if (recurrence.active === false) return { created: false, reason: 'paused' };
+        if (!recurringFiresOn(recurrence, dayStr)) return { created: false, reason: 'not-due' };
+    }
+
+    const data = template.data || {};
+    const assignee = data.assignedUserId || data.assignedWorkerId || '';
+    const managerId = data.managerId || template.createdBy || null;
+
+    // Resolve the assignee's display name (the app denormalizes assignedUserName onto task rows).
+    let assignedUserName = '';
+    if (assignee) {
+        try {
+            const us = await db.collection('users').doc(assignee).get();
+            if (us.exists) assignedUserName = us.data().displayName || us.data().email || '';
+        } catch (err) {
+            logger.warn('recurring assignee name lookup failed', { assignee, err: err.message });
+        }
+    }
+
+    const absent = assignee ? await isUserAbsentOn(assignee, dayStr) : false;
+
+    // Deterministic id → at most one task per template per Vilnius day, no matter how many runs.
+    const taskId = `rec_${templateId}_${dayStr}`;
+    const ref = db.collection('tasks').doc(taskId);
+
+    const result = await db.runTransaction(async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists) return { created: false, deduped: true, taskId };
+
+        const nowIso = new Date().toISOString();
+        const task = {
+            title: data.title || template.templateName || 'Pasikartojantis darbas',
+            description: data.description || '',
+            priority: normalizeRecurringPriority(data.priority),
+            estimatedTime: data.estimatedTime || '',
+            estimatedTimeMinutes: parseEstimateMinutes(data.estimatedTime || ''),
+            assignedUserId: assignee,
+            assignedUserName,
+            managerId,
+            taskAuditor: managerId,
+            tag: data.tag || '',
+            links: Array.isArray(data.links) ? data.links : [],
+            checklist: Array.isArray(data.checklist) ? data.checklist : [],
+            comments: [],
+            status: 'pending',
+            completed: false,
+            createdAt: nowIso,
+            createdBy: 'system_recurring',
+            creatorName: 'Pasikartojantis darbas',
+            assignedAt: nowIso,
+            updatedAt: nowIso,
+            // Provenance — makes recurring-vs-adhoc reporting exact instead of inferred.
+            sourceTemplateId: templateId,
+            generatedForDate: dayStr,
+            isRecurringInstance: true,
+            ...(absent ? { needsReassignment: true, reassignReason: 'assignee-absent' } : {}),
+        };
+        tx.set(ref, task);
+        return { created: true, taskId, needsReassignment: absent };
+    });
+
+    // Notify the manager to reassign when the usual assignee is away (outside the transaction).
+    if (result.created && result.needsReassignment && managerId) {
+        try {
+            await db.collection('request_notifications').add({
+                recipientId: managerId,
+                type: 'recurring_reassign',
+                taskId: result.taskId,
+                taskTitle: data.title || template.templateName || 'Pasikartojantis darbas',
+                userId: assignee,
+                isRead: false,
+                createdAt: new Date().toISOString(),
+                createdBy: 'system_recurring',
+            });
+        } catch (err) {
+            logger.warn('recurring reassign notify failed', { templateId, err: err.message });
+        }
+    }
+    return result;
+}
+
+exports.generateRecurringTasks = onSchedule(
+    // 05:00 Vilnius — before the managers' ~09:00 creation peak, after the 03:00 work-day flip.
+    { schedule: 'every day 05:00', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const dayStr = lithuanianDay(new Date());
+        let scanned = 0;
+        let created = 0;
+        let deduped = 0;
+        let reassign = 0;
+
+        let snap;
+        try {
+            snap = await db.collection('task_templates').get(); // small collection — full scan is fine
+        } catch (err) {
+            logger.error('generateRecurringTasks list failed', { err: err.message });
+            return;
+        }
+
+        for (const docSnap of snap.docs) {
+            const template = docSnap.data();
+            const recurrence = template.recurrence;
+            if (!recurrence || recurrence.active === false) continue;
+            if (!recurringFiresOn(recurrence, dayStr)) continue;
+            scanned += 1;
+            try {
+                const r = await generateOneRecurring(docSnap.id, template, dayStr, false);
+                if (r.created) {
+                    created += 1;
+                    if (r.needsReassignment) reassign += 1;
+                    // Observability only (the deterministic id, not this field, is the dedup).
+                    await docSnap.ref.update({ 'recurrence.lastGeneratedDate': dayStr }).catch(() => {});
+                } else if (r.deduped) {
+                    deduped += 1;
+                }
+            } catch (err) {
+                logger.error('generateRecurringTasks one failed', { id: docSnap.id, err: err.message });
+            }
+        }
+
+        logger.info('generateRecurringTasks done', { dayStr, scanned, created, deduped, reassign });
+    }
+);
+
+// On-demand "Sukurti dabar" — the manager's manual trigger over the SAME generation logic (shared
+// dedup / provenance / absence-notify). Manager+ only. force=true so it fires regardless of the
+// rule's schedule/pause, but the deterministic id still prevents a same-day duplicate.
+exports.runRecurringTasksNow = onCall(async (request) => {
+    const callerUid = request.auth && request.auth.uid;
+    if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
+    const callerSnap = await db.collection('users').doc(callerUid).get();
+    const role = callerSnap.exists ? callerSnap.data().role : '';
+    if (!['admin', 'Administratorius', 'manager', 'seniorManager'].includes(role)) {
+        throw new HttpsError('permission-denied', 'Managers only.');
+    }
+    const templateId = request.data && request.data.templateId;
+    if (!templateId) throw new HttpsError('invalid-argument', 'templateId required.');
+
+    const tSnap = await db.collection('task_templates').doc(templateId).get();
+    if (!tSnap.exists) throw new HttpsError('not-found', 'Template not found.');
+
+    const dayStr = lithuanianDay(new Date());
+    try {
+        return await generateOneRecurring(templateId, tSnap.data(), dayStr, true);
+    } catch (err) {
+        logger.error('runRecurringTasksNow failed', { templateId, err: err.message });
+        throw new HttpsError('internal', 'Generation failed.');
+    }
+});
+
+// ---------------------------------------------------------------------------
+// AI task-draft parser — free-text → structured task (server-side, manager-only)
+// ---------------------------------------------------------------------------
+//
+// Mirrors the GODSGLOOM AI pattern: the key NEVER touches the client — a callable forwards to
+// OpenRouter (model google/gemini-2.5-flash) using a server-side secret. The model extracts a
+// DRAFT only; the client opens it in the normal create flow for the manager to confirm, so AI
+// never writes a task and the userId-pin / scoping rules are untouched. The assignee is resolved
+// SERVER-side from the caller-supplied roster (the model returns a name, not an id, so it can't
+// invent a user). Priority/estimate are run through the same canonicalizers as every other writer.
+
+const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const PARSE_MODEL = 'google/gemini-2.5-flash';
+const MAX_PARSE_INPUT = 2000;
+
+// Accent-insensitive lowercase, for matching Lithuanian names regardless of inflection/diacritics.
+function foldName(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+
+// Map the model's chosen assignee NAME back to a roster id — exact, then first-name, then contains.
+// Returns '' when nothing matches confidently (the manager then picks), so a hallucinated name can
+// never route to the wrong person.
+function resolveAssigneeId(name, roster) {
+    const target = foldName(name);
+    if (!target || !Array.isArray(roster)) return '';
+    const folded = roster.map((r) => ({ id: r.id, n: foldName(r.name) })).filter((r) => r.id && r.n);
+    let hit = folded.find((r) => r.n === target);
+    if (hit) return hit.id;
+    const targetFirst = target.split(' ')[0];
+    hit = folded.find((r) => r.n.split(' ')[0] === targetFirst);
+    if (hit) return hit.id;
+    hit = folded.find((r) => r.n.includes(target) || target.includes(r.n.split(' ')[0]));
+    return hit ? hit.id : '';
+}
+
+exports.parseTaskDraft = onCall(
+    { secrets: [OPENROUTER_API_KEY], timeoutSeconds: 30, memory: '256MiB' },
+    async (request) => {
+        const callerUid = request.auth && request.auth.uid;
+        if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
+        const callerSnap = await db.collection('users').doc(callerUid).get();
+        const role = callerSnap.exists ? callerSnap.data().role : '';
+        if (!['admin', 'Administratorius', 'manager', 'seniorManager'].includes(role)) {
+            throw new HttpsError('permission-denied', 'Managers only.');
+        }
+        const apiKey = OPENROUTER_API_KEY.value();
+        if (!apiKey) throw new HttpsError('failed-precondition', 'AI not configured.');
+
+        const text = String((request.data && request.data.text) || '').slice(0, MAX_PARSE_INPUT).trim();
+        if (!text) throw new HttpsError('invalid-argument', 'No text provided.');
+        const roster = Array.isArray(request.data && request.data.roster)
+            ? request.data.roster.slice(0, 60)
+            : [];
+        const names = roster.map((r) => r.name).filter(Boolean);
+        const today = lithuanianDay(new Date());
+
+        const system =
+            'Tu ištrauki VIENĄ darbo užduotį iš vadovo laisvo teksto (lietuvių kalba). Grąžink TIK ' +
+            'JSON objektą su laukais: title (trumpas darbo pavadinimas BE vykdytojo/laiko/prioriteto ' +
+            'žodžių), assigneeName (geriausiai atitinkantis vardas iš sąrašo arba ""), priority ' +
+            '(vienas iš: URGENT, HIGH, MEDIUM, LOW, VERY_LOW), estimate (pvz. "30min","1h","2h","1,5h" ' +
+            'arba ""), deadline (YYYY-MM-DD arba ""). Šiandien yra ' + today + ' (Europe/Vilnius), ' +
+            'savaitė prasideda pirmadienį — "rytoj","poryt","pirmadienį" ir pan. paversk į konkrečią ' +
+            'datą. Vykdytojų sąrašas: ' + (names.join(', ') || '(nėra)') + '. Jei prioritetas ' +
+            'nenurodytas, naudok MEDIUM. Atsakyk TIK JSON, be jokio kito teksto.';
+
+        const body = {
+            model: PARSE_MODEL,
+            messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: text },
+            ],
+            response_format: { type: 'json_object' },
+            temperature: 0,
+            max_tokens: 300,
+        };
+
+        let resp;
+        try {
+            resp = await fetch(OPENROUTER_URL, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://anti-gravity-projektai.pages.dev',
+                    'X-Title': 'WORKZ task parser',
+                },
+                body: JSON.stringify(body),
+            });
+        } catch (e) {
+            logger.error('parseTaskDraft fetch failed', { err: e.message });
+            throw new HttpsError('unavailable', 'AI laikinai nepasiekiamas.');
+        }
+
+        if (!resp.ok) {
+            const t = await resp.text().catch(() => '');
+            logger.warn('parseTaskDraft non-OK', { status: resp.status, body: t.slice(0, 200) });
+            if (resp.status === 429) throw new HttpsError('resource-exhausted', 'AI kvota viršyta.');
+            throw new HttpsError('internal', 'AI grąžino klaidą.');
+        }
+
+        let json;
+        try {
+            json = await resp.json();
+        } catch (e) {
+            throw new HttpsError('internal', 'AI atsakymas netinkamas.');
+        }
+        const content = json && json.choices && json.choices[0] &&
+            json.choices[0].message && json.choices[0].message.content;
+        let parsed = {};
+        try {
+            parsed = JSON.parse(content);
+        } catch (e) {
+            const m = String(content || '').match(/\{[\s\S]*\}/);
+            if (m) { try { parsed = JSON.parse(m[0]); } catch (e2) { parsed = {}; } }
+        }
+
+        const estimate = typeof parsed.estimate === 'string' ? parsed.estimate.trim() : '';
+        const deadline = (typeof parsed.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.deadline))
+            ? parsed.deadline
+            : '';
+        return {
+            title: typeof parsed.title === 'string' ? parsed.title.trim().slice(0, 200) : '',
+            assignedUserId: resolveAssigneeId(parsed.assigneeName, roster),
+            priority: normalizeRecurringPriority(parsed.priority),
+            estimatedTime: estimate,
+            estimatedTimeMinutes: parseEstimateMinutes(estimate),
+            deadline,
+        };
     }
 );

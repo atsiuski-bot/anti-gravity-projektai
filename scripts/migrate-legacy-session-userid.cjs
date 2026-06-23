@@ -33,23 +33,41 @@
  */
 
 const admin = require('firebase-admin');
+const fs = require('fs');
 
 const EXPECTED_PROJECT = 'darbo-planavimas';
 const COLLECTIONS = ['work_sessions', 'break_sessions'];
 const APPLY = process.argv.includes('--apply');
 const BATCH_LIMIT = 400;
 
-admin.initializeApp();
-const db = admin.firestore();
+let db; // initialized in run(), AFTER the credentials are validated
 
-function resolvedProject() {
-    return (
-        admin.app().options.projectId ||
-        process.env.GOOGLE_CLOUD_PROJECT ||
-        process.env.GCLOUD_PROJECT ||
-        process.env.FIREBASE_PROJECT ||
-        null
-    );
+// Validate the service-account credentials BEFORE any Firestore access, reading the project id
+// straight from the key file. This is the load-bearing safety guard: it must run before we ever
+// scan or write, and must NOT rely on lazily-loaded SDK state (admin.app().options.projectId is
+// empty until the first request, which would let a wrong-project key slip past with only a warning).
+function validateCredentialsOrExit() {
+    const keyPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    if (!keyPath) {
+        console.error('ABORT: GOOGLE_APPLICATION_CREDENTIALS is not set. Point it at a darbo-planavimas service-account key (.json).');
+        process.exit(1);
+    }
+    if (!fs.existsSync(keyPath)) {
+        console.error(`ABORT: key file not found: ${keyPath}`);
+        process.exit(1);
+    }
+    let project = null;
+    try {
+        project = JSON.parse(fs.readFileSync(keyPath, 'utf8')).project_id || null;
+    } catch {
+        console.error(`ABORT: could not parse the key file as JSON: ${keyPath}`);
+        process.exit(1);
+    }
+    if (project !== EXPECTED_PROJECT) {
+        console.error(`ABORT: key is for project "${project || '(none)'}", expected "${EXPECTED_PROJECT}". Wrong key — fix GOOGLE_APPLICATION_CREDENTIALS.`);
+        process.exit(1);
+    }
+    return project;
 }
 
 // Mirror of functions/index.js overseersFor(uid). Cached: only ~roster-sized number of reads.
@@ -90,21 +108,10 @@ async function overseersFor(uid) {
 }
 
 async function run() {
-    const project = resolvedProject();
-    console.log(`\nCredentials project : ${project || '(unknown)'}`);
-    if (project && project !== EXPECTED_PROJECT) {
-        console.error(
-            `ABORT: connected to "${project}", expected "${EXPECTED_PROJECT}". ` +
-                `Point GOOGLE_APPLICATION_CREDENTIALS at a ${EXPECTED_PROJECT} service-account key.`
-        );
-        process.exit(1);
-    }
-    if (!project) {
-        console.warn(
-            'WARNING: could not confirm the project from the credentials. ' +
-                'Verify the sample rows below belong to WORKZ before running with --apply.'
-        );
-    }
+    const project = validateCredentialsOrExit();
+    admin.initializeApp();
+    db = admin.firestore();
+    console.log(`\nCredentials project : ${project}`);
     console.log(`Mode                : ${APPLY ? 'APPLY (will write)' : 'DRY-RUN (no writes)'}\n`);
 
     let totalLegacy = 0;

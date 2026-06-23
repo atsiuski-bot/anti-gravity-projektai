@@ -2,6 +2,7 @@ import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setD
 import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
+import { normalizePriority } from './priority';
 import { logError } from './errorLog';
 
 /**
@@ -151,7 +152,7 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
             parallelOps.push(
                 addDoc(collection(db, 'work_sessions'), {
                     taskId: task.id,
-                    taskTitle: task.title || 'Unknown Task',
+                    taskTitle: task.title || 'Nežinoma užduotis',
                     userId: task.assignedUserId,
                     userName: task.assignedUserName || null,
                     startTime: start.toISOString(),
@@ -320,11 +321,14 @@ export const archiveTask = async (task, userId) => {
  * @param {Object} user - The current user object.
  * @returns {Promise<void>}
  */
-export const saveTaskTemplate = async (templateName, selectedData, user) => {
+export const saveTaskTemplate = async (templateName, selectedData, user, category = '') => {
     try {
         await addDoc(collection(db, 'task_templates'), {
             templateName,
             data: selectedData,
+            // Top-level (not inside `data`) so it groups templates without ever leaking into the
+            // task form when the template is applied.
+            category: category || '',
             createdBy: user.uid,
             creatorName: user.displayName || user.email,
             createdAt: new Date().toISOString()
@@ -372,11 +376,12 @@ export const deleteTaskTemplate = async (templateId) => {
  * @param {Object} user - The current user object.
  * @returns {Promise<void>}
  */
-export const updateTaskTemplate = async (templateId, templateName, selectedData, user) => {
+export const updateTaskTemplate = async (templateId, templateName, selectedData, user, category = '') => {
     try {
         await updateDoc(doc(db, 'task_templates', templateId), {
             templateName,
             data: selectedData,
+            category: category || '',
             updatedBy: user.uid,
             updatedByName: user.displayName || user.email,
             updatedAt: new Date().toISOString()
@@ -386,6 +391,99 @@ export const updateTaskTemplate = async (templateId, templateName, selectedData,
         console.error("Error updating template:", err);
         throw err;
     }
+};
+
+/**
+ * Sets (or clears) a template's recurrence descriptor — the WHEN that turns a plain template into a
+ * recurring job the scheduled generator materializes. Pass the full recurrence object (see
+ * utils/recurrence.js) or null to make the template non-recurring. Manager/admin-writable per the
+ * task_templates rules (no new rule needed).
+ *
+ * @param {string} templateId
+ * @param {Object|null} recurrence
+ * @param {Object} user - current user (for the audit stamp)
+ */
+export const setTemplateRecurrence = async (templateId, recurrence, user) => {
+    try {
+        await updateDoc(doc(db, 'task_templates', templateId), {
+            recurrence: recurrence || null,
+            updatedBy: user.uid,
+            updatedByName: user.displayName || user.email,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error("Error setting template recurrence:", err);
+        throw err;
+    }
+};
+
+/**
+ * Sets a template's baked assignee to the single CANONICAL field (`data.assignedUserId`), which the
+ * generator reads. This is also the place the legacy `assignedWorkerId` drift is healed: writing the
+ * canonical field and clearing the old one removes the ambiguity the data exposed (templates split
+ * 5 old / 9 new). Pass an empty string to leave it unassigned.
+ *
+ * @param {string} templateId
+ * @param {string} assignedUserId
+ * @param {Object} user
+ */
+export const setTemplateAssignee = async (templateId, assignedUserId, user) => {
+    try {
+        await updateDoc(doc(db, 'task_templates', templateId), {
+            'data.assignedUserId': assignedUserId || '',
+            'data.assignedWorkerId': null, // heal the old-field drift on write
+            updatedBy: user.uid,
+            updatedByName: user.displayName || user.email,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error("Error setting template assignee:", err);
+        throw err;
+    }
+};
+
+/**
+ * Create a single task from a plain field object — the shared create path for the manager
+ * conveniences (one-tap "create from template", the quick-add bar). Writes a normal `tasks` doc so
+ * the stampTeamOnTaskWrite trigger denormalizes teamManagerIds and approval/timer/archival all work
+ * unchanged. Canonicalizes priority + persists estimatedTimeMinutes so the write satisfies the
+ * tasks shape rules and reports read clean values. Status is always 'pending'.
+ *
+ * @param {Object} fields - { title, description?, priority?, estimatedTime?, assignedUserId?,
+ *                            managerId?, tag?, links?, checklist?, sourceTemplateId? }
+ * @param {Object} user - the current user (createdBy/auditor when no managerId is given)
+ * @returns {Promise<string>} the new task id
+ */
+export const createManagerTask = async (fields, user) => {
+    const nowIso = new Date().toISOString();
+    const assignee = fields.assignedUserId || '';
+    const managerId = fields.managerId || user.uid;
+    const estimatedTime = fields.estimatedTime || '';
+    const payload = {
+        title: (fields.title || '').trim() || 'Darbas',
+        description: fields.description || '',
+        priority: normalizePriority(fields.priority),
+        estimatedTime,
+        estimatedTimeMinutes: parseTimeStringToMinutes(estimatedTime),
+        assignedUserId: assignee,
+        managerId,
+        taskAuditor: managerId,
+        deadline: fields.deadline || '',
+        tag: fields.tag || '',
+        links: Array.isArray(fields.links) ? fields.links : [],
+        checklist: Array.isArray(fields.checklist) ? fields.checklist : [],
+        comments: [],
+        status: 'pending',
+        completed: false,
+        createdAt: nowIso,
+        createdBy: user.uid,
+        creatorName: user.displayName || user.email,
+        assignedAt: nowIso,
+        updatedAt: nowIso,
+    };
+    if (fields.sourceTemplateId) payload.sourceTemplateId = fields.sourceTemplateId;
+    const ref = await addDoc(collection(db, 'tasks'), payload);
+    return ref.id;
 };
 
 /**

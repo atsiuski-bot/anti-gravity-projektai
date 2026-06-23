@@ -4,7 +4,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, Link2, Calendar, MessageSquare } from 'lucide-react';
+import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, Calendar, MessageSquare, Sparkles, User, Pencil } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
@@ -12,9 +12,12 @@ import { notify } from '../utils/notify';
 import { getPriorityOptions, getPriorityLabel, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
-import { calculateCurrentTotalMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
-import { TASK_TAGS } from '../utils/taskUtils';
+import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
+import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
+import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
+import useTaskSuggestions from '../hooks/useTaskSuggestions';
+import { useAssigneeAffinity } from '../hooks/useAssigneeAffinity';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
@@ -22,15 +25,18 @@ import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import DeletedBadge from './task/DeletedBadge';
+import TitleSuggestInput from './task/TitleSuggestInput';
 
 // Persistent field label — fields previously had only placeholders, which vanish on input
 // and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
 const fieldLabel = 'mt-4 mb-1 block text-body font-medium text-ink';
 
-// The handful of estimated-time values that cover the vast majority of tasks. Shown as
-// one-tap chips on the spine; the full scale stays one tap away behind "Kita…" so the
-// common case is fast and the long tail is still reachable. (Replaces a 30-option dropdown.)
-const COMMON_TIMES = ['15min', '30min', '1h', '2h', '4h', '8h'];
+// Fallback one-tap time chips for a user with no history yet: six round anchors spanning a quick
+// job to a full day, chosen to include the values that actually dominate real tasks (audit of 171
+// tasks: 2h/1h/3h/4h are all top-6; the old set 15min/30min/1h/2h/4h/8h had no 3h and forced
+// "Kita…" on >55% of timed tasks). The long tail (1,5h, 5h, 6h, multi-day) stays behind "Kita…".
+// Once the creator has history, useTaskSuggestions.topTimes puts THEIR most-used values first.
+const DEFAULT_TIME_CHIPS = ['30min', '1h', '2h', '3h', '4h', '8h'];
 
 // Full estimated-time scale, preserved from the original picker — revealed on demand.
 const ALL_TIMES = [
@@ -48,6 +54,41 @@ const formatBytes = (bytes) => {
     const value = bytes / Math.pow(1024, i);
     return `${value >= 10 || i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
 };
+
+// "Suggest saving as a template" config. We nudge only once a manager has authored SIMILAR work
+// (fuzzy, see titleSimilarity — exact repetition basically never happens) at least this many times
+// AND no template covers it yet — so the prompt is rare, never blocks (the task is already saved),
+// and is remembered as dismissed so it can't nag.
+const TEMPLATE_SUGGEST_AFTER = 3;
+const TEMPLATE_DISMISS_KEY = 'workz:templateSuggestDismissed';
+
+// Dismissals are stored as distinctive-stem signatures so declining the nudge for one title
+// suppresses the whole recurring THEME, not just that exact wording (the next occurrence is
+// phrased differently but is the same work).
+const stemSignature = (title) => [...titleStemSet(title)].sort().join('|');
+const readDismissedSignatures = () => {
+    try {
+        return JSON.parse(localStorage.getItem(TEMPLATE_DISMISS_KEY) || '[]');
+    } catch {
+        return [];
+    }
+};
+const rememberDismissedTitle = (title) => {
+    const sig = stemSignature(title);
+    if (!sig) return;
+    try {
+        const arr = readDismissedSignatures();
+        if (!arr.includes(sig)) arr.push(sig);
+        // Keep the list bounded — only the most recent dismissals matter.
+        localStorage.setItem(TEMPLATE_DISMISS_KEY, JSON.stringify(arr.slice(-200)));
+    } catch {
+        // localStorage can be unavailable (private mode); the nudge just isn't remembered.
+    }
+};
+const isThemeDismissed = (stems) =>
+    readDismissedSignatures().some((sig) =>
+        stemSetsSimilar(stems, new Set(sig.split('|').filter(Boolean)))
+    );
 
 // One collapsible row in the optional "Daugiau" block. Keeps the create card short by
 // hiding low-frequency fields behind a labelled, keyboard-reachable disclosure (icon +
@@ -89,21 +130,18 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         title: '',
         assignedUserId: '',
         managerId: '',
-        priority: 'Medium',
+        priority: DEFAULT_PRIORITY,
         estimatedTime: '',
         description: '',
-        links: [],
         status: 'pending',
         comments: [],
         completed: false,
         deadline: '',
-        tag: '',
         attachmentUrl: '',
         attachmentUrls: [], // New field for multiple attachments
         checklist: []
     });
 
-    const [newLink, setNewLink] = useState('');
     const [newComment, setNewComment] = useState('');
     const [newChecklistItem, setNewChecklistItem] = useState('');
     const [selectedFiles, setSelectedFiles] = useState([]); // Changed to array
@@ -112,13 +150,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // Estimated-time picker: common values are one-tap chips; the full scale is revealed
     // on demand (or auto-revealed when the saved value isn't one of the common ones).
     const [showTimeOther, setShowTimeOther] = useState(false);
+    // The assignee is self for ~2/3 of all tasks, so the picker stays collapsed behind a
+    // "Keisti" affordance and only opens when assigning to someone else.
+    const [showAssigneePicker, setShowAssigneePicker] = useState(false);
     // Which optional ("Daugiau") sections are currently expanded.
     const [expanded, setExpanded] = useState({
         description: false,
         photos: false,
         checklist: false,
         schedule: false,
-        extra: false,
         comment: false
     });
 
@@ -126,13 +166,17 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const [templates, setTemplates] = useState([]);
     const [isSavingTemplate, setIsSavingTemplate] = useState(false);
     const [templateName, setTemplateName] = useState('');
+    // When set ({ title, total }) the template-save view is shown as a post-create NUDGE ("you've
+    // made this N times — save it as a template?") rather than a manual save; its footer closes the
+    // modal instead of returning to the form.
+    const [templateSuggestion, setTemplateSuggestion] = useState(null);
+    // Category chosen in the save view (empty = let it be inferred from the title on save).
+    const [templateCategory, setTemplateCategory] = useState('');
     const [selectedTemplateFields, setSelectedTemplateFields] = useState({
         title: true,
         priority: true,
         estimatedTime: true,
         description: true,
-        tag: true,
-        links: true,
         assignedUserId: false,
         managerId: false,
         deadline: false
@@ -163,6 +207,26 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         });
     }, [templates, workers]);
 
+    // Loader options grouped under category section headings (Select renders `isGroup` rows as
+    // non-selectable headers). Category order follows TEMPLATE_CATEGORIES; empty ones are omitted;
+    // within a category templates keep the sortedTemplates order.
+    const groupedTemplateOptions = useMemo(() => {
+        const byCat = new Map();
+        for (const t of sortedTemplates) {
+            const cat = getTemplateCategory(t);
+            if (!byCat.has(cat)) byCat.set(cat, []);
+            byCat.get(cat).push(t);
+        }
+        const opts = [];
+        for (const { id, label } of TEMPLATE_CATEGORIES) {
+            const items = byCat.get(id);
+            if (!items || items.length === 0) continue;
+            opts.push({ isGroup: true, label });
+            for (const t of items) opts.push({ value: t.id, label: t.templateName });
+        }
+        return opts;
+    }, [sortedTemplates]);
+
     const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.role === 'seniorManager' || w.id === currentUser.uid);
 
     // The assignee picker is narrowed to a scoped manager's own team (plus themselves), so they
@@ -172,6 +236,88 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         () => scopeRoster(workers, userData, currentUser?.uid),
         [workers, userData, currentUser]
     );
+
+    // History-driven create assistance: the creator's own past titles (type-ahead), their
+    // most-used times (chip personalisation) and a per-title time guess. Loaded only while
+    // CREATING (a single owner-scoped read; never on edit).
+    const { recentTitles, topTimes, suggestTimeForTitle, countSimilarTitles } = useTaskSuggestions({
+        uid: currentUser?.uid,
+        enabled: isOpen && !task,
+    });
+
+    // The one-tap time chips: the user's own most-used values first (restricted to the canonical
+    // scale so legacy free-text like "1 val" never becomes a chip), then the data-driven defaults
+    // fill the row up to six (de-duplicated).
+    const timeChips = useMemo(() => {
+        const out = [];
+        const add = (t) => { if (t && !out.includes(t) && out.length < 6) out.push(t); };
+        topTimes.filter((t) => ALL_TIMES.includes(t)).forEach(add);
+        DEFAULT_TIME_CHIPS.forEach(add);
+        return out;
+    }, [topTimes]);
+
+    // A suggested time for the title being typed (create only), shown as a distinct chip the user
+    // taps — never auto-written, so it informs without surprising. Restricted to the canonical
+    // scale so a legacy free-text history value is never offered.
+    const suggestedTime = useMemo(() => {
+        if (task) return '';
+        const t = suggestTimeForTitle(formData.title);
+        return ALL_TIMES.includes(t) ? t : '';
+    }, [task, formData.title, suggestTimeForTitle]);
+
+    // Resolved display name for the current assignee (for the collapsed "Vykdytojas: …" row).
+    const assigneeName = useMemo(() => {
+        const w = workers.find((x) => x.id === formData.assignedUserId);
+        return w ? formatDisplayName(w.displayName || w.email) : '';
+    }, [workers, formData.assignedUserId]);
+    const isSelfAssignee = !!currentUser && formData.assignedUserId === currentUser.uid;
+
+    // Manager flag — defined here (not just before the early return) so the suggestions memo can
+    // gate templates on it. Templates carry an assignee/manager preset, so they are a manager tool.
+    const isManager = isManagerRole(role) || isManagerRole(userRole);
+
+    // "Who usually does this kind of job?" — learn the title-root → assignee routing from history and
+    // offer it as one-tap suggestions above the picker. Manager-only, new-task-only; the hook reads
+    // scoped archived history once while this modal is mounted (open).
+    const { suggestAssignees } = useAssigneeAffinity({ currentUser, userData, userRole, enabled: isManager && !task });
+    const assigneeSuggestions = (isManager && !task)
+        ? suggestAssignees(formData.title)
+            .filter((id) => id !== formData.assignedUserId && assignableWorkers.some((w) => w.id === id))
+            .map((id) => {
+                const w = assignableWorkers.find((x) => x.id === id);
+                return { id, name: formatDisplayName(w.displayName || w.email) };
+            })
+        : [];
+
+    // The unified title type-ahead source: curated templates first (manager-only), then the
+    // creator's own past titles each with its typical time. TitleSuggestInput filters this to the
+    // typed text; picking a template applies its full preset, picking a history title fills time.
+    const titleSuggestions = useMemo(() => {
+        const items = [];
+        if (isManager) {
+            for (const t of templates) {
+                const tTitle = t.data?.title || t.templateName || '';
+                if (!t.templateName && !tTitle) continue;
+                // Search a template by its name, task title, description AND assignee — a manager
+                // may recall "the one assigned to Giedrius" or a word from its instructions.
+                const desc = t.data?.description || '';
+                const aId = t.data?.assignedUserId || t.data?.assignedWorkerId || '';
+                const w = aId ? workers.find((x) => x.id === aId) : null;
+                const aName = w ? formatDisplayName(w.displayName || w.email) : '';
+                items.push({
+                    value: t.templateName || tTitle,
+                    kind: 'template',
+                    time: t.data?.estimatedTime || '',
+                    matchText: `${t.templateName || ''} ${tTitle} ${desc} ${aName}`,
+                    template: t,
+                });
+            }
+        }
+        for (const title of recentTitles) {
+            items.push({ value: title, kind: 'history', time: suggestTimeForTitle(title), matchText: title });
+        }
+        return items;
+    }, [isManager, templates, recentTitles, suggestTimeForTitle, workers]);
 
     useEffect(() => {
         if (task) {
@@ -188,12 +334,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 priority: normalizePriority(task.priority),
                 estimatedTime: task.estimatedTime || '',
                 description: task.description || '',
-                links: task.links || [],
                 status: task.status || 'pending',
                 comments: task.comments || [],
                 completed: task.completed || false,
                 deadline: task.deadline || '',
-                tag: task.tag || '',
                 attachmentUrl: task.attachmentUrl || '', // Keep for legacy
                 attachmentUrls: existingUrls,
                 checklist: task.checklist || []
@@ -221,12 +365,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     priority: DEFAULT_PRIORITY,
                     estimatedTime: '',
                     description: '',
-                    links: [],
                     status: 'pending',
                     comments: [],
                     completed: false,
                     deadline: '',
-                    tag: '',
                     attachmentUrl: '',
                     attachmentUrls: [],
                     checklist: []
@@ -248,6 +390,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         setFormError('');
         setTemplateToDelete(null);
         setOverwriteTemplate(null);
+        setTemplateSuggestion(null);
+        setIsSavingTemplate(false);
     }, [isOpen]);
 
     // When opening an existing task, auto-expand only the optional sections that actually
@@ -262,15 +406,18 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 photos: photoCount > 0,
                 checklist: (task.checklist?.length || 0) > 0,
                 schedule: !!task.deadline,
-                extra: (task.links?.length || 0) > 0 || !!task.tag,
                 comment: (task.comments?.length || 0) > 0
             });
-            setShowTimeOther(!!task.estimatedTime && !COMMON_TIMES.includes(task.estimatedTime));
+            setShowTimeOther(!!task.estimatedTime && !DEFAULT_TIME_CHIPS.includes(task.estimatedTime));
+            // Reveal the assignee picker up-front when the task is already assigned to someone
+            // other than the current user, so the manager can see/keep who it's on.
+            setShowAssigneePicker(!!task.assignedUserId && task.assignedUserId !== currentUser?.uid);
         } else {
-            setExpanded({ description: false, photos: false, checklist: false, schedule: false, extra: false, comment: false });
+            setExpanded({ description: false, photos: false, checklist: false, schedule: false, comment: false });
             setShowTimeOther(false);
+            setShowAssigneePicker(false);
         }
-    }, [task, isOpen]);
+    }, [task, isOpen, currentUser]);
 
     const fetchTemplates = async () => {
         try {
@@ -285,14 +432,28 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }
     };
 
+    // Apply a template's preset to the form. The single place template data enters the form, so
+    // every load path (header dropdown + the in-title suggestion) gets the same fixes:
+    //  - strip tag/links (the form no longer manages them);
+    //  - map the legacy `assignedWorkerId` the form never read onto `assignedUserId` (otherwise a
+    //    template's assignee was silently dropped on load);
+    //  - normalise any legacy priority casing to the canonical key.
+    const handleApplyTemplate = (template) => {
+        if (!template) return;
+        const data = { ...(template.data || {}) };
+        delete data.tag;
+        delete data.links;
+        if (!data.assignedUserId && data.assignedWorkerId) data.assignedUserId = data.assignedWorkerId;
+        delete data.assignedWorkerId;
+        if (data.priority) data.priority = normalizePriority(data.priority);
+        setFormData(prev => ({ ...prev, ...data }));
+        // Surface the assignee picker when the template puts the work on someone other than me.
+        if (data.assignedUserId && data.assignedUserId !== currentUser?.uid) setShowAssigneePicker(true);
+    };
+
     const handleLoadTemplate = (templateId) => {
         const template = templates.find(t => t.id === templateId);
-        if (!template) return;
-
-        setFormData(prev => ({
-            ...prev,
-            ...template.data
-        }));
+        handleApplyTemplate(template);
     };
 
     const handleSaveTemplateClick = () => {
@@ -306,12 +467,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             priority: true,
             estimatedTime: !!formData.estimatedTime,
             description: !!formData.description,
-            tag: !!formData.tag,
-            links: formData.links.length > 0,
             assignedUserId: !!formData.assignedUserId,
             managerId: !!formData.managerId,
             deadline: !!formData.deadline
         });
+        // Pre-pick a category inferred from the title; the manager can override it.
+        setTemplateCategory(inferTemplateCategory({ templateName: formData.title, data: { title: formData.title } }));
     };
 
     const handleDeleteTemplate = (templateId, name) => {
@@ -359,9 +520,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
         setLoading(true);
         try {
-            await saveTaskTemplate(templateName, buildTemplateData(), currentUser);
+            await saveTaskTemplate(templateName, buildTemplateData(), currentUser, templateCategory || inferTemplateCategory({ templateName, data: { title: formData.title } }));
             await fetchTemplates();
             setIsSavingTemplate(false);
+            // If this save came from the post-create nudge, the task is already created — close.
+            if (templateSuggestion) {
+                setTemplateSuggestion(null);
+                onClose();
+            }
         } catch (error) {
             console.error("Failed to save template", error);
             setFormError('Nepavyko išsaugoti šablono. Bandykite dar kartą.');
@@ -374,10 +540,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         if (!overwriteTemplate) return;
         setLoading(true);
         try {
-            await updateTaskTemplate(overwriteTemplate.id, templateName, buildTemplateData(), currentUser);
+            await updateTaskTemplate(overwriteTemplate.id, templateName, buildTemplateData(), currentUser, templateCategory || inferTemplateCategory({ templateName, data: { title: formData.title } }));
             await fetchTemplates();
             setOverwriteTemplate(null);
             setIsSavingTemplate(false);
+            if (templateSuggestion) {
+                setTemplateSuggestion(null);
+                onClose();
+            }
         } catch (error) {
             console.error("Failed to save template", error);
             setOverwriteTemplate(null);
@@ -456,6 +626,13 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const handleSubmit = async (e) => {
         e.preventDefault();
 
+        // Title is the one field every task truly needs; the combobox input has no native
+        // `required`, so guard it here (analysis: 100% of real tasks carry a title).
+        if (!formData.title.trim()) {
+            setFormError('Įveskite pavadinimą.');
+            return;
+        }
+
         // Estimated time is required but is now chosen via chips (no native <select required>
         // is guaranteed to be in the DOM), so guard it explicitly with a friendly message.
         if (!formData.estimatedTime) {
@@ -511,6 +688,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
             const taskData = {
                 ...formData,
+                // Canonicalize at the write boundary so the stored priority is ALWAYS one of the
+                // UPPERCASE PRIORITIES tokens, regardless of which entry path set it (chip,
+                // default seed, loaded legacy value). Read-side already normalizes; this stops
+                // new mixed-casing from being minted. Idempotent (normalizePriority('MEDIUM')==='MEDIUM').
+                priority: normalizePriority(formData.priority),
+                // Persist the parsed numeric estimate alongside the human string so the time-limit
+                // monitor and every report read a clean number instead of re-parsing free text.
+                // estimatedTime is required (guarded above), so this is always a real value here.
+                estimatedTimeMinutes: parseTimeStringToMinutes(formData.estimatedTime),
                 attachmentUrl: primaryAttachmentUrl,
                 attachmentUrls: currentAttachmentUrls,
                 managerName: selectedManager ? (selectedManager.displayName || selectedManager.email) : '',
@@ -622,6 +808,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 }
             }
 
+            // For a freshly created task, offer to save it as a template if it's clearly recurring;
+            // that keeps the modal open on the nudge. Otherwise close as usual.
+            if (!task && maybeEnterTemplateSuggestion()) {
+                return;
+            }
             onClose();
         } catch (error) {
             console.error("Error saving task:", error);
@@ -629,21 +820,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         } finally {
             setLoading(false);
         }
-    };
-
-    const addLink = () => {
-        if (newLink) {
-            let linkToAdd = newLink.trim();
-            if (!/^https?:\/\//i.test(linkToAdd)) {
-                linkToAdd = 'https://' + linkToAdd;
-            }
-            setFormData(prev => ({ ...prev, links: [...prev.links, linkToAdd] }));
-            setNewLink('');
-        }
-    };
-
-    const removeLink = (index) => {
-        setFormData(prev => ({ ...prev, links: prev.links.filter((_, i) => i !== index) }));
     };
 
     const addComment = () => {
@@ -673,13 +849,76 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         setFormData(prev => ({ ...prev, checklist: (prev.checklist || []).filter(item => item.id !== id) }));
     };
 
+    // A pick from the title type-ahead. A template applies its full preset; a history title sets
+    // the name and, only if no time is chosen yet, its typical time (an explicit time is kept).
+    const handleSuggestionSelect = (item) => {
+        if (!item) return;
+        if (item.kind === 'template' && item.template) {
+            handleApplyTemplate(item.template);
+            return;
+        }
+        setFormData((prev) => {
+            if (prev.estimatedTime) return { ...prev, title: item.value };
+            return item.time
+                ? { ...prev, title: item.value, estimatedTime: item.time }
+                : { ...prev, title: item.value };
+        });
+    };
+
     const toggleSection = (key) => setExpanded(prev => ({ ...prev, [key]: !prev[key] }));
+
+    // Closing while the template nudge is showing counts as "no thanks" — remember it so the same
+    // recurring title is not offered again. Used by the header X and Escape.
+    const handleClose = () => {
+        if (templateSuggestion) {
+            rememberDismissedTitle(templateSuggestion.title);
+            setTemplateSuggestion(null);
+        }
+        onClose();
+    };
+
+    // After creating a task, decide whether to OFFER saving it as a template. High-precision so it
+    // rarely fires: the same title authored ≥ TEMPLATE_SUGGEST_AFTER times, manager only, not
+    // already templated, not previously dismissed. Returns true when the nudge is shown (caller
+    // then keeps the modal open instead of closing). The task itself is already saved by now.
+    const maybeEnterTemplateSuggestion = () => {
+        if (!isManager) return false;
+        const title = formData.title.trim();
+        if (!title) return false;
+        const newStems = titleStemSet(title);
+        if (newStems.size === 0) return false;
+        const total = countSimilarTitles(title) + 1; // prior similar + the new one
+        if (total < TEMPLATE_SUGGEST_AFTER) return false;
+        // Skip if an existing template already covers this work (fuzzy, not exact, so a
+        // differently-worded near-duplicate template isn't proposed again).
+        const alreadyTemplated = templates.some(
+            (t) => stemSetsSimilar(newStems, titleStemSet(t.templateName)) || stemSetsSimilar(newStems, titleStemSet(t.data?.title))
+        );
+        if (alreadyTemplated) return false;
+        if (isThemeDismissed(newStems)) return false;
+
+        // Pre-fill the (reused) template-save view with this task's useful fields.
+        setTemplateName(formData.title);
+        setSelectedTemplateFields({
+            title: true,
+            priority: true,
+            estimatedTime: !!formData.estimatedTime,
+            description: !!formData.description,
+            assignedUserId: !!formData.assignedUserId && formData.assignedUserId !== currentUser?.uid,
+            managerId: false,
+            deadline: !!formData.deadline,
+        });
+        setTemplateCategory(inferTemplateCategory({ templateName: title, data: { title } }));
+        setTemplateSuggestion({ title: formData.title, total });
+        setIsSavingTemplate(true);
+        return true;
+    };
 
     if (!isOpen) return null;
 
-    const isManager = isManagerRole(role) || isManagerRole(userRole);
     // Worker viewing an already-created task can't edit the structured fields; the spine
     // controls and section bodies fall back to a read-only/locked state via this flag.
+    // (isManager is defined above, near the suggestions memo.)
     const fieldsLocked = !isManager && !!task;
 
     // Filter to only allow Managers, Admins, and the current user (so they can assign to themselves).
@@ -695,7 +934,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             size="xl"
             closeOnBackdrop={false}
             ariaLabelledby="task-modal-title"
-            onClose={onClose}
+            onClose={handleClose}
         >
             {/* Header - Fixed (vertically compact: tighter padding, X pinned hard right) */}
                 <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-b border-line flex-shrink-0">
@@ -716,7 +955,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             <Select
                                 value=""
                                 onChange={handleLoadTemplate}
-                                options={sortedTemplates.map((t) => ({ value: t.id, label: t.templateName }))}
+                                options={groupedTemplateOptions}
                                 label="Šablonai"
                                 placeholder="Užkrauti šabloną..."
                                 ariaLabel="Užkrauti šabloną"
@@ -724,7 +963,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 className="min-w-0 max-w-[10rem]"
                             />
                         )}
-                        <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-1.5" />
+                        <IconButton icon={X} label="Uždaryti" onClick={handleClose} className="-mr-1.5" />
                     </div>
                 </div>
 
@@ -742,6 +981,17 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     )}
                     {isSavingTemplate ? (
                         <div className="space-y-6">
+                            {templateSuggestion && (
+                                <div className="rounded-control bg-brand/10 border border-brand/30 p-3">
+                                    <p className="flex items-center gap-2 text-body font-medium text-ink-strong">
+                                        <Check className="h-4 w-4 text-feedback-success" aria-hidden="true" />
+                                        Darbas sukurtas
+                                    </p>
+                                    <p className="mt-1 text-sm text-ink-muted">
+                                        Panašų darbą kūrėte jau {templateSuggestion.total} kartą. Išsaugoti kaip šabloną, kad kitą kartą būtų greičiau? (Galite ir praleisti.)
+                                    </p>
+                                </div>
+                            )}
                             <div>
                                 <input
                                     type="text"
@@ -777,6 +1027,18 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 )}
                             </div>
                             <div>
+                                <span className="mb-1 block text-body font-medium text-ink">Kategorija</span>
+                                <Select
+                                    value={templateCategory}
+                                    onChange={setTemplateCategory}
+                                    options={TEMPLATE_CATEGORIES.map((c) => ({ value: c.id, label: c.label }))}
+                                    label="Kategorija"
+                                    placeholder="Pasirinkti kategoriją..."
+                                    ariaLabel="Šablono kategorija"
+                                    alwaysSheet
+                                />
+                            </div>
+                            <div>
                                 <h4 className="font-medium mb-3">Pasirinkite laukus, kuriuos išsaugoti:</h4>
                                 <div className="grid grid-cols-2 gap-3">
                                     {Object.keys(selectedTemplateFields).map(key => (
@@ -794,9 +1056,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                             key === 'deadline' ? 'Terminas' :
                                                                 key === 'title' ? 'Pavadinimas' :
                                                                     key === 'description' ? 'Aprašymas' :
-                                                                        key === 'priority' ? 'Prioritetas' :
-                                                                            key === 'tag' ? 'Žyma' :
-                                                                                key === 'links' ? 'Nuorodos' : key
+                                                                        key === 'priority' ? 'Prioritetas' : key
                                             }</span>
                                         </label>
                                     ))}
@@ -806,23 +1066,145 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     ) : (
                         <form id="task-form" onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="space-y-5">
                             {/* ─────────────── Spine: the few fields set on every task ─────────────── */}
-                            {/* Title — label removed; the word "Pavadinimas" now lives in the
-                                placeholder to save vertical space. aria-label keeps it accessible. */}
+                            {/* Title — a type-ahead over the creator's OWN past titles. Each row shows that
+                                job's typical time; picking it fills both name and (if unset) the time. Free
+                                text is always allowed for a brand-new job. */}
                             <div>
-                                <input
-                                    type="text"
+                                <span className="mb-1 block text-body font-medium text-ink">Ką reikia padaryti?</span>
+                                <TitleSuggestInput
                                     value={formData.title}
-                                    onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                                    onChange={(val) => setFormData((prev) => ({ ...prev, title: val }))}
+                                    onSelect={handleSuggestionSelect}
+                                    suggestions={titleSuggestions}
                                     disabled={fieldsLocked}
                                     placeholder="Pavadinimas"
-                                    aria-label="Pavadinimas"
-                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand focus:border-brand disabled:bg-surface-sunken text-base"
-                                    required
+                                    ariaLabel="Pavadinimas"
                                 />
                             </div>
 
-                            {/* Priority — five one-tap swatches; the selected name is shown as text so
-                                color is never the sole signal (DESIGN_SYSTEM §6). */}
+                            {/* Estimated time — a per-title suggestion (when history has one) leads as a
+                                distinct chip; then the personalised one-tap values; the full scale stays
+                                one tap away behind "Kita…". */}
+                            <div>
+                                <span className="mb-1 block text-body font-medium text-ink">Planuojamas laikas</span>
+                                <div className="flex flex-wrap gap-2">
+                                    {suggestedTime && formData.estimatedTime !== suggestedTime && (
+                                        <button
+                                            type="button"
+                                            onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: suggestedTime })); setShowTimeOther(false); }}
+                                            disabled={fieldsLocked}
+                                            aria-label={`Siūloma trukmė: ${suggestedTime}`}
+                                            className="inline-flex items-center gap-1 min-h-touch rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                        >
+                                            <Sparkles className="h-4 w-4" aria-hidden="true" />
+                                            Siūloma {suggestedTime}
+                                        </button>
+                                    )}
+                                    {timeChips
+                                        .filter((t) => !(suggestedTime && formData.estimatedTime !== suggestedTime && t === suggestedTime))
+                                        .map((t) => {
+                                            const active = formData.estimatedTime === t;
+                                            return (
+                                                <button
+                                                    key={t}
+                                                    type="button"
+                                                    onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: t })); setShowTimeOther(false); }}
+                                                    disabled={fieldsLocked}
+                                                    aria-pressed={active}
+                                                    className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
+                                                >
+                                                    {t}
+                                                </button>
+                                            );
+                                        })}
+                                    {(() => {
+                                        const valueInChips = timeChips.includes(formData.estimatedTime);
+                                        const otherActive = showTimeOther || (!!formData.estimatedTime && !valueInChips);
+                                        const showsValue = otherActive && !!formData.estimatedTime && !valueInChips;
+                                        return (
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowTimeOther((v) => !v)}
+                                                disabled={fieldsLocked}
+                                                aria-expanded={otherActive}
+                                                className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${otherActive ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink-muted hover:bg-surface-sunken'}`}
+                                            >
+                                                {showsValue ? formData.estimatedTime : 'Kita…'}
+                                            </button>
+                                        );
+                                    })()}
+                                </div>
+                                {(showTimeOther || (!!formData.estimatedTime && !timeChips.includes(formData.estimatedTime))) && (
+                                    <Select
+                                        value={formData.estimatedTime}
+                                        onChange={(val) => setFormData({ ...formData, estimatedTime: val })}
+                                        disabled={fieldsLocked}
+                                        options={ALL_TIMES.map((t) => ({ value: t, label: t }))}
+                                        label="Planuojamas laikas"
+                                        placeholder="Planuojamas laikas..."
+                                        ariaLabel="Planuojamas laikas (visi)"
+                                        alwaysSheet
+                                        className="mt-2"
+                                    />
+                                )}
+                            </div>
+
+                            {/* Worker (assignee) — defaults to self and stays collapsed (~2/3 of tasks are
+                                self-assigned); a manager opens the picker only to hand work to someone else.
+                                A non-manager only ever sees themselves, shown read-only. */}
+                            <div>
+                                <span className="mb-1 block text-body font-medium text-ink">Vykdytojas</span>
+                                {/* History-learned "who usually does this kind of job" — one tap assigns. */}
+                                {assigneeSuggestions.length > 0 && (
+                                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                                        <span className="text-caption text-ink-muted">Siūloma:</span>
+                                        {assigneeSuggestions.map((s) => (
+                                            <button
+                                                key={s.id}
+                                                type="button"
+                                                onClick={() => { setFormData({ ...formData, assignedUserId: s.id }); setShowAssigneePicker(true); }}
+                                                className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            >
+                                                {s.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                {isManager ? (
+                                    (showAssigneePicker || !isSelfAssignee) ? (
+                                        <Select
+                                            value={formData.assignedUserId}
+                                            onChange={(val) => setFormData({ ...formData, assignedUserId: val })}
+                                            options={assignableWorkers.map((worker) => ({ value: worker.id, label: formatDisplayName(worker.displayName || worker.email) }))}
+                                            label="Vykdytojas"
+                                            placeholder="Priskirti vykdytoją..."
+                                            ariaLabel="Vykdytojas"
+                                            alwaysSheet
+                                        />
+                                    ) : (
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowAssigneePicker(true)}
+                                            className="flex w-full min-h-touch items-center gap-2 rounded-lg border border-line px-3 text-left text-base text-ink transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                        >
+                                            <User className="h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                                            <span className="flex-1 truncate">{assigneeName || 'Aš'}</span>
+                                            <span className="inline-flex items-center gap-1 text-caption text-brand">
+                                                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                                                Keisti
+                                            </span>
+                                        </button>
+                                    )
+                                ) : (
+                                    <div className="flex min-h-touch items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 text-base text-ink-muted">
+                                        <User className="h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                                        <span className="flex-1 truncate">{assigneeName || 'Aš'}</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Priority — kept as the signature colour swatches but demoted below the two
+                                real decisions: ~65% of tasks never move it off the default (Vidutinis). */}
                             <div>
                                 <div className="mb-1 flex items-center justify-between">
                                     <span className="text-body font-medium text-ink">Prioritetas</span>
@@ -848,71 +1230,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         );
                                     })}
                                 </div>
-                            </div>
-
-                            {/* Estimated time — common values are one tap; the full scale is one more. */}
-                            <div>
-                                <span className="mb-1 block text-body font-medium text-ink">Planuojamas laikas</span>
-                                <div className="flex flex-wrap gap-2">
-                                    {COMMON_TIMES.map((t) => {
-                                        const active = formData.estimatedTime === t;
-                                        return (
-                                            <button
-                                                key={t}
-                                                type="button"
-                                                onClick={() => { setFormData({ ...formData, estimatedTime: t }); setShowTimeOther(false); }}
-                                                disabled={fieldsLocked}
-                                                aria-pressed={active}
-                                                className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
-                                            >
-                                                {t}
-                                            </button>
-                                        );
-                                    })}
-                                    {(() => {
-                                        const otherActive = showTimeOther || (!!formData.estimatedTime && !COMMON_TIMES.includes(formData.estimatedTime));
-                                        const showsValue = otherActive && !!formData.estimatedTime && !COMMON_TIMES.includes(formData.estimatedTime);
-                                        return (
-                                            <button
-                                                type="button"
-                                                onClick={() => setShowTimeOther((v) => !v)}
-                                                disabled={fieldsLocked}
-                                                aria-expanded={otherActive}
-                                                className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${otherActive ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink-muted hover:bg-surface-sunken'}`}
-                                            >
-                                                {showsValue ? formData.estimatedTime : 'Kita…'}
-                                            </button>
-                                        );
-                                    })()}
-                                </div>
-                                {(showTimeOther || (!!formData.estimatedTime && !COMMON_TIMES.includes(formData.estimatedTime))) && (
-                                    <Select
-                                        value={formData.estimatedTime}
-                                        onChange={(val) => setFormData({ ...formData, estimatedTime: val })}
-                                        disabled={fieldsLocked}
-                                        options={ALL_TIMES.map((t) => ({ value: t, label: t }))}
-                                        label="Planuojamas laikas"
-                                        placeholder="Planuojamas laikas..."
-                                        ariaLabel="Planuojamas laikas (visi)"
-                                        alwaysSheet
-                                        className="mt-2"
-                                    />
-                                )}
-                            </div>
-
-                            {/* Worker (assignee) — managers choose; a worker sees themselves, locked. */}
-                            <div>
-                                <span className="mb-1 block text-body font-medium text-ink">Vykdytojas</span>
-                                <Select
-                                    value={formData.assignedUserId}
-                                    onChange={(val) => setFormData({ ...formData, assignedUserId: val })}
-                                    disabled={!isManager}
-                                    options={assignableWorkers.map((worker) => ({ value: worker.id, label: formatDisplayName(worker.displayName || worker.email) }))}
-                                    label="Vykdytojas"
-                                    placeholder="Priskirti vykdytoją..."
-                                    ariaLabel="Vykdytojas"
-                                    alwaysSheet
-                                />
                             </div>
 
                             {/* ─────────────── "Daugiau" — optional, collapsed by default ─────────────── */}
@@ -1092,57 +1409,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         />
                                     </AdvancedSection>
 
-                                    {/* Links + tag */}
-                                    <AdvancedSection icon={Link2} label="Nuorodos ir žyma" count={formData.links.length} open={expanded.extra} onToggle={() => toggleSection('extra')}>
-                                        <div className="flex gap-2">
-                                            <input
-                                                type="url"
-                                                value={newLink}
-                                                onChange={(e) => setNewLink(e.target.value)}
-                                                placeholder="https://..."
-                                                aria-label="Nuoroda"
-                                                inputMode="url"
-                                                className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
-                                            />
-                                            <IconButton
-                                                icon={Plus}
-                                                label="Pridėti nuorodą"
-                                                variant="primary"
-                                                onClick={addLink}
-                                            />
-                                        </div>
-
-                                        {formData.links.length > 0 && (
-                                            <div className="mt-2 space-y-2">
-                                                {formData.links.map((link, index) => (
-                                                    <div key={index} className="flex items-center justify-between bg-surface-sunken p-2 rounded-lg">
-                                                        <a href={link} target="_blank" rel="noopener noreferrer" className="text-sm text-brand truncate hover:underline flex-1 mr-2">
-                                                            {link}
-                                                        </a>
-                                                        <IconButton
-                                                            icon={Trash2}
-                                                            label="Pašalinti nuorodą"
-                                                            variant="danger"
-                                                            onClick={() => removeLink(index)}
-                                                        />
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
-
-                                        <span className={fieldLabel}>Žyma</span>
-                                        <Select
-                                            value={formData.tag || ''}
-                                            onChange={(val) => setFormData({ ...formData, tag: val })}
-                                            disabled={fieldsLocked}
-                                            options={TASK_TAGS.map((tag) => ({ value: tag, label: tag }))}
-                                            label="Žyma"
-                                            placeholder="Pasirinkti žymą..."
-                                            ariaLabel="Žyma"
-                                            alwaysSheet
-                                        />
-                                    </AdvancedSection>
-
                                     {/* Comment */}
                                     <AdvancedSection icon={MessageSquare} label="Komentaras" count={formData.comments?.length || 0} open={expanded.comment} onToggle={() => toggleSection('comment')}>
                                         <div className="flex items-end gap-2">
@@ -1198,8 +1464,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 <div className="flex justify-end gap-3 p-4 border-t border-line flex-shrink-0 bg-surface-sunken rounded-b-xl">
                     {isSavingTemplate ? (
                         <>
-                            <Button variant="secondary" size="md" onClick={() => setIsSavingTemplate(false)}>
-                                Atšaukti
+                            <Button
+                                variant="secondary"
+                                size="md"
+                                onClick={() => (templateSuggestion ? handleClose() : setIsSavingTemplate(false))}
+                            >
+                                {templateSuggestion ? 'Ne, ačiū' : 'Atšaukti'}
                             </Button>
                             <Button variant="primary" size="md" onClick={handleConfirmSaveTemplate} loading={loading}>
                                 Išsaugoti šabloną
