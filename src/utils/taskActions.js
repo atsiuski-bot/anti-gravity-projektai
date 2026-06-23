@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
 import { logError } from './errorLog';
-import { createTask, reopenTask, humanActor, MODES } from '../domain';
+import { createTask, reopenTask, deleteTask as deleteTaskCommand, humanActor, MODES } from '../domain';
 
 /**
  * Updates the user's work status in Firestore.
@@ -504,93 +504,33 @@ export const deleteTask = async (task, userId, options = { keepWorkHours: false 
     if (!task || !task.id) return;
 
     try {
-        // 0. Handle Active Session if Running
+        // 0. Pause a running timer first (logs the final session, frees the user) — kept here so the
+        // deleteTask command needn't import the timer code and create a domain↔taskActions cycle.
         if (task.timerStatus === 'running') {
             try {
-                // a. Pause to log session and calculate time
                 await pauseTask(task);
-
-                // b. Force User Status to Idle
                 if (task.assignedUserId) {
                     await updateUserWorkStatus(task.assignedUserId, false, 'idle', null);
                 }
-
             } catch (pErr) {
                 console.error("Error pausing active task before deletion:", pErr);
                 // Continue with deletion even if pause fails, to avoid "undead" tasks
             }
         }
 
-        const { id } = task;
-
-        // Discover role to auto-confirm deleted tasks if manager
+        // Resolve the actor's role (the keep-hours path auto-confirms for a manager) + name for the
+        // audit, reusing the single user-doc read the role check already needs.
         const userDoc = await getDoc(doc(db, 'users', userId));
-        const userRole = userDoc.exists() ? userDoc.data().role : 'worker';
-        const isManager = isManagerRole(userRole);
+        const userData = userDoc.exists() ? userDoc.data() : {};
+        const isManager = isManagerRole(userData.role || 'worker');
+        const actor = humanActor({ uid: userId, displayName: userData.displayName, email: userData.email, role: userData.role });
 
-        if (options.keepWorkHours) {
-            // Option B: Mark the task as completed+deleted IN the tasks collection.
-            // It will show with strikethrough in today's completed tasks,
-            // then the nightly archiving process will move it to archived_tasks naturally.
-            const now = new Date().toISOString();
-
-            if (task.isArchived) {
-                // Already in archived_tasks — just update it there
-                await updateDoc(doc(db, 'archived_tasks', id), {
-                    status: 'deleted',
-                    completed: true,
-                    completedAt: now,
-                    isDeleted: true,
-                    deletedAt: now,
-                    deletedBy: userId,
-                    timerStatus: 'stopped',
-                    timerStartedAt: null,
-                    updatedAt: now
-                });
-            } else {
-                // Still in active tasks — update in place so it shows in completed tasks today
-                await updateDoc(doc(db, 'tasks', id), {
-                    status: isManager ? 'confirmed' : 'completed',
-                    completed: true,
-                    completedAt: now,
-                    confirmedBy: isManager ? userId : null,
-                    confirmedAt: isManager ? now : null,
-                    isDeleted: true,
-                    deletedAt: now,
-                    deletedBy: userId,
-                    timerStatus: 'stopped',
-                    timerStartedAt: null,
-                    updatedAt: now
-                });
-            }
-        } else {
-            // Option C: Completely remove from both collections, and delete/mark sessions as deleted.
-            if (!task.isArchived) {
-                await deleteDoc(doc(db, 'tasks', id));
-            }
-            // If it was already in archived_tasks, or we want to make sure it's gone:
-            await deleteDoc(doc(db, 'archived_tasks', id));
-            
-            // Mark all associated work_sessions as deleted
-            const sessionsQuery = query(
-                collection(db, 'work_sessions'),
-                where('taskId', '==', id)
-            );
-
-            try {
-                const sessionsSnap = await getDocs(sessionsQuery);
-                const updatePromises = sessionsSnap.docs.map(sessionDoc =>
-                    updateDoc(doc(db, 'work_sessions', sessionDoc.id), {
-                        isDeleted: true,
-                        deletedAt: new Date().toISOString()
-                    })
-                );
-                await Promise.all(updatePromises);
-            } catch (sessionErr) {
-                console.error("Error marking work sessions as deleted:", sessionErr);
-            }
-        }
-
+        // The soft/hard delete writes + the decision_log entry are owned by the audited deleteTask
+        // command (ADR 0015, increment 6). This util keeps the timer-pause + role/actor resolution.
+        await deleteTaskCommand(
+            { task, keepWorkHours: !!options.keepWorkHours, isManager },
+            { actor, mode: MODES.COMMIT, reason: options.keepWorkHours ? 'deleted (kept hours)' : 'deleted (hard)' },
+        );
     } catch (err) {
         console.error("Error deleting task:", err);
         throw err;
