@@ -12,6 +12,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
 import { cn } from '../utils/cn';
 import QuickWorkDescribePrompt from './QuickWorkDescribePrompt';
+import OnboardingWelcome from './OnboardingWelcome';
 
 export default function Layout({ children }) {
     const { userData, isTakingBreak, workStatus } = useAuth();
@@ -125,6 +126,7 @@ export default function Layout({ children }) {
                             {/* Retroactive description for quick-work sessions ended on another
                                 device — a calm prompt that never collides with the shell above. */}
                             <QuickWorkDescribePrompt />
+                            <OnboardingWelcome />
                             {children}
                         </div>
                     </main>

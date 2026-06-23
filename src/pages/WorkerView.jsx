@@ -280,8 +280,8 @@ export default function WorkerView() {
                     <div className="rounded-card border border-line bg-surface-card shadow-sm">
                         <EmptyState
                             icon={ClipboardList}
-                            title="Nėra užduočių"
-                            description="Jums dar nepriskirta jokių užduočių."
+                            title="Kol kas užduočių nėra"
+                            description="Kai vadovas priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą darbą ar skambutį mygtukais apačioje."
                             action={
                                 <Button
                                     variant="primary"
