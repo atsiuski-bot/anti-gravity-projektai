@@ -35,6 +35,7 @@ import { cn } from '../utils/cn';
 const AllUsersCalendar = React.lazy(() => import('../components/AllUsersCalendar'));
 const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
 const Reports = React.lazy(() => import('../components/Reports'));
+const AuditDashboard = React.lazy(() => import('../components/AuditDashboard'));
 
 export default function ManagerView() {
     const { userRole, currentUser, userData } = useAuth();
@@ -517,6 +518,17 @@ export default function ManagerView() {
                         <UserManagement />
                     </ErrorBoundary>
                 </div>
+            )}
+
+            {/* Audit dashboard (admin-only): decision_log + integrity_reports. Mounted only while
+                active — like the calendar tabs — so its Firestore listeners attach on first visit,
+                not eagerly behind a hidden div. */}
+            {userRole === 'admin' && activeTab === 'audit' && (
+                <ErrorBoundary boundaryName="manager:audit" resetKeys={[activeTab]}>
+                    <React.Suspense fallback={<Spinner />}>
+                        <AuditDashboard />
+                    </React.Suspense>
+                </ErrorBoundary>
             )}
 
             {isModalOpen && (

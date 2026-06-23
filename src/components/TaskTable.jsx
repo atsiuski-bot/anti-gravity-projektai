@@ -21,6 +21,7 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
+import { approveTask, humanActor, MODES } from '../domain';
 import { isManagerRole } from '../utils/formatters';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
@@ -254,13 +255,10 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             // Approving an unapproved task clears the approval gate → status 'approved'
             // ("Patvirtintas"), the canonical value the notification hub already writes. The worker
             // then sees it is approved and may start it. (Was 'pending', which lost the signal.)
-            await updateDoc(doc(db, 'tasks', taskId), {
-                status: 'approved',
-                isApproved: true,
-                approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid,
-                updatedAt: new Date().toISOString()
-            });
+            await approveTask(
+                { task },
+                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }), mode: MODES.COMMIT, reason: 'approved from task table' },
+            );
         } catch (err) {
             logError(err, { source: 'TaskTable.handleApproveTask' });
             setError('Nepavyko patvirtinti užduoties. Bandykite vėliau.');

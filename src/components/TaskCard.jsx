@@ -7,6 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
+import { approveTask, humanActor, MODES } from '../domain';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { isManagerRole } from '../utils/formatters';
 import Button from './ui/Button';
@@ -128,13 +129,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
             // ("Patvirtintas"), the canonical value the notification hub and the table use. The old
             // 'in-progress' read as "Pristabdyta" (paused) via deriveTaskStatus — wrong for a task
             // nobody has started. The worker then sees it is approved and may start it.
-            await updateDoc(doc(db, 'tasks', task.id), {
-                status: 'approved',
-                isApproved: true,
-                approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid,
-                updatedAt: new Date().toISOString(),
-            });
+            await approveTask(
+                { task },
+                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }), mode: MODES.COMMIT, reason: 'approved from task card' },
+            );
             setConfirmApprove(false);
         } catch (err) {
             console.error('Error approving task:', err);

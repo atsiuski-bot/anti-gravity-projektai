@@ -25,6 +25,7 @@ const { initializeApp } = require('firebase-admin/app');
 const { getFirestore } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
+const { appendSystemDecision } = require('./decisionLog');
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -867,6 +868,7 @@ async function autoStopForgottenTimers() {
     const nowIso = new Date().toISOString();
     let stopped = 0;
     const samples = [];
+    const audits = [];
     const writer = db.bulkWriter();
     snap.forEach((docSnap) => {
         const t = docSnap.data();
@@ -885,8 +887,26 @@ async function autoStopForgottenTimers() {
         });
         stopped += 1;
         if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, elapsedMin: Math.round(elapsedMin) });
+        // Key on the stopped running interval (taskId + its start) so a retry recomputes the SAME
+        // idempotency key — the create() in appendSystemDecision then dedups the audit, not the effect.
+        audits.push({ taskId: docSnap.id, startIso: t.timerStartedAt, elapsedMin: Math.round(elapsedMin) });
     });
     await writer.close();
+
+    // Audit each auto-stop under the SYSTEM actor (ADR 0015), AFTER the writes land. Best-effort:
+    // an audit failure never undoes a stop that already happened.
+    for (const a of audits) {
+        await appendSystemDecision(db, {
+            idempotencyKey: `autostop_${a.taskId}_${a.startIso}`,
+            command: 'integrity.autoStopTimer',
+            source: 'dailyIntegrityScan',
+            targetType: 'task',
+            targetId: a.taskId,
+            reason: `Auto-stopped a timer left running ${a.elapsedMin} min (>16h); phantom interval discarded`,
+            before: { timerStatus: 'running', timerStartedAt: a.startIso },
+            after: { timerStatus: 'paused', timerStartedAt: null, autoStopped: true, autoStopReason: 'forgotten-timer-16h' },
+        });
+    }
     return { scanned: snap.size, stopped, samples };
 }
 
@@ -1075,7 +1095,7 @@ async function isUserAbsentOn(uid, dayStr) {
 
 // Materialize one template's task for `dayStr` (Vilnius). Idempotent via the deterministic id.
 // `force` (run-now) bypasses the fires-today / paused checks so a manager can fire on demand.
-async function generateOneRecurring(templateId, template, dayStr, force) {
+async function generateOneRecurring(templateId, template, dayStr, force, source) {
     const recurrence = template.recurrence || null;
     if (!force) {
         if (!recurrence) return { created: false, reason: 'no-recurrence' };
@@ -1140,6 +1160,29 @@ async function generateOneRecurring(templateId, template, dayStr, force) {
         return { created: true, taskId, needsReassignment: absent };
     });
 
+    // Audit the automatic creation under the SYSTEM actor (ADR 0015) — populate the decision_log
+    // event spine with real system-job traffic so the human/agent/system audit surface is exercised
+    // (and validatable) before agents go live. Best-effort: never aborts the already-applied create.
+    if (result.created) {
+        await appendSystemDecision(db, {
+            idempotencyKey: `gen_${result.taskId}`,
+            command: 'recurring.generate',
+            source: source || 'generateRecurringTasks',
+            targetType: 'task',
+            targetId: result.taskId,
+            reason: `Recurring template ${templateId} materialized a task for ${dayStr}`
+                + (result.needsReassignment ? ' (assignee absent — flagged for reassignment)' : ''),
+            before: null,
+            after: {
+                title: data.title || template.templateName || 'Pasikartojantis darbas',
+                assignedUserId: assignee || null,
+                priority: normalizeRecurringPriority(data.priority),
+                generatedForDate: dayStr,
+                needsReassignment: !!result.needsReassignment,
+            },
+        });
+    }
+
     // Notify the manager to reassign when the usual assignee is away (outside the transaction).
     if (result.created && result.needsReassignment && managerId) {
         try {
@@ -1185,7 +1228,7 @@ exports.generateRecurringTasks = onSchedule(
             if (!recurringFiresOn(recurrence, dayStr)) continue;
             scanned += 1;
             try {
-                const r = await generateOneRecurring(docSnap.id, template, dayStr, false);
+                const r = await generateOneRecurring(docSnap.id, template, dayStr, false, 'generateRecurringTasks');
                 if (r.created) {
                     created += 1;
                     if (r.needsReassignment) reassign += 1;
@@ -1222,7 +1265,7 @@ exports.runRecurringTasksNow = onCall(async (request) => {
 
     const dayStr = lithuanianDay(new Date());
     try {
-        return await generateOneRecurring(templateId, tSnap.data(), dayStr, true);
+        return await generateOneRecurring(templateId, tSnap.data(), dayStr, true, 'runRecurringTasksNow');
     } catch (err) {
         logger.error('runRecurringTasksNow failed', { templateId, err: err.message });
         throw new HttpsError('internal', 'Generation failed.');

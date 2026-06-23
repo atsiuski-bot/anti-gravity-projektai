@@ -149,8 +149,16 @@ raised 15 findings; **7 were confirmed and fixed**, 8 dismissed as out-of-scope/
    raised — the only deltas, e.g. a reopened zero-time task's `timerStatus` going `paused`→`null`, were
    judged benign). Verified live in prod: a full create→complete→reopen cycle leaves the task `pending`
    and writes the three matching decision entries (the lifecycle's "how it got here" trail).
-   STILL TODO: approve (unapproved→approved), reprioritize, reschedule, extend-time, delete, and routing
-   the EDIT path through one command (which retires increment 2's non-atomic split).
+   **`approveTask` + `reprioritizeTask` + `rescheduleTask` DONE (increment 5, same worktree):**
+   `approveTask` consolidates FOUR previously-identical inline approve writes (TaskCard, TaskTable, two
+   ManagerNotifications handlers) into one audited command — every approval is now attributable.
+   `reprioritizeTask` + `rescheduleTask` are the manager-agent's triage verbs (single-field, canonical
+   priority / verbatim deadline); they are built + tested and **agent-ready but not yet UI-wired** (the
+   UI changes priority/deadline through the edit form until that path is routed through a command).
+   Review clean (0 findings); verified live in prod (real auth): a create→approve→reprioritize→reschedule
+   run left the task `approved` / `URGENT` / dated and wrote the four matching decision entries.
+   STILL TODO: confirm (completed→confirmed — its writes vary across sites and need reconciling),
+   extend-time, delete, and routing the EDIT path through one command (retiring increment 2's split).
 3. **Formalize the task lifecycle as an explicit state machine** enforced by the commands.
 4. **Promote perception (E):** make `workerStats`/`reportAggregate` callable server-side so an agent
    can read "decision context" without a browser.
