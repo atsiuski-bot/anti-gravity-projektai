@@ -669,13 +669,13 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.priority)}>
                                 {gc ? <HeaderCell label="Prior." sortMode={sortCols.priority} sort={gc.sort} filter={filters.priority} filterLabel="Filtruoti pagal prioritetą" /> : 'Prior.'}
                             </th>
-                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" aria-sort={ariaSortFor(sortCols.status)}>
-                                {gc ? <HeaderCell label="Būsena" sortMode={sortCols.status} sort={gc.sort} /> : 'Būsena'}
+                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.status)}>
+                                {gc ? <HeaderCell label="Būsena" sortMode={sortCols.status} sort={gc.sort} filter={filters.status} filterLabel="Filtruoti pagal būseną" /> : 'Būsena'}
                             </th>
                             <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" title="Sugaišta / numatyta">Laikas</th>
                             {/* Žymos sits as far right as possible — directly before the actions block. */}
-                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24">
-                                {gc ? <HeaderCell label="Žymos" filter={filters.tag} filterLabel="Filtruoti pagal žymą" /> : 'Žymos'}
+                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.tag)}>
+                                {gc ? <HeaderCell label="Žymos" sortMode={sortCols.tag} sort={gc.sort} filter={filters.tag} filterLabel="Filtruoti pagal žymą" /> : 'Žymos'}
                             </th>
                             <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-44">Veik.</th>
                         </tr>
@@ -1009,6 +1009,7 @@ export default React.memo(TaskTable, (prevProps, nextProps) => {
         const nf = ng.filters || {};
         if (pf.user?.value !== nf.user?.value) return false;
         if (pf.priority?.value !== nf.priority?.value) return false;
+        if (pf.status?.value !== nf.status?.value) return false;
         if (pf.tag?.value !== nf.tag?.value) return false;
     }
 

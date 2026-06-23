@@ -19,6 +19,7 @@ import { useNavigation } from '../context/NavigationContext';
 
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
 import { PRIORITIES, getPriorityLabel } from '../utils/priority';
+import { STATUS_LABELS } from '../utils/taskConstants';
 
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
@@ -57,6 +58,7 @@ export default function ManagerView() {
         filterUser, setFilterUser,
         filterPriority, setFilterPriority,
         filterTag, setFilterTag,
+        filterStatus, setFilterStatus,
         searchText, setSearchText,
         searchSuggestions,
         sortBy, setSortBy
@@ -145,6 +147,15 @@ export default function ManagerView() {
         { value: '', label: 'Visi Tagai' },
         ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
     ];
+    const statusOptions = [
+        { value: '', label: 'Visos būsenos' },
+        { value: 'pending', label: STATUS_LABELS.pending },
+        { value: 'in-progress', label: STATUS_LABELS['in-progress'] },
+        { value: 'unapproved', label: STATUS_LABELS.unapproved },
+        { value: 'approved', label: STATUS_LABELS.approved },
+        { value: 'completed', label: STATUS_LABELS.completed },
+        { value: 'confirmed', label: STATUS_LABELS.confirmed },
+    ];
     const sortOptions = [
         { value: 'none', label: 'Numatyta tvarka' },
         { value: 'status', label: 'Pagal būseną' },
@@ -153,21 +164,21 @@ export default function ManagerView() {
         { value: 'deadline-user', label: 'Pagal terminą-vartotoją' },
         { value: 'user-priority', label: 'Pagal vartotoją-prioritetą' },
         { value: 'manual', label: 'Rankiniu būdu' },
-        ...TASK_TAGS.map((tag) => ({ value: `tag-${tag}`, label: `Rūšiuoti: ${tag}` })),
     ];
-    const hasActiveFilters = !!(searchText || filterUser || filterPriority || filterTag);
+    const hasActiveFilters = !!(searchText || filterUser || filterPriority || filterTag || filterStatus);
     const clearFilters = () => {
         setSearchText('');
         setFilterUser('');
         setFilterPriority('');
         setFilterTag('');
+        setFilterStatus('');
     };
 
     // Desktop data-grid wiring. The team list's headers carry single-axis sort (user/priority/
-    // status) + per-column filters; the composite/manual/tag-scoped sorts (no single column) stay
-    // in the "Daugiau rūšiavimo" launcher. One `sortBy` is the single source of truth, so the
-    // launcher binds to '' under a header sort (showing its placeholder, contradicting nothing).
-    const MORE_SORT_VALUES = ['none', 'deadline-user', 'user-priority', 'manual', ...TASK_TAGS.map((t) => `tag-${t}`)];
+    // status) + per-column filters; the composite/manual sorts (no single column) stay in the
+    // "Daugiau rūšiavimo" launcher. One `sortBy` is the single source of truth, so the launcher
+    // binds to '' under a header sort (showing its placeholder, contradicting nothing).
+    const MORE_SORT_VALUES = ['none', 'deadline-user', 'user-priority', 'manual'];
     const moreSortOptions = sortOptions.filter((o) => MORE_SORT_VALUES.includes(o.value));
     const activeAdvancedSortLabel = sortBy !== 'none' && MORE_SORT_VALUES.includes(sortBy)
         ? (moreSortOptions.find((o) => o.value === sortBy)?.label ?? null)
@@ -176,11 +187,12 @@ export default function ManagerView() {
         sort: {
             value: sortBy,
             set: setSortBy,
-            columns: { user: 'user', priority: 'priority', status: 'status' },
+            columns: { user: 'user', priority: 'priority', status: 'status', tag: 'tag' },
         },
         filters: {
             user: { value: filterUser, set: setFilterUser, options: userOptions },
             priority: { value: filterPriority, set: setFilterPriority, options: priorityOptions },
+            status: { value: filterStatus, set: setFilterStatus, options: statusOptions },
             tag: { value: filterTag, set: setFilterTag, options: tagOptions },
         },
     };
