@@ -498,7 +498,11 @@ function ColorSlider({ label, labelClass, value, onChange, track, accent }) {
                 onChange={(e) => onChange(parseInt(e.target.value, 10))}
                 aria-label={label}
                 className={cn(
-                    'h-2 w-full cursor-pointer appearance-none rounded-full',
+                    // `wz-range` supplies the thumb: `appearance-none` strips the native handle in
+                    // every engine, and `accent-color` is inert once it's gone — so without an
+                    // explicit ::-webkit-slider-thumb / ::-moz-range-thumb (see index.css) the
+                    // handle is invisible in Chrome, Safari AND Firefox.
+                    'wz-range h-2 w-full cursor-pointer appearance-none rounded-full',
                     track,
                     accent,
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2'

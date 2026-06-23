@@ -10,6 +10,7 @@ import { formatDisplayName } from '../utils/formatters';
 import { getLithuanianDateString, addDaysToDateString } from '../utils/timeUtils';
 import { gatherReportData, reportFilename } from '../utils/reportData';
 import { buildReport, renderReportMarkdown, renderReportJSON, renderTimesheetCSV } from '../utils/reportAggregate';
+import { downloadTextFile } from '../utils/download';
 
 // Calendar-style presets (familiar from the report tab). Each resolves a [start, end] ending today.
 const PERIOD_PRESETS = [
@@ -60,16 +61,10 @@ const FORMATS = [
     { id: 'csv', label: 'CSV — val./diena', hint: 'Timesheet: eilutė / darbuotoją-dieną skaičiuoklei', icon: Table2 },
 ];
 
+// Thin wrapper over the shared, cross-browser-safe downloader (handles the iOS-standalone
+// navigate-away quirk and the Safari/Firefox revoke race — see src/utils/download.js).
 function triggerDownload(content, filename, mime) {
-    const blob = new Blob([content], { type: mime });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+    downloadTextFile(content, filename, mime);
 }
 
 /**

@@ -2,6 +2,48 @@
 @tailwind components;
 @tailwind utilities;
 
+/* iOS Safari force-zooms the viewport whenever a focused form control's text is < 16px, leaving
+   the page stuck at an awkward zoom that never resets. We override Tailwind's text-sm / text-body
+   (14px) utilities on form controls so no field is ever missed (Login, comments, checklist, report
+   search were 14px), scoped to phones (<=640px) so the denser desktop manager UI is untouched.
+   The `:root ` prefix is load-bearing: Tailwind v3 FLATTENS its @layer into plain CSS (the built
+   sheet has no native @layer), so a bare `textarea`/`select` (specificity 0,0,1) would LOSE to a
+   `.text-sm` utility (0,1,0). `:root textarea` is (0,1,1) and beats it; `:root` always matches.
+   Range / checkbox / radio are excluded: font-size is irrelevant and would distort the range track. */
+@media (max-width: 640px) {
+  :root input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  :root textarea,
+  :root select {
+    font-size: 16px;
+  }
+}
+
+/* Range-slider thumb (UserManagement ColorSlider). `appearance-none` removes the native handle in
+   EVERY engine, so a thumb must be redrawn explicitly per-engine or it's invisible — WebKit reads
+   ::-webkit-slider-thumb, Gecko reads ::-moz-range-thumb (neither inherits from the other, and
+   autoprefixer does NOT synthesise the pair). A white disc with a neutral ring reads on any track
+   tint (red/green/blue-100). Keep both blocks in sync. */
+.wz-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 1.25rem;
+  width: 1.25rem;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 2px solid rgb(var(--ink-muted));
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+}
+.wz-range::-moz-range-thumb {
+  height: 1.25rem;
+  width: 1.25rem;
+  border-radius: 9999px;
+  background: #ffffff;
+  border: 2px solid rgb(var(--ink-muted));
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  cursor: pointer;
+}
+
 /* =====================================================================
    Theme palette (ADR 0008) — the calm-canvas/chrome tokens are CSS
    variables so a single `data-theme` attribute on <html> swaps the whole

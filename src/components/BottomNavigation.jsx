@@ -77,7 +77,7 @@ const BottomNavigation = () => {
             {/* Main bottom bar — the quiet substrate. Recedes into the canvas (surface-base, no
                 shadow) so only the action dock above reads as "floating": two competing shadows
                 were the reason the two strips blended into one (DESIGN_SYSTEM §9). */}
-            <div className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-base pb-[env(safe-area-inset-bottom)]">
+            <div className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-base pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
                 <div className="relative mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-2">
                     {/* Tablet (sm..lg): full tab set, centered, a thin separator between groups */}
                     <div className="hidden flex-1 items-center justify-center gap-2 sm:flex">

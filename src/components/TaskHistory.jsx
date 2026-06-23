@@ -11,6 +11,7 @@ import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
+import { downloadTextFile } from '../utils/download';
 import { DeleteConfirmationModal, CommentsModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import SessionTypeIcon from './SessionTypeIcon';
 import { addComment } from '../utils/commentActions';
@@ -312,14 +313,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             const exportData = await Promise.all(exportDataPromises);
 
             const dataStr = JSON.stringify(exportData, null, 2);
-            const blob = new Blob([dataStr], { type: "application/json" });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `ai_task_analysis_${dateFrom}_to_${dateTo}.json`;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            downloadTextFile(dataStr, `ai_task_analysis_${dateFrom}_to_${dateTo}.json`, 'application/json');
         } catch (err) {
             console.error("Error generating AI export:", err);
             setError("Nepavyko paruošti AI analizės duomenų. Bandykite dar kartą.");
@@ -385,15 +379,8 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         });
 
         const csvContent = [headers.join(','), ...rows].join('\n');
-        // Add BOM for Excel UTF-8 recognition
-        const blob = new Blob(['\uFEFF' + csvContent], { type: "text/csv;charset=utf-8;" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `task_history_${dateFrom}_to_${dateTo}.csv`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+        // Leading BOM keeps Excel reading it as UTF-8.
+        downloadTextFile('\uFEFF' + csvContent, `task_history_${dateFrom}_to_${dateTo}.csv`, 'text/csv;charset=utf-8;');
     };
 
 

@@ -38,5 +38,14 @@
     "vite": "^5.1.4",
     "vite-plugin-pwa": "^1.2.0",
     "vitest": "^2.1.9"
-  }
+  },
+  "//browserslist": "Pins the support floor EXPLICITLY (was implicit before). autoprefixer reads this for CSS prefixing; vite.config.js build.target mirrors it for JS. Floor ~= the audience's oldest realistic devices (field-worker phones / older iPhones). Bump deliberately, not by accident.",
+  "browserslist": [
+    "Chrome >= 87",
+    "Edge >= 88",
+    "Firefox >= 78",
+    "Safari >= 14",
+    "iOS >= 14",
+    "not dead"
+  ]
 }
