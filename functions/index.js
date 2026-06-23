@@ -17,6 +17,7 @@
 
 const { onDocumentCreated, onDocumentUpdated, onDocumentDeleted, onDocumentWritten } = require('firebase-functions/v2/firestore');
 const { onCall, HttpsError } = require('firebase-functions/v2/https');
+const { defineSecret } = require('firebase-functions/params');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const logger = require('firebase-functions/logger');
@@ -839,6 +840,79 @@ async function scanSessionAnomalies(name) {
     return { scanned: snap.size, anomalies, samples };
 }
 
+// Hard ceiling for a SINGLE continuous running timer — MIRROR of src/utils/timeUtils
+// MAX_SESSION_MINUTES (16h). No real continuous session approaches this; a larger elapsed can only
+// be a timer left running after the app was closed.
+const MAX_RUNNING_TIMER_MINUTES = 16 * 60;
+const STALE_TASK_DAYS = 30;                                   // non-terminal age that warrants review
+const STALE_STATUSES = ['pending', 'in-progress', 'approved', 'unapproved'];
+
+// Stop timers left RUNNING longer than any real continuous session — the forgotten-timer corruption
+// (the 8710-min / 1158-min cases) that the CLIENT clamp structurally cannot reach, because it only
+// fires while the assignee has the app open on that task (autoStopped was 0/471 in the data). The
+// unbounded running interval is DISCARDED (we never credit phantom hours) and the task is flagged
+// autoStopped so a manager can add real time if the worker actually worked. Safe by construction: a
+// genuine continuous session never exceeds 16h, and legitimate long (25-70h) jobs accrue via many
+// PAUSED sessions, never one running run — so this never clips real work. The worker's own
+// activeSession/workStatus is reconciled client-side by the orphan-recovery hook on next app load.
+async function autoStopForgottenTimers() {
+    let snap;
+    try {
+        snap = await db.collection('tasks').where('timerStatus', '==', 'running').get();
+    } catch (err) {
+        logger.warn('autoStopForgottenTimers query failed', { err: err.message });
+        return { scanned: 0, stopped: 0, samples: [] };
+    }
+    const nowMs = Date.now();
+    const nowIso = new Date().toISOString();
+    let stopped = 0;
+    const samples = [];
+    const writer = db.bulkWriter();
+    snap.forEach((docSnap) => {
+        const t = docSnap.data();
+        if (!t.timerStartedAt) return;
+        const startMs = new Date(t.timerStartedAt).getTime();
+        if (Number.isNaN(startMs)) return;
+        const elapsedMin = (nowMs - startMs) / 60000;
+        if (elapsedMin <= MAX_RUNNING_TIMER_MINUTES) return;
+        writer.update(docSnap.ref, {
+            timerStatus: 'paused',
+            timerStartedAt: null,
+            autoStopped: true,
+            autoStopReason: 'forgotten-timer-16h',
+            autoStoppedAt: nowIso,
+            updatedAt: nowIso,
+        });
+        stopped += 1;
+        if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, elapsedMin: Math.round(elapsedMin) });
+    });
+    await writer.close();
+    return { scanned: snap.size, stopped, samples };
+}
+
+// Surface (do NOT mutate) non-terminal tasks sitting unfinished beyond STALE_TASK_DAYS — the
+// backlog the data found (91 tasks >14d, oldest 'pending' 159d). Report-only: a manager decides to
+// finish, reassign, or drop them. createdAt is an ISO string, so the cutoff compares lexically.
+async function scanStaleTasks() {
+    const cutoffIso = new Date(Date.now() - STALE_TASK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    let snap;
+    try {
+        snap = await db.collection('tasks').where('status', 'in', STALE_STATUSES).get();
+    } catch (err) {
+        logger.warn('scanStaleTasks query failed', { err: err.message });
+        return { count: 0, samples: [] };
+    }
+    let count = 0;
+    const samples = [];
+    snap.forEach((docSnap) => {
+        const t = docSnap.data();
+        if (t.isDeleted || !t.createdAt || t.createdAt >= cutoffIso) return;
+        count += 1;
+        if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, status: t.status, createdAt: t.createdAt });
+    });
+    return { count, samples };
+}
+
 exports.dailyIntegrityScan = onSchedule(
     { schedule: 'every day 06:00', timeZone: 'Europe/Vilnius' },
     async () => {
@@ -872,15 +946,22 @@ exports.dailyIntegrityScan = onSchedule(
             totalAnomalies += r.anomalies;
         }
 
+        // (3) Task timer integrity — stop forgotten running timers, and surface the stale backlog.
+        const autoStoppedTimers = await autoStopForgottenTimers();
+        const staleBacklog = await scanStaleTasks();
+
         const critical = drops.length > 0;
+        const warning = totalAnomalies > 0 || autoStoppedTimers.stopped > 0;
         const report = {
             day,
             ranAt: nowIso,
-            severity: critical ? 'critical' : (totalAnomalies > 0 ? 'warning' : 'ok'),
+            severity: critical ? 'critical' : (warning ? 'warning' : 'ok'),
             counts,
             drops,
             anomalies: anomalyReport,
-            totalAnomalies
+            totalAnomalies,
+            autoStoppedTimers,
+            staleBacklog
         };
 
         try {
@@ -892,11 +973,13 @@ exports.dailyIntegrityScan = onSchedule(
 
         if (critical) {
             logger.error('INTEGRITY: volume drop detected — possible data loss', { drops, counts });
-        } else if (totalAnomalies > 0) {
-            logger.warn('INTEGRITY: value anomalies detected', { totalAnomalies, anomalyReport });
+        } else if (warning) {
+            logger.warn('INTEGRITY: anomalies / auto-stops detected', { totalAnomalies, anomalyReport, autoStoppedTimers });
         } else {
             logger.info('INTEGRITY: clean', { counts });
         }
+        if (autoStoppedTimers.stopped > 0) logger.warn('INTEGRITY: auto-stopped forgotten timers', autoStoppedTimers);
+        if (staleBacklog.count > 0) logger.info('INTEGRITY: stale backlog surfaced', { count: staleBacklog.count });
     }
 );
 
@@ -1145,3 +1228,137 @@ exports.runRecurringTasksNow = onCall(async (request) => {
         throw new HttpsError('internal', 'Generation failed.');
     }
 });
+
+// ---------------------------------------------------------------------------
+// AI task-draft parser — free-text → structured task (server-side, manager-only)
+// ---------------------------------------------------------------------------
+//
+// Mirrors the GODSGLOOM AI pattern: the key NEVER touches the client — a callable forwards to
+// OpenRouter (model google/gemini-2.5-flash) using a server-side secret. The model extracts a
+// DRAFT only; the client opens it in the normal create flow for the manager to confirm, so AI
+// never writes a task and the userId-pin / scoping rules are untouched. The assignee is resolved
+// SERVER-side from the caller-supplied roster (the model returns a name, not an id, so it can't
+// invent a user). Priority/estimate are run through the same canonicalizers as every other writer.
+
+const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const PARSE_MODEL = 'google/gemini-2.5-flash';
+const MAX_PARSE_INPUT = 2000;
+
+// Accent-insensitive lowercase, for matching Lithuanian names regardless of inflection/diacritics.
+function foldName(s) {
+    return String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim();
+}
+
+// Map the model's chosen assignee NAME back to a roster id — exact, then first-name, then contains.
+// Returns '' when nothing matches confidently (the manager then picks), so a hallucinated name can
+// never route to the wrong person.
+function resolveAssigneeId(name, roster) {
+    const target = foldName(name);
+    if (!target || !Array.isArray(roster)) return '';
+    const folded = roster.map((r) => ({ id: r.id, n: foldName(r.name) })).filter((r) => r.id && r.n);
+    let hit = folded.find((r) => r.n === target);
+    if (hit) return hit.id;
+    const targetFirst = target.split(' ')[0];
+    hit = folded.find((r) => r.n.split(' ')[0] === targetFirst);
+    if (hit) return hit.id;
+    hit = folded.find((r) => r.n.includes(target) || target.includes(r.n.split(' ')[0]));
+    return hit ? hit.id : '';
+}
+
+exports.parseTaskDraft = onCall(
+    { secrets: [OPENROUTER_API_KEY], timeoutSeconds: 30, memory: '256MiB' },
+    async (request) => {
+        const callerUid = request.auth && request.auth.uid;
+        if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
+        const callerSnap = await db.collection('users').doc(callerUid).get();
+        const role = callerSnap.exists ? callerSnap.data().role : '';
+        if (!['admin', 'Administratorius', 'manager', 'seniorManager'].includes(role)) {
+            throw new HttpsError('permission-denied', 'Managers only.');
+        }
+        const apiKey = OPENROUTER_API_KEY.value();
+        if (!apiKey) throw new HttpsError('failed-precondition', 'AI not configured.');
+
+        const text = String((request.data && request.data.text) || '').slice(0, MAX_PARSE_INPUT).trim();
+        if (!text) throw new HttpsError('invalid-argument', 'No text provided.');
+        const roster = Array.isArray(request.data && request.data.roster)
+            ? request.data.roster.slice(0, 60)
+            : [];
+        const names = roster.map((r) => r.name).filter(Boolean);
+        const today = lithuanianDay(new Date());
+
+        const system =
+            'Tu ištrauki VIENĄ darbo užduotį iš vadovo laisvo teksto (lietuvių kalba). Grąžink TIK ' +
+            'JSON objektą su laukais: title (trumpas darbo pavadinimas BE vykdytojo/laiko/prioriteto ' +
+            'žodžių), assigneeName (geriausiai atitinkantis vardas iš sąrašo arba ""), priority ' +
+            '(vienas iš: URGENT, HIGH, MEDIUM, LOW, VERY_LOW), estimate (pvz. "30min","1h","2h","1,5h" ' +
+            'arba ""), deadline (YYYY-MM-DD arba ""). Šiandien yra ' + today + ' (Europe/Vilnius), ' +
+            'savaitė prasideda pirmadienį — "rytoj","poryt","pirmadienį" ir pan. paversk į konkrečią ' +
+            'datą. Vykdytojų sąrašas: ' + (names.join(', ') || '(nėra)') + '. Jei prioritetas ' +
+            'nenurodytas, naudok MEDIUM. Atsakyk TIK JSON, be jokio kito teksto.';
+
+        const body = {
+            model: PARSE_MODEL,
+            messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: text },
+            ],
+            response_format: { type: 'json_object' },
+            temperature: 0,
+            max_tokens: 300,
+        };
+
+        let resp;
+        try {
+            resp = await fetch(OPENROUTER_URL, {
+                method: 'POST',
+                headers: {
+                    Authorization: `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                    'HTTP-Referer': 'https://anti-gravity-projektai.pages.dev',
+                    'X-Title': 'WORKZ task parser',
+                },
+                body: JSON.stringify(body),
+            });
+        } catch (e) {
+            logger.error('parseTaskDraft fetch failed', { err: e.message });
+            throw new HttpsError('unavailable', 'AI laikinai nepasiekiamas.');
+        }
+
+        if (!resp.ok) {
+            const t = await resp.text().catch(() => '');
+            logger.warn('parseTaskDraft non-OK', { status: resp.status, body: t.slice(0, 200) });
+            if (resp.status === 429) throw new HttpsError('resource-exhausted', 'AI kvota viršyta.');
+            throw new HttpsError('internal', 'AI grąžino klaidą.');
+        }
+
+        let json;
+        try {
+            json = await resp.json();
+        } catch (e) {
+            throw new HttpsError('internal', 'AI atsakymas netinkamas.');
+        }
+        const content = json && json.choices && json.choices[0] &&
+            json.choices[0].message && json.choices[0].message.content;
+        let parsed = {};
+        try {
+            parsed = JSON.parse(content);
+        } catch (e) {
+            const m = String(content || '').match(/\{[\s\S]*\}/);
+            if (m) { try { parsed = JSON.parse(m[0]); } catch (e2) { parsed = {}; } }
+        }
+
+        const estimate = typeof parsed.estimate === 'string' ? parsed.estimate.trim() : '';
+        const deadline = (typeof parsed.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.deadline))
+            ? parsed.deadline
+            : '';
+        return {
+            title: typeof parsed.title === 'string' ? parsed.title.trim().slice(0, 200) : '',
+            assignedUserId: resolveAssigneeId(parsed.assigneeName, roster),
+            priority: normalizeRecurringPriority(parsed.priority),
+            estimatedTime: estimate,
+            estimatedTimeMinutes: parseEstimateMinutes(estimate),
+            deadline,
+        };
+    }
+);

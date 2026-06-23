@@ -173,6 +173,29 @@ service cloud.firestore {
              data.get('end', '') is string;
     }
 
+    // A task's priority (if present) must be one of the canonical UPPERCASE tokens, and
+    // estimatedTimeMinutes (if present) a non-negative number within a sane ceiling (1000h). Mirrors
+    // the write-path canonicalization (priority.js / timeUtils) so a future code path cannot
+    // re-introduce the priority casing split or a string-typed numeric estimate. Permissive: an
+    // ABSENT field passes, so quick-work's minimal shape and legacy rows are never blocked. Applied
+    // to /tasks only (NOT /archived_tasks — the client archives legacy rows verbatim).
+    function taskFieldsOk(data) {
+      return (!('priority' in data) ||
+              data.priority in ['URGENT', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW']) &&
+             (!('estimatedTimeMinutes' in data) ||
+              (data.estimatedTimeMinutes is number &&
+               data.estimatedTimeMinutes >= 0 &&
+               data.estimatedTimeMinutes <= 60000));
+    }
+    // On UPDATE, enforce only when this write CHANGES priority/estimate — so a status/timer/title
+    // edit that leaves them untouched, AND the remediation of an already-non-canonical legacy row,
+    // both pass. (The app's edit path rewrites priority canonically on every save anyway.)
+    function taskFieldsOkForUpdate() {
+      return (request.resource.data.get('priority', '') == resource.data.get('priority', '') &&
+              request.resource.data.get('estimatedTimeMinutes', 0) == resource.data.get('estimatedTimeMinutes', 0))
+             || taskFieldsOk(request.resource.data);
+    }
+
     // ---- USERS --------------------------------------------------------------
     match /users/{userId} {
       // Read OWN doc unconditionally (first-login bootstrap before the doc has an
@@ -235,15 +258,16 @@ service cloud.firestore {
       // Create: a worker self-assigns (covers normal create + call/quick-work auto-logs);
       // whole-team viewers may assign to anyone; a scoped overseer may assign ONLY within their
       // subtree (overseesUser checks the assignee's closure — also covers RESTORE of a team task).
-      allow create: if isUserActive() && (
+      allow create: if isUserActive() && taskFieldsOk(request.resource.data) && (
                       request.resource.data.assignedUserId == request.auth.uid ||
                       canSeeWholeTeam() ||
                       (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
                     );
       // Update: whole-team viewers edit any; a scoped manager edits their team's tasks and may
       // only reassign within their team; the assignee edits their own but may NOT flip the
-      // manager-only approval fields.
-      allow update: if isUserActive() && (
+      // manager-only approval fields. taskFieldsOkForUpdate adds the priority/estimate shape guard
+      // (enforced only when this write changes those fields).
+      allow update: if isUserActive() && taskFieldsOkForUpdate() && (
                       canSeeWholeTeam() ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
