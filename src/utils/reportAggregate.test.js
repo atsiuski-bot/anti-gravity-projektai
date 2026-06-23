@@ -222,4 +222,63 @@ describe('renderers', () => {
         expect(csv).toContain('2026-06-11');
         expect(csv).toContain('Viso');
     });
+
+    it('Timesheet CSV omits the money columns entirely when includeEarnings is off', () => {
+        const csv = renderTimesheetCSV([worker], window);
+        const header = csv.split('\n')[0];
+        expect(header).not.toContain('Neto (€)');
+        expect(header).not.toContain('Bruto (€)');
+        // Every row keeps the base 6-column width — no trailing money cells.
+        csv.replace(/^\uFEFF/, '')
+            .split('\n')
+            .forEach((line) => expect(line.split(',').length).toBe(6));
+    });
+
+    it('Timesheet CSV adds Neto/Bruto columns, populated only on the Viso row', () => {
+        // 8h + 5h = 13h @ €10 (under the 20h tier) → 130 € neto; gross is higher.
+        const csv = renderTimesheetCSV([worker], window, { includeEarnings: true });
+        const lines = csv.replace(/^\uFEFF/, '').split('\n');
+        const header = lines[0].split(',');
+        expect(header).toContain('Neto (€)');
+        expect(header).toContain('Bruto (€)');
+        expect(header.length).toBe(8);
+
+        const dayLines = lines.filter((l) => /,2026-06-1[01],/.test(l));
+        expect(dayLines).toHaveLength(2);
+        // Daily rows pad the two money columns blank (trailing ",,") — money must NOT appear per day.
+        dayLines.forEach((l) => {
+            const cells = l.split(',');
+            expect(cells.length).toBe(8);
+            expect(cells[6]).toBe('');
+            expect(cells[7]).toBe('');
+        });
+
+        const visoLine = lines.find((l) => l.includes(',Viso,'));
+        const visoCells = visoLine.split(',');
+        expect(visoCells.length).toBe(8);
+        expect(visoCells[6]).toBe('130'); // Neto
+        expect(Number(visoCells[7])).toBeGreaterThan(130); // Bruto > Neto
+    });
+
+    it('Timesheet CSV leaves money cells blank on the Viso row when the worker has no pay rate', () => {
+        const noRate = baseWorker({ payRate: null, workSessions: [session('2026-06-10', 8)] });
+        const csv = renderTimesheetCSV([noRate], window, { includeEarnings: true });
+        const lines = csv.replace(/^\uFEFF/, '').split('\n');
+        expect(lines[0].split(',').length).toBe(8); // header still widened
+        const visoCells = lines.find((l) => l.includes(',Viso,')).split(',');
+        expect(visoCells.length).toBe(8);
+        expect(visoCells[6]).toBe('');
+        expect(visoCells[7]).toBe('');
+    });
+
+    it('Timesheet CSV money values are plain integers needing no CSV escaping', () => {
+        // Euro cells carry only digits (Math.round'd integers), so they stay unquoted — the field
+        // count is stable and a euro figure never spills into an adjacent column.
+        const csv = renderTimesheetCSV([worker], window, { includeEarnings: true });
+        const visoCells = csv.replace(/^\uFEFF/, '').split('\n').find((l) => l.includes(',Viso,')).split(',');
+        expect(visoCells[6]).toMatch(/^\d+$/);
+        expect(visoCells[7]).toMatch(/^\d+$/);
+        expect(visoCells[6]).not.toContain('"');
+        expect(visoCells[7]).not.toContain('"');
+    });
 });

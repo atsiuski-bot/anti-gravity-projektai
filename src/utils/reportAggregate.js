@@ -388,14 +388,24 @@ export function renderReportJSON(report) {
 // Skirtumas (gated by the plan-coverage floor). Operates on the RAW fetched slice (`workers`), not
 // the aggregated report object. Honors manual-adjustment magnitudes (payroll convention) — distinct
 // from the analysis metrics, which clamp every session at 16h for outlier resistance.
-export function renderTimesheetCSV(workers, window) {
+//
+// `includeEarnings` appends "Neto (€)" / "Bruto (€)" columns. Money lands ONLY on each worker's
+// "Viso" row, never on the daily rows: the net rate is marginal over CUMULATIVE monthly hours
+// (see computePeriodEarnings), so a per-day price would mis-tier and read as fact. Workers without
+// a pay rate, or whose window earns nothing, leave both money cells blank — same null policy as
+// buildReport. The earnings figure ALSO uses the analysis 16h clamp (no allowLarge), so it can
+// differ slightly from the allowLarge "Darbas" total above; that mirrors EarningsModal exactly.
+export function renderTimesheetCSV(workers, window, { includeEarnings = false } = {}) {
     const escape = (str) => {
         if (str === null || str === undefined) return '';
         const s = String(str);
         return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
+    if (includeEarnings) headers.push('Neto (€)', 'Bruto (€)');
     const rows = [];
+    // Pad a base 6-cell row out to the full header width so daily rows keep blank money columns.
+    const pad = (cells) => (includeEarnings ? [...cells, '', ''] : cells);
 
     for (const w of workers) {
         const days = aggregateDaily(w.workSessions, w.breakSessions, window, { allowLarge: true });
@@ -407,7 +417,7 @@ export function renderTimesheetCSV(workers, window) {
                 const d = days[date];
                 totalWork += d.work;
                 totalBreak += d.break;
-                rows.push([escape(w.name), escape(date), escape(formatMinutesToHHMM(d.work)), escape(formatMinutesToHHMM(d.break)), '', ''].join(','));
+                rows.push(pad([escape(w.name), escape(date), escape(formatMinutesToHHMM(d.work)), escape(formatMinutesToHHMM(d.break)), '', '']).join(','));
             });
 
         const planned = computePlannedMinutes(w.plannedShifts, window, w.expectedWeeklyHours);
@@ -415,7 +425,14 @@ export function renderTimesheetCSV(workers, window) {
         const planCovers = hasPlan && (totalWork <= 0 || planned >= TIMESHEET_PLAN_FLOOR * totalWork);
         const plannedCell = hasPlan ? formatMinutesToHHMM(planned) : '';
         const skirtumasCell = !hasPlan ? '' : planCovers ? formatSignedMinutesToHHMM(totalWork - planned) : 'Nepakanka plano';
-        rows.push([escape(w.name), escape('Viso'), escape(formatMinutesToHHMM(totalWork)), escape(formatMinutesToHHMM(totalBreak)), escape(plannedCell), escape(skirtumasCell)].join(','));
+        const totalCells = [escape(w.name), escape('Viso'), escape(formatMinutesToHHMM(totalWork)), escape(formatMinutesToHHMM(totalBreak)), escape(plannedCell), escape(skirtumasCell)];
+        if (includeEarnings) {
+            const earnings = hasPayRate(w.payRate)
+                ? computePeriodEarnings(w.workSessions, window, w.payRate.tiers)
+                : null;
+            totalCells.push(escape(earnings ? String(earnings.netEur) : ''), escape(earnings ? String(earnings.grossEur) : ''));
+        }
+        rows.push(totalCells.join(','));
     }
 
     // BOM so Excel reads the Lithuanian diacritics as UTF-8.
