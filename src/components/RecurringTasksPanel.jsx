@@ -6,6 +6,7 @@ import {
     getTaskTemplates,
     setTemplateRecurrence,
     setTemplateAssignee,
+    createManagerTask,
 } from '../utils/taskActions';
 import { runRecurringNow } from '../utils/recurringActions';
 import { scopeRoster } from '../utils/teamScope';
@@ -145,6 +146,26 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
         }
     };
 
+    // One-tap create from a NON-recurring template (client-side; the recurring path uses the
+    // server "Sukurti dabar" with dedup/absence handling instead).
+    const handleCreateOnce = async () => {
+        if (!baked) {
+            setMsg({ text: 'Šablonas be vykdytojo — atidarykite „Tvarkyti" ir priskirkite.', tone: 'err' });
+            return;
+        }
+        setBusyAction('create-once');
+        setMsg(null);
+        try {
+            await createManagerTask({ ...template.data, assignedUserId: baked, sourceTemplateId: template.id }, currentUser);
+            setMsg({ text: 'Darbas sukurtas.', tone: 'ok' });
+            onChanged?.();
+        } catch {
+            setMsg({ text: 'Nepavyko sukurti.', tone: 'err' });
+        } finally {
+            setBusyAction('');
+        }
+    };
+
     const next = isRecurring ? nextOccurrence(recurrence) : null;
 
     return (
@@ -160,6 +181,11 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                         {next && <> · Kita: <span className="font-mono">{next}</span></>}
                     </p>
                 </div>
+                {!isRecurring && (
+                    <Button variant="secondary" size="md" icon={Play} loading={busyAction === 'create-once'} onClick={handleCreateOnce}>
+                        Sukurti darbą
+                    </Button>
+                )}
                 <button
                     type="button"
                     onClick={openEditor}
