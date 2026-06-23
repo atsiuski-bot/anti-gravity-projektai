@@ -103,6 +103,34 @@ prod-config changes — per `CLAUDE.md` agents don't do these autonomously).
 
 6. **Re-park the account when done** (see teardown — at minimum, re-disable it).
 
+### Driving it headless via Claude Preview (agent QA — verified 2026-06-23)
+
+The Preview tools (`mcp__Claude_Preview__*`) can run the dev server and inspect the page without a
+human at the browser. The exact path that works here (the naive one does not — read the gotchas):
+
+1. **Start the server:** `preview_start({ name: "workz-dev" })`. The repo ships
+   [`.claude/launch.json`](../../.claude/launch.json) (`npm run dev`, port 5173) so this works out
+   of the box. If port 5173 is held by a stray `node.exe`, free it first
+   (`Stop-Process -Id <pid> -Force`) — Preview will not attach to a non-Preview server.
+2. **Kill the dev service worker BEFORE looking.** `vite-plugin-pwa` registers a dev SW that
+   serves a stale/blank shell, so the first paint is empty and the page sticks at a *"Atnaujinta
+   versija"* prompt. Clear it once with `preview_eval`:
+   ```js
+   (async () => { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
+     if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
+     location.reload(); })()
+   ```
+   After the reload the app boots clean to `/login`.
+3. **Verify with `preview_eval` / `preview_snapshot`, NOT `preview_screenshot`.** Screenshots
+   time out in this environment (30 s, every time); the a11y snapshot and reading
+   `document.body.innerText` are reliable and are the documented-preferred check anyway.
+4. **Log in:** the `#dev-email` / `#dev-password` inputs are pre-filled from `.env.local` (Vite
+   reads it from the checkout root), so just `preview_click({ selector: 'button[type="submit"]' })`.
+   A successful login leaves `/login` for `?tab=...` and the nav shows **"Administratorius"** with
+   the MANO / KOMANDA / ADMINISTRAVIMAS groups; opening **Vartotojai** loads the whole roster
+   (proof that team-wide Firestore reads work). A `[role="alert"]` in the panel means sign-in
+   failed — read its text (e.g. `auth/operation-not-allowed` = provider disabled).
+
 ### Stay safe on real production data
 - The account is `isTest`, so Reports/Statistics already drop it — **but the data is real prod
   data**, not an emulator. Prefer read-only visual checks.
