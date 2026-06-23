@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react';
-import { Trophy, BarChart3 } from 'lucide-react';
+import { Trophy, BarChart3, TrendingUp } from 'lucide-react';
 import clsx from 'clsx';
 import { useUsers } from '../context/UsersContext';
 import { useAuth } from '../context/AuthContext';
@@ -17,6 +17,10 @@ import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 // The day-report drill-down is heavy (its own Firestore listeners), so it only mounts when a
 // manager actually switches to the "Statistika" tab — never on the achievements view.
 const DailyStatistics = lazy(() => import('./DailyStatistics'));
+
+// The aggregated "Suvestinė" surface (its own period queries + compute) is heavier still, so it
+// also only mounts when a manager switches to that tab — never on achievements or the day report.
+const WorkerStatsPanel = lazy(() => import('./stats/WorkerStatsPanel'));
 
 // Role presentation — color paired with text (DESIGN_SYSTEM §5), with the rank insignia
 // (ADR 0010). `seniorManager` must be present: without it a Vyr. vadovas peer profile fell back
@@ -64,6 +68,7 @@ export default function UserProfileModal({ userId, onClose }) {
             (isScopedOverseer(userData) && isOverseenBy(user, currentUser?.uid)));
 
     const showStats = canViewStats && tab === 'stats';
+    const showSummary = canViewStats && tab === 'summary';
 
     return (
         <Modal
@@ -100,12 +105,12 @@ export default function UserProfileModal({ userId, onClose }) {
                             aria-selected={tab === 'achievements'}
                             onClick={() => setTab('achievements')}
                             className={clsx(
-                                'flex items-center gap-1.5 px-4 py-2 text-caption font-semibold transition-colors',
+                                'flex items-center gap-1.5 px-3 py-2 text-caption font-semibold transition-colors',
                                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                 tab === 'achievements' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                             )}
                         >
-                            <Trophy className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                            <Trophy className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />
                             Pasiekimai
                         </button>
                         <div className="w-px bg-line" aria-hidden="true" />
@@ -115,13 +120,28 @@ export default function UserProfileModal({ userId, onClose }) {
                             aria-selected={tab === 'stats'}
                             onClick={() => setTab('stats')}
                             className={clsx(
-                                'flex items-center gap-1.5 px-4 py-2 text-caption font-semibold transition-colors',
+                                'flex items-center gap-1.5 px-3 py-2 text-caption font-semibold transition-colors',
                                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                 tab === 'stats' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                             )}
                         >
-                            <BarChart3 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                            <BarChart3 className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />
                             Statistika
+                        </button>
+                        <div className="w-px bg-line" aria-hidden="true" />
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected={tab === 'summary'}
+                            onClick={() => setTab('summary')}
+                            className={clsx(
+                                'flex items-center gap-1.5 px-3 py-2 text-caption font-semibold transition-colors',
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                tab === 'summary' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            )}
+                        >
+                            <TrendingUp className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />
+                            Suvestinė
                         </button>
                     </div>
                 </div>
@@ -138,6 +158,20 @@ export default function UserProfileModal({ userId, onClose }) {
                             users={activeUsers}
                             forceUserId={userId}
                             embedded
+                        />
+                    </Suspense>
+                </div>
+            ) : showSummary ? (
+                <div className="mt-5">
+                    <Suspense
+                        fallback={<div className="py-12 text-center text-body text-ink-muted">Kraunama suvestinė…</div>}
+                    >
+                        <WorkerStatsPanel
+                            userId={userId}
+                            targetUser={user}
+                            viewerData={userData}
+                            viewerUid={currentUser?.uid}
+                            viewerRole={userRole}
                         />
                     </Suspense>
                 </div>
