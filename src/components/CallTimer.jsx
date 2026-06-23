@@ -36,7 +36,7 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                 {/* Content */}
                 <p className="text-body text-ink-muted mb-4">Įveskite skambučio aprašymą</p>
 
-                <div className="mb-5 bg-session-call-surface rounded-card p-4 border border-blue-200 flex items-center justify-between">
+                <div className="mb-5 bg-session-call-surface rounded-card p-4 border border-session-call-soft flex items-center justify-between">
                     <span className="text-body-lg font-semibold text-session-call-accent">Užfiksuotas laikas:</span>
                     <span className="text-4xl font-mono font-bold text-session-call-accent">{totalDisplay}</span>
                 </div>
@@ -226,7 +226,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
                         isDisabled
                             ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isCalling
-                                ? 'bg-session-call-accent text-white ring-2 ring-blue-100'
+                                ? 'bg-session-call-accent text-white ring-2 ring-session-call-shell'
                                 : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
                     title={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}

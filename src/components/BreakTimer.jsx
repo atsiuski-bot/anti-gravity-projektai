@@ -109,7 +109,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                         isDisabled
                             ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isTakingBreak
-                                ? 'bg-session-break-accent text-white ring-2 ring-amber-100'
+                                ? 'bg-session-break-accent text-white ring-2 ring-session-break-shell'
                                 : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
                     title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
@@ -158,7 +158,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                         isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border border-line" :
                             isTakingBreak
-                                ? 'bg-session-break-surface text-amber-800 hover:bg-amber-100 border border-amber-200'
+                                ? 'bg-session-break-surface text-session-break-accent hover:bg-session-break-shell border border-session-break-soft'
                                 : 'bg-surface-card text-ink hover:bg-surface-sunken border border-line'
                     )}
                     title={isDisabled ? getInterruptionReason(activeSessionType) : ""}

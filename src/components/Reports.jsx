@@ -13,6 +13,7 @@ import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
+import { Spinner } from './ui/Loading';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
@@ -1065,9 +1066,12 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 viewing their OWN data via viewRole="worker") there is just one view, so the
                 whole switcher is dropped. */}
             {isManagerRole(userRole) && (
-                <div className="flex border-b border-line overflow-x-auto">
+                <div role="tablist" aria-label="Ataskaitų skiltys" className="flex border-b border-line overflow-x-auto">
 
                     <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'report'}
                         onClick={() => setActiveTab('report')}
                         className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
@@ -1075,6 +1079,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         Darbo ataskaita
                     </button>
                     <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'approval'}
                         onClick={() => setActiveTab('approval')}
                         className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
@@ -1082,6 +1089,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         Patvirtinimas
                     </button>
                     <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'calendar-history'}
                         onClick={() => setActiveTab('calendar-history')}
                         className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
@@ -1330,7 +1340,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     </div>
 
                     {loading && (
-                        <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">Kraunami duomenys...</div>
+                        <div className="bg-surface-card rounded-card shadow-sm">
+                            <Spinner label="Kraunami duomenys…" />
+                        </div>
                     )}
 
                     {!loading && calendarHistory.length === 0 && (
@@ -1518,7 +1530,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     </div>
 
                     {loading ? (
-                        <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">Kraunami duomenys...</div>
+                        <div className="bg-surface-card rounded-card shadow-sm">
+                            <Spinner label="Kraunami duomenys…" />
+                        </div>
                     ) : (
                         <>
                             {groupedTasks.length > 0 && groupedTasks.map(([date, tasks]) => (

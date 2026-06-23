@@ -127,4 +127,22 @@ describe('archiveOldTasks — work-day cutoff flips at 03:00 Vilnius', () => {
         expect(archivedIds).toContain('twoDaysAgo');
         expect(archivedIds).not.toContain('yesterday'); // cutoff rolled back to 06-20
     });
+
+    it('buckets the confirmedAt to its Vilnius day, not the UTC day (the late-evening bug)', async () => {
+        // now = 15:00 Vilnius on 2026-06-22 -> cutoff = 2026-06-22.
+        getLithuanianNow.mockReturnValue(new Date('2026-06-22T12:00:00Z'));
+        // 22:30 UTC on the 21st is 01:30 Vilnius on the 22nd (summer +3): its Vilnius work-day
+        // is TODAY (06-22), so it must NOT be archived. The old relevantDate.split('T')[0] took
+        // the UTC date '2026-06-21' < cutoff and would have archived it a cycle too soon.
+        getDocs
+            .mockResolvedValueOnce(snapshotOf([
+                { id: 'lateEvening', status: 'confirmed', confirmedAt: '2026-06-21T22:30:00Z' },
+            ]))
+            .mockResolvedValueOnce(snapshotOf([]));
+
+        await archiveOldTasks();
+
+        const archivedIds = archiveTask.mock.calls.map((c) => c[0].id);
+        expect(archivedIds).not.toContain('lateEvening');
+    });
 });

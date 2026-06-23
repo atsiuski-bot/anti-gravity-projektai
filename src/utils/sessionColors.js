@@ -14,6 +14,8 @@ import { Zap, Phone, Coffee, Briefcase } from 'lucide-react';
  *  - `shell`   full-screen background while the session is active
  *  - `surface` the running card layered above the shell (content rides on this, §4-D)
  *  - `accent`  timer / icon / accent text color
+ *  - `accentBorder` the accent as a BORDER class — for a pill/chip outlined in the session
+ *              accent (e.g. the floating ActiveSessionReadout), so it reads the one map too
  *  - `onShell` text color that is legible *directly* on the shell. Because the shells are
  *              theme-INVARIANT (a light tint, or saturated red), `onShell` is a FIXED color
  *              (never the themeable `ink` token, which would invert to near-white on the dark
@@ -32,6 +34,7 @@ export const SESSION_COLORS = {
         surface: 'bg-session-quickWork-surface',
         accent: 'text-session-quickWork-accent',
         accentBg: 'bg-session-quickWork-accent',
+        accentBorder: 'border-session-quickWork-accent',
         onShell: 'text-white', // saturated-red shell → white label for contrast
     },
     call: {
@@ -42,6 +45,7 @@ export const SESSION_COLORS = {
         surface: 'bg-session-call-surface',
         accent: 'text-session-call-accent',
         accentBg: 'bg-session-call-accent',
+        accentBorder: 'border-session-call-accent',
         onShell: 'text-gray-900', // light shell (theme-invariant) → fixed dark label, never inverting ink
     },
     break: {
@@ -52,6 +56,7 @@ export const SESSION_COLORS = {
         surface: 'bg-session-break-surface',
         accent: 'text-session-break-accent',
         accentBg: 'bg-session-break-accent',
+        accentBorder: 'border-session-break-accent',
         onShell: 'text-gray-900',
     },
     task: {
@@ -62,6 +67,7 @@ export const SESSION_COLORS = {
         surface: 'bg-session-task-surface',
         accent: 'text-session-task-accent',
         accentBg: 'bg-session-task-accent',
+        accentBorder: 'border-session-task-accent',
         onShell: 'text-gray-900',
     },
 };

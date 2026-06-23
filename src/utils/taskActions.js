@@ -72,6 +72,10 @@ export const startTask = async (task, userId) => {
 
     } catch (err) {
         console.error("Error starting task:", err);
+        // Record to the durable crash log before rethrowing — a failed timer start is exactly
+        // the kind of session-lifecycle failure errorLog.js exists to capture, and it was
+        // previously invisible there (only console.error fired).
+        logError(err, { source: 'taskActions.startTask' });
         throw err;
     }
 };
@@ -164,6 +168,10 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
 
     } catch (err) {
         console.error("Error pausing task:", err);
+        // Durable-log the pause failure: a failed pause is what leaves the timer running and
+        // credits ghost time on the next pause, so it must be visible in the crash log — not
+        // only the console. (The work_sessions write already has its own .catch→logError.)
+        logError(err, { source: 'taskActions.pauseTask' });
         throw err;
     } finally {
         pauseInFlight.delete(task.id);
@@ -214,6 +222,9 @@ export const resumeTask = async (task, userId) => {
 
     } catch (err) {
         console.error("Error resuming task:", err);
+        // Same durable-log rationale as startTask — a failed resume must reach errorLog.js, not
+        // just the console.
+        logError(err, { source: 'taskActions.resumeTask' });
         throw err;
     }
 };

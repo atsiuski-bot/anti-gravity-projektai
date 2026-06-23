@@ -267,7 +267,15 @@ service cloud.firestore {
       allow read:          if isUserActive();
       // Workers plan their own hours; managers write approved entries for workers.
       allow create:        if isUserActive() && (createOwnsUserId() || isManagerOrAdmin());
-      allow update, delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
+      // Update may NOT re-point the record's owner. ownsUserId() only checks the EXISTING
+      // owner, so without this pin an owner (or manager) could rewrite userId to a colleague
+      // and graft their planned/logged hours onto someone else's record (polluting that
+      // person's calendar + reports). Splitting update from delete is required because a
+      // delete carries no request.resource to compare. The .get() form tolerates any legacy
+      // doc that predates a userId field, matching the defensive idiom used elsewhere here.
+      allow update:        if isUserActive() && (ownsUserId() || isManagerOrAdmin())
+                           && request.resource.data.get('userId', '') == resource.data.get('userId', '');
+      allow delete:        if isUserActive() && (ownsUserId() || isManagerOrAdmin());
     }
 
     // ---- ARCHIVED TASKS -----------------------------------------------------
