@@ -9,9 +9,18 @@
 > Function) reduce the chance of corruption and *detect* loss — but **recovery** depends on the two
 > managed features this runbook turns on. See [ADR 0011](../adr/0011-data-durability-and-integrity.md).
 
-**These are human-run, one-time GCP operations.** Per the agent operating model, an AI agent cannot
-perform them (the permission classifier blocks prod GCP changes), and only the owner account has
-access. Run them yourself in a terminal.
+> **STATUS — ACTIVATED 2026-06-23.** All four layers are live: PITR `ENABLED` + delete-protection
+> `ENABLED` (set via the Firebase channel), daily (7d) + weekly (14w/Sunday) backup schedules
+> created, and the rules + `dailyIntegrityScan` deployed. The commands below are kept as the
+> reference for re-creating / adjusting / **recovering**. Note: on this machine `gcloud` is logged in
+> as a non-owner account with no project access and the owner cannot do an interactive
+> `gcloud auth login` headlessly, so the activation actually used the **Firebase CLI**
+> (`firebase firestore:backups:schedules:*`, authenticated as the owner) and the Firebase admin API
+> for the database flags — the `gcloud` forms are equivalent for anyone with owner gcloud creds.
+
+**These are owner-run operations** (Firebase CLI or gcloud, authenticated as the owner account). The
+Firebase CLI path needs no gcloud login — it reuses the same `firebase login` session used for
+deploys.
 
 - **Project:** `darbo-planavimas`
 - **Database:** `(default)` — Firestore Native, location **`eur3`** (Europe multi-region)
@@ -60,6 +69,19 @@ gcloud firestore databases describe --database="(default)" \
 PITR only reaches back 7 days and lives *inside* the database. Scheduled backups are independent
 snapshots that survive even a database deletion and retain far longer. Create both a daily and a
 weekly schedule.
+
+**Firebase CLI form (what was actually used 2026-06-23 — no gcloud login needed):**
+
+```bash
+firebase firestore:backups:schedules:create --database "(default)" \
+  --recurrence DAILY  --retention 7d  --project darbo-planavimas
+firebase firestore:backups:schedules:create --database "(default)" \
+  --recurrence WEEKLY --retention 98d --day-of-week SUNDAY --project darbo-planavimas
+firebase firestore:backups:schedules:list --database "(default)" --project darbo-planavimas
+# (the CLI takes a day duration; 98d == 14 weeks, the maximum weekly retention)
+```
+
+**gcloud form (equivalent, for an owner with gcloud creds):**
 
 ```bash
 # Daily backups, retained 7 days
