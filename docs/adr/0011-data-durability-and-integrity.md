@@ -1,7 +1,7 @@
 # 0011 — Data durability & integrity safety net
 
 - **Date:** 2026-06-23
-- **Status:** Accepted
+- **Status:** Accepted — **all four layers activated & verified live 2026-06-23**
 - **Deciders:** Founder + AI agent (claude-opus-4-8)
 
 ## Context
@@ -97,6 +97,10 @@ features that were simply switched off.
 - Surface `integrity_reports` in an admin UI (a small panel under the existing manager tooling) so a
   `critical`/`warning` report is seen without reading Firestore directly.
 - Wire a real alert (push to admins / email) when a report is `critical`.
-- Once PITR + backups are confirmed live, record the activation date here and in the decisions log.
+- ~~Once PITR + backups are confirmed live, record the activation date here and in the decisions
+  log.~~ **Done 2026-06-23:** PITR + delete-protection enabled (`POINT_IN_TIME_RECOVERY_ENABLED`,
+  `versionRetentionPeriod 604800s`); daily (7d) + weekly (98d/Sunday) backup schedules created; rules
+  + `dailyIntegrityScan` deployed and verified via the live ruleset / function list. Activation used
+  the Firebase CLI + admin API (gcloud here lacks the owner credential) — see the runbook.
 - Consider extending the anomaly scan to `work_hours` (it has no `createdAt`; either add one on write
   or accept a periodic full scan).
