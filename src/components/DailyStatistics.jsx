@@ -1075,7 +1075,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         </span>
                     )}
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <MetricWorkedGlyph className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
                         <span className="text-caption text-ink-muted">Darbas</span>
                         <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
                     </span>
@@ -1085,7 +1084,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <span className="text-body font-bold text-feedback-warning tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <MetricTotalGlyph className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
                         <span className="text-caption text-brand">Viso</span>
                         <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
                     </span>
