@@ -150,7 +150,11 @@ export async function archiveOldTasks() {
             const relevantDate = task.deletedAt || task.confirmedAt || task.updatedAt;
             if (!relevantDate) continue;
 
-            const dateStr = relevantDate.split('T')[0];
+            // Bucket the stored UTC ISO timestamp to its Vilnius calendar day before comparing
+            // against cutOffStr (also a Vilnius day). Using relevantDate.split('T')[0] took the
+            // UTC date, so a task confirmed 21:00–24:00 Vilnius in summer (UTC+3) carried a
+            // UTC date one day earlier and was archived a cycle too soon. Mirrors line 40.
+            const dateStr = getLithuanianDateString(new Date(relevantDate));
             if (dateStr < cutOffStr) {
                 // It's from a previous cycle
                 await archiveTask(task, 'system_automation');

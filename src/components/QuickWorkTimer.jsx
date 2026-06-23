@@ -46,7 +46,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                     Įveskite atlikto darbo aprašymą
                 </p>
 
-                <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-red-200 flex items-center justify-between">
+                <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-session-quickWork-soft flex items-center justify-between">
                     <span className="text-session-quickWork-accent font-semibold text-body-lg">Užfiksuotas laikas:</span>
                     <span className="text-4xl font-mono font-bold text-session-quickWork-accent">{totalDisplay}</span>
                 </div>
@@ -128,7 +128,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
 });
 QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
 
-export default function QuickWorkTimer({ compact = false }) {
+export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
     const { usersMap } = useUsers();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
@@ -281,7 +281,7 @@ export default function QuickWorkTimer({ compact = false }) {
                         isDisabled
                             ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isQuickWorking
-                                ? 'bg-session-quickWork-shell text-white ring-2 ring-red-200 shadow-lg shadow-red-500/20'
+                                ? 'bg-session-quickWork-shell text-white ring-2 ring-session-quickWork-soft shadow-lg shadow-session-quickWork-shell/20'
                                 : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
                     title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
@@ -293,8 +293,12 @@ export default function QuickWorkTimer({ compact = false }) {
                     )}
                 </button>
 
-                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1) */}
-                <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Greitas</span>
+                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1).
+                    Suppressed only in the collapsed side rail (`hideLabel`), where the icon SHAPE
+                    differs by state and the button keeps its aria-label + title tooltip. */}
+                {!hideLabel && (
+                    <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Greitas</span>
+                )}
 
                 {error && (
                     <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2 wz-shake" role="alert">
@@ -320,7 +324,7 @@ export default function QuickWorkTimer({ compact = false }) {
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isQuickWorking
-                            ? 'bg-session-quickWork-surface border-red-200 text-red-900 ring-1 ring-red-200'
+                            ? 'bg-session-quickWork-surface border-session-quickWork-soft text-session-quickWork-accent ring-1 ring-session-quickWork-soft'
                             : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-line'
                 )}
                 title={isDisabled ? getInterruptionReason(activeSessionType) : ""}

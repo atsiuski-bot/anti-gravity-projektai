@@ -4,6 +4,7 @@ import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'fire
 import { formatMinutesToTimeString, formatMinutesToHHMM, formatSignedMinutesToHHMM, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints } from '../utils/teamScope';
+import { absenceLabel } from '../utils/absence';
 import { addComment } from '../utils/commentActions';
 import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar } from 'lucide-react';
 
@@ -12,6 +13,7 @@ import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
+import { Spinner } from './ui/Loading';
 import TaskStatusPill from './task/TaskStatusPill';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
@@ -34,6 +36,12 @@ const PERIOD_PRESETS = [
     { id: '3months', label: '3 mėnesiai' },
     { id: 'year', label: 'Šie metai' },
 ];
+
+// Skirtumas (worked − planned) is meaningful only when the plan plausibly covers the worked span;
+// a token plan against a full month produces a fake "+164:00 surplus". A worker counts as "planned"
+// only when their plan is at least this fraction of worked time. Shared by the CSV Skirtumas gate
+// and the on-screen coverage indicator so the two surfaces never disagree on who has a usable plan.
+const PLAN_COVERAGE_FLOOR = 0.25;
 
 export default function Reports({ users, canExport = false, viewRole }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
@@ -716,11 +724,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
         const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
         const rows = [];
-        // Skirtumas (worked − planned) is meaningful only when the calendar plan plausibly
-        // covers the worked span. A token plan (one stray slot) against a full month of work
-        // produces a fake "+164:00 surplus"; require the plan to be at least this fraction of
-        // worked time before emitting a signed delta, otherwise label it "Nepakanka plano".
-        const PLAN_COVERAGE_FLOOR = 0.25;
 
         // Exclude test/founder accounts from the payroll export unless the manager opted in, so
         // team totals and the per-worker list aren't skewed by non-production rows.
@@ -1022,7 +1025,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
         let typeColor = "text-ink-muted";
         if (evt.isVacation) {
             TypeIcon = null;
-            typeLabel = "Atostogos";
+            typeLabel = absenceLabel(evt) || "Atostogos";
             typeColor = "text-feedback-warning";
         } else if (evt.isWorkFromHome) {
             TypeIcon = null;
@@ -1063,9 +1066,12 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 viewing their OWN data via viewRole="worker") there is just one view, so the
                 whole switcher is dropped. */}
             {isManagerRole(userRole) && (
-                <div className="flex border-b border-line overflow-x-auto">
+                <div role="tablist" aria-label="Ataskaitų skiltys" className="flex border-b border-line overflow-x-auto">
 
                     <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'report'}
                         onClick={() => setActiveTab('report')}
                         className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'report' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
@@ -1073,6 +1079,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         Darbo ataskaita
                     </button>
                     <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'approval'}
                         onClick={() => setActiveTab('approval')}
                         className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'approval' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
@@ -1080,6 +1089,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         Patvirtinimas
                     </button>
                     <button
+                        type="button"
+                        role="tab"
+                        aria-selected={activeTab === 'calendar-history'}
                         onClick={() => setActiveTab('calendar-history')}
                         className={`px-4 py-2 font-medium text-sm transition-colors whitespace-nowrap border-b-2 ${activeTab === 'calendar-history' ? 'border-brand text-brand' : 'border-transparent text-ink-muted hover:text-ink'
                             }`}
@@ -1208,7 +1220,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         const testIds = new Set((users || []).filter((u) => u.isTest).map((u) => u.id));
                         const rows = showTestUsers ? workData : workData.filter((u) => !testIds.has(u.userId));
                         if (rows.length === 0) return null;
-                        const withPlan = rows.filter((u) => u.plannedMinutes > 0).length;
+                        // Count only workers whose plan actually covers the span — the same predicate
+                        // the CSV's Skirtumas gate uses — so the indicator and the export agree on
+                        // who has a usable plan (a thin real plan that the CSV blanks is NOT counted).
+                        const withPlan = rows.filter((u) =>
+                            u.plannedMinutes > 0 &&
+                            (u.totalMinutes <= 0 || u.plannedMinutes >= PLAN_COVERAGE_FLOOR * u.totalMinutes)
+                        ).length;
                         return (
                             <p className="mb-3 px-1 text-caption text-ink-muted">
                                 Planą turi {withPlan} iš {rows.length} darbuotojų
@@ -1322,7 +1340,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     </div>
 
                     {loading && (
-                        <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">Kraunami duomenys...</div>
+                        <div className="bg-surface-card rounded-card shadow-sm">
+                            <Spinner label="Kraunami duomenys…" />
+                        </div>
                     )}
 
                     {!loading && calendarHistory.length === 0 && (
@@ -1510,7 +1530,9 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     </div>
 
                     {loading ? (
-                        <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">Kraunami duomenys...</div>
+                        <div className="bg-surface-card rounded-card shadow-sm">
+                            <Spinner label="Kraunami duomenys…" />
+                        </div>
                     ) : (
                         <>
                             {groupedTasks.length > 0 && groupedTasks.map(([date, tasks]) => (

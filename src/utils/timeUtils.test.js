@@ -9,6 +9,7 @@ import {
     calculateCurrentTotalMinutes,
     formatMinutesToHHMM,
     formatSignedMinutesToHHMM,
+    vilniusWallClockToISO,
 } from './timeUtils';
 
 // These are characterization tests for the pure time-math + timezone helpers that the
@@ -229,5 +230,80 @@ describe('formatSignedMinutesToHHMM (difference columns)', () => {
     it('guards non-finite input', () => {
         expect(formatSignedMinutesToHHMM(NaN)).toBe('00:00');
         expect(formatSignedMinutesToHHMM(Infinity)).toBe('00:00');
+    });
+});
+
+describe('vilniusWallClockToISO (Vilnius wall-clock -> UTC ISO, DST-safe)', () => {
+    // The admin session editor types a Vilnius local day + clock; this is the inverse of the
+    // getLithuanianDateString()/HH:MM pair the UI renders. The offset is read from a noon
+    // reference (never inside the spring-forward gap), so summer credits UTC+3 and winter UTC+2.
+    it('applies the summer offset (UTC+3): subtracts 3h', () => {
+        expect(vilniusWallClockToISO('2026-06-23', '14:30')).toBe('2026-06-23T11:30:00.000Z');
+    });
+
+    it('applies the winter offset (UTC+2): subtracts 2h', () => {
+        expect(vilniusWallClockToISO('2026-01-15', '14:30')).toBe('2026-01-15T12:30:00.000Z');
+    });
+
+    it('rolls back across the UTC day boundary when the local hour underflows', () => {
+        // 01:00 Vilnius summer is 22:00 UTC the PREVIOUS day (01:00 - 3h).
+        expect(vilniusWallClockToISO('2026-06-23', '01:00')).toBe('2026-06-22T22:00:00.000Z');
+    });
+
+    // Round-trip: rendering a stored UTC instant as the Vilnius (day, HH:MM) the admin sees and
+    // feeding it straight back must reproduce the exact same instant — otherwise an untouched
+    // edit would silently shift the time by the Vilnius offset. The HH:MM derivation mirrors the
+    // Intl formatting the UI uses to display a session's clock.
+    const vilniusHHMM = (date) => {
+        const parts = new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/Vilnius',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+        }).formatToParts(date);
+        let hh = parts.find((p) => p.type === 'hour').value;
+        const mm = parts.find((p) => p.type === 'minute').value;
+        if (hh === '24') hh = '00'; // some runtimes render midnight as "24"
+        return `${hh}:${mm}`;
+    };
+
+    it('round-trips getLithuanianDateString + the Intl HH:MM derivation back to the same instant', () => {
+        const instants = [
+            '2026-06-23T11:30:00.000Z', // summer, mid-day Vilnius (14:30)
+            '2026-01-15T12:30:00.000Z', // winter, mid-day Vilnius (14:30)
+            '2026-06-23T22:00:00.000Z', // summer, crosses into the NEXT Vilnius day (01:00)
+            '2026-07-10T05:07:00.000Z', // arbitrary summer instant
+            '2026-02-28T19:43:00.000Z', // arbitrary winter instant
+        ];
+        for (const iso of instants) {
+            const d = new Date(iso);
+            const dateStr = getLithuanianDateString(d);
+            const timeStr = vilniusHHMM(d);
+            expect(vilniusWallClockToISO(dateStr, timeStr)).toBe(iso);
+        }
+    });
+
+    it('returns null on malformed date/time shape', () => {
+        expect(vilniusWallClockToISO('2026-6-23', '14:30')).toBeNull(); // month not 2-digit
+        expect(vilniusWallClockToISO('2026-06-23', '14')).toBeNull(); // no minutes
+        expect(vilniusWallClockToISO('2026-06-23', '1430')).toBeNull(); // no colon
+        expect(vilniusWallClockToISO('garbage', '14:30')).toBeNull();
+        expect(vilniusWallClockToISO('2026-06-23', 'garbage')).toBeNull();
+    });
+
+    it('returns null on out-of-range date/time components', () => {
+        expect(vilniusWallClockToISO('2026-13-01', '14:30')).toBeNull(); // month 13
+        expect(vilniusWallClockToISO('2026-00-10', '14:30')).toBeNull(); // month 0
+        expect(vilniusWallClockToISO('2026-06-32', '14:30')).toBeNull(); // day 32
+        expect(vilniusWallClockToISO('2026-06-00', '14:30')).toBeNull(); // day 0
+        expect(vilniusWallClockToISO('2026-06-23', '25:00')).toBeNull(); // hour 25
+        expect(vilniusWallClockToISO('2026-06-23', '14:60')).toBeNull(); // minute 60
+    });
+
+    it('returns null on non-string input', () => {
+        expect(vilniusWallClockToISO(null, '14:30')).toBeNull();
+        expect(vilniusWallClockToISO('2026-06-23', null)).toBeNull();
+        expect(vilniusWallClockToISO(undefined, undefined)).toBeNull();
+        expect(vilniusWallClockToISO(20260623, 1430)).toBeNull();
     });
 });

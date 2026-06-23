@@ -2,19 +2,21 @@ import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { startOfWeek, format, parseISO } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
 import { deleteTask } from '../utils/taskActions';
 import { logCalendarChange } from '../utils/calendarNotifications';
+import { getLithuanianWeekId } from '../utils/timeUtils';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import { SoundManager } from '../utils/soundUtils';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import EmptyState from './ui/EmptyState';
+import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyphs';
 
 /**
  * NotificationFeed — the two-way feed rendered inside the notification bell's panel.
@@ -48,9 +50,11 @@ export default function ManagerNotifications({ onClose }) {
     useEffect(() => {
         if (!currentUser || !isManager) { setCalendarNotifications([]); return undefined; }
 
-        const now = new Date();
-        const weekStart = startOfWeek(now, { weekStartsOn: 1 });
-        const weekId = format(weekStart, 'yyyy-MM-dd');
+        // Week key = Monday of the Vilnius calendar week. MUST match logCalendarChange's writer
+        // key (both derive it via getLithuanianWeekId), so a manager and worker in different
+        // timezones near the Monday boundary cannot compute different week strings — which would
+        // otherwise hide the worker's calendar change from the manager (silent notification loss).
+        const weekId = getLithuanianWeekId();
 
         const q = query(
             collection(db, 'calendar_notifications'),
@@ -501,15 +505,18 @@ export default function ManagerNotifications({ onClose }) {
 
                                             const isAdd = change.type === 'add';
                                             const isEdit = change.type === 'edit';
+                                            // Shape carries the change type, not just color (the old
+                                            // +/~/- punctuation was a color-only signal — WCAG 1.4.1):
+                                            // add = Plus, edit = pencil, cancel = X.
+                                            const DeltaIcon = isAdd ? Plus : isEdit ? Edit : X;
+                                            const deltaColor = isAdd ? 'text-feedback-success' : isEdit ? 'text-feedback-warning' : 'text-feedback-danger';
+                                            const deltaLabel = isAdd ? 'Pridėta:' : isEdit ? 'Pakeista:' : 'Atšaukta:';
 
                                             return (
                                                 <div key={index} className="flex gap-2">
-                                                    <span className={
-                                                        isAdd ? 'text-feedback-success font-medium min-w-[70px]' :
-                                                            isEdit ? 'text-feedback-warning font-medium min-w-[70px]' :
-                                                                'text-feedback-danger font-medium min-w-[70px]'
-                                                    }>
-                                                        {isAdd ? '+ Pridėta:' : isEdit ? '~ Pakeista:' : '- Atšaukta:'}
+                                                    <span className={`inline-flex items-center gap-1 font-medium min-w-[84px] ${deltaColor}`}>
+                                                        <DeltaIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                                        {deltaLabel}
                                                     </span>
                                                     <span>{dayNameCap}, {timeRange}</span>
                                                 </div>
@@ -593,8 +600,8 @@ export default function ManagerNotifications({ onClose }) {
                             case 'task_assigned': Icon = ListTodo; tone = 'text-brand'; text = `${who} priskyrė Jums naują užduotį: ${task}`; break;
                             case 'task_approved': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų užduotis patvirtinta — galite pradėti: ${task}`; break;
                             case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis patvirtinta: ${task}`; break;
-                            case 'extension_granted': Icon = Clock; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
-                            case 'extension_denied': Icon = Clock; tone = 'text-ink-muted'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
+                            case 'extension_granted': Icon = TimeGrantedGlyph; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
+                            case 'extension_denied': Icon = TimeDeniedGlyph; tone = 'text-feedback-danger'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
                             case 'calendar_decision': {
                                 const approved = notif.decision === 'approved';
                                 Icon = approved ? CheckCircle2 : XCircle;
@@ -616,10 +623,10 @@ export default function ManagerNotifications({ onClose }) {
                     // Worker-facing ACTION: a returned task — open it to fix.
                     if (notif.type === 'task_reverted') {
                         return (
-                            <div key={notif.id} className="rounded-card border border-amber-200 bg-amber-50 p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
+                            <div key={notif.id} className="rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2">
                                 <div className="flex items-start gap-3">
-                                    <RotateCcw className="mt-0.5 h-5 w-5 flex-shrink-0 text-amber-600" aria-hidden="true" />
-                                    <div className="min-w-0 flex-1 text-sm text-amber-900">
+                                    <RotateCcw className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
                                         <p><span className="font-semibold">{formatDisplayName(notif.createdByName) || 'Vadovas'}</span> grąžino užduotį tobulinti:</p>
                                         <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
                                     </div>
@@ -748,7 +755,7 @@ export default function ManagerNotifications({ onClose }) {
                                 <div className="flex flex-col gap-3">
                                     {/* Header */}
                                     <div className="flex items-start gap-3">
-                                        <Clock className="w-5 h-5 mt-0.5 flex-shrink-0 text-feedback-danger" />
+                                        <TimeUpGlyph className="w-5 h-5 mt-0.5 flex-shrink-0 text-feedback-danger" />
                                         <div>
                                             <div className="text-sm text-feedback-danger-text">
                                                 <p className="font-medium leading-relaxed">

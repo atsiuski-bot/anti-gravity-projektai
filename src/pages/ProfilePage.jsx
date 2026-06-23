@@ -20,6 +20,7 @@ import ConfirmDialog from '../components/ui/ConfirmDialog';
 import Avatar from '../components/ui/Avatar';
 import Badge from '../components/ui/Badge';
 import InstallInstructions from '../components/InstallInstructions';
+import { ROLE_GLYPHS } from '../components/icons/roleInsigniaMap';
 
 // Role presentation — pair color with text so role is never color-only (DESIGN_SYSTEM §5).
 const ROLE_META = {
@@ -204,7 +205,7 @@ export default function ProfilePage() {
 
                 {fullName && <p className="text-h3 font-semibold text-ink-strong">{fullName}</p>}
                 <div className="mt-3 flex justify-center">
-                    <StatusPill tone={role.tone}>{role.label}</StatusPill>
+                    <StatusPill tone={role.tone} icon={ROLE_GLYPHS[userRole]}>{role.label}</StatusPill>
                 </div>
                 {memberSince && (
                     <p className="mt-3 text-caption text-ink-muted">Narys nuo {memberSince}</p>

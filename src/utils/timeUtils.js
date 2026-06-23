@@ -215,6 +215,30 @@ export const addDaysToDateString = (dateStr, days = 1) => {
 };
 
 /**
+ * Returns the Monday-of-week date string (YYYY-MM-DD) for the Vilnius calendar week that
+ * contains `date`. Both the writer (logCalendarChange) and the manager-side reader build the
+ * shared `${uid}_${weekId}` notification key from this, so it MUST be derived from the Vilnius
+ * day — NOT date-fns startOfWeek(new Date()), which buckets by the BROWSER's local week. Two
+ * devices in different timezones straddling the Monday boundary would otherwise compute
+ * different week strings and the notification document would never match (silent loss).
+ *
+ * Pure: the Vilnius calendar day via getLithuanianDateString, then UTC calendar arithmetic to
+ * step back to Monday. DST-independent and identical on every device regardless of its clock's
+ * timezone. (The weekday is read from the date-only string at UTC midnight, where getUTCDay()
+ * is just that calendar date's weekday: 0=Sunday … 6=Saturday.)
+ *
+ * @param {Date|string} [date=new Date()] - The instant whose Vilnius week is wanted.
+ * @returns {string} The week's Monday as a YYYY-MM-DD string.
+ */
+export const getLithuanianWeekId = (date = new Date()) => {
+    const todayStr = getLithuanianDateString(date);
+    const [y, m, d] = todayStr.split('-').map(Number);
+    const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun … 6=Sat
+    const daysSinceMonday = (dayOfWeek + 6) % 7; // Mon→0, Tue→1, … Sun→6
+    return addDaysToDateString(todayStr, -daysSinceMonday);
+};
+
+/**
  * Returns the weekday in Lithuanian (e.g. "Pirmadienis") according to Lithuania's time.
  */
 export const getLithuanianWeekday = (date = new Date()) => {
@@ -255,4 +279,44 @@ export const getLithuanian3AMCutoff = (dateStr) => {
     );
     const offsetHours = localNoonHour - 12; // 2 (winter) or 3 (summer)
     return new Date(Date.UTC(y, m - 1, d, 3 - offsetHours, 0, 0));
+};
+
+/**
+ * Build a UTC instant (ISO string) from a Vilnius LOCAL wall-clock date + time. This is the
+ * inverse of the pair getLithuanianDateString()/formatTime(): those render a stored UTC ISO as
+ * the Vilnius day + clock an admin sees; this takes the day + clock the admin TYPES back and
+ * returns the UTC ISO to persist. work_sessions store startTime/endTime as UTC ISO, so the
+ * session editor must round-trip through here or it would silently shift every edited time by
+ * the Vilnius offset.
+ *
+ * Vilnius is UTC+2 (winter) / UTC+3 (summer); the day's offset is read from a NOON reference
+ * (noon is never inside the DST spring-forward gap) so the conversion is deterministic — the
+ * same technique getLithuanian3AMCutoff uses. Returns null on malformed input.
+ *
+ * @param {string} dateStr - Vilnius local date, "YYYY-MM-DD".
+ * @param {string} timeStr - Vilnius local time, "HH:MM" (24h).
+ * @returns {string|null} UTC ISO string, or null if either part is malformed.
+ */
+export const vilniusWallClockToISO = (dateStr, timeStr) => {
+    if (typeof dateStr !== 'string' || typeof timeStr !== 'string') return null;
+    const dateMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const timeMatch = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+    if (!dateMatch || !timeMatch) return null;
+    const y = Number(dateMatch[1]);
+    const mo = Number(dateMatch[2]);
+    const d = Number(dateMatch[3]);
+    const hh = Number(timeMatch[1]);
+    const mm = Number(timeMatch[2]);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || hh > 23 || mm > 59) return null;
+    const noonUTC = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
+    const localNoonHour = parseInt(
+        new Intl.DateTimeFormat('en-GB', {
+            timeZone: 'Europe/Vilnius',
+            hour: 'numeric',
+            hour12: false
+        }).format(noonUTC),
+        10
+    );
+    const offsetHours = localNoonHour - 12; // 2 (winter) or 3 (summer)
+    return new Date(Date.UTC(y, mo - 1, d, hh - offsetHours, mm, 0)).toISOString();
 };

@@ -69,15 +69,16 @@ very-low) so "more urgent = louder against the canvas" holds without glare.
 
 ### Session colors (closed set — §4 of the design system)
 
-Each session has a `shell` (full-screen bg), a `surface` (the running card), and an `accent`
-(timer/icon/label). **All session-aware code reads this one map.**
+Each session has a `shell` (full-screen bg), a `surface` (the running card), an `accent`
+(timer/icon/label), and a `soft` tint (the *-200 shade, for a session-tinted border/ring on a
+secondary control). **All session-aware code reads this one map.**
 
-| Session | `shell` | `surface` | `accent` | Label (LT) |
-|---|---|---|---|---|
-| `session.quickWork` | red-500 (`#EF4444`) | red-50 (`#FEF2F2`) | red-700 (`#B91C1C`) | "Greitas darbas" |
-| `session.call` | blue-100 (`#DBEAFE`) | blue-50 (`#EFF6FF`) | blue-600 (`#2563EB`) | "Skambutis" |
-| `session.break` | amber-100 (`#FEF3C7`) | amber-50 (`#FFFBEB`) | amber-700 (`#B45309`) | "Pertrauka" |
-| `session.task` | green-200 (`#BBF7D0`) | green-100 (`#DCFCE7`) | green-700 (`#15803D`) | "Vyksta darbas" |
+| Session | `shell` | `surface` | `accent` | `soft` (border/ring) | Label (LT) |
+|---|---|---|---|---|---|
+| `session.quickWork` | red-500 (`#EF4444`) | red-50 (`#FEF2F2`) | red-700 (`#B91C1C`) | red-200 (`#FECACA`) | "Greitas darbas" |
+| `session.call` | blue-100 (`#DBEAFE`) | blue-50 (`#EFF6FF`) | blue-600 (`#2563EB`) | blue-200 (`#BFDBFE`) | "Skambutis" |
+| `session.break` | amber-100 (`#FEF3C7`) | amber-50 (`#FFFBEB`) | amber-700 (`#B45309`) | amber-200 (`#FDE68A`) | "Pertrauka" |
+| `session.task` | green-200 (`#BBF7D0`) | green-100 (`#DCFCE7`) | green-700 (`#15803D`) | green-200 (`#BBF7D0`) | "Vyksta darbas" |
 
 > **call** is `blue`, never `sky` — unify `CallTimer` onto this. Saturated red is **only**
 > `session.quickWork`.
@@ -304,10 +305,10 @@ extend: {
     ink:     { strong: '#111827', DEFAULT: '#374151', muted: '#6B7280' }, // text-ink, -strong, -muted
     line:    '#E5E7EB',                                                   // border-line
     session: {
-      quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#B91C1C' },
-      call:      { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB' },
-      break:     { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309' },
-      task:      { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D' },
+      quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#B91C1C', soft: '#FECACA' },
+      call:      { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB', soft: '#BFDBFE' },
+      break:     { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309', soft: '#FDE68A' },
+      task:      { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D', soft: '#BBF7D0' },
     },
     tier: { // achievement badges — surface + AA accent text + metallic ring; never a session shell
       bronze:   { surface: '#F3E4D3', accent: '#7A4A21', ring: '#C28E5A' },

@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
 
-export default function BreakTimer({ currentUser: _propUser, compact = false }) {
+export default function BreakTimer({ currentUser: _propUser, compact = false, hideLabel = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
     const {
@@ -109,7 +109,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                         isDisabled
                             ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isTakingBreak
-                                ? 'bg-session-break-accent text-white ring-2 ring-amber-100'
+                                ? 'bg-session-break-accent text-white ring-2 ring-session-break-shell'
                                 : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
                     title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
@@ -121,8 +121,12 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                     )}
                 </button>
 
-                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1) */}
-                <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Pertrauka</span>
+                {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1).
+                    Suppressed only in the collapsed side rail (`hideLabel`), where the icon SHAPE
+                    differs by state and the button keeps its aria-label + title tooltip. */}
+                {!hideLabel && (
+                    <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Pertrauka</span>
+                )}
 
                 {error && (
                     <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2" role="alert">
@@ -154,7 +158,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false }) 
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                         isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border border-line" :
                             isTakingBreak
-                                ? 'bg-session-break-surface text-amber-800 hover:bg-amber-100 border border-amber-200'
+                                ? 'bg-session-break-surface text-session-break-accent hover:bg-session-break-shell border border-session-break-soft'
                                 : 'bg-surface-card text-ink hover:bg-surface-sunken border border-line'
                     )}
                     title={isDisabled ? getInterruptionReason(activeSessionType) : ""}

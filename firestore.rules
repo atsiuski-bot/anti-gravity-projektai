@@ -139,6 +139,40 @@ service cloud.firestore {
              request.resource.data.get('approvedBy', null) != resource.data.get('approvedBy', null);
     }
 
+    // ---- Data shape / range validation (durability guardrails) --------------
+    // The rules above answer WHO may write; these answer WHAT a write may contain, so a buggy
+    // client or a runaway agent cannot poison the logged-time record with impossible values — the
+    // failure mode that previously left 247 break_sessions with >960-min durations (a one-off
+    // SA-key script had to delete them, because there was no guard at the door).
+    //
+    // Deliberately PERMISSIVE so it can never break a legitimate flow: a field is checked only when
+    // it is PRESENT (the `.get(field, default)` form defaults-pass an absent field) and, on update,
+    // only when this write actually CHANGES it. That keeps partial updates (a title rename, a
+    // soft-delete that touches no times) and the remediation of an already-corrupt row both
+    // possible — neither is blocked by a value it does not set. The admin-SDK Cloud Functions
+    // bypass rules entirely, so the team-stamp writes are unaffected.
+
+    // A session's credited duration: a finite number within a physical sanity ceiling (24h). The
+    // client clamps far below this (16h), so a legitimate write can never trip it; the ceiling
+    // exists only to reject the absurd values that corruption produces.
+    function durationInRange(data) {
+      return data.get('durationMinutes', 0) is number &&
+             data.get('durationMinutes', 0) >= 0 &&
+             data.get('durationMinutes', 0) <= 1440;
+    }
+    // On UPDATE, enforce the range only when the write changes the duration — so a rename /
+    // soft-delete (duration untouched) and the cleanup of a pre-existing out-of-range row pass.
+    function durationOkForUpdate() {
+      return request.resource.data.get('durationMinutes', 0) == resource.data.get('durationMinutes', 0) ||
+             durationInRange(request.resource.data);
+    }
+    // work_hours carries no duration; its time bounds are ISO strings. Guard only that, if present,
+    // start/end are strings (a bug writing a number/object/array there is rejected). Absent → pass.
+    function workHoursShapeOk(data) {
+      return data.get('start', '') is string &&
+             data.get('end', '') is string;
+    }
+
     // ---- USERS --------------------------------------------------------------
     match /users/{userId} {
       // Read OWN doc unconditionally (first-login bootstrap before the doc has an
@@ -229,13 +263,20 @@ service cloud.firestore {
       // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.
       allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
       // Workers log their own; whole-team viewers create time corrections for anyone; a scoped
-      // manager only for their people.
+      // manager only for their people. The duration guard rejects impossible credited time.
       allow create:        if isUserActive() && (
                               createOwnsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && overseesUser(request.resource.data.userId))
-                            );
-      allow update, delete: if isUserActive() && (
+                            ) && durationInRange(request.resource.data);
+      // Split from delete (a delete carries no request.resource to validate). The duration guard
+      // only bites when this update changes the duration, so renames / soft-deletes still pass.
+      allow update:        if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && inCallerTeam())
+                            ) && durationOkForUpdate();
+      allow delete:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
@@ -246,9 +287,15 @@ service cloud.firestore {
     match /break_sessions/{sessionId} {
       // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.
       allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
-      // Breaks are self-logged only (no manager-create path), unchanged.
-      allow create:        if isUserActive() && createOwnsUserId();
-      allow update, delete: if isUserActive() && (
+      // Breaks are self-logged only (no manager-create path). Duration guard as for work_sessions —
+      // this is the exact collection the >960-min corruption landed in.
+      allow create:        if isUserActive() && createOwnsUserId() && durationInRange(request.resource.data);
+      allow update:        if isUserActive() && (
+                              ownsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && inCallerTeam())
+                            ) && durationOkForUpdate();
+      allow delete:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
@@ -265,9 +312,20 @@ service cloud.firestore {
       // Team-wide read (the team calendar / AllUsersCalendar listens to all hours by
       // date and maps every userId into a whole-team view).
       allow read:          if isUserActive();
-      // Workers plan their own hours; managers write approved entries for workers.
-      allow create:        if isUserActive() && (createOwnsUserId() || isManagerOrAdmin());
-      allow update, delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
+      // Workers plan their own hours; managers write approved entries for workers. The shape guard
+      // rejects a malformed start/end (non-string) so a bug can't poison the planner/reports feed.
+      allow create:        if isUserActive() && (createOwnsUserId() || isManagerOrAdmin())
+                           && workHoursShapeOk(request.resource.data);
+      // Update may NOT re-point the record's owner. ownsUserId() only checks the EXISTING
+      // owner, so without this pin an owner (or manager) could rewrite userId to a colleague
+      // and graft their planned/logged hours onto someone else's record (polluting that
+      // person's calendar + reports). Splitting update from delete is required because a
+      // delete carries no request.resource to compare. The .get() form tolerates any legacy
+      // doc that predates a userId field, matching the defensive idiom used elsewhere here.
+      allow update:        if isUserActive() && (ownsUserId() || isManagerOrAdmin())
+                           && request.resource.data.get('userId', '') == resource.data.get('userId', '')
+                           && workHoursShapeOk(request.resource.data);
+      allow delete:        if isUserActive() && (ownsUserId() || isManagerOrAdmin());
     }
 
     // ---- ARCHIVED TASKS -----------------------------------------------------
@@ -407,6 +465,17 @@ service cloud.firestore {
       allow read:   if isManagerOrAdmin();
       allow update: if false;
       allow delete: if isAdmin();
+    }
+
+    // ---- INTEGRITY REPORTS (durability monitor output) ----------------------
+    // The scheduled integrity-scan Cloud Function (admin SDK) writes one report doc here per run
+    // (integrity_reports/{YYYY-MM-DD}) plus a rolling baseline (integrity_reports/_counts): anomaly
+    // counts + a sudden-volume-drop canary that signals a possible mass-delete / wipe. Read by
+    // managers/admins so the safety net is visible in-app; no CLIENT may write — only the admin SDK,
+    // which bypasses rules. Recovery procedure: docs/runbooks/firestore-backup-recovery.md.
+    match /integrity_reports/{reportId} {
+      allow read:  if isManagerOrAdmin();
+      allow write: if false;
     }
   }
 }

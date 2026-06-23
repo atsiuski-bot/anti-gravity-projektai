@@ -44,11 +44,14 @@ export default {
                 // border in dark. Explicit border-line / border-feedback-* still work (from colors).
                 // Session colors (closed set, §4) — theme-INVARIANT literal hex. The loud
                 // full-screen shell is the product's identity and must not dim with the canvas.
+                // `soft` is the soft tint (the *-200 shade) for a session-tinted BORDER or RING on
+                // a secondary control (e.g. the quick-work / break desktop buttons), so those stop
+                // reaching for raw border-red-200 / border-amber-200 outside the token system.
                 session: {
-                    quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#B91C1C' },
-                    call: { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB' },
-                    break: { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309' },
-                    task: { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D' },
+                    quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#B91C1C', soft: '#FECACA' },
+                    call: { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB', soft: '#BFDBFE' },
+                    break: { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309', soft: '#FDE68A' },
+                    task: { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D', soft: '#BBF7D0' },
                 },
                 // Achievement tiers (closed set) — calm surface + AA-passing accent text + a
                 // metallic ring. Self-contained medallions; theme-invariant literal hex (a light

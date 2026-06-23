@@ -1,5 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { createPortal } from 'react-dom';
+import { useState, useEffect, useMemo } from 'react';
 import { db, storage } from '../firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
@@ -18,11 +17,11 @@ import { TASK_TAGS } from '../utils/taskUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import Modal from './ui/Modal';
 import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import DeletedBadge from './task/DeletedBadge';
-import { useModalA11y } from '../hooks/useModalA11y';
 
 // Persistent field label — fields previously had only placeholders, which vanish on input
 // and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
@@ -85,8 +84,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // State-gated confirmations (replace banned window.confirm).
     const [templateToDelete, setTemplateToDelete] = useState(null); // { id, name }
     const [overwriteTemplate, setOverwriteTemplate] = useState(null); // existing template pending overwrite
-    // Dialog panel ref for focus management.
-    const panelRef = useRef(null);
 
     const [formData, setFormData] = useState({
         title: '',
@@ -244,9 +241,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             fetchTemplates();
         }
     }, [role, isOpen]);
-
-    // Focus-in, focus restore, Escape, and a Tab focus-trap — all shared (WCAG 2.4.3).
-    useModalA11y(panelRef, { open: isOpen, onClose, dismissible: true });
 
     // Clear any stale error / pending confirmations from a previous open.
     useEffect(() => {
@@ -691,17 +685,19 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // Filter to only allow Managers, Admins, and the current user (so they can assign to themselves).
     // This excludes other 'regular' workers.
 
-    return createPortal(
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4">
-            <div
-                ref={panelRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="task-modal-title"
-                tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-xl w-full max-w-2xl max-h-[calc(100dvh-2rem)] flex flex-col relative focus:outline-none overflow-hidden"
-            >
-                {/* Header - Fixed (vertically compact: tighter padding, X pinned hard right) */}
+    // The shell (scrim, centered card, focus-trap, Escape, portal) is the canonical Modal in
+    // `bare` mode, so this form keeps its bespoke compact header/body/footer while inheriting
+    // the shared a11y plumbing. `closeOnBackdrop={false}` keeps a stray backdrop tap from
+    // discarding unsaved task input; Escape and the header `X` still close it.
+    return (
+        <Modal
+            bare
+            size="xl"
+            closeOnBackdrop={false}
+            ariaLabelledby="task-modal-title"
+            onClose={onClose}
+        >
+            {/* Header - Fixed (vertically compact: tighter padding, X pinned hard right) */}
                 <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-b border-line flex-shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
                         <h2 id="task-modal-title" className="text-lg font-bold text-ink-strong truncate min-w-0">
@@ -1255,8 +1251,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     variant="primary"
                     loading={loading}
                 />
-            </div>
-        </div>,
-        document.body
+        </Modal>
     );
 }

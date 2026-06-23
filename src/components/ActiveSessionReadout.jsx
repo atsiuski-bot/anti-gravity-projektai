@@ -1,38 +1,31 @@
 import { useEffect, useRef, useState } from 'react';
-import { Zap, Phone, Coffee } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { getLithuanianNow, clampSessionMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
+import { SESSION_COLORS } from '../utils/sessionColors';
 import { cn } from '../utils/cn';
 
 // Live readout for the active secondary session (quick work / call / break), surfaced as its
 // OWN floating pill ABOVE the controls bar. This keeps the controls pill itself as short as an
 // icon + label — no reserved timer row inside it. Renders nothing when nothing is running.
-const READOUT = {
-    quickWork: {
-        label: 'Greitas darbas',
-        icon: Zap,
-        stateKey: 'quickWorkState',
-        tone: 'border-session-quickWork-accent bg-session-quickWork-surface text-session-quickWork-accent',
-    },
-    call: {
-        label: 'Skambutis',
-        icon: Phone,
-        stateKey: 'callState',
-        tone: 'border-session-call-accent bg-session-call-surface text-session-call-accent',
-    },
-    break: {
-        label: 'Pertrauka',
-        icon: Coffee,
-        stateKey: 'breakState',
-        tone: 'border-session-break-accent bg-session-break-surface text-session-break-accent',
-    },
+//
+// Label, icon, and the accent/surface colors all come from the one SESSION_COLORS map (no local
+// palette copy). The only thing kept here is STATE_KEYS — the legacy per-state field on the user
+// doc (quickWorkState/callState/breakState) used for the start-time fallback — which is a data
+// concern, not a presentation one, so it does not belong in SESSION_COLORS. `task` is absent on
+// purpose: this readout is only for the secondary sessions, so a running task renders nothing
+// (matching the previous behavior, where READOUT had no `task` entry).
+const STATE_KEYS = {
+    quickWork: 'quickWorkState',
+    call: 'callState',
+    break: 'breakState',
 };
 
 export default function ActiveSessionReadout() {
     const { userData } = useAuth();
     const { activeSessionType } = useActiveSessionStatus();
-    const cfg = READOUT[activeSessionType];
+    const stateKey = STATE_KEYS[activeSessionType];
+    const cfg = stateKey ? SESSION_COLORS[activeSessionType] : null;
 
     // activeSession is the authoritative start time; fall back to the legacy per-state
     // lastStartedAt only when no activeSession object exists (mirrors useTimerState).
@@ -42,7 +35,7 @@ export default function ActiveSessionReadout() {
         if (activeSession?.type === activeSessionType && activeSession.startTime) {
             startISO = activeSession.startTime;
         } else if (!activeSession) {
-            startISO = userData?.[cfg.stateKey]?.lastStartedAt || null;
+            startISO = userData?.[stateKey]?.lastStartedAt || null;
         }
     }
 
@@ -80,7 +73,7 @@ export default function ActiveSessionReadout() {
         }
     }, [active, label]);
 
-    const Icon = cfg?.icon;
+    const Icon = cfg?.Icon;
     return (
         <>
             {/* Out-of-flow live region: speaks the session start/stop event, not the ticking time. */}
@@ -93,7 +86,7 @@ export default function ActiveSessionReadout() {
                     className={cn(
                         'flex items-center gap-2 rounded-full border px-3 py-1 shadow-md backdrop-blur-sm',
                         'animate-in fade-in slide-in-from-bottom-2',
-                        cfg.tone
+                        cfg.accentBorder, cfg.surface, cfg.accent
                     )}
                 >
                     <Icon className="h-4 w-4 wz-pulse-soft" aria-hidden="true" />

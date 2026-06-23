@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay, endOfWeek, subWeeks, addDays } from 'date-fns';
@@ -15,6 +15,7 @@ import 'react-big-calendar/lib/css/react-big-calendar.css';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import Modal from './ui/Modal';
 import InfoPopover from './ui/InfoPopover';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
@@ -217,12 +218,6 @@ export default function WorkPlanner() {
         typeof window !== 'undefined' && window.innerWidth < 768
     );
 
-    // Refs for the three hand-rolled dialog panels, so each can take focus on open
-    // and restore focus to the triggering element on close (4.1.2 focus management).
-    const editEventPanelRef = useRef(null);
-    const approvalFeedbackPanelRef = useRef(null);
-    const reasonPanelRef = useRef(null);
-
     useEffect(() => {
         if (typeof window === 'undefined' || !window.matchMedia) return undefined;
         const mql = window.matchMedia('(max-width: 767px)');
@@ -231,55 +226,6 @@ export default function WorkPlanner() {
         mql.addEventListener('change', onChange);
         return () => mql.removeEventListener('change', onChange);
     }, []);
-
-    // Dialog semantics for the three hand-rolled modals: close the open one on Escape,
-    // move focus into it on open, and restore focus to the previously focused element on
-    // close (2.1.1 / 4.1.2). Keyed on which modal is open so only one is ever active.
-    useEffect(() => {
-        const openModal = editingEvent
-            ? { panelRef: editEventPanelRef, close: () => setEditingEvent(null) }
-            : showApprovalFeedback
-                ? { panelRef: approvalFeedbackPanelRef, close: () => setShowApprovalFeedback(false) }
-                : showReasonModal
-                    ? {
-                        panelRef: reasonPanelRef,
-                        close: () => {
-                            setShowReasonModal(false);
-                            setReasonValue('');
-                            setPendingAction(null);
-                        },
-                    }
-                    : null;
-
-        if (!openModal) return undefined;
-
-        const previouslyFocused = typeof document !== 'undefined' ? document.activeElement : null;
-
-        const handleKeyDown = (e) => {
-            if (e.key === 'Escape') {
-                e.preventDefault();
-                openModal.close();
-            }
-        };
-        document.addEventListener('keydown', handleKeyDown);
-
-        // Move focus into the dialog on open: prefer the first focusable control, fall back
-        // to the panel itself (panels carry tabIndex={-1} so they can hold focus).
-        const panel = openModal.panelRef.current;
-        if (panel) {
-            const focusable = panel.querySelector(
-                'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-            );
-            (focusable || panel).focus();
-        }
-
-        return () => {
-            document.removeEventListener('keydown', handleKeyDown);
-            if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
-                previouslyFocused.focus();
-            }
-        };
-    }, [editingEvent, showApprovalFeedback, showReasonModal]);
 
     useEffect(() => {
 
@@ -759,7 +705,10 @@ export default function WorkPlanner() {
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
                         // Vacation = calm indigo "free" state (brand, not a session colour);
                         // work events keep the calendar's own (blue) fill, so white text reads.
-                        isVacation ? 'bg-brand-soft text-brand-hover' : 'text-white'
+                        // text-brand (not -hover) so the dark-theme foreground-decoupling in
+                        // index.css lightens it to indigo-300 — indigo-700 was illegible on the
+                        // dark indigo-950 brand-soft wash. Light theme keeps indigo-600 on indigo-50.
+                        isVacation ? 'bg-brand-soft text-brand' : 'text-white'
                     )}
                 >
                     <span className="text-caption font-mono font-semibold tabular-nums">
@@ -867,18 +816,17 @@ export default function WorkPlanner() {
                         </label>
                     </div>
                     {manualIsVacation && (
-                        <label className="mt-3 block">
-                            <span className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</span>
-                            <select
+                        <div className="mt-3">
+                            <label htmlFor="manualAbsenceType" className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</label>
+                            <Select
+                                id="manualAbsenceType"
                                 value={manualAbsenceType}
-                                onChange={(e) => setManualAbsenceType(e.target.value)}
-                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
-                            >
-                                {ABSENCE_TYPES.map((a) => (
-                                    <option key={a.value} value={a.value}>{a.label}</option>
-                                ))}
-                            </select>
-                        </label>
+                                onChange={setManualAbsenceType}
+                                options={ABSENCE_TYPES}
+                                label="Nebuvimo tipas"
+                                ariaLabel="Nebuvimo tipas"
+                            />
+                        </div>
                     )}
                     <div className="flex gap-2 mt-4">
                         <Button type="submit" variant="primary" size="md">
@@ -932,18 +880,20 @@ export default function WorkPlanner() {
                 />
             </div>
 
-            {/* Edit Event Modal */}
+            {/* Edit Event Modal — canonical Modal (bare) keeps the bespoke form chrome while
+                inheriting the shared scrim, focus-trap, Escape and portal. closeOnBackdrop={false}
+                so a stray backdrop tap can't discard unsaved edits; Escape + buttons still close. */}
             {
                 editingEvent && (
-                    <div className="fixed inset-0 z-top flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
-                        <div
-                            ref={editEventPanelRef}
-                            role="dialog"
-                            aria-modal="true"
-                            aria-labelledby="edit-event-title"
-                            tabIndex={-1}
-                            className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 relative animate-in fade-in zoom-in focus-visible:outline-none"
-                        >
+                    <Modal
+                        bare
+                        size="md"
+                        level="top"
+                        closeOnBackdrop={false}
+                        ariaLabelledby="edit-event-title"
+                        onClose={() => setEditingEvent(null)}
+                    >
+                        <div className="flex-1 min-h-0 overflow-y-auto p-6">
                             <h3 id="edit-event-title" className="text-h2 text-ink-strong mb-4">
                                 {editingEvent.id ? 'Redaguoti laiką' : 'Pridėti darbo laiką'}
                             </h3>
@@ -1014,18 +964,18 @@ export default function WorkPlanner() {
                                     </label>
                                 </div>
                                 {editingEvent.isVacation && (
-                                    <label className="mt-3 block">
-                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</span>
-                                        <select
+                                    <div className="mt-3">
+                                        <label htmlFor="editAbsenceType" className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</label>
+                                        <Select
+                                            id="editAbsenceType"
                                             value={editingEvent.absenceType || 'vacation'}
-                                            onChange={(e) => setEditingEvent({ ...editingEvent, absenceType: e.target.value })}
-                                            className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none bg-surface-card appearance-none"
-                                        >
-                                            {ABSENCE_TYPES.map((a) => (
-                                                <option key={a.value} value={a.value}>{a.label}</option>
-                                            ))}
-                                        </select>
-                                    </label>
+                                            onChange={(val) => setEditingEvent({ ...editingEvent, absenceType: val })}
+                                            options={ABSENCE_TYPES}
+                                            label="Nebuvimo tipas"
+                                            ariaLabel="Nebuvimo tipas"
+                                            alwaysSheet
+                                        />
+                                    </div>
                                 )}
 
 
@@ -1074,23 +1024,23 @@ export default function WorkPlanner() {
                                         : 'Planavimo metu pakeitimai išsaugomi ir patvirtinami iš karto.'}
                                 </p>
                             </form>
-                        </div >
-                    </div >
+                        </div>
+                    </Modal>
                 )
             }
 
 
-            {/* Approval Logic Confirmation Modal */}
+            {/* Approval Logic Confirmation Modal — pure acknowledgement (no unsaved input), so it
+                keeps the default backdrop-tap-to-dismiss alongside Escape and the button. */}
             {showApprovalFeedback && (
-                <div className="fixed inset-0 z-top flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
-                    <div
-                        ref={approvalFeedbackPanelRef}
-                        role="dialog"
-                        aria-modal="true"
-                        aria-labelledby="approval-feedback-title"
-                        tabIndex={-1}
-                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-sm p-8 text-center animate-in zoom-in focus-visible:outline-none"
-                    >
+                <Modal
+                    bare
+                    size="sm"
+                    level="top"
+                    ariaLabelledby="approval-feedback-title"
+                    onClose={() => setShowApprovalFeedback(false)}
+                >
+                    <div className="flex-1 min-h-0 overflow-y-auto p-8 text-center">
                         {feedbackVariant === 'approved' ? (
                             <div className="w-16 h-16 bg-feedback-success/10 text-feedback-success rounded-full flex items-center justify-center mx-auto mb-4">
                                 <CheckCircle2 className="w-8 h-8" aria-hidden="true" />
@@ -1112,20 +1062,24 @@ export default function WorkPlanner() {
                             Supratau
                         </Button>
                     </div>
-                </div>
+                </Modal>
             )}
 
-            {/* Reason Modal */}
+            {/* Reason Modal — captures a required change reason (unsaved text), so
+                closeOnBackdrop={false} guards it; Escape and the buttons still close. */}
             {showReasonModal && (
-                <div className="fixed inset-0 z-modal flex items-center justify-center p-4 bg-feedback-scrim backdrop-blur-sm">
-                    <div
-                        ref={reasonPanelRef}
-                        role="dialog"
-                        aria-modal="true"
-                        aria-labelledby="reason-modal-title"
-                        tabIndex={-1}
-                        className="bg-surface-card rounded-modal shadow-xl w-full max-w-md p-6 animate-in fade-in slide-in-from-bottom-4 focus-visible:outline-none"
-                    >
+                <Modal
+                    bare
+                    size="md"
+                    closeOnBackdrop={false}
+                    ariaLabelledby="reason-modal-title"
+                    onClose={() => {
+                        setShowReasonModal(false);
+                        setReasonValue('');
+                        setPendingAction(null);
+                    }}
+                >
+                    <div className="flex-1 min-h-0 overflow-y-auto p-6">
                         <h3 id="reason-modal-title" className="text-h2 text-ink-strong mb-2">Pakeitimų priežastis</h3>
                         <label htmlFor="reasonValue" className="block text-body text-ink-muted mb-4">Prašome nurodyti kodėl darote šį pakeitimą (min. 10 simbolių).</label>
 
@@ -1174,15 +1128,19 @@ export default function WorkPlanner() {
                             </Button>
                         </div>
                     </div>
-                </div>
+                </Modal>
             )}
 
+            {/* level="top" so the confirm stacks ABOVE the Edit Event modal (also z-top), which
+                stays mounted behind it — without it the confirm (default z-modal) renders hidden
+                behind the edit overlay. */}
             <DeleteConfirmationModal
                 isOpen={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
                 onConfirm={confirmDelete}
                 taskTitle={editingEvent?.title || 'Darbo laiko įrašą'}
                 isTask={false}
+                level="top"
             />
         </div >
     );

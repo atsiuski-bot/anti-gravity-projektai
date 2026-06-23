@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1760" viewBox="0 0 1200 1760" font-family="-apple-system,Segoe UI,Roboto,Arial,sans-serif">
+  <title>WORKZ — custom symbol / icon system proposal (rev. 2)</title>
+  <desc>Revised per feedback: status ring/fill split, quick-action bar unchanged, new task-running shape options, no on-site glyph, crests dropped.</desc>
+
+  <rect x="0" y="0" width="1200" height="1760" fill="#f8fafc"/>
+
+  <!-- ===== TITLE ===== -->
+  <text x="48" y="56" font-size="30" font-weight="800" letter-spacing="0.5" fill="#1f2430">WORKZ — custom simbolių sistema · v4</text>
+  <text x="48" y="84" font-size="15" fill="#6b7280">Monochromė, visada šalia teksto · skaitoma su pirštinėmis, saulėje, daltonikui · spalva visame ekrane lieka vienintelis „garsus" signalas</text>
+  <line x1="48" y1="100" x2="1152" y2="100" stroke="#e5e7eb" stroke-width="1.5"/>
+
+  <defs>
+    <g id="teamBadge">
+      <circle cx="-6" cy="-3" r="3.2" fill="#4f46e5"/>
+      <path d="M-11,5 a5,4 0 0 1 10,0" fill="#4f46e5"/>
+      <circle cx="3" cy="-2" r="3.6" fill="#4f46e5" stroke="#ffffff" stroke-width="1.4"/>
+      <path d="M-3,6 a6,5 0 0 1 12,0" fill="#4f46e5" stroke="#ffffff" stroke-width="1.4"/>
+    </g>
+  </defs>
+
+  <!-- ===== §1 NAVIGATION ===== -->
+  <text x="48" y="138" font-size="18" font-weight="700" fill="#1f2430">1 · Navigacija — unikalus siluetas + „komandos" modifikatorius</text>
+  <text x="48" y="158" font-size="12.5" fill="#6b7280">Šiandien ta pati History ikona „Mano" ir „Komandos" ataskaitoms; Users = ir komandos kalendorius, ir Vartotojai. Sprendimas: 1 bazė koncepte, „komanda" = ženkliukas kampe.</text>
+  <g stroke="#1f2430" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(86,180)"><rect x="6" y="6" width="36" height="40" rx="4"/><rect x="16" y="2" width="16" height="9" rx="2.5" fill="#f8fafc"/><path d="M14,22 l4,4 l7,-8" stroke-width="2.4"/><line x1="14" y1="34" x2="34" y2="34"/></g>
+    <g transform="translate(236,180)"><rect x="4" y="8" width="40" height="36" rx="4"/><line x1="4" y1="18" x2="44" y2="18"/><line x1="14" y1="4" x2="14" y2="12"/><line x1="34" y1="4" x2="34" y2="12"/><rect x="11" y="24" width="7" height="7" rx="1.5" fill="#1f2430" stroke="none"/><circle cx="30" cy="27" r="1.6" fill="#1f2430" stroke="none"/><circle cx="38" cy="27" r="1.6" fill="#1f2430" stroke="none"/><circle cx="14.5" cy="38" r="1.6" fill="#1f2430" stroke="none"/><circle cx="30" cy="38" r="1.6" fill="#1f2430" stroke="none"/></g>
+    <g transform="translate(386,180)"><rect x="8" y="4" width="32" height="40" rx="3"/><line x1="15" y1="34" x2="15" y2="28"/><line x1="24" y1="34" x2="24" y2="22"/><line x1="33" y1="34" x2="33" y2="15"/></g>
+    <g transform="translate(536,180)"><rect x="8" y="4" width="32" height="40" rx="3"/><line x1="15" y1="34" x2="15" y2="28"/><line x1="24" y1="34" x2="24" y2="22"/><line x1="33" y1="34" x2="33" y2="15"/><use href="#teamBadge" transform="translate(40,42)"/></g>
+    <g transform="translate(686,180)"><circle cx="17" cy="16" r="7"/><path d="M6,42 a13,11 0 0 1 22,0"/><circle cx="33" cy="19" r="6"/><path d="M26,42 a11,9 0 0 1 18,0"/></g>
+    <g transform="translate(836,180)"><rect x="6" y="6" width="36" height="40" rx="4"/><rect x="16" y="2" width="16" height="9" rx="2.5" fill="#f8fafc"/><path d="M14,22 l4,4 l7,-8" stroke-width="2.4"/><line x1="14" y1="34" x2="34" y2="34"/></g>
+    <g transform="translate(986,180)"><rect x="6" y="6" width="36" height="40" rx="4" fill="#4f46e5" stroke="#4f46e5"/><rect x="16" y="2" width="16" height="9" rx="2.5" fill="#4f46e5" stroke="#4f46e5"/><path d="M14,22 l4,4 l7,-8" stroke="#ffffff" stroke-width="2.4"/><line x1="14" y1="34" x2="34" y2="34" stroke="#ffffff"/></g>
+  </g>
+  <g font-size="12" fill="#6b7280" text-anchor="middle">
+    <text x="114" y="250">Darbai</text><text x="264" y="250">Kalendorius</text><text x="414" y="250">Ataskaitos</text><text x="564" y="250">Kom. ataskaitos</text><text x="714" y="250">Vartotojai</text><text x="864" y="250">aktyvus: outline</text><text x="1014" y="250">aktyvus: filled</text>
+  </g>
+  <line x1="48" y1="272" x2="1152" y2="272" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== §2 STATUS CIRCLE (UPDATED) ===== -->
+  <text x="48" y="306" font-size="18" font-weight="700" fill="#1f2430">2 · Užduoties būsenos žiedas — atnaujinta pagal pastabą</text>
+  <text x="48" y="326" font-size="12.5" fill="#6b7280">Padaryta &amp; laukia patvirtinimo = plonas žalias žiedas + žalia varnelė. Patvirtinta = pilnas žalias fonas + balta varnelė. Iš pirmo žvilgsnio aišku.</text>
+  <g stroke="#1f2430" stroke-width="2.1" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(86,348)"><circle cx="24" cy="22" r="14" stroke="#9ca3af" stroke-dasharray="2.5 3"/></g>
+    <g transform="translate(236,348)"><path d="M18,12 l15,10 l-15,10 z" fill="#16a34a" stroke="#16a34a" stroke-width="2.4"/></g>
+    <g transform="translate(386,348)"><circle cx="24" cy="22" r="14"/><line x1="20" y1="16" x2="20" y2="28"/><line x1="28" y1="16" x2="28" y2="28"/></g>
+    <!-- done & awaiting confirmation: THIN GREEN RING + GREEN CHECK -->
+    <g transform="translate(536,348)"><circle cx="24" cy="22" r="14" stroke="#16a34a" stroke-width="1.8"/><path d="M17,22 l5,5 l9,-10" stroke="#16a34a" stroke-width="2.4"/></g>
+    <!-- confirmed: GREEN FILL + WHITE CHECK -->
+    <g transform="translate(686,348)"><circle cx="24" cy="22" r="14.5" fill="#16a34a" stroke="#16a34a"/><path d="M17,22 l5,5 l9,-10" stroke="#ffffff" stroke-width="2.6"/></g>
+    <g transform="translate(836,348)"><circle cx="24" cy="24" r="11"/><path d="M17,24 l4,4 l9,-9" stroke-width="2.2"/><line x1="14" y1="38" x2="34" y2="38" stroke-width="3"/></g>
+  </g>
+  <g font-size="11.5" fill="#6b7280" text-anchor="middle">
+    <text x="114" y="402">Laukia</text><text x="264" y="402">Vyksta ● (pulse)</text><text x="414" y="402">Pristabdyta</text>
+    <text x="564" y="402" font-weight="600" fill="#16a34a">Padaryta, laukia patv.</text><text x="714" y="402" font-weight="600" fill="#16a34a">Patvirtinta</text><text x="864" y="402">Patvirtinti (veiksmas)</text>
+  </g>
+  <line x1="48" y1="424" x2="1152" y2="424" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== §3 PRIORITY ===== -->
+  <text x="48" y="458" font-size="18" font-weight="700" fill="#1f2430">3 · Prioritetas — „suskaičiuok stulpelius", o ne skaityk žodį</text>
+  <text x="48" y="478" font-size="12.5" fill="#6b7280">Šiandien 3 gretimi pilki atspalviai saulėje nesiskiria. Stulpelių kiekis išlieka su pirštinėmis ir tankiame stulpelyje.</text>
+  <g stroke="#1f2430" stroke-width="2.4" stroke-linecap="round">
+    <g transform="translate(86,500)"><line x1="10" y1="36" x2="10" y2="30"/><line x1="18" y1="36" x2="18" y2="36" stroke="#d1d5db"/><line x1="26" y1="36" x2="26" y2="36" stroke="#d1d5db"/><line x1="34" y1="36" x2="34" y2="36" stroke="#d1d5db"/></g>
+    <g transform="translate(236,500)"><line x1="10" y1="36" x2="10" y2="30"/><line x1="18" y1="36" x2="18" y2="24"/><line x1="26" y1="36" x2="26" y2="36" stroke="#d1d5db"/><line x1="34" y1="36" x2="34" y2="36" stroke="#d1d5db"/></g>
+    <g transform="translate(386,500)"><line x1="10" y1="36" x2="10" y2="30"/><line x1="18" y1="36" x2="18" y2="24"/><line x1="26" y1="36" x2="26" y2="18"/><line x1="34" y1="36" x2="34" y2="36" stroke="#d1d5db"/></g>
+    <g transform="translate(536,500)"><line x1="10" y1="36" x2="10" y2="30"/><line x1="18" y1="36" x2="18" y2="24"/><line x1="26" y1="36" x2="26" y2="18"/><line x1="34" y1="36" x2="34" y2="12"/></g>
+    <g transform="translate(686,500)" stroke="#dc2626"><line x1="6" y1="36" x2="6" y2="30"/><line x1="14" y1="36" x2="14" y2="24"/><line x1="22" y1="36" x2="22" y2="18"/><line x1="30" y1="36" x2="30" y2="12"/><line x1="40" y1="12" x2="40" y2="26" stroke-width="2.6"/><circle cx="40" cy="33" r="1.8" fill="#dc2626" stroke="none"/></g>
+  </g>
+  <g font-size="12" fill="#6b7280" text-anchor="middle">
+    <text x="114" y="554">Labai žemas</text><text x="264" y="554">Žemas</text><text x="414" y="554">Vidutinis</text><text x="564" y="554">Aukštas</text><text x="724" y="554">Skubus (+ aliarmas)</text>
+  </g>
+  <line x1="48" y1="576" x2="1152" y2="576" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== §4 SESSIONS — ALL kept as current app icons ===== -->
+  <text x="48" y="610" font-size="18" font-weight="700" fill="#1f2430">4 · Sesijos — VISOS ikonos paliekamos kaip dabar app'e (nekeičiamos)</text>
+  <text x="48" y="630" font-size="12.5" fill="#6b7280">Greitas darbas, skambutis, pertrauka ir „Vyksta darbas" lieka su esamais app ženklais ir spalvomis. Naujos sesijų ikonos nediegiamos.</text>
+
+  <g stroke-width="2.3" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(86,652)" stroke="#dc2626"><path d="M26,6 L14,26 H23 L20,42 L34,20 H25 Z" fill="#dc2626" stroke="#dc2626"/></g>
+    <g transform="translate(236,652)" stroke="#2563eb"><path d="M15,13 a3,3 0 0 1 3,-2 l3,0 a2,2 0 0 1 2,1.6 l1,5 a2,2 0 0 1 -1,2 l-2,1.5 a13,13 0 0 0 7,7 l1.5,-2 a2,2 0 0 1 2,-1 l5,1 a2,2 0 0 1 1.6,2 l0,3 a3,3 0 0 1 -2,3 q-15,1 -25,-9 q-10,-10 -9,-25 z" fill="#2563eb" stroke="#2563eb"/></g>
+    <g transform="translate(386,652)" stroke="#d97706"><path d="M12,20 h20 v10 a8,8 0 0 1 -8,8 h-4 a8,8 0 0 1 -8,-8 z"/><path d="M32,22 h4 a4,4 0 0 1 0,8 h-4"/><path d="M18,14 q2,-3 0,-6"/><path d="M26,14 q2,-3 0,-6"/></g>
+    <g transform="translate(536,652)" stroke="#16a34a"><rect x="10" y="18" width="28" height="20" rx="3"/><path d="M18,18 v-3 a2,2 0 0 1 2,-2 h8 a2,2 0 0 1 2,2 v3"/><line x1="10" y1="27" x2="38" y2="27"/></g>
+  </g>
+  <g font-size="12" fill="#6b7280" text-anchor="middle">
+    <text x="114" y="706">Greitas darbas</text><text x="264" y="706">Skambutis</text><text x="414" y="706">Pertrauka</text><text x="564" y="706">Vyksta darbas</text>
+  </g>
+  <rect x="60" y="638" width="552" height="84" rx="10" fill="none" stroke="#cbd5e1" stroke-dasharray="4 4"/>
+  <text x="636" y="676" font-size="13" font-weight="600" fill="#475569">↑ visos lieka kaip dabar app'e</text>
+  <text x="636" y="696" font-size="12" fill="#94a3b8">(vaizdas + spalvos nekeičiami)</text>
+
+  <line x1="48" y1="846" x2="1152" y2="846" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== §5 CALENDAR (no on-site glyph) ===== -->
+  <text x="48" y="880" font-size="18" font-weight="700" fill="#1f2430">5 · Pamainų plytelės + pakeitimų ženklai — BE „dirbtuvėse" ikonos</text>
+  <text x="48" y="900" font-size="12.5" fill="#6b7280">Dirbtuvėse = numatytoji pamaina, ženklo NĖRA. Žymim tik nukrypimus (iš namų, atostogos) ir pakeitimus — vietoj +/~/- ASCII (gyvas WCAG pažeidimas).</text>
+  <g stroke="#1f2430" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(86,922)"><rect x="6" y="6" width="36" height="36" rx="6" fill="#eef2ff" stroke="#c7d2fe"/><path d="M14,26 l10,-9 l10,9"/><rect x="18" y="26" width="12" height="10" rx="1.5"/></g>
+    <g transform="translate(236,922)"><rect x="6" y="6" width="36" height="36" rx="6" fill="#fff7ed" stroke="#fed7aa"/><line x1="12" y1="32" x2="36" y2="32" stroke="#d97706"/><circle cx="24" cy="24" r="6" stroke="#d97706"/><line x1="24" y1="12" x2="24" y2="15" stroke="#d97706"/></g>
+    <g transform="translate(386,922)"><rect x="6" y="6" width="36" height="36" rx="6" stroke="#16a34a"/><line x1="24" y1="16" x2="24" y2="32" stroke="#16a34a" stroke-width="2.6"/><line x1="16" y1="24" x2="32" y2="24" stroke="#16a34a" stroke-width="2.6"/></g>
+    <g transform="translate(536,922)"><rect x="6" y="6" width="36" height="36" rx="6" stroke="#d97706"/><path d="M18,30 l12,-12 l4,4 l-12,12 h-4 z" stroke="#d97706"/></g>
+    <g transform="translate(686,922)"><rect x="6" y="6" width="36" height="36" rx="6" stroke="#dc2626"/><line x1="15" y1="33" x2="33" y2="15" stroke="#dc2626" stroke-width="2.6"/></g>
+    <g transform="translate(836,922)"><rect x="6" y="6" width="36" height="36" rx="6"/><rect x="11" y="11" width="6" height="26" rx="3" fill="#16a34a" stroke="none"/><path d="M22,25 l4,4 l8,-9" stroke="#16a34a"/></g>
+  </g>
+  <g font-size="12" fill="#6b7280" text-anchor="middle">
+    <text x="114" y="976">Iš namų</text><text x="264" y="976">Atostogos</text><text x="414" y="976">Pridėta</text><text x="564" y="976">Keista</text><text x="714" y="976">Atšaukta</text><text x="864" y="976">Būsenos juosta</text>
+  </g>
+  <line x1="48" y1="998" x2="1152" y2="998" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== §6 ROLE chevrons ===== -->
+  <text x="48" y="1032" font-size="18" font-weight="700" fill="#1f2430">6 · Pareigų insignija — chevron'ų kopėčios (skaičiuojamos, ne spalva)</text>
+  <text x="48" y="1052" font-size="12.5" fill="#6b7280">4 lygių hierarchija nematoma skenuojant; Vadovas ir Vyr. vadovas spalviškai vienodi. Viena roleInsignia.js — taiso ir gyvą „seniorManager → Vykdytojas" klaidą.</text>
+  <g stroke="#1f2430" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(86,1074)"><circle cx="24" cy="24" r="3" fill="#9ca3af" stroke="none"/></g>
+    <g transform="translate(236,1074)"><path d="M14,28 l10,-9 l10,9"/></g>
+    <g transform="translate(386,1074)"><path d="M14,30 l10,-9 l10,9"/><path d="M14,21 l10,-9 l10,9"/></g>
+    <g transform="translate(536,1074)"><path d="M24,9 L37,14 V24 Q37,34 24,41 Q11,34 11,24 V14 Z"/></g>
+  </g>
+  <g font-size="12" fill="#6b7280" text-anchor="middle">
+    <text x="114" y="1130">Vykdytojas (be)</text><text x="264" y="1130">Vadovas</text><text x="414" y="1130">Vyr. vadovas</text><text x="564" y="1130">Administratorius</text>
+  </g>
+  <line x1="48" y1="1152" x2="1152" y2="1152" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== §7 NOTIFICATIONS + connection ===== -->
+  <text x="48" y="1186" font-size="18" font-weight="700" fill="#1f2430">7 · Pranešimų tipų žemėlapis (vienas ženklas — varpelis/toast/telefono ekranas) + ryšio būsena</text>
+  <text x="48" y="1206" font-size="12.5" fill="#6b7280">Tas pats įvykis dabar dėvi skirtingus ženklus; push „badge" gauna spalvotą logo į monochromę vietą. Smėlio laikrodis = laukimas (Clock rezervuotas trukmei).</text>
+  <g stroke="#1f2430" stroke-width="2.1" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(86,1228)"><path d="M16,12 h16 M16,40 h16"/><path d="M17,12 q0,9 7,14 q-7,5 -7,14"/><path d="M31,12 q0,9 -7,14 q7,5 7,14"/></g>
+    <g transform="translate(236,1228)" stroke="#16a34a"><path d="M16,12 h16 M16,40 h16"/><path d="M17,12 q0,9 7,14 q-7,5 -7,14"/><path d="M31,12 q0,9 -7,14 q7,5 7,14"/><path d="M19,15 h10 l-5,8 z" fill="#16a34a" stroke="none"/><path d="M19,37 h10 l-5,-8 z" fill="#16a34a" stroke="none"/><g stroke-width="2.3"><line x1="37" y1="9" x2="37" y2="17"/><line x1="33" y1="13" x2="41" y2="13"/></g></g>
+    <g transform="translate(386,1228)" stroke="#dc2626"><path d="M16,12 h16 M16,40 h16"/><path d="M17,12 q0,9 7,14 q-7,5 -7,14"/><path d="M31,12 q0,9 -7,14 q7,5 7,14"/><path d="M19,15 h10 l-5,8 z" fill="#dc2626" stroke="none"/><path d="M19,37 h10 l-5,-8 z" fill="#dc2626" stroke="none"/><g stroke-width="2.3"><line x1="33" y1="9" x2="41" y2="17"/><line x1="41" y1="9" x2="33" y2="17"/></g></g>
+    <g transform="translate(536,1228)"><path d="M14,18 a10,10 0 0 1 20,0 v8 l3,5 h-26 l3,-5 z"/><path d="M20,36 a4,4 0 0 0 8,0"/><g stroke="#dc2626"><line x1="38" y1="10" x2="38" y2="18"/><circle cx="38" cy="23" r="1.6" fill="#dc2626" stroke="none"/></g></g>
+    <g transform="translate(686,1228)"><circle cx="24" cy="24" r="13" stroke="#16a34a"/><path d="M17,24 l5,5 l9,-10" stroke="#16a34a" stroke-width="2.3"/></g>
+    <g transform="translate(836,1228)" stroke="#475569"><path d="M16,28 a7,7 0 0 1 1,-14 a9,9 0 0 1 17,3 a6,6 0 0 1 -1,11 z"/><rect x="22" y="24" width="9" height="14" rx="2" fill="#f8fafc"/><line x1="35" y1="30" x2="35" y2="40"/><path d="M32,37 l3,3 l3,-3"/></g>
+    <g transform="translate(986,1228)" stroke="#4f46e5"><path d="M16,28 a7,7 0 0 1 1,-14 a9,9 0 0 1 17,3 a6,6 0 0 1 -1,11 z"/><path d="M30,34 a6,6 0 1 1 -2,-5"/><path d="M28,24 l1,5 l-5,-1"/></g>
+  </g>
+  <g font-size="11.5" fill="#6b7280" text-anchor="middle">
+    <text x="114" y="1282">Laikas baigėsi</text><text x="264" y="1282">Pratęsta</text><text x="414" y="1282">Atmesta</text><text x="564" y="1282">Reikia patvirtinti</text><text x="714" y="1282">Sėkmė</text><text x="864" y="1282">Neprisijungus</text><text x="1014" y="1282">Sinchronizuoja</text>
+  </g>
+  <line x1="48" y1="1304" x2="1152" y2="1304" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== §8 EMPTY STATES ===== -->
+  <text x="48" y="1338" font-size="18" font-weight="700" fill="#1f2430">8 · Tuščių būsenų ženklai — kontekstinis siluetas + „sėklos" taisyklė</text>
+  <text x="48" y="1358" font-size="12.5" fill="#6b7280">Vienas pilkas apskritimas visur → kontekstinis ženklas. Sėkla (+) = galima kurti; be sėklos = tik gauni (pranešimai).</text>
+  <g stroke="#4f46e5" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(96,1380)"><rect x="2" y="2" width="56" height="56" rx="14" fill="#eef2ff" stroke="#c7d2fe"/><rect x="18" y="16" width="24" height="28" rx="3"/><rect x="25" y="12" width="10" height="7" rx="2" fill="#eef2ff"/><line x1="24" y1="28" x2="36" y2="28" stroke-dasharray="2 2.5"/><g stroke="#16a34a"><line x1="46" y1="40" x2="46" y2="50"/><line x1="41" y1="45" x2="51" y2="45"/></g></g>
+    <g transform="translate(276,1380)"><rect x="2" y="2" width="56" height="56" rx="14" fill="#eef2ff" stroke="#c7d2fe"/><rect x="16" y="18" width="28" height="24" rx="3"/><line x1="16" y1="26" x2="44" y2="26"/><rect x="20" y="30" width="8" height="7" rx="1.5" stroke-dasharray="2 2"/><line x1="46" y1="40" x2="46" y2="50"/><line x1="41" y1="45" x2="51" y2="45"/></g>
+    <g transform="translate(456,1380)"><rect x="2" y="2" width="56" height="56" rx="14" fill="#eef2ff" stroke="#c7d2fe"/><rect x="16" y="14" width="28" height="32" rx="3"/><line x1="22" y1="40" x2="22" y2="34"/><line x1="30" y1="40" x2="30" y2="28" stroke-dasharray="2 2"/><line x1="38" y1="40" x2="38" y2="24" stroke-dasharray="2 2"/></g>
+    <g transform="translate(636,1380)"><rect x="2" y="2" width="56" height="56" rx="14" fill="#f3f4f6" stroke="#e5e7eb"/><path d="M22,34 a8,8 0 0 1 16,0" stroke="#6b7280"/><path d="M27,40 a3,3 0 0 0 6,0" stroke="#6b7280"/><path d="M40,18 q3,4 0,8" stroke="#6b7280" stroke-dasharray="2 2.5"/></g>
+  </g>
+  <g font-size="11.5" fill="#6b7280" text-anchor="middle">
+    <text x="126" y="1460">Nėra darbų (žalia sėkla)</text><text x="306" y="1460">Nėra planų (indigo +)</text><text x="486" y="1460">Nėra duomenų</text><text x="666" y="1460">Nėra pranešimų</text>
+  </g>
+  <line x1="48" y1="1482" x2="1152" y2="1482" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== §9 REPORTS time-bar ===== -->
+  <text x="48" y="1516" font-size="18" font-weight="700" fill="#1f2430">9 · Ataskaitų „laiko juosta" — užpildas neša reikšmę</text>
+  <text x="48" y="1536" font-size="12.5" fill="#6b7280">Šiandien Zap = „Viso" (kertasi su greitu darbu), Clock žymi ir dienos tarpą, ir išdirbtą sumą. Vienas primityvas, moduliuojamas užpildu.</text>
+  <g stroke="#1f2430" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(86,1558)"><rect x="8" y="20" width="32" height="8" rx="4" stroke-dasharray="3 3"/></g>
+    <g transform="translate(236,1558)"><rect x="8" y="20" width="32" height="8" rx="4" fill="#16a34a" stroke="#16a34a"/></g>
+    <g transform="translate(386,1558)"><rect x="8" y="15" width="32" height="6" rx="3"/><rect x="8" y="25" width="32" height="6" rx="3"/><path d="M44,18 l4,5 l-4,5" /></g>
+  </g>
+  <g font-size="12" fill="#6b7280" text-anchor="middle">
+    <text x="114" y="1602">Planuota (tuščia)</text><text x="264" y="1602">Išdirbta (pilna)</text><text x="414" y="1602">Viso (susilieja)</text>
+  </g>
+  <line x1="48" y1="1624" x2="1152" y2="1624" stroke="#e5e7eb" stroke-width="1"/>
+
+  <!-- ===== DROPPED + CANON ===== -->
+  <rect x="48" y="1644" width="1104" height="36" rx="8" fill="#fef2f2" stroke="#fecaca"/>
+  <text x="64" y="1667" font-size="13" fill="#b91c1c">✕ Apdovanojimų herbai — atšaukta jūsų prašymu. Lieka esami app ženklai ir esama pakopų išvaizda; neperdaroma.</text>
+
+  <text x="48" y="1708" font-size="14" font-weight="700" fill="#1f2430">Braižo kanonas</text>
+  <g font-size="12.5" fill="#374151">
+    <text x="48" y="1730">• 24px tinklelis, vienodas potėpis, monochromė currentColor · 3 nepriklausomi kanalai: KAS (siluetas) · KIENO (komandos ženkliukas) · BŪSENA (užpildas/žiedas/skaičius).</text>
+    <text x="48" y="1750">• Kiekviena šeima — vienas raktinis žemėlapis (kaip SESSION_COLORS) faile src/components/icons/ · ženklas visada šalia lietuviško teksto (WCAG 1.4.1) · ≥12px reikšminiams.</text>
+  </g>
+</svg>

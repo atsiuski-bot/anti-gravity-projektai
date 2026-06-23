@@ -1,0 +1,11 @@
+Package             Current   Wanted   Latest  Location  Depended by
+clsx                MISSING    2.1.1    2.1.1  -         stoic-proskuriakova-aad0bf
+date-fns            MISSING    4.4.0    4.4.0  -         stoic-proskuriakova-aad0bf
+firebase            MISSING  10.14.1  12.15.0  -         stoic-proskuriakova-aad0bf
+lucide-react        MISSING  0.344.0   1.21.0  -         stoic-proskuriakova-aad0bf
+react               MISSING   18.3.1   19.2.7  -         stoic-proskuriakova-aad0bf
+react-big-calendar  MISSING   1.20.0   1.20.0  -         stoic-proskuriakova-aad0bf
+react-dom           MISSING   18.3.1   19.2.7  -         stoic-proskuriakova-aad0bf
+react-router-dom    MISSING   6.30.4   7.18.0  -         stoic-proskuriakova-aad0bf
+react-swipeable     MISSING    7.0.2    7.0.2  -         stoic-proskuriakova-aad0bf
+tailwind-merge      MISSING    2.6.1    3.6.0  -         stoic-proskuriakova-aad0bf

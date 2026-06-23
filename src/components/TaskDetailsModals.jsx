@@ -1,50 +1,37 @@
-import React, { useState, useEffect, useRef, useId } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState, useEffect, useId } from 'react';
 import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
-import { useModalA11y } from '../hooks/useModalA11y';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { preventEnterSubmit } from '../utils/formUtils';
 import IconButton from './ui/IconButton';
-import DatePicker from './ui/DatePicker';
+import Modal from './ui/Modal';
 import UserChip from './UserChip';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
-    const dialogRef = useRef(null);
     const titleId = useId();
 
-    // Focus-in, focus restore, Escape, and a Tab focus-trap (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
-
-    if (!isOpen) return null;
-
+    // Routed through the canonical Modal (DESIGN_SYSTEM §8): the scrim, z-ladder, portal,
+    // focus-trap and dismissal (backdrop tap + Escape) are all shared. `bare` + a block scroll
+    // container preserve the bordered, sticky icon header this details modal has always shown.
     return (
-        <div
-            className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4"
-            onClick={onClose}
-            onTouchEnd={(e) => { e.stopPropagation(); onClose(); }}
+        <Modal
+            open={isOpen}
+            onClose={onClose}
+            ariaLabelledby={titleId}
+            size="xl"
+            bare
+            className="block max-h-[80vh] overflow-y-auto"
         >
-            <div
-                ref={dialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={titleId}
-                tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-xl max-w-2xl w-full max-h-[80vh] overflow-y-auto focus:outline-none"
-                onClick={(e) => e.stopPropagation()}
-                onTouchEnd={(e) => e.stopPropagation()}
-            >
-                <div className="flex justify-between items-center p-4 border-b border-line sticky top-0 bg-surface-card z-10">
-                    <div className="flex items-center gap-2">
-                        {Icon && <Icon className="w-5 h-5 text-brand" />}
-                        <h3 id={titleId} className="text-lg font-semibold text-ink-strong">{title}</h3>
-                    </div>
-                    <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
+            <div className="flex justify-between items-center p-4 border-b border-line sticky top-0 bg-surface-card z-10">
+                <div className="flex items-center gap-2">
+                    {Icon && <Icon className="w-5 h-5 text-brand" />}
+                    <h3 id={titleId} className="text-lg font-semibold text-ink-strong">{title}</h3>
                 </div>
-                <div className="p-6">
-                    {children}
-                </div>
+                <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2" />
             </div>
-        </div>
+            <div className="p-6">
+                {children}
+            </div>
+        </Modal>
     );
 }
 
@@ -331,113 +318,39 @@ export function DescriptionModal({ isOpen, onClose, description }) {
     );
 }
 
-export function TimeAdjustmentsModal({ isOpen, onClose, task, onAddAdjustment, onDeleteAdjustment }) {
-    const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-    const [hours, setHours] = useState(0);
-    const [mins, setMins] = useState(0);
-    const [reason, setReason] = useState('');
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
+// Read-only history of legacy manual time corrections (deltas). Adding/removing corrections was
+// retired in favour of the per-session start/end editor on the day timeline; the existing records
+// are kept and stay viewable here so past adjustments remain auditable.
+export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
     if (!isOpen || !task) return null;
 
     const adjustments = task.timeAdjustments || [];
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        const h = parseInt(hours) || 0;
-        const m = parseInt(mins) || 0;
-        if (h === 0 && m === 0) return;
-
-        setIsSubmitting(true);
-        try {
-            await onAddAdjustment(task.id, date, h, m, reason);
-            setHours(0);
-            setMins(0);
-            setReason('');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-
     return (
         <DetailsModal isOpen={isOpen} onClose={onClose} title="Papildomi laiko įrašai" icon={Clock}>
             <div className="flex flex-col h-full max-h-[60vh]">
-                <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
+                <div className="flex-1 overflow-y-auto space-y-3 pr-2">
                     {adjustments.length > 0 ? (
                         adjustments.map((adj, idx) => (
-                            <div key={idx} className="bg-surface-sunken p-4 rounded-lg flex justify-between items-center">
-                                <div>
-                                    <div className="flex items-center gap-2 mb-1">
-                                        <span className="font-semibold text-ink-strong">{adj.date}</span>
-                                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-feedback-danger-soft text-feedback-danger-text' : 'bg-feedback-success-soft text-feedback-success-text'}`}>
-                                            {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
-                                        </span>
-                                    </div>
-                                    <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
+                            <div key={idx} className="bg-surface-sunken p-4 rounded-lg">
+                                <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-semibold text-ink-strong">{adj.date}</span>
+                                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-feedback-danger-soft text-feedback-danger-text' : 'bg-feedback-success-soft text-feedback-success-text'}`}>
+                                        {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
+                                    </span>
                                 </div>
-                                <IconButton
-                                    icon={Trash2}
-                                    label="Ištrinti šį įrašą"
-                                    variant="danger"
-                                    onClick={() => onDeleteAdjustment(task.id, adj)}
-                                />
+                                <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
                             </div>
                         ))
                     ) : (
                         <p className="text-ink-muted text-center py-4">Nėra papildomų laiko įrašų</p>
                     )}
                 </div>
-
-                <form onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="mt-auto pt-4 border-t border-line flex flex-col gap-3">
-                    <h4 className="text-sm font-semibold text-ink">Pridėti naują įrašą</h4>
-                    <div className="flex flex-wrap gap-2">
-                        <DatePicker
-                            value={date}
-                            onChange={setDate}
-                            max={new Date().toISOString().split('T')[0]}
-                            aria-label="Data"
-                            className="flex-1 min-w-[140px]"
-                        />
-                        <div className="flex items-center gap-1">
-                            <input
-                                type="number"
-                                value={hours}
-                                onChange={(e) => setHours(e.target.value)}
-                                placeholder="Valandos"
-                                aria-label="Valandos"
-                                className="w-20 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
-                            />
-                            <span className="text-sm text-ink-muted font-medium">h</span>
-                            <input
-                                type="number"
-                                value={mins}
-                                onChange={(e) => setMins(e.target.value)}
-                                placeholder="Minutės"
-                                aria-label="Minutės"
-                                className="w-20 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm text-center"
-                            />
-                            <span className="text-sm text-ink-muted font-medium">m</span>
-                        </div>
-                    </div>
-                    <div className="flex gap-2">
-                        <input
-                            type="text"
-                            value={reason}
-                            onChange={(e) => setReason(e.target.value)}
-                            placeholder="Priežastis (pvz. 'Pamiršo įjungti taimerį')"
-                            aria-label="Pakeitimo priežastis"
-                            className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm"
-                        />
-                        <button
-                            type="submit"
-                            disabled={isSubmitting || (parseInt(hours) === 0 && parseInt(mins) === 0)}
-                            className="min-h-touch bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                        >
-                            {isSubmitting ? 'Saugoma...' : 'Pridėti'}
-                        </button>
-                    </div>
-                    <p className="text-xs text-ink-muted">Patarimas: norėdami atimti laiką, naudokite minuso ženklą (pvz. -1 valanda).</p>
-                </form>
+                {/* Read-only: new corrections are made on the day timeline by editing the specific
+                    session's start/end, not as a task-total delta. */}
+                <p className="mt-4 pt-4 border-t border-line text-xs text-ink-muted">
+                    Šie įrašai – istorija (tik peržiūrai). Laiką koreguokite dienos laiko juostoje, redaguodami konkrečią sesiją.
+                </p>
             </div>
         </DetailsModal>
     );
@@ -454,7 +367,6 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
     const [scrollLeft, setScrollLeft] = useState(0);
     const [scrollTop, setScrollTop] = useState(0);
     const containerRef = React.useRef(null);
-    const dialogRef = React.useRef(null);
     const isDragOccurred = React.useRef(false);
 
     const hasMultiple = imageUrls && imageUrls.length > 1;
@@ -473,9 +385,6 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
         document.addEventListener('keydown', onKey);
         return () => document.removeEventListener('keydown', onKey);
     }, [isOpen, hasMultiple, imageUrls]);
-
-    // Move focus into the viewer, restore on close, Escape closes, and trap Tab (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
 
     if (!isOpen || !imageUrls || imageUrls.length === 0) return null;
 
@@ -541,17 +450,24 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
         containerRef.current.scrollTop = scrollTop - walkY;
     };
 
-    const modalContent = (
-        <div
-            ref={dialogRef}
-            className="fixed inset-0 z-top flex items-center justify-center bg-black/95 focus:outline-none"
-            onClick={onClose}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Nuotraukos peržiūra"
-            tabIndex={-1}
+    // Routed through the canonical Modal (DESIGN_SYSTEM §8) for the shared focus-trap, Escape,
+    // portal and dialog stack (so it sits cleanly above an already-open task modal via
+    // level="top"). `bare` + a full-bleed black dialog reproduce the edge-to-edge lightbox;
+    // the dialog covers the scrim, so click-to-close lives on the dialog surface itself.
+    return (
+        <Modal
+            open={isOpen}
+            onClose={onClose}
+            ariaLabel="Nuotraukos peržiūra"
+            level="top"
+            bare
+            closeOnBackdrop={false}
+            className="h-screen max-h-screen w-screen max-w-none rounded-none bg-black/95 shadow-none"
         >
-            <div className={`relative w-full h-full flex items-center justify-center overflow-hidden`}>
+            <div
+                className="relative w-full h-full flex items-center justify-center overflow-hidden"
+                onClick={onClose}
+            >
                 {/* Controls - Only show when not zoomed or fix them to screen edges */}
                 <button
                     type="button"
@@ -635,32 +551,23 @@ export function ImageModal({ isOpen, onClose, imageUrls }) {
                     </div>
                 )}
             </div>
-        </div>
+        </Modal>
     );
-
-    return createPortal(modalContent, document.body);
 }
 
-export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error }) {
-    const dialogRef = useRef(null);
+export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle, isTask = true, error, level = 'modal' }) {
     const titleId = useId();
 
-    // Focus-in, focus restore, Escape, and a Tab focus-trap (WCAG 2.4.3).
-    useModalA11y(dialogRef, { open: isOpen, onClose, dismissible: true });
-
-    if (!isOpen) return null;
-
+    // Destructive confirm on the canonical Modal (bare): it supplies the scrim, focus-trap,
+    // Escape and portal, while this keeps its bespoke danger-header + multi-button body.
+    // closeOnBackdrop={false} so a stray backdrop tap can't cancel — the choice is made via the
+    // explicit buttons (or Escape). level="top" lets a caller raise this confirm above another
+    // already-open top-level modal (e.g. WorkPlanner's Edit Event modal, which stays mounted
+    // behind it); the default keeps the standard modal layer, so every other call site is
+    // unaffected.
     return (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in">
-            <div
-                ref={dialogRef}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby={titleId}
-                tabIndex={-1}
-                className="bg-surface-card rounded-modal shadow-2xl max-w-md w-full overflow-hidden transform animate-in zoom-in-95 focus:outline-none"
-            >
-                <div className="p-6">
+        <Modal open={isOpen} bare size="md" closeOnBackdrop={false} level={level} ariaLabelledby={titleId} onClose={onClose}>
+            <div className="flex-1 min-h-0 overflow-y-auto p-6">
                     <div className="flex items-center gap-3 mb-4 text-feedback-danger">
                         <div className="p-2 bg-feedback-danger-soft rounded-full">
                             <AlertTriangle className="w-6 h-6" />
@@ -713,7 +620,6 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                         </button>
                     </div>
                 </div>
-            </div>
-        </div>
+        </Modal>
     );
 }

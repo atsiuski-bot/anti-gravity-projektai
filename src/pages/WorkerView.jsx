@@ -12,9 +12,16 @@ import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/ta
 import { getPriorityRank } from '../utils/priority';
 import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
+import SearchBox from '../components/ui/SearchBox';
+import {
+    filterRankTasks,
+    buildTaskSuggestions,
+    getTaskMatchFields,
+    getTaskSuggestionSources,
+} from '../utils/taskSearch';
 import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
 import { logError } from '../utils/errorLog';
-import { Filter, AlertCircle, ClipboardList, Search } from 'lucide-react';
+import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
 import Button from '../components/ui/Button';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -169,6 +176,17 @@ export default function WorkerView() {
         });
     }, [activeTab, scrollPositions]);
 
+    // Suggestions read from the tag-scoped set (own tasks) — titles and tags only; every row is
+    // the signed-in worker's own task, so a "Vykdytojas" suggestion would be noise. Driven by the
+    // live searchText so completions feel instant while the list re-filter stays debounced.
+    const searchSuggestions = useMemo(() => {
+        if (!searchText.trim()) return [];
+        const scoped = filterTag ? tasks.filter(t => t.tag === filterTag) : tasks;
+        return buildTaskSuggestions(scoped, searchText, getTaskSuggestionSources, {
+            kinds: ['task', 'tag'],
+        });
+    }, [tasks, searchText, filterTag]);
+
     const sortedTasks = useMemo(() => {
         let result = [...tasks];
 
@@ -176,11 +194,11 @@ export default function WorkerView() {
             result = result.filter(t => t.tag === filterTag);
         }
 
-        const query = debouncedSearch.trim().toLowerCase();
-        if (query) {
-            result = result.filter(t =>
-                [t.title, t.description, t.tag].some(field => field && String(field).toLowerCase().includes(query))
-            );
+        // Fuzzy free-text search (diacritic-insensitive, typo-tolerant, ranked by relevance).
+        // When a query is present the matches come back ordered by relevance; an explicit sort
+        // below overrides that, the default order keeps it.
+        if (debouncedSearch.trim()) {
+            result = filterRankTasks(result, debouncedSearch, getTaskMatchFields);
         }
 
         if (sortBy === 'status') {
@@ -234,17 +252,14 @@ export default function WorkerView() {
                     {/* Search + the two classifiers — search spans the full width on a phone,
                         then Rūšiavimas | Žyma sit side by side; inline from sm+. */}
                     <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-2">
-                        <div className="relative col-span-2 sm:col-auto">
-                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-ink-muted pointer-events-none" aria-hidden="true" />
-                            <input
-                                type="search"
-                                value={searchText}
-                                onChange={(e) => setSearchText(e.target.value)}
-                                placeholder="Ieškoti užduočių…"
-                                aria-label="Ieškoti užduočių"
-                                className="w-full min-h-touch pl-10 pr-4 py-2 border border-line rounded-input text-body-lg text-ink bg-surface-card focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                            />
-                        </div>
+                        <SearchBox
+                            value={searchText}
+                            onChange={setSearchText}
+                            suggestions={searchSuggestions}
+                            placeholder="Ieškoti užduočių…"
+                            ariaLabel="Ieškoti užduočių"
+                            className="col-span-2 sm:col-auto"
+                        />
                         <Select
                             value={sortBy}
                             onChange={setSortBy}
