@@ -43,6 +43,7 @@ export default function ManagerNotifications({ onClose }) {
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
     const [bulkConfirming, setBulkConfirming] = useState(false); // batch "approve all completions" in flight
+    const [bulkApprovingCal, setBulkApprovingCal] = useState(false); // batch "approve all calendar requests" in flight
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
     const [grantingExt, setGrantingExt] = useState(null); // notif.id of an in-flight one-tap time grant
     const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
@@ -216,6 +217,33 @@ export default function ManagerNotifications({ onClose }) {
         } catch (err) {
             console.error("Error declining calendar request:", err);
             setActionError("Nepavyko atmesti užklausos. Bandykite dar kartą.");
+        }
+    };
+
+    // Only add/edit calendar requests are low-risk enough to batch-approve. A `delete` removes a
+    // work_hours entry outright (destructive, irreversible from the bell), so it stays a deliberate
+    // per-card decision — never swept into a one-tap bulk action.
+    const bulkApprovableCalRequests = calendarRequests.filter(r => r.type === 'add' || r.type === 'edit');
+    const calBatchEligible = bulkApprovableCalRequests.length >= 2 &&
+        bulkApprovableCalRequests.length === calendarRequests.length;
+
+    // Batch-approve every pending (add/edit) calendar request in one action — the calendar-side
+    // mirror of handleConfirmAllCompletions. Loops the existing per-item handler, so each approval
+    // still writes work_hours, flips the request, logs the change, and notifies the worker exactly
+    // as a single tap would. Deletes are excluded by construction (calBatchEligible gates the bar).
+    const handleApproveAllCalendarRequests = async () => {
+        if (!calBatchEligible) return;
+        setBulkApprovingCal(true);
+        setActionError(null);
+        try {
+            for (const request of bulkApprovableCalRequests) {
+                await handleApproveCalendarRequest(request);
+            }
+        } catch (err) {
+            console.error('Error approving all calendar requests:', err);
+            setActionError('Nepavyko patvirtinti visų užklausų. Bandykite dar kartą.');
+        } finally {
+            setBulkApprovingCal(false);
         }
     };
 
@@ -498,6 +526,19 @@ export default function ManagerNotifications({ onClose }) {
                         Užbaigtos užduotys: {taskNotifications.filter(n => n.type === 'task_completion').length}
                     </span>
                     <Button variant="success" size="md" icon={Check} loading={bulkConfirming} onClick={handleConfirmAllCompletions}>
+                        Patvirtinti visas
+                    </Button>
+                </div>
+            )}
+
+            {/* Batch-approve bar for calendar requests — only when EVERY pending request is a low-risk
+                add/edit (a delete keeps its own per-card decision) and there are several of them. */}
+            {calBatchEligible && (
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-feedback-info-border bg-feedback-info-soft px-4 py-2 max-w-xl">
+                    <span className="text-sm font-medium text-feedback-info-text">
+                        Kalendoriaus užklausos: {bulkApprovableCalRequests.length}
+                    </span>
+                    <Button variant="success" size="md" icon={Check} loading={bulkApprovingCal} onClick={handleApproveAllCalendarRequests}>
                         Patvirtinti visas
                     </Button>
                 </div>
