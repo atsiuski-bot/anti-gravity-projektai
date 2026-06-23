@@ -11,6 +11,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
 import SearchBox from '../components/ui/SearchBox';
+import SearchPopover from '../components/ui/SearchPopover';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -124,6 +125,65 @@ export default function ManagerView() {
         });
     }, [activeTab, scrollPositions]);
 
+    // Filter/sort option sets — shared by the mobile toolbar, the desktop control strip, and the
+    // desktop data-grid headers (gridControls). Lifted out of the old toolbar IIFE so all three
+    // read one source of truth.
+    const userOptions = [
+        { value: '', label: 'Visi vykdytojai' },
+        ...pickerUsers.map((user) => ({ value: user.id, label: user.displayName || user.email })),
+    ];
+    const priorityOptions = [
+        { value: '', label: 'Visi prioritetai' },
+        { value: PRIORITIES.URGENT, label: getPriorityLabel(PRIORITIES.URGENT) },
+        { value: PRIORITIES.HIGH, label: getPriorityLabel(PRIORITIES.HIGH) },
+        { value: PRIORITIES.MEDIUM, label: getPriorityLabel(PRIORITIES.MEDIUM) },
+        { value: PRIORITIES.LOW, label: getPriorityLabel(PRIORITIES.LOW) },
+        { value: PRIORITIES.VERY_LOW, label: getPriorityLabel(PRIORITIES.VERY_LOW) },
+    ];
+    const tagOptions = [
+        { value: '', label: 'Visi Tagai' },
+        ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
+    ];
+    const sortOptions = [
+        { value: 'none', label: 'Numatyta tvarka' },
+        { value: 'status', label: 'Pagal būseną' },
+        { value: 'priority', label: 'Pagal prioritetą' },
+        { value: 'user', label: 'Pagal vartotoją' },
+        { value: 'deadline-user', label: 'Pagal terminą-vartotoją' },
+        { value: 'user-priority', label: 'Pagal vartotoją-prioritetą' },
+        { value: 'manual', label: 'Rankiniu būdu' },
+        ...TASK_TAGS.map((tag) => ({ value: `tag-${tag}`, label: `Rūšiuoti: ${tag}` })),
+    ];
+    const hasActiveFilters = !!(searchText || filterUser || filterPriority || filterTag);
+    const clearFilters = () => {
+        setSearchText('');
+        setFilterUser('');
+        setFilterPriority('');
+        setFilterTag('');
+    };
+
+    // Desktop data-grid wiring. The team list's headers carry single-axis sort (user/priority/
+    // status) + per-column filters; the composite/manual/tag-scoped sorts (no single column) stay
+    // in the "Daugiau rūšiavimo" launcher. One `sortBy` is the single source of truth, so the
+    // launcher binds to '' under a header sort (showing its placeholder, contradicting nothing).
+    const MORE_SORT_VALUES = ['none', 'deadline-user', 'user-priority', 'manual', ...TASK_TAGS.map((t) => `tag-${t}`)];
+    const moreSortOptions = sortOptions.filter((o) => MORE_SORT_VALUES.includes(o.value));
+    const activeAdvancedSortLabel = sortBy !== 'none' && MORE_SORT_VALUES.includes(sortBy)
+        ? (moreSortOptions.find((o) => o.value === sortBy)?.label ?? null)
+        : null;
+    const teamGridControls = {
+        sort: {
+            value: sortBy,
+            set: setSortBy,
+            columns: { user: 'user', priority: 'priority', status: 'status' },
+        },
+        filters: {
+            user: { value: filterUser, set: setFilterUser, options: userOptions },
+            priority: { value: filterPriority, set: setFilterPriority, options: priorityOptions },
+            tag: { value: filterTag, set: setFilterTag, options: tagOptions },
+        },
+    };
+
     return (
         <div className="pt-1 sm:pt-4">
             {error && (
@@ -138,42 +198,85 @@ export default function ManagerView() {
                 The weekly planned-vs-worked summary that used to head this tab now lives in
                 Kom. kalendorius, next to the calendar it summarises. */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
-                <div role="tablist" aria-label="Komandos darbų rodinys" className="mb-4">
-                    <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
-                        <button
-                            type="button"
-                            role="tab"
-                            id="team-active-tab"
-                            aria-selected={teamTasksSubTab === 'active'}
-                            aria-controls="team-active-panel"
-                            onClick={() => setTeamTasksSubTab('active')}
-                            className={cn(
-                                'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
-                            )}
-                        >
-                            <Activity className="h-4 w-4 shrink-0" aria-hidden="true" />
-                            Aktyvūs darbai
-                        </button>
-                        <div className="w-px bg-line" aria-hidden="true" />
-                        <button
-                            type="button"
-                            role="tab"
-                            id="team-list-tab"
-                            aria-selected={teamTasksSubTab === 'list'}
-                            aria-controls="team-list-panel"
-                            onClick={() => setTeamTasksSubTab('list')}
-                            className={cn(
-                                'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
-                            )}
-                        >
-                            <ListChecks className="h-4 w-4 shrink-0" aria-hidden="true" />
-                            Užduočių sąrašas
-                        </button>
+                <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+                    <div role="tablist" aria-label="Komandos darbų rodinys">
+                        <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                            <button
+                                type="button"
+                                role="tab"
+                                id="team-active-tab"
+                                aria-selected={teamTasksSubTab === 'active'}
+                                aria-controls="team-active-panel"
+                                onClick={() => setTeamTasksSubTab('active')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <Activity className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                Aktyvūs darbai
+                            </button>
+                            <div className="w-px bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
+                                id="team-list-tab"
+                                aria-selected={teamTasksSubTab === 'list'}
+                                aria-controls="team-list-panel"
+                                onClick={() => setTeamTasksSubTab('list')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <ListChecks className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                Užduočių sąrašas
+                            </button>
+                        </div>
                     </div>
+
+                    {/* Užduočių sąrašas toolbar lifted onto the tab row (desktop only) and split
+                        off with a vertical divider, so it reads as a separate control cluster — not
+                        part of the tab switcher. md+ only; mobile keeps the full toolbar in-panel
+                        below. Rendered only on the list sub-tab — Aktyvūs darbai has no filters. */}
+                    {teamTasksSubTab === 'list' && (
+                        <div className="hidden items-center gap-2 md:ml-auto md:flex md:border-l md:border-line md:pl-4">
+                            <SearchPopover
+                                value={searchText}
+                                onChange={setSearchText}
+                                suggestions={searchSuggestions}
+                                placeholder="Ieškoti užduočių…"
+                                label="Ieškoti užduočių"
+                            />
+                            <Select
+                                value={MORE_SORT_VALUES.includes(sortBy) && sortBy !== 'none' ? sortBy : ''}
+                                onChange={setSortBy}
+                                options={moreSortOptions}
+                                label="Daugiau rūšiavimo"
+                                placeholder="Daugiau rūšiavimo"
+                                ariaLabel="Daugiau rūšiavimo"
+                                icon={ArrowUpDown}
+                                className="w-auto min-w-[12rem]"
+                            />
+                            {activeAdvancedSortLabel && (
+                                <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-sunken px-2.5 py-1 text-caption text-ink-muted">
+                                    Rūšiuojama:&nbsp;<span className="font-medium text-ink">{activeAdvancedSortLabel}</span>
+                                </span>
+                            )}
+                            {hasActiveFilters && (
+                                <button
+                                    type="button"
+                                    onClick={clearFilters}
+                                    className="inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                >
+                                    <X className="w-4 h-4" aria-hidden="true" />
+                                    Išvalyti filtrus
+                                </button>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Sub-tab 1 — Aktyvūs darbai */}
@@ -193,107 +296,64 @@ export default function ManagerView() {
                     aria-labelledby="team-list-tab"
                     className={cn(teamTasksSubTab !== 'list' && 'hidden')}
                 >
-                {/* Filter and Sort Controls.
-                    Mobile-first: search spans the full width, the three filters drop into a tidy
-                    2-column grid, and sort takes the full width at the bottom — no more ragged
-                    wrapping. From lg+ everything collapses back to one inline row, sort pushed
-                    to the right. Every control fills its cell (w-full) so tap targets are wide. */}
-                {(() => {
-                    const hasActiveFilters = !!(searchText || filterUser || filterPriority || filterTag);
-                    const clearFilters = () => {
-                        setSearchText('');
-                        setFilterUser('');
-                        setFilterPriority('');
-                        setFilterTag('');
-                    };
-                    const userOptions = [
-                        { value: '', label: 'Visi vykdytojai' },
-                        ...pickerUsers.map((user) => ({ value: user.id, label: user.displayName || user.email })),
-                    ];
-                    const priorityOptions = [
-                        { value: '', label: 'Visi prioritetai' },
-                        { value: PRIORITIES.URGENT, label: getPriorityLabel(PRIORITIES.URGENT) },
-                        { value: PRIORITIES.HIGH, label: getPriorityLabel(PRIORITIES.HIGH) },
-                        { value: PRIORITIES.MEDIUM, label: getPriorityLabel(PRIORITIES.MEDIUM) },
-                        { value: PRIORITIES.LOW, label: getPriorityLabel(PRIORITIES.LOW) },
-                        { value: PRIORITIES.VERY_LOW, label: getPriorityLabel(PRIORITIES.VERY_LOW) },
-                    ];
-                    const tagOptions = [
-                        { value: '', label: 'Visi Tagai' },
-                        ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
-                    ];
-                    const sortOptions = [
-                        { value: 'none', label: 'Numatyta tvarka' },
-                        { value: 'status', label: 'Pagal būseną' },
-                        { value: 'priority', label: 'Pagal prioritetą' },
-                        { value: 'user', label: 'Pagal vartotoją' },
-                        { value: 'deadline-user', label: 'Pagal terminą-vartotoją' },
-                        { value: 'user-priority', label: 'Pagal vartotoją-prioritetą' },
-                        { value: 'manual', label: 'Rankiniu būdu' },
-                        ...TASK_TAGS.map((tag) => ({ value: `tag-${tag}`, label: `Rūšiuoti: ${tag}` })),
-                    ];
-                    // Mobile-first: search spans the full width, then the four classifiers form a
-                    // tidy 2x2 grid — [Vykdytojas | Rūšiavimas] over [Prioritetas | Žyma]. From lg+
-                    // everything collapses to one inline row with sort pushed to the right.
-                    return (
-                        <div className="grid grid-cols-2 gap-2 mb-4 lg:flex lg:flex-wrap lg:items-center lg:gap-3">
-                            <SearchBox
-                                value={searchText}
-                                onChange={setSearchText}
-                                suggestions={searchSuggestions}
-                                placeholder="Ieškoti užduočių…"
-                                ariaLabel="Ieškoti užduočių"
-                                className="col-span-2 lg:col-auto lg:w-64"
-                            />
-                            <Select
-                                value={filterUser}
-                                onChange={setFilterUser}
-                                options={userOptions}
-                                label="Vykdytojas"
-                                ariaLabel="Filtruoti pagal vykdytoją"
-                                icon={Filter}
-                                className="lg:w-auto lg:min-w-[10rem]"
-                            />
-                            <Select
-                                value={sortBy}
-                                onChange={setSortBy}
-                                options={sortOptions}
-                                label="Rūšiavimas"
-                                ariaLabel="Rūšiuoti užduotis"
-                                icon={ArrowUpDown}
-                                className="lg:order-last lg:ml-auto lg:w-auto lg:min-w-[11rem]"
-                            />
-                            <Select
-                                value={filterPriority}
-                                onChange={setFilterPriority}
-                                options={priorityOptions}
-                                label="Prioritetas"
-                                ariaLabel="Filtruoti pagal prioritetą"
-                                icon={Filter}
-                                className="lg:w-auto lg:min-w-[10rem]"
-                            />
-                            <Select
-                                value={filterTag}
-                                onChange={setFilterTag}
-                                options={tagOptions}
-                                label="Žyma"
-                                ariaLabel="Filtruoti pagal žymę"
-                                icon={Filter}
-                                className="lg:w-auto lg:min-w-[9rem]"
-                            />
-                            {hasActiveFilters && (
-                                <button
-                                    type="button"
-                                    onClick={clearFilters}
-                                    className="col-span-2 lg:col-auto inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                                >
-                                    <X className="w-4 h-4" aria-hidden="true" />
-                                    Išvalyti filtrus
-                                </button>
-                            )}
-                        </div>
-                    );
-                })()}
+                {/* Filter & sort controls.
+                    Mobile (<md): the full toolbar below — search spans the width, the four
+                    classifiers form a 2x2 grid, sort below. Desktop (md+): sort and per-column
+                    filters live ON the table headers (TaskTable `gridControls`); collapsed search,
+                    the non-column "Daugiau rūšiavimo" launcher, the active-advanced-sort hint and a
+                    global clear sit on the tab row above (lifted next to the sub-tab switcher). */}
+                <div className="grid grid-cols-2 gap-2 mb-4 md:hidden">
+                    <SearchBox
+                        value={searchText}
+                        onChange={setSearchText}
+                        suggestions={searchSuggestions}
+                        placeholder="Ieškoti užduočių…"
+                        ariaLabel="Ieškoti užduočių"
+                        className="col-span-2"
+                    />
+                    <Select
+                        value={filterUser}
+                        onChange={setFilterUser}
+                        options={userOptions}
+                        label="Vykdytojas"
+                        ariaLabel="Filtruoti pagal vykdytoją"
+                        icon={Filter}
+                    />
+                    <Select
+                        value={sortBy}
+                        onChange={setSortBy}
+                        options={sortOptions}
+                        label="Rūšiavimas"
+                        ariaLabel="Rūšiuoti užduotis"
+                        icon={ArrowUpDown}
+                    />
+                    <Select
+                        value={filterPriority}
+                        onChange={setFilterPriority}
+                        options={priorityOptions}
+                        label="Prioritetas"
+                        ariaLabel="Filtruoti pagal prioritetą"
+                        icon={Filter}
+                    />
+                    <Select
+                        value={filterTag}
+                        onChange={setFilterTag}
+                        options={tagOptions}
+                        label="Žyma"
+                        ariaLabel="Filtruoti pagal žymę"
+                        icon={Filter}
+                    />
+                    {hasActiveFilters && (
+                        <button
+                            type="button"
+                            onClick={clearFilters}
+                            className="col-span-2 inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        >
+                            <X className="w-4 h-4" aria-hidden="true" />
+                            Išvalyti filtrus
+                        </button>
+                    )}
+                </div>
 
                 {viewMode === 'mobile' ? (
                     <div className="space-y-4">
@@ -318,6 +378,7 @@ export default function ManagerView() {
                         onMoveUp={handleMoveUp}
                         onMoveDown={handleMoveDown}
                         hideCheckboxes={true}
+                        gridControls={teamGridControls}
                     />
                 )}
                 </div>

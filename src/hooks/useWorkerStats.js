@@ -4,6 +4,7 @@ import { db } from '../firebase';
 import { privateScopeConstraints } from '../utils/teamScope';
 import { computeWorkerStats } from '../utils/workerStats';
 import { addDaysToDateString } from '../utils/timeUtils';
+import { resolveUserId } from '../utils/formatters';
 import { logError } from '../utils/errorLog';
 
 /** Inclusive day count of a YYYY-MM-DD window (UTC calendar arithmetic, DST-independent). */
@@ -79,13 +80,17 @@ export function useWorkerStats({ userId, viewerData, viewerUid, viewerRole, expe
                     logError(e, { source: 'useWorkerStats.calendarRequests', userId });
                 }
 
-                const pick = (docs, field) =>
-                    docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => x[field] === userId);
+                const pick = (docs, keyOf) =>
+                    docs.map((d) => ({ id: d.id, ...d.data() })).filter((x) => keyOf(x) === userId);
 
-                const workSessions = pick(wsS.docs, 'userId');
-                const breakSessions = pick(bsS.docs, 'userId');
-                const archivedTasks = pick(arcS.docs, 'assignedUserId');
-                const activeCompleted = pick(actS.docs, 'assignedUserId').filter(
+                // Sessions are keyed through `resolveUserId` (not raw `x.userId`) so the oldest
+                // go-live rows — which carry the legacy `workerId` field and no `userId` — are not
+                // silently dropped from a viewer's whole-team totals. Mirrors Reports.jsx /
+                // reportData.js. Tasks stay on `assignedUserId`.
+                const workSessions = pick(wsS.docs, resolveUserId);
+                const breakSessions = pick(bsS.docs, resolveUserId);
+                const archivedTasks = pick(arcS.docs, (x) => x.assignedUserId);
+                const activeCompleted = pick(actS.docs, (x) => x.assignedUserId).filter(
                     (t) => t.completed || t.status === 'completed' || t.status === 'confirmed'
                 );
                 const tasks = [...archivedTasks, ...activeCompleted];

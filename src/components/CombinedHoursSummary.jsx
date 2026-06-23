@@ -225,7 +225,7 @@ export default function CombinedHoursSummary() {
             >
                 <div className="flex items-center gap-2">
                     <Users className="w-5 h-5 text-brand" aria-hidden="true" />
-                    <h3 className="font-semibold text-ink-strong">Komandos darbai (Savaitės)</h3>
+                    <h3 className="font-semibold text-ink-strong">Komandos savaitės valandų suma</h3>
                 </div>
                 {isCollapsed
                     ? <ChevronDown className="w-5 h-5 text-ink-muted" aria-hidden="true" />
@@ -236,28 +236,23 @@ export default function CombinedHoursSummary() {
                 <div className="p-4 space-y-6 animate-in fade-in slide-in-from-top-2">
                     {/* Weekly Hours Bars */}
                     <div>
-                        {combinedStats.data.length > 0 && (
-                            <h4 className="text-caption font-semibold text-ink-muted uppercase tracking-wider mb-3 pl-1">
-                                Savaitės valandos
-                            </h4>
-                        )}
-
                         {combinedStats.data.length === 0 ? (
                             <p className="text-body italic text-ink-muted">Nėra duomenų.</p>
                         ) : (
                             combinedStats.data.map(user => (
-                                <div key={user.id} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 mb-3 last:mb-0">
-                                    {/* User Info */}
-                                    <div className="sm:w-1/4 min-w-[150px] flex items-center gap-2">
+                                <div key={user.id} className="mb-5 last:mb-0">
+                                    {/* User Info — sits directly above this worker's rows so the
+                                        name and its Planuota/Dirbta figures read as one group. */}
+                                    <div className="flex items-center gap-2 mb-1.5">
                                         <div
                                             className="w-3 h-3 rounded-full flex-shrink-0"
                                             style={{ backgroundColor: user.color }}
                                         />
-                                        <UserChip userId={user.id} name={user.name} className="text-sm font-medium text-ink-strong truncate" />
+                                        <UserChip userId={user.id} name={user.name} className="text-sm font-semibold text-ink-strong truncate" />
                                     </div>
 
-                                    {/* Bars Area */}
-                                    <div className="flex-1 flex flex-col gap-1.5">
+                                    {/* Bars Area — indented under the name to bind them visually */}
+                                    <div className="flex flex-col gap-1.5 pl-5">
                                         {/* Planned Bar — labelled so colour is never the sole signal (§5) */}
                                         <div className="flex items-center gap-2">
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Planuota</span>
@@ -297,14 +292,6 @@ export default function CombinedHoursSummary() {
                                                 )}
                                             </div>
                                         </div>
-
-                                        {/* Breaks — named in text so the amber segment is never colour-only (§5),
-                                            with the work + break total spelled out. */}
-                                        {user.breakHours > 0 && (
-                                            <span className="text-caption text-ink-muted">
-                                                Pertraukos: {user.breakHours.toFixed(1)}h · iš viso {(user.workedHours + user.breakHours).toFixed(1)}h
-                                            </span>
-                                        )}
                                     </div>
                                 </div>
                             ))

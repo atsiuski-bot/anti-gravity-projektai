@@ -63,7 +63,8 @@ export default function Reports({ users, canExport = false, viewRole }) {
     const [workData, setWorkData] = useState([]); // Array of { userId, name, totalMinutes, days: { date: minutes } }
     // Test/founder accounts are excluded from the work report by default so payroll totals and
     // the leaderboard aren't skewed by non-production data; a manager can opt to show them.
-    const [showTestUsers, setShowTestUsers] = useState(false);
+    // Reports always exclude test (isTest) users — there is no manager toggle.
+    const showTestUsers = false;
 
     // Unified report period. 'day' renders DailyStatistics (its own day navigation); any other
     // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
@@ -1195,15 +1196,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         )}
                         </div>
 
-                        {reportPeriod !== 'day' && isManagerRole(userRole) && (
-                            <Button
-                                variant={showTestUsers ? 'primary' : 'secondary'}
-                                onClick={() => setShowTestUsers((v) => !v)}
-                                className="shrink-0 px-3 sm:px-4"
-                            >
-                                {showTestUsers ? 'Slėpti bandomuosius' : 'Rodyti bandomuosius'}
-                            </Button>
-                        )}
                         {reportPeriod !== 'day' && (
                             <Button
                                 variant="success"

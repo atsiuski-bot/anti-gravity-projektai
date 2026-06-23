@@ -15,7 +15,7 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, Filter, RotateCcw, X, Pencil, Plus } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, RotateCcw, X, Pencil, Plus } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
@@ -30,7 +30,7 @@ import UserChip from './UserChip';
 import SessionEditModal from './SessionEditModal';
 import SessionEditedBadge from './task/SessionEditedBadge';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, initialDate = null, embedded = false, view = 'full', showTestUsers = false }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', showTestUsers = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
@@ -100,7 +100,17 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // Per-worker drill-down: clicking a row in the team "Darbo valandos" summary opens a
     // modal listing everything that worker touched that day — both finished work and the
     // session still running — without forcing the manager to switch the user filter.
-    const [workerDetail, setWorkerDetail] = useState(null); // { userId, name } | null
+    // In workerDetailOnly mode (the team-calendar drill-down) the component renders nothing but
+    // this drill-down, opened immediately for the clicked worker — the same "Darbo valandos" table
+    // the team report shows, never the full dashboard. forcedWorker is the stable descriptor we
+    // reopen against after the viewer dips into a task and back.
+    const forcedWorker = workerDetailOnly && forceUserId
+        ? (() => {
+            const match = users.find(u => resolveUserId(u) === forceUserId);
+            return { userId: forceUserId, name: forceUserName || (match ? resolveUserName(match) : '') || '' };
+        })()
+        : null;
+    const [workerDetail, setWorkerDetail] = useState(forcedWorker); // { userId, name } | null
 
     // Clicking a work card inside that drill-down opens the full task. We swap modals rather
     // than stack them (two focus-trapped dialogs fight) — the worker modal closes, the task
@@ -356,7 +366,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     };
 
     // Sorting state
-    const [sortBy, setSortBy] = useState('time'); // 'time' or 'status'
+    // Finished-task list ordering. The "Pagal laiką / Pagal būseną" toolbar toggle was removed
+    // from the report header; ordering is pinned to time (newest-first). The status-sort branch
+    // in splitTasks below is kept intact so the toggle can be reinstated by restoring this state.
+    const sortBy = 'time';
 
     // Split finished tasks into Today, Earlier, and Archived
     const splitTasks = useMemo(() => {
@@ -949,6 +962,53 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
     const weekday = getLithuanianWeekday(selectedDate);
 
+    // Team-calendar drill-down: render ONLY the worker day-detail table (the same one the team
+    // report opens), never the surrounding dashboard. All the data hooks above have already run
+    // and scoped to forceUserId, so combinedTimelineItems / allLoadedTasks are ready. Closing the
+    // modal bubbles up so the calendar can clear its open state; opening a task swaps to the full
+    // task window and returns here afterwards (two focus-trapped dialogs must not stack).
+    if (workerDetailOnly) {
+        return (
+            <>
+                {workerDetail && (
+                    <WorkerDayDetailModal
+                        worker={workerDetail}
+                        isRange={isRange}
+                        rangeStart={rangeStart}
+                        rangeEnd={rangeEnd}
+                        date={selectedDate}
+                        items={combinedTimelineItems.filter(i => i.userId === workerDetail.userId)}
+                        tasks={allLoadedTasks}
+                        canEditSessions={canEditSessions}
+                        onEditSession={(item, dayTotal) => openEditSession(item, { id: workerDetail.userId, name: workerDetail.name }, dayTotal)}
+                        onOpenTask={(task) => { setWorkerDetail(null); setOpenTaskDetail(task); }}
+                        onClose={() => { setWorkerDetail(null); onClose?.(); }}
+                    />
+                )}
+                {openTaskDetail && (
+                    <TaskModal
+                        isOpen
+                        task={openTaskDetail}
+                        role={userRole}
+                        onClose={() => { setOpenTaskDetail(null); setWorkerDetail(forcedWorker); }}
+                    />
+                )}
+                {sessionEditTarget && (
+                    <SessionEditModal
+                        open
+                        mode={sessionEditTarget.mode}
+                        session={sessionEditTarget.session}
+                        targetUser={sessionEditTarget.targetUser || sessionEditTargetUser}
+                        defaultDate={typeof rangeStart === 'string' ? rangeStart : null}
+                        dayTotalMinutes={sessionEditTarget.dayTotal ?? totalWorkedMinutes}
+                        editor={currentUser}
+                        onClose={() => setSessionEditTarget(null)}
+                    />
+                )}
+            </>
+        );
+    }
+
     return (
         <div className="space-y-4">
             {actionError && (
@@ -1018,7 +1078,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         </span>
                     )}
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <MetricWorkedGlyph className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
                         <span className="text-caption text-ink-muted">Darbas</span>
                         <span className="text-body font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
                     </span>
@@ -1028,51 +1087,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <span className="text-body font-bold text-feedback-warning tabular-nums">{formatMinutesToTimeString(totalBreakMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <MetricTotalGlyph className="w-4 h-4 text-brand shrink-0" aria-hidden="true" />
                         <span className="text-caption text-brand">Viso</span>
                         <span className="text-body font-bold text-brand tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes + totalBreakMinutes)}</span>
                     </span>
                 </div>
-                </div>
-
-                {/* Sort filter — a two-option segmented control (Pagal laiką | Pagal būseną).
-                    On md+ it sits horizontally inline in the toolbar. On a phone it stacks
-                    VERTICALLY and sits to the RIGHT of the date stepper on the same row:
-                    `self-stretch` matches its height to the date stepper (no magic numbers),
-                    `flex-1` splits that height between the two options — trading a wasted
-                    second toolbar row for a tighter header. */}
-                <div
-                    className="flex flex-col md:flex-row self-stretch md:self-auto bg-surface-sunken rounded-control overflow-hidden border border-line"
-                    role="group"
-                    aria-label="Rūšiuoti"
-                >
-                    <button
-                        type="button"
-                        onClick={() => setSortBy('time')}
-                        aria-pressed={sortBy === 'time'}
-                        className={clsx(
-                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                            sortBy === 'time' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
-                        )}
-                    >
-                        <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                        Pagal laiką
-                    </button>
-                    <div className="w-full h-px md:w-px md:h-auto bg-line" aria-hidden="true" />
-                    <button
-                        type="button"
-                        onClick={() => setSortBy('status')}
-                        aria-pressed={sortBy === 'status'}
-                        className={clsx(
-                            "flex flex-1 md:flex-initial items-center justify-center gap-1.5 whitespace-nowrap px-2.5 py-1 md:px-3 md:py-1.5 text-caption font-semibold transition-colors",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                            sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-card"
-                        )}
-                    >
-                        <Filter className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-                        Pagal būseną
-                    </button>
                 </div>
             </div>
 
