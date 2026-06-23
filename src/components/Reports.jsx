@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, addDaysToDateString, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
@@ -43,6 +43,107 @@ const PERIOD_PRESETS = [
 // only when their plan is at least this fraction of worked time. Shared by the CSV Skirtumas gate
 // and the on-screen coverage indicator so the two surfaces never disagree on who has a usable plan.
 const PLAN_COVERAGE_FLOOR = 0.25;
+
+// Period picker that fits as many preset chips inline as the row width allows, hiding the rest
+// behind an expander. A hidden measuring row carries every chip at its natural width; an observer
+// recomputes how many lead chips fit whenever the visible row resizes. The expander panel reveals
+// ALL presets plus the custom from/to range, so nothing the inline row clips is ever unreachable.
+// One component drives both the work-report and calendar-history pickers, keeping them identical.
+function PeriodPicker({ presets, activeId, onChoose, open, onToggle, label, children }) {
+    const wrapRef = useRef(null);
+    const measureRef = useRef(null);
+    const [visibleCount, setVisibleCount] = useState(presets.length);
+
+    useLayoutEffect(() => {
+        const wrapEl = wrapRef.current;
+        const measureEl = measureRef.current;
+        if (!wrapEl || !measureEl) return;
+        const GAP = 8; // matches gap-2 between chips
+        const compute = () => {
+            const chips = Array.from(measureEl.children);
+            const avail = wrapEl.clientWidth;
+            let used = 0;
+            let count = 0;
+            for (let i = 0; i < chips.length; i++) {
+                used += chips[i].offsetWidth + (i > 0 ? GAP : 0);
+                if (used <= avail) count++;
+                else break;
+            }
+            setVisibleCount(Math.max(1, count));
+        };
+        compute();
+        const ro = new ResizeObserver(compute);
+        ro.observe(wrapEl);
+        return () => ro.disconnect();
+    }, [presets]);
+
+    const hiddenCount = presets.length - visibleCount;
+    const chipClass = (id) =>
+        `shrink-0 inline-flex items-center justify-center min-h-touch px-3 rounded-control text-body font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+            activeId === id
+                ? 'bg-brand text-on-brand border-brand'
+                : 'bg-surface-card text-ink-strong border-line hover:bg-surface-sunken'
+        }`;
+
+    return (
+        <div className="bg-surface-card rounded-card shadow-sm border border-line">
+            <div className="flex items-center gap-3 px-4 py-3 min-h-touch">
+                <span className="shrink-0 flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
+                    <Calendar className="w-4 h-4" aria-hidden="true" />
+                    <span className="hidden sm:inline">{label}</span>
+                </span>
+
+                {/* Inline chips: only those that fit on one line; the rest live in the panel below. */}
+                <div ref={wrapRef} className="relative flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
+                    {/* Hidden row at natural width — the single source of truth for chip widths. */}
+                    <div ref={measureRef} aria-hidden="true" className="absolute left-0 top-0 flex items-center gap-2 opacity-0 pointer-events-none">
+                        {presets.map((p) => (
+                            <span key={p.id} className={chipClass(p.id)}>{p.label}</span>
+                        ))}
+                    </div>
+                    {presets.slice(0, visibleCount).map((p) => (
+                        <button key={p.id} type="button" onClick={() => onChoose(p.id)} className={chipClass(p.id)}>
+                            {p.label}
+                        </button>
+                    ))}
+                </div>
+
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    aria-expanded={open}
+                    aria-label={open ? 'Suskleisti laikotarpio parinktis' : 'Daugiau laikotarpio parinkčių'}
+                    className="shrink-0 inline-flex items-center gap-1 min-h-touch px-2 rounded-control text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                >
+                    {!open && hiddenCount > 0 && (
+                        <span className="text-caption font-bold text-ink-strong">+{hiddenCount}</span>
+                    )}
+                    {open
+                        ? <ChevronUp className="w-4 h-4" aria-hidden="true" />
+                        : <ChevronDown className="w-4 h-4" aria-hidden="true" />}
+                </button>
+            </div>
+
+            {open && (
+                <div className="border-t border-line p-3 space-y-3 animate-in fade-in slide-in-from-top-2">
+                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                        {presets.map((p) => (
+                            <Button
+                                key={p.id}
+                                variant={activeId === p.id ? 'primary' : 'secondary'}
+                                onClick={() => onChoose(p.id)}
+                                className="justify-center"
+                            >
+                                {p.label}
+                            </Button>
+                        ))}
+                    </div>
+                    {children}
+                </div>
+            )}
+        </div>
+    );
+}
 
 export default function Reports({ users, canExport = false, viewRole }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
@@ -189,8 +290,11 @@ export default function Reports({ users, canExport = false, viewRole }) {
             const getUserName = (uid, sessionName) => {
                 const u = users?.find(user => user.id === uid);
                 if (u) return u.displayName || u.email;
-                if (sessionName && sessionName !== 'Unknown') return sessionName;
-                return 'Unknown';
+                // Treat both the legacy English placeholder and the current Lithuanian one as
+                // "no real name" so an old doc storing 'Unknown' never surfaces English; fall
+                // back to the Lithuanian placeholder used everywhere else (resolveUserName).
+                if (sessionName && sessionName !== 'Unknown' && sessionName !== 'Nežinomas') return sessionName;
+                return 'Nežinomas';
             };
 
             // Helper to init user map
@@ -695,11 +799,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         if (period !== 'day') applyPreset(period);
     };
 
-    // Human label for the currently selected period (shown on the collapsed picker button).
-    const periodLabel = reportPeriod === 'custom'
-        ? `${dateRange.start} – ${dateRange.end}`
-        : (PERIOD_PRESETS.find((p) => p.id === reportPeriod)?.label ?? `${dateRange.start} – ${dateRange.end}`);
-
     // Calendar-history period picker — same collapsible modal + preset logic as the work report,
     // but every preset (including 'day') resolves to a from/to range, since history is always a
     // range query (there is no special daily-timeline mode here).
@@ -709,10 +808,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         const range = resolvePresetRange(period);
         if (range) setHistoryRange(range);
     };
-
-    const historyPeriodLabel = historyPeriod === 'custom'
-        ? `${historyRange.start} – ${historyRange.end}`
-        : (PERIOD_PRESETS.find((p) => p.id === historyPeriod)?.label ?? `${historyRange.start} – ${historyRange.end}`);
 
     // Group tasks by date
     const groupedTasks = React.useMemo(() => {
@@ -1058,62 +1153,37 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         has no export). The button reveals the range ladder (week → month →
                         3 months → year) and a custom date picker. */}
                     <div className="flex items-start gap-2">
-                        <div className="flex-1 bg-surface-card rounded-card shadow-sm border border-line">
-                        <button
-                            type="button"
-                            onClick={() => setPeriodOpen((o) => !o)}
-                            aria-expanded={periodOpen}
-                            className="w-full min-h-touch flex items-center justify-between gap-3 px-4 py-3 text-left rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        <div className="flex-1 min-w-0">
+                        <PeriodPicker
+                            presets={PERIOD_PRESETS}
+                            activeId={reportPeriod}
+                            onChoose={choosePeriod}
+                            open={periodOpen}
+                            onToggle={() => setPeriodOpen((o) => !o)}
+                            label="Laikotarpis"
                         >
-                            <span className="flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
-                                <Calendar className="w-4 h-4" aria-hidden="true" />
-                                Laikotarpis
-                            </span>
-                            <span className="flex items-center gap-2 min-w-0">
-                                <span className="text-body font-semibold text-ink-strong truncate">{periodLabel}</span>
-                                {periodOpen
-                                    ? <ChevronUp className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
-                                    : <ChevronDown className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />}
-                            </span>
-                        </button>
-
-                        {periodOpen && (
-                            <div className="border-t border-line p-3 space-y-3 animate-in fade-in slide-in-from-top-2">
-                                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                                    {PERIOD_PRESETS.map((p) => (
-                                        <Button
-                                            key={p.id}
-                                            variant={reportPeriod === p.id ? 'primary' : 'secondary'}
-                                            onClick={() => choosePeriod(p.id)}
-                                            className="justify-center"
-                                        >
-                                            {p.label}
-                                        </Button>
-                                    ))}
+                            <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
+                                <div className="flex-1">
+                                    <label htmlFor="report-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
+                                    <DatePicker
+                                        id="report-from"
+                                        value={dateRange.start}
+                                        max={dateRange.end}
+                                        onChange={(v) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, start: v })); }}
+                                    />
                                 </div>
-                                <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
-                                    <div className="flex-1">
-                                        <label htmlFor="report-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                                        <DatePicker
-                                            id="report-from"
-                                            value={dateRange.start}
-                                            max={dateRange.end}
-                                            onChange={(v) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, start: v })); }}
-                                        />
-                                    </div>
-                                    <div className="flex-1">
-                                        <label htmlFor="report-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                                        <DatePicker
-                                            id="report-to"
-                                            value={dateRange.end}
-                                            min={dateRange.start}
-                                            max={getLithuanianDateString()}
-                                            onChange={(v) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, end: v })); }}
-                                        />
-                                    </div>
+                                <div className="flex-1">
+                                    <label htmlFor="report-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
+                                    <DatePicker
+                                        id="report-to"
+                                        value={dateRange.end}
+                                        min={dateRange.start}
+                                        max={getLithuanianDateString()}
+                                        onChange={(v) => { setReportPeriod('custom'); setDateRange(prev => ({ ...prev, end: v })); }}
+                                    />
                                 </div>
                             </div>
-                        )}
+                        </PeriodPicker>
                         </div>
 
                         {/* Single export entry point: the modal carries Markdown (for an LLM) / JSON /
@@ -1211,63 +1281,36 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 <div className="space-y-4">
                     {/* Period selector — identical collapsible modal to the work report tab, so
                         calendar filtering behaves the same everywhere in the app. */}
-                    <div className="bg-surface-card rounded-card shadow-sm border border-line">
-                        <button
-                            type="button"
-                            onClick={() => setHistoryPeriodOpen((o) => !o)}
-                            aria-expanded={historyPeriodOpen}
-                            className="w-full min-h-touch flex items-center justify-between gap-3 px-4 py-3 text-left rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                        >
-                            <span className="flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
-                                <Calendar className="w-4 h-4" aria-hidden="true" />
-                                Laikotarpis
-                            </span>
-                            <span className="flex items-center gap-2 min-w-0">
-                                <span className="text-body font-semibold text-ink-strong truncate">{historyPeriodLabel}</span>
-                                {historyPeriodOpen
-                                    ? <ChevronUp className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
-                                    : <ChevronDown className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />}
-                            </span>
-                        </button>
-
-                        {historyPeriodOpen && (
-                            <div className="border-t border-line p-3 space-y-3 animate-in fade-in slide-in-from-top-2">
-                                <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                                    {PERIOD_PRESETS.map((p) => (
-                                        <Button
-                                            key={p.id}
-                                            variant={historyPeriod === p.id ? 'primary' : 'secondary'}
-                                            onClick={() => chooseHistoryPeriod(p.id)}
-                                            className="justify-center"
-                                        >
-                                            {p.label}
-                                        </Button>
-                                    ))}
-                                </div>
-                                <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
-                                    <div className="flex-1">
-                                        <label htmlFor="history-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                                        <DatePicker
-                                            id="history-from"
-                                            value={historyRange.start}
-                                            max={historyRange.end}
-                                            onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, start: v })); }}
-                                        />
-                                    </div>
-                                    <div className="flex-1">
-                                        <label htmlFor="history-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                                        <DatePicker
-                                            id="history-to"
-                                            value={historyRange.end}
-                                            min={historyRange.start}
-                                            max={getLithuanianDateString()}
-                                            onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, end: v })); }}
-                                        />
-                                    </div>
-                                </div>
+                    <PeriodPicker
+                        presets={PERIOD_PRESETS}
+                        activeId={historyPeriod}
+                        onChoose={chooseHistoryPeriod}
+                        open={historyPeriodOpen}
+                        onToggle={() => setHistoryPeriodOpen((o) => !o)}
+                        label="Laikotarpis"
+                    >
+                        <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
+                            <div className="flex-1">
+                                <label htmlFor="history-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
+                                <DatePicker
+                                    id="history-from"
+                                    value={historyRange.start}
+                                    max={historyRange.end}
+                                    onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, start: v })); }}
+                                />
                             </div>
-                        )}
-                    </div>
+                            <div className="flex-1">
+                                <label htmlFor="history-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
+                                <DatePicker
+                                    id="history-to"
+                                    value={historyRange.end}
+                                    min={historyRange.start}
+                                    max={getLithuanianDateString()}
+                                    onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, end: v })); }}
+                                />
+                            </div>
+                        </div>
+                    </PeriodPicker>
 
                     {loading && (
                         <div className="bg-surface-card rounded-card shadow-sm">

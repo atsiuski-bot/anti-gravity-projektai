@@ -128,7 +128,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
     // Confirmation dialog targets (replace window.confirm — §8). Each destructive action gates
     // its own state so rapid clicks on different tasks can't race a single shared dialog.
-    const [commentDeleteTarget, setCommentDeleteTarget] = useState(null); // { taskId, index }
+    const [commentDeleteTarget, setCommentDeleteTarget] = useState(null); // { taskId, commentKey }
     const [completeTarget, setCompleteTarget] = useState(null);        // taskId (marking completed)
     const [revertTarget, setRevertTarget] = useState(null);            // task object
     const [reverting, setReverting] = useState(false);
@@ -148,26 +148,26 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
 
 
-    const handleUpdateComment = async (taskId, index, newText) => {
+    const handleUpdateComment = async (taskId, commentKey, newText) => {
         try {
             const task = tasks.find(t => t.id === taskId);
-            await updateComment(taskId, index, newText, task?.comments);
+            await updateComment(taskId, commentKey, newText, task?.comments);
         } catch (err) {
             logError(err, { source: 'TaskTable.handleUpdateComment' });
             setError("Nepavyko atnaujinti komentaro.");
         }
     };
 
-    const handleDeleteComment = (taskId, index) => {
-        setCommentDeleteTarget({ taskId, index });
+    const handleDeleteComment = (taskId, commentKey) => {
+        setCommentDeleteTarget({ taskId, commentKey });
     };
 
     const confirmDeleteComment = async () => {
         if (!commentDeleteTarget) return;
-        const { taskId, index } = commentDeleteTarget;
+        const { taskId, commentKey } = commentDeleteTarget;
         try {
             const task = tasks.find(t => t.id === taskId);
-            await deleteComment(taskId, index, task?.comments);
+            await deleteComment(taskId, commentKey, task?.comments);
         } catch (err) {
             // Error managed in utility
         } finally {
@@ -251,12 +251,19 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         try {
             const task = tasks.find(t => t.id === taskId);
             if (!task) return;
+            // Approving an unapproved task clears the approval gate → status 'approved'
+            // ("Patvirtintas"), the canonical value the notification hub already writes. The worker
+            // then sees it is approved and may start it. (Was 'pending', which lost the signal.)
             await updateDoc(doc(db, 'tasks', taskId), {
-                status: 'pending',
+                status: 'approved',
+                isApproved: true,
+                approvedAt: new Date().toISOString(),
+                approvedBy: currentUser.uid,
                 updatedAt: new Date().toISOString()
             });
         } catch (err) {
-            // alert("Nepavyko patvirtinti užduoties.");
+            logError(err, { source: 'TaskTable.handleApproveTask' });
+            setError('Nepavyko patvirtinti užduoties. Bandykite vėliau.');
         }
     };
 
@@ -671,7 +678,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 {gc ? <HeaderCell label="Būsena" sortMode={sortCols.status} sort={gc.sort} /> : 'Būsena'}
                             </th>
                             <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" title="Sugaišta / numatyta">Laikas</th>
-                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-32">Veik.</th>
+                            <th className="px-1 py-3 text-right text-caption font-medium text-ink-muted uppercase tracking-wider w-44">Veik.</th>
                         </tr>
                     </thead>
                     <tbody className="bg-surface-card divide-y divide-line">
@@ -733,8 +740,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         </td>
                                     )}
                                     {/* Task — title is the keyboard-accessible opener; the whole row opens on
-                                        mouse click. Tag / deadline / links / image / checklist / comments collapse
-                                        into one muted indicator row instead of their own (mostly empty) columns. */}
+                                        mouse click. Deadline / links / image / checklist / comments collapse into
+                                        one muted indicator row in front of "Vadovas" (tag keeps its own column). */}
                                     <td className="px-2 py-3 align-top">
                                         <button
                                             type="button"
@@ -748,40 +755,45 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             {task.title}
                                             {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                         </button>
-                                        {showManagerLine && (task.managerName || task.creatorName) && (
-                                            <div className="mt-0.5 text-caption font-medium text-feedback-info-text">
-                                                Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
+                                        {/* One muted line: the indicators lead, the manager closes it — so a
+                                            deadline / urgent / comment glyph rides IN FRONT of "Vadovas" instead
+                                            of dropping onto its own extra row and making the task taller. */}
+                                        {(task.isSystemTask || task.isQuickWork || deadline || links.length > 0 || hasImage || checklist || commentCount > 0 || (showManagerLine && (task.managerName || task.creatorName))) && (
+                                            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
+                                                {(task.isSystemTask || task.isQuickWork) && (
+                                                    <SessionTypeIcon
+                                                        type={task.isSystemTask ? 'call' : 'quickWork'}
+                                                        className="h-3.5 w-3.5"
+                                                    />
+                                                )}
+                                                {deadline && (
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <Calendar className="h-3.5 w-3.5" aria-hidden="true" />{deadline}
+                                                    </span>
+                                                )}
+                                                {links.length > 0 && (
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />{links.length}
+                                                    </span>
+                                                )}
+                                                {hasImage && <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+                                                {checklist && (
+                                                    <span className={clsx("inline-flex items-center gap-1 tabular-nums", checklist.allDone && "text-feedback-success")}>
+                                                        <ListChecks className="h-3.5 w-3.5" aria-hidden="true" />{checklist.done}/{checklist.total}
+                                                    </span>
+                                                )}
+                                                {commentCount > 0 && (
+                                                    <span className="inline-flex items-center gap-1">
+                                                        <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />{commentCount}
+                                                    </span>
+                                                )}
+                                                {showManagerLine && (task.managerName || task.creatorName) && (
+                                                    <span className="inline-flex items-center font-medium text-feedback-info-text">
+                                                        Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} className="ml-1" />
+                                                    </span>
+                                                )}
                                             </div>
                                         )}
-                                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
-                                            {(task.isSystemTask || task.isQuickWork) && (
-                                                <SessionTypeIcon
-                                                    type={task.isSystemTask ? 'call' : 'quickWork'}
-                                                    className="h-3.5 w-3.5"
-                                                />
-                                            )}
-                                            {deadline && (
-                                                <span className="inline-flex items-center gap-1">
-                                                    <Calendar className="h-3.5 w-3.5" aria-hidden="true" />{deadline}
-                                                </span>
-                                            )}
-                                            {links.length > 0 && (
-                                                <span className="inline-flex items-center gap-1">
-                                                    <LinkIcon className="h-3.5 w-3.5" aria-hidden="true" />{links.length}
-                                                </span>
-                                            )}
-                                            {hasImage && <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
-                                            {checklist && (
-                                                <span className={clsx("inline-flex items-center gap-1 tabular-nums", checklist.allDone && "text-feedback-success")}>
-                                                    <ListChecks className="h-3.5 w-3.5" aria-hidden="true" />{checklist.done}/{checklist.total}
-                                                </span>
-                                            )}
-                                            {commentCount > 0 && (
-                                                <span className="inline-flex items-center gap-1">
-                                                    <MessageSquare className="h-3.5 w-3.5" aria-hidden="true" />{commentCount}
-                                                </span>
-                                            )}
-                                        </div>
                                         <TimeChangedWarning task={task} />
                                     </td>
                                     <td className="px-1 py-3 align-top">
@@ -822,19 +834,35 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         to act on) plus the worker's timer. Edit / revert / delete moved into the
                                         detail sheet that the row opens. */}
                                     <td className="px-1 py-3 align-top" onClick={(e) => e.stopPropagation()}>
-                                        <div className="flex flex-col items-stretch gap-2">
-                                            {canManage && task.status === 'completed' && (
-                                                <Button variant="success" size="md" icon={CheckCircle2} fullWidth onClick={() => handleConfirmTask(task.id)}>
-                                                    Patvirtinti
-                                                </Button>
-                                            )}
-                                            {canManage && task.status === 'unapproved' && (
-                                                <Button variant="success" size="md" icon={CheckCircle2} fullWidth onClick={() => handleApproveTask(task.id)}>
-                                                    Patvirtinti
-                                                </Button>
-                                            )}
-                                            <TaskTimerControls task={task} role={role} />
-                                        </div>
+                                        {(() => {
+                                            const canConfirmRow = canManage && task.status === 'completed';
+                                            const canApproveRow = canManage && task.status === 'unapproved';
+                                            const canRevertRow = canManage && (task.completed || task.isDeleted);
+                                            return (
+                                                <div className="flex flex-col items-stretch gap-2">
+                                                    {(canRevertRow || canConfirmRow || canApproveRow) && (
+                                                        <div className="flex flex-wrap items-center justify-end gap-1">
+                                                            {/* Grąžinti sits to the LEFT of Patvirtinti — the manager can send a
+                                                                finished/confirmed task back without first opening the sheet. */}
+                                                            {canRevertRow && (
+                                                                <IconButton icon={Undo2} label="Grąžinti" variant="default" onClick={() => setRevertTarget(task)} />
+                                                            )}
+                                                            {canConfirmRow && (
+                                                                <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
+                                                                    Patvirtinti
+                                                                </Button>
+                                                            )}
+                                                            {canApproveRow && (
+                                                                <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleApproveTask(task.id)}>
+                                                                    Patvirtinti
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                    <TaskTimerControls task={task} role={role} />
+                                                </div>
+                                            );
+                                        })()}
                                     </td>
                                 </tr>
                             );
@@ -867,8 +895,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 onAddComment={(text) => handleAddComment(task.id, text)}
                                 currentUserId={currentUser?.uid}
                                 canManage={canManage}
-                                onUpdateComment={(index, text) => handleUpdateComment(task.id, index, text)}
-                                onDeleteComment={(index) => handleDeleteComment(task.id, index)}
+                                onUpdateComment={(commentKey, text) => handleUpdateComment(task.id, commentKey, text)}
+                                onDeleteComment={(commentKey) => handleDeleteComment(task.id, commentKey)}
                             />
                             <ImageModal
                                 isOpen={activeModal.type === 'image'}
@@ -909,9 +937,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                 onRevert={revertFromDetail}
                 onConfirm={confirmFromDetail}
                 onApprove={approveFromDetail}
-                onOpenComments={openSubModalFromDetail('comments')}
                 onOpenChecklist={openSubModalFromDetail('checklist')}
-                onOpenImage={openSubModalFromDetail('image')}
                 onOpenTimeAdjustments={openSubModalFromDetail('timeAdjustments')}
             />
 

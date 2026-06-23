@@ -152,7 +152,7 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
             parallelOps.push(
                 addDoc(collection(db, 'work_sessions'), {
                     taskId: task.id,
-                    taskTitle: task.title || 'Unknown Task',
+                    taskTitle: task.title || 'Nežinoma užduotis',
                     userId: task.assignedUserId,
                     userName: task.assignedUserName || null,
                     startTime: start.toISOString(),

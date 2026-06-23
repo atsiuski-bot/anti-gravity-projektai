@@ -161,11 +161,12 @@ export default function ManagerNotifications({ onClose }) {
             const now = new Date().toISOString();
             
             if (type === 'add') {
-                await addDoc(collection(db, 'work_hours'), {
-                    ...requestedEvent,
-                    userId,
-                    type: 'planned'
-                });
+                // requestedEvent carries a synthetic id:null for adds (a real id only exists for
+                // edit/delete); strip it so it never lands on the work_hours doc and can't clobber
+                // doc.id for a future reader doing {id: doc.id, ...data}.
+                const addData = { ...requestedEvent, userId, type: 'planned' };
+                delete addData.id;
+                await addDoc(collection(db, 'work_hours'), addData);
             } else if (type === 'edit') {
                 await updateDoc(doc(db, 'work_hours', requestedEvent.id), {
                     start: requestedEvent.start,
@@ -241,7 +242,8 @@ export default function ManagerNotifications({ onClose }) {
                 status: 'approved',
                 isApproved: true, // Redundant but explicit
                 approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid
+                approvedBy: currentUser.uid,
+                updatedAt: new Date().toISOString()
             });
 
             // 2. Dismiss notification + tell the worker
@@ -264,7 +266,8 @@ export default function ManagerNotifications({ onClose }) {
                 status: 'approved',
                 isApproved: true,
                 approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid
+                approvedBy: currentUser.uid,
+                updatedAt: new Date().toISOString()
             });
 
             // 2. Dismiss notification + tell the worker
@@ -606,7 +609,7 @@ export default function ManagerNotifications({ onClose }) {
                                 const approved = notif.decision === 'approved';
                                 Icon = approved ? CheckCircle2 : XCircle;
                                 tone = approved ? 'text-feedback-success' : 'text-feedback-danger';
-                                text = approved ? 'Jūsų kalendoriaus pakeitimas patvirtintas.' : 'Jūsų kalendoriaus pakeitimas atmestas.';
+                                text = approved ? 'Jūsų kalendoriaus užklausa patvirtinta.' : 'Jūsų kalendoriaus užklausa atmesta.';
                                 break;
                             }
                             default: break;
