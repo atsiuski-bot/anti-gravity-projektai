@@ -816,18 +816,17 @@ export default function WorkPlanner() {
                         </label>
                     </div>
                     {manualIsVacation && (
-                        <label className="mt-3 block">
-                            <span className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</span>
-                            <select
+                        <div className="mt-3">
+                            <label htmlFor="manualAbsenceType" className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</label>
+                            <Select
+                                id="manualAbsenceType"
                                 value={manualAbsenceType}
-                                onChange={(e) => setManualAbsenceType(e.target.value)}
-                                className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
-                            >
-                                {ABSENCE_TYPES.map((a) => (
-                                    <option key={a.value} value={a.value}>{a.label}</option>
-                                ))}
-                            </select>
-                        </label>
+                                onChange={setManualAbsenceType}
+                                options={ABSENCE_TYPES}
+                                label="Nebuvimo tipas"
+                                ariaLabel="Nebuvimo tipas"
+                            />
+                        </div>
                     )}
                     <div className="flex gap-2 mt-4">
                         <Button type="submit" variant="primary" size="md">
@@ -965,18 +964,18 @@ export default function WorkPlanner() {
                                     </label>
                                 </div>
                                 {editingEvent.isVacation && (
-                                    <label className="mt-3 block">
-                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</span>
-                                        <select
+                                    <div className="mt-3">
+                                        <label htmlFor="editAbsenceType" className="mb-1 block text-caption font-medium text-ink-muted">Nebuvimo tipas</label>
+                                        <Select
+                                            id="editAbsenceType"
                                             value={editingEvent.absenceType || 'vacation'}
-                                            onChange={(e) => setEditingEvent({ ...editingEvent, absenceType: e.target.value })}
-                                            className="w-full px-3 py-2.5 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none bg-surface-card appearance-none"
-                                        >
-                                            {ABSENCE_TYPES.map((a) => (
-                                                <option key={a.value} value={a.value}>{a.label}</option>
-                                            ))}
-                                        </select>
-                                    </label>
+                                            onChange={(val) => setEditingEvent({ ...editingEvent, absenceType: val })}
+                                            options={ABSENCE_TYPES}
+                                            label="Nebuvimo tipas"
+                                            ariaLabel="Nebuvimo tipas"
+                                            alwaysSheet
+                                        />
+                                    </div>
                                 )}
 
 
@@ -1132,12 +1131,16 @@ export default function WorkPlanner() {
                 </Modal>
             )}
 
+            {/* level="top" so the confirm stacks ABOVE the Edit Event modal (also z-top), which
+                stays mounted behind it — without it the confirm (default z-modal) renders hidden
+                behind the edit overlay. */}
             <DeleteConfirmationModal
                 isOpen={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
                 onConfirm={confirmDelete}
                 taskTitle={editingEvent?.title || 'Darbo laiko įrašą'}
                 isTask={false}
+                level="top"
             />
         </div >
     );
