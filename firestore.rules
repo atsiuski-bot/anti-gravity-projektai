@@ -502,6 +502,41 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // ---- DECISION LOG (AI-native command audit / event spine) ---------------
+    // Append-only audit of every consequential command run through the command layer (ADR 0015):
+    // who decided (actorType/actorId/actorName), what command against which target, why, and a
+    // compact before/after. This is the seam that makes an action — human OR agent — attributable
+    // and reversible, and the surface an analysis agent reads to reconstruct events.
+    //
+    // CREATE: any active user may APPEND, but ONLY as a HUMAN acting as themselves — the doc must
+    //   stamp the caller's uid as `actorId` AND declare `actorType:'human'`. Pinning the TYPE (not
+    //   just the id) is what stops a human from LAUNDERING a decision as if an AI agent or system job
+    //   made it — the attribution boundary ADR 0015 exists to harden. A non-human commit (agent/
+    //   system) runs server-side via the admin SDK, which bypasses these rules and stamps its own
+    //   actorType. Minimal, permissive shape guards (the request_notifications idiom) keep the audit
+    //   spine from being poisoned by a malformed/oversized free-form entry; the appender's payload
+    //   passes them unchanged (a null `reason` is tolerated; an absent field defaults-passes).
+    // UPDATE: false — entries are IMMUTABLE. The doc id is the command's idempotency key, so a
+    //   retried command re-issues setDoc against the same id, which evaluates as an update and is
+    //   DENIED here; the client appender swallows that denial (best-effort), leaving the original
+    //   entry intact rather than duplicating it.
+    // READ: managers/admins, so the audit trail is visible in-app. DELETE: admin only (log hygiene).
+    match /decision_log/{opId} {
+      allow create: if isUserActive()
+                    && request.resource.data.get('actorId', '') == request.auth.uid
+                    && request.resource.data.get('actorType', '') == 'human'
+                    && request.resource.data.get('command', '') is string
+                    && request.resource.data.get('command', '').size() > 0
+                    && request.resource.data.get('mode', '') is string
+                    && (!('reason' in request.resource.data) ||
+                        request.resource.data.reason == null ||
+                        (request.resource.data.reason is string &&
+                         request.resource.data.reason.size() <= 2000));
+      allow read:   if isManagerOrAdmin();
+      allow update: if false;
+      allow delete: if isAdmin();
+    }
+
     // ---- INTEGRITY REPORTS (durability monitor output) ----------------------
     // The scheduled integrity-scan Cloud Function (admin SDK) writes one report doc here per run
     // (integrity_reports/{YYYY-MM-DD}) plus a rolling baseline (integrity_reports/_counts): anomaly
