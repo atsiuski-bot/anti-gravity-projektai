@@ -175,7 +175,7 @@ export default function AllUsersCalendar() {
     // Friendly Lithuanian status descriptor for an event (text + icon, never color alone).
     const eventStatus = (event) => {
         if (event.isVacation) return { label: absenceLabel(event) || 'Atostogos', Icon: Palmtree };
-        if (event.isWorkFromHome) return { label: 'Iš namų', Icon: Home };
+        if (event.isWorkFromHome) return { label: 'Veikla namuose', Icon: Home };
         return null;
     };
 

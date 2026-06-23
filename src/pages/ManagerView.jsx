@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Filter, X, Activity, ListChecks, Repeat } from 'lucide-react';
+import { ArrowUpDown, Filter, X, Activity, ListChecks, Repeat, BadgeCheck } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -68,6 +68,14 @@ export default function ManagerView() {
     // Task time monitoring — 80% warning and 100% limit for manager's own tasks (ownTasks, so a
     // scoped manager whose team listener excludes their own rows is still monitored correctly).
     const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(ownTasks);
+
+    // Worker-created tasks still awaiting THIS manager's approval (status 'unapproved' — the same
+    // items the notification bell surfaces). Derived from the raw team `tasks`, independent of the
+    // list sub-tab's filters, so the approvals queue never hides behind an active filter/sort.
+    const pendingApprovalTasks = React.useMemo(
+        () => sortWorkerTasks(tasks.filter((t) => t.status === 'unapproved' && !t.isDeleted)),
+        [tasks]
+    );
 
     const handleMoveUp = React.useCallback((taskId) => {
         const currentList = [...sortedTasks];
@@ -256,6 +264,36 @@ export default function ManagerView() {
                             <button
                                 type="button"
                                 role="tab"
+                                id="team-approvals-tab"
+                                aria-selected={teamTasksSubTab === 'approvals'}
+                                aria-controls="team-approvals-panel"
+                                onClick={() => setTeamTasksSubTab('approvals')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'approvals' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <BadgeCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span className="sm:hidden">Laukia</span>
+                                <span className="hidden sm:inline">Laukia patvirtinimo</span>
+                                {pendingApprovalTasks.length > 0 && (
+                                    <span
+                                        className={cn(
+                                            'ml-0.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-caption font-bold leading-none',
+                                            teamTasksSubTab === 'approvals'
+                                                ? 'bg-white/20 text-white'
+                                                : 'bg-feedback-warning-soft text-feedback-warning-text'
+                                        )}
+                                    >
+                                        {pendingApprovalTasks.length}
+                                    </span>
+                                )}
+                            </button>
+                            <div className="w-px bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
                                 id="team-recurring-tab"
                                 aria-selected={teamTasksSubTab === 'recurring'}
                                 aria-controls="team-recurring-panel"
@@ -429,6 +467,34 @@ export default function ManagerView() {
                     className={cn(teamTasksSubTab !== 'recurring' && 'hidden')}
                 >
                     <RecurringTasksPanel embedded />
+                </div>
+
+                {/* Sub-tab 4 — Laukia patvirtinimo: worker-created tasks awaiting this manager's
+                    approval (status 'unapproved' — the same items the notification bell surfaces).
+                    Always the spacious standard TaskCard (these are few at a time), whose own
+                    "Patvirtinti" button clears the approval gate; Redaguoti/Trinti come with it. */}
+                <div
+                    id="team-approvals-panel"
+                    role="tabpanel"
+                    aria-labelledby="team-approvals-tab"
+                    className={cn(teamTasksSubTab !== 'approvals' && 'hidden')}
+                >
+                    {pendingApprovalTasks.length === 0 ? (
+                        <div className="text-center py-12 bg-surface-card rounded-card shadow-sm border border-line">
+                            <p className="text-body text-ink-muted">Nėra užduočių, laukiančių patvirtinimo.</p>
+                        </div>
+                    ) : (
+                        <div className="space-y-4">
+                            {pendingApprovalTasks.map(task => (
+                                <TaskCard
+                                    key={task.id}
+                                    task={task}
+                                    onEdit={() => handleEditTask(task)}
+                                    role="manager"
+                                />
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
 
