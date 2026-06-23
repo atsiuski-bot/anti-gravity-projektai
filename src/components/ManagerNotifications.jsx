@@ -10,6 +10,7 @@ import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
 import { deleteTask } from '../utils/taskActions';
 import { approveTask, humanActor, MODES } from '../domain';
+import { useUndoableAction } from '../hooks/useUndoableAction';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
@@ -37,6 +38,7 @@ import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyp
 export default function ManagerNotifications({ onClose }) {
     const { currentUser, userRole } = useAuth();
     const isManager = isManagerRole(userRole);
+    const runUndoable = useUndoableAction();
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
@@ -232,24 +234,46 @@ export default function ManagerNotifications({ onClose }) {
         });
     };
 
-    const handleApproveTask = async (notif) => {
+    // Approving clears the worker's gate — a cleanly reversible decision — so it is now immediate +
+    // undoable instead of firing irrevocably on one tap. The catch: it pings the worker ("you may
+    // start"). That ping is DEFERRED for the undo window and cancelled on undo, so an undo leaves
+    // nothing for the worker to see; the approval state itself commits now (other managers see it
+    // live). Undo restores the exact prior status + re-surfaces the manager's approval request.
+    const handleApproveTask = (notif) => {
         const taskId = notif?.taskId;
-        if (!taskId) return;
-        try {
-            setActionError(null);
-            // 1. Approve the task (audited approveTask command — ADR 0015, increment 5)
-            await approveTask(
-                { task: { id: taskId, title: notif.taskTitle } },
-                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email }), mode: MODES.COMMIT, reason: 'approved from notification' },
-            );
-
-            // 2. Dismiss notification + tell the worker
-            await handleDismissTask(notif.id);
-            await notifyTaskApproved(notif);
-        } catch (err) {
-            console.error("Error approving task:", err);
-            setActionError("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
-        }
+        if (!taskId) return undefined;
+        setActionError(null);
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+        let prior = { status: null, isApproved: false }; // snapshotted in run, restored in undo
+        return runUndoable({
+            run: async () => {
+                const snap = await getDoc(doc(db, 'tasks', taskId));
+                if (snap.exists()) {
+                    const d = snap.data();
+                    prior = { status: d.status ?? null, isApproved: !!d.isApproved };
+                }
+                // Audited approveTask command — ADR 0015, increment 5 (prior state feeds its audit before/after).
+                await approveTask(
+                    { task: { id: taskId, title: notif.taskTitle, status: prior.status, isApproved: prior.isApproved } },
+                    { actor, mode: MODES.COMMIT, reason: 'approved from notification' },
+                );
+                await handleDismissTask(notif.id);
+            },
+            deferredEffect: () => notifyTaskApproved(notif),
+            undo: async () => {
+                await updateDoc(doc(db, 'tasks', taskId), {
+                    status: prior.status ?? 'pending',
+                    isApproved: prior.isApproved,
+                    approvedAt: null,
+                    approvedBy: null,
+                    updatedAt: new Date().toISOString(),
+                });
+                await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
+            },
+            message: 'Užduotis patvirtinta.',
+            undoneMessage: 'Atšaukta — patvirtinimas atšauktas.',
+            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite dar kartą.',
+        });
     };
 
     const handleEditAndApprove = async (notif) => {
@@ -313,46 +337,73 @@ export default function ManagerNotifications({ onClose }) {
         await notify({ recipientId: notif.userId, type: 'extension_denied', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
     };
 
-    // Batch-confirm every pending task completion in one action. Each completion is a simple,
-    // homogeneous, low-risk approval, so looping the existing per-item handler turns N taps into
-    // one. Reverts/edits/deletes stay per-card because they are the exception, not the rule.
-    const handleConfirmAllCompletions = async () => {
-        const completions = taskNotifications.filter(n => n.type === 'task_completion');
-        if (completions.length === 0) return;
-        setBulkConfirming(true);
-        setActionError(null);
-        try {
-            for (const n of completions) {
-                await handleConfirmCompletion(n);
-            }
-        } catch (err) {
-            console.error('Error confirming all completions:', err);
-            setActionError('Nepavyko patvirtinti visų užduočių. Bandykite dar kartą.');
-        } finally {
-            setBulkConfirming(false);
-        }
-    };
-
     // --- Task Completion Handlers ---
-    const handleConfirmCompletion = async (notif) => {
+    // State write only — confirm a finished task (completed -> confirmed). The worker "confirmed"
+    // ping is NOT sent here: it is deferred for the undo window (see below) so an undo never leaves a
+    // contradicted notification on the worker's phone. No toast either, so the single and the bulk
+    // handler share it (the bulk action shows ONE undo snackbar instead of N).
+    const confirmCompletionWrite = async (notif) => {
         const taskId = notif?.taskId;
         if (!taskId) return;
-        try {
-            setActionError(null);
-            await updateDoc(doc(db, 'tasks', taskId), {
-                status: 'confirmed',
-                isApproved: true,
-                confirmedBy: currentUser.uid,
-                confirmedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            });
-            await handleDismissTask(notif.id);
-            // Close the loop: tell the worker their finished task was confirmed.
-            await notify({ recipientId: notif.userId, type: 'task_confirmed', taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
-        } catch (err) {
-            console.error('Error confirming task completion:', err);
-            setActionError('Nepavyko patvirtinti užduoties. Bandykite dar kartą.');
-        }
+        const now = new Date().toISOString();
+        await updateDoc(doc(db, 'tasks', taskId), {
+            status: 'confirmed',
+            isApproved: true,
+            confirmedBy: currentUser.uid,
+            confirmedAt: now,
+            updatedAt: now
+        });
+        await handleDismissTask(notif.id);
+    };
+
+    // Deferred outbound ping — tell the worker their finished task was confirmed. Held for the undo
+    // window; skipped entirely if the manager undoes.
+    const notifyCompletionConfirmed = (notif) =>
+        notify({ recipientId: notif.userId, type: 'task_confirmed', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+
+    // Inverse — return a confirmed task to "awaiting confirmation" AND bring the manager's completion
+    // request back into the feed (the listener filters isRead==false). With the worker ping deferred,
+    // this is a fully clean undo: nothing the worker can see ever happened.
+    const undoConfirmCompletion = async (notif) => {
+        if (!notif?.taskId) return;
+        await updateDoc(doc(db, 'tasks', notif.taskId), {
+            status: 'completed',
+            confirmedBy: null,
+            confirmedAt: null,
+            updatedAt: new Date().toISOString()
+        });
+        await updateDoc(doc(db, 'request_notifications', notif.id), { isRead: false });
+    };
+
+    const handleConfirmCompletion = (notif) => {
+        if (!notif?.taskId) return undefined;
+        setActionError(null);
+        return runUndoable({
+            run: () => confirmCompletionWrite(notif),
+            deferredEffect: () => notifyCompletionConfirmed(notif),
+            undo: () => undoConfirmCompletion(notif),
+            message: 'Užduotis patvirtinta.',
+            undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
+            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite dar kartą.',
+        });
+    };
+
+    // Batch-confirm every pending task completion in one action — the single highest-risk one-tap in
+    // the bell (it signs off ALL finished work at once), so it gets ONE undo snackbar that reverses
+    // the whole batch, and the whole batch of worker pings is deferred together (cancelled on undo).
+    const handleConfirmAllCompletions = () => {
+        const completions = taskNotifications.filter(n => n.type === 'task_completion');
+        if (completions.length === 0) return undefined;
+        setActionError(null);
+        setBulkConfirming(true);
+        return runUndoable({
+            run: async () => { for (const n of completions) await confirmCompletionWrite(n); },
+            deferredEffect: async () => { for (const n of completions) await notifyCompletionConfirmed(n); },
+            undo: async () => { for (const n of completions) await undoConfirmCompletion(n); },
+            message: completions.length === 1 ? 'Užduotis patvirtinta.' : `Patvirtinta užduočių: ${completions.length}.`,
+            undoneMessage: 'Atšaukta — grąžinta patvirtinimui.',
+            errorMessage: 'Nepavyko patvirtinti visų užduočių. Bandykite dar kartą.',
+        }).finally(() => setBulkConfirming(false));
     };
 
     const handleRevertTask = async (notif) => {
