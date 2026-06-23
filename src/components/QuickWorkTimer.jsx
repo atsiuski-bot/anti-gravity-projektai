@@ -46,7 +46,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                     Įveskite atlikto darbo aprašymą
                 </p>
 
-                <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-red-200 flex items-center justify-between">
+                <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-session-quickWork-soft flex items-center justify-between">
                     <span className="text-session-quickWork-accent font-semibold text-body-lg">Užfiksuotas laikas:</span>
                     <span className="text-4xl font-mono font-bold text-session-quickWork-accent">{totalDisplay}</span>
                 </div>
@@ -281,7 +281,7 @@ export default function QuickWorkTimer({ compact = false }) {
                         isDisabled
                             ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
                             : isQuickWorking
-                                ? 'bg-session-quickWork-shell text-white ring-2 ring-red-200 shadow-lg shadow-red-500/20'
+                                ? 'bg-session-quickWork-shell text-white ring-2 ring-session-quickWork-soft shadow-lg shadow-session-quickWork-shell/20'
                                 : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
                     title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
@@ -320,7 +320,7 @@ export default function QuickWorkTimer({ compact = false }) {
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isQuickWorking
-                            ? 'bg-session-quickWork-surface border-red-200 text-red-900 ring-1 ring-red-200'
+                            ? 'bg-session-quickWork-surface border-session-quickWork-soft text-session-quickWork-accent ring-1 ring-session-quickWork-soft'
                             : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-line'
                 )}
                 title={isDisabled ? getInterruptionReason(activeSessionType) : ""}

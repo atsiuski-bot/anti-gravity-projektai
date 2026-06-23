@@ -1,15 +1,16 @@
 import { db } from '../firebase';
 import { doc, setDoc, getDoc, updateDoc, arrayUnion } from 'firebase/firestore';
-import { startOfWeek, format } from 'date-fns';
 import { formatDisplayName } from './formatters';
-import { getLithuanianNow } from './timeUtils';
+import { getLithuanianNow, getLithuanianWeekId } from './timeUtils';
 
 export const logCalendarChange = async (currentUser, type, start, end) => {
     const now = getLithuanianNow();
 
-    // Determine week start (Monday)
-    const weekStart = startOfWeek(now, { weekStartsOn: 1 });
-    const weekId = format(weekStart, 'yyyy-MM-dd');
+    // Week key = Monday of the Vilnius calendar week. MUST match the manager-side reader's key
+    // (ManagerNotifications), so both derive it from the same Vilnius-day helper rather than the
+    // browser-local date-fns week — otherwise two devices near the Monday boundary disagree and
+    // the notification silently never matches.
+    const weekId = getLithuanianWeekId(now);
     const docId = `${currentUser.uid}_${weekId}`;
 
     const change = {

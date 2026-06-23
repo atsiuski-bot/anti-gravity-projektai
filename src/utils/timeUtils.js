@@ -215,6 +215,30 @@ export const addDaysToDateString = (dateStr, days = 1) => {
 };
 
 /**
+ * Returns the Monday-of-week date string (YYYY-MM-DD) for the Vilnius calendar week that
+ * contains `date`. Both the writer (logCalendarChange) and the manager-side reader build the
+ * shared `${uid}_${weekId}` notification key from this, so it MUST be derived from the Vilnius
+ * day — NOT date-fns startOfWeek(new Date()), which buckets by the BROWSER's local week. Two
+ * devices in different timezones straddling the Monday boundary would otherwise compute
+ * different week strings and the notification document would never match (silent loss).
+ *
+ * Pure: the Vilnius calendar day via getLithuanianDateString, then UTC calendar arithmetic to
+ * step back to Monday. DST-independent and identical on every device regardless of its clock's
+ * timezone. (The weekday is read from the date-only string at UTC midnight, where getUTCDay()
+ * is just that calendar date's weekday: 0=Sunday … 6=Saturday.)
+ *
+ * @param {Date|string} [date=new Date()] - The instant whose Vilnius week is wanted.
+ * @returns {string} The week's Monday as a YYYY-MM-DD string.
+ */
+export const getLithuanianWeekId = (date = new Date()) => {
+    const todayStr = getLithuanianDateString(date);
+    const [y, m, d] = todayStr.split('-').map(Number);
+    const dayOfWeek = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun … 6=Sat
+    const daysSinceMonday = (dayOfWeek + 6) % 7; // Mon→0, Tue→1, … Sun→6
+    return addDaysToDateString(todayStr, -daysSinceMonday);
+};
+
+/**
  * Returns the weekday in Lithuanian (e.g. "Pirmadienis") according to Lithuania's time.
  */
 export const getLithuanianWeekday = (date = new Date()) => {

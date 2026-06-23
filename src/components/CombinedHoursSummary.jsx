@@ -266,7 +266,7 @@ export default function CombinedHoursSummary() {
                                             </span>
                                             <div className="flex-1 h-2 bg-surface-sunken rounded-full overflow-hidden relative">
                                                 <div
-                                                    className="absolute top-0 left-0 h-full bg-blue-300 rounded-full"
+                                                    className="absolute top-0 left-0 h-full bg-feedback-info rounded-full"
                                                     style={{ width: `${(user.plannedHours / combinedStats.max) * 100}%` }}
                                                 />
                                             </div>
