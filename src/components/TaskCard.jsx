@@ -97,7 +97,7 @@ function useOneLineActions() {
  * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the edit
  * button opens the create/edit form directly, bypassing the preview.
  */
-const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown }) => {
+const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown, onConfirmed, onReverted, onDeleted }) => {
     const { currentUser, userRole } = useAuth();
     const [activeModal, setActiveModal] = useState(null); // 'checklist' | 'timeAdjustments'
     const [showDetail, setShowDetail] = useState(false);
@@ -117,6 +117,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         try {
             await revertTask(task, currentUser);
             setConfirmRevert(false);
+            // Optional post-action hook: the notification feed dismisses its card and tells the
+            // worker their task came back for rework. Undefined (a no-op) in the plain task list.
+            await onReverted?.(task);
         } catch (err) {
             console.error('Error reverting task:', err);
             setRevertError('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
@@ -151,6 +154,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 updatedAt: now,
             });
             setConfirmComplete(false);
+            // Optional post-action hook: the notification feed dismisses its card and tells the
+            // worker their finished task was confirmed. Undefined (a no-op) in the plain task list.
+            await onConfirmed?.(task);
         } catch (err) {
             logError(err, { source: 'TaskCard.performConfirm' });
             setActionError('Nepavyko patvirtinti atlikimo. Bandykite dar kartą.');
@@ -232,6 +238,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
             setActionError('');
             await deleteTask(task, currentUser.uid, { keepWorkHours });
             setShowDeleteModal(false);
+            // Optional post-action hook: the notification feed dismisses its card. Undefined
+            // (a no-op) in the plain task list.
+            await onDeleted?.(task);
         } catch (err) {
             logError(err, { source: 'handler:deleteTask' });
             setActionError('Nepavyko ištrinti užduoties. Bandykite dar kartą.');
