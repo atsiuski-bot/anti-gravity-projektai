@@ -4,12 +4,12 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, Calendar, MessageSquare, Sparkles, User, Pencil } from 'lucide-react';
+import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, MessageSquare, Sparkles, User, Pencil } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { notify } from '../utils/notify';
-import { getPriorityOptions, getPriorityLabel, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
+import { getPriorityOptions, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
@@ -26,22 +26,18 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import DeletedBadge from './task/DeletedBadge';
 import TitleSuggestInput from './task/TitleSuggestInput';
+import TimeEstimatePicker from './TimeEstimatePicker';
 
-// Persistent field label — fields previously had only placeholders, which vanish on input
-// and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
-const fieldLabel = 'mt-4 mb-1 block text-body font-medium text-ink';
+// The four one-tap time chips on the form spine: the most common quick durations. Everything else
+// (and a free-text custom value) lives one tap away behind the "+" button → TimeEstimatePicker.
+const QUICK_TIME_CHIPS = ['15min', '30min', '1h', '2h'];
 
-// Fallback one-tap time chips for a user with no history yet: six round anchors spanning a quick
-// job to a full day, chosen to include the values that actually dominate real tasks (audit of 171
-// tasks: 2h/1h/3h/4h are all top-6; the old set 15min/30min/1h/2h/4h/8h had no 3h and forced
-// "Kita…" on >55% of timed tasks). The long tail (1,5h, 5h, 6h, multi-day) stays behind "Kita…".
-// Once the creator has history, useTaskSuggestions.topTimes puts THEIR most-used values first.
-const DEFAULT_TIME_CHIPS = ['30min', '1h', '2h', '3h', '4h', '8h'];
-
-// Full estimated-time scale, preserved from the original picker — revealed on demand.
+// Canonical scale used only to VALIDATE history-driven suggestions (per-title guess) so legacy
+// free-text never leaks into the suggestion chip. The selectable scale itself lives in
+// TimeEstimatePicker (TIME_PICKER_OPTIONS). 30h/60h were dropped from the offered options.
 const ALL_TIMES = [
     '5min', '15min', '30min', '45min', '1h', '1,5h', '2h', '2,5h', '3h', '4h', '5h', '6h',
-    '8h', '10h', '12h', '15h', '20h', '25h', '30h', '40h', '50h', '60h', '70h', '80h',
+    '7,5h', '8h', '10h', '12,5h', '12h', '15h', '20h', '25h', '40h', '50h', '70h', '80h',
     '90h', '100h', '110h', '120h', '150h', '200h'
 ];
 
@@ -149,7 +145,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     // Estimated-time picker: common values are one-tap chips; the full scale is revealed
     // on demand (or auto-revealed when the saved value isn't one of the common ones).
-    const [showTimeOther, setShowTimeOther] = useState(false);
+    const [timePickerOpen, setTimePickerOpen] = useState(false);
     // The assignee is self for ~2/3 of all tasks, so the picker stays collapsed behind a
     // "Keisti" affordance and only opens when assigning to someone else.
     const [showAssigneePicker, setShowAssigneePicker] = useState(false);
@@ -240,21 +236,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // History-driven create assistance: the creator's own past titles (type-ahead), their
     // most-used times (chip personalisation) and a per-title time guess. Loaded only while
     // CREATING (a single owner-scoped read; never on edit).
-    const { recentTitles, topTimes, suggestTimeForTitle, countSimilarTitles } = useTaskSuggestions({
+    const { recentTitles, suggestTimeForTitle, countSimilarTitles } = useTaskSuggestions({
         uid: currentUser?.uid,
         enabled: isOpen && !task,
     });
 
-    // The one-tap time chips: the user's own most-used values first (restricted to the canonical
-    // scale so legacy free-text like "1 val" never becomes a chip), then the data-driven defaults
-    // fill the row up to six (de-duplicated).
-    const timeChips = useMemo(() => {
-        const out = [];
-        const add = (t) => { if (t && !out.includes(t) && out.length < 6) out.push(t); };
-        topTimes.filter((t) => ALL_TIMES.includes(t)).forEach(add);
-        DEFAULT_TIME_CHIPS.forEach(add);
-        return out;
-    }, [topTimes]);
+    // The one-tap time chips on the spine are a FIXED quick-access subset; the full scale + a custom
+    // entry live behind the "+" button (TimeEstimatePicker).
+    const timeChips = QUICK_TIME_CHIPS;
 
     // A suggested time for the title being typed (create only), shown as a distinct chip the user
     // taps — never auto-written, so it informs without surprising. Restricted to the canonical
@@ -405,16 +394,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 description: !!task.description,
                 photos: photoCount > 0,
                 checklist: (task.checklist?.length || 0) > 0,
-                schedule: !!task.deadline,
+                schedule: !!task.managerId,
                 comment: (task.comments?.length || 0) > 0
             });
-            setShowTimeOther(!!task.estimatedTime && !DEFAULT_TIME_CHIPS.includes(task.estimatedTime));
+            setTimePickerOpen(false);
             // Reveal the assignee picker up-front when the task is already assigned to someone
             // other than the current user, so the manager can see/keep who it's on.
             setShowAssigneePicker(!!task.assignedUserId && task.assignedUserId !== currentUser?.uid);
         } else {
             setExpanded({ description: false, photos: false, checklist: false, schedule: false, comment: false });
-            setShowTimeOther(false);
+            setTimePickerOpen(false);
             setShowAssigneePicker(false);
         }
     }, [task, isOpen, currentUser]);
@@ -1083,15 +1072,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             </div>
 
                             {/* Estimated time — a per-title suggestion (when history has one) leads as a
-                                distinct chip; then the personalised one-tap values; the full scale stays
-                                one tap away behind "Kita…". */}
+                                distinct chip; then four one-tap quick durations; the full scale and a
+                                free-text custom value live one tap away behind the "+" picker. */}
                             <div>
                                 <span className="mb-1 block text-body font-medium text-ink">Planuojamas laikas</span>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                     {suggestedTime && formData.estimatedTime !== suggestedTime && (
                                         <button
                                             type="button"
-                                            onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: suggestedTime })); setShowTimeOther(false); }}
+                                            onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: suggestedTime })); setTimePickerOpen(false); }}
                                             disabled={fieldsLocked}
                                             aria-label={`Siūloma trukmė: ${suggestedTime}`}
                                             className="inline-flex items-center gap-1 min-h-touch rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
@@ -1108,7 +1097,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 <button
                                                     key={t}
                                                     type="button"
-                                                    onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: t })); setShowTimeOther(false); }}
+                                                    onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: t })); setTimePickerOpen(false); }}
                                                     disabled={fieldsLocked}
                                                     aria-pressed={active}
                                                     className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
@@ -1117,36 +1106,62 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 </button>
                                             );
                                         })}
+                                    {/* The current value when it is off the four quick chips (a "+"-picked or
+                                        custom duration) — shown as its own active chip so the choice stays visible;
+                                        tapping it reopens the picker. */}
                                     {(() => {
-                                        const valueInChips = timeChips.includes(formData.estimatedTime);
-                                        const otherActive = showTimeOther || (!!formData.estimatedTime && !valueInChips);
-                                        const showsValue = otherActive && !!formData.estimatedTime && !valueInChips;
+                                        const v = formData.estimatedTime;
+                                        const covered = !v || timeChips.includes(v) || (suggestedTime && v === suggestedTime);
+                                        if (covered) return null;
                                         return (
                                             <button
                                                 type="button"
-                                                onClick={() => setShowTimeOther((v) => !v)}
+                                                onClick={() => setTimePickerOpen(true)}
                                                 disabled={fieldsLocked}
-                                                aria-expanded={otherActive}
-                                                className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${otherActive ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink-muted hover:bg-surface-sunken'}`}
+                                                aria-pressed="true"
+                                                className="min-h-touch rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
                                             >
-                                                {showsValue ? formData.estimatedTime : 'Kita…'}
+                                                {v}
                                             </button>
                                         );
                                     })()}
-                                </div>
-                                {(showTimeOther || (!!formData.estimatedTime && !timeChips.includes(formData.estimatedTime))) && (
-                                    <Select
-                                        value={formData.estimatedTime}
-                                        onChange={(val) => setFormData({ ...formData, estimatedTime: val })}
+                                    {/* "+" opens the full scrollable scale + custom entry. */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setTimePickerOpen(true)}
                                         disabled={fieldsLocked}
-                                        options={ALL_TIMES.map((t) => ({ value: t, label: t }))}
-                                        label="Planuojamas laikas"
-                                        placeholder="Planuojamas laikas..."
-                                        ariaLabel="Planuojamas laikas (visi)"
-                                        alwaysSheet
-                                        className="mt-2"
-                                    />
-                                )}
+                                        aria-label="Pasirinkti kitą planuojamą laiką"
+                                        title="Daugiau…"
+                                        className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border border-line text-ink-muted transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                    >
+                                        <Plus className="h-5 w-5" aria-hidden="true" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <TimeEstimatePicker
+                                open={timePickerOpen}
+                                value={formData.estimatedTime}
+                                onSelect={(val) => setFormData((prev) => ({ ...prev, estimatedTime: val }))}
+                                onClose={() => setTimePickerOpen(false)}
+                            />
+
+                            {/* Deadline — promoted onto the spine, directly under the planned time (was buried
+                                in the collapsed "Daugiau" section). The text→date type swap keeps the native
+                                picker's placeholder readable until the field is focused. */}
+                            <div>
+                                <span className="mb-1 block text-body font-medium text-ink">Atlikti iki</span>
+                                <input
+                                    type={formData.deadline ? "date" : "text"}
+                                    value={formData.deadline}
+                                    onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                                    onFocus={(e) => e.target.type = 'date'}
+                                    onBlur={(e) => !e.target.value && (e.target.type = 'text')}
+                                    aria-label="Atlikti iki"
+                                    placeholder="Atlikti iki"
+                                    disabled={fieldsLocked}
+                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
+                                />
                             </div>
 
                             {/* Worker (assignee) — defaults to self and stays collapsed (~2/3 of tasks are
@@ -1206,9 +1221,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             {/* Priority — kept as the signature colour swatches but demoted below the two
                                 real decisions: ~65% of tasks never move it off the default (Vidutinis). */}
                             <div>
-                                <div className="mb-1 flex items-center justify-between">
+                                <div className="mb-1 flex items-center">
                                     <span className="text-body font-medium text-ink">Prioritetas</span>
-                                    <span className="text-sm text-ink-muted">{getPriorityLabel(formData.priority)}</span>
                                 </div>
                                 <div role="group" aria-label="Prioritetas" className="flex gap-1 rounded-lg border border-line p-1">
                                     {[...getPriorityOptions()].reverse().map((p) => {
@@ -1222,10 +1236,17 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 aria-label={p.label}
                                                 aria-pressed={active}
                                                 title={p.label}
-                                                className={`flex h-9 flex-1 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'ring-2 ring-brand' : 'ring-1 ring-line'}`}
+                                                className={`flex h-9 items-center justify-center gap-1 rounded-md px-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'flex-[2] ring-2 ring-brand' : 'flex-1 ring-1 ring-line'}`}
                                                 style={{ backgroundColor: getPriorityColor(p.id) }}
                                             >
-                                                {active && <Check className="h-4 w-4" style={{ color: getPriorityTextColor(p.id) }} aria-hidden="true" />}
+                                                {active && (
+                                                    <>
+                                                        <Check className="h-4 w-4 shrink-0" style={{ color: getPriorityTextColor(p.id) }} aria-hidden="true" />
+                                                        <span className="truncate text-caption font-medium" style={{ color: getPriorityTextColor(p.id) }}>
+                                                            {p.label}
+                                                        </span>
+                                                    </>
+                                                )}
                                             </button>
                                         );
                                     })}
@@ -1380,23 +1401,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         )}
                                     </AdvancedSection>
 
-                                    {/* Schedule — deadline + the manager/auditor. Both have sensible
-                                        defaults, so they live here rather than on the spine. */}
-                                    <AdvancedSection icon={Calendar} label="Terminas ir vadovas" count={formData.deadline ? 1 : 0} open={expanded.schedule} onToggle={() => toggleSection('schedule')}>
-                                        <span className="mb-1 block text-body font-medium text-ink">Atlikti iki</span>
-                                        <input
-                                            type={formData.deadline ? "date" : "text"}
-                                            value={formData.deadline}
-                                            onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-                                            onFocus={(e) => e.target.type = 'date'}
-                                            aria-label="Atlikti iki"
-                                            onBlur={(e) => !e.target.value && (e.target.type = 'text')}
-                                            placeholder="Atlikti iki"
-                                            disabled={fieldsLocked}
-                                            className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
-                                        />
-
-                                        <span className={fieldLabel}>Vadovas</span>
+                                    {/* Manager / auditor — has a sensible default, so it stays here rather
+                                        than on the spine. (The deadline was promoted up next to the planned
+                                        time.) */}
+                                    <AdvancedSection icon={User} label="Vadovas" count={formData.managerId ? 1 : 0} open={expanded.schedule} onToggle={() => toggleSection('schedule')}>
+                                        <span className="mb-1 block text-body font-medium text-ink">Vadovas</span>
                                         <Select
                                             value={formData.managerId}
                                             onChange={(val) => setFormData({ ...formData, managerId: val })}
