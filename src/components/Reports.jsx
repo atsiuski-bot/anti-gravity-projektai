@@ -6,7 +6,7 @@ import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from
 import { privateScopeConstraints } from '../utils/teamScope';
 import { absenceLabel } from '../utils/absence';
 import { addComment } from '../utils/commentActions';
-import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Download, Calendar, FileText } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -22,6 +22,7 @@ import AssigneeChip from './task/AssigneeChip';
 import TaskRow from './task/TaskRow';
 
 import DailyStatistics from './DailyStatistics';
+import ReportExportModal from './ReportExportModal';
 import { CommentsModal } from './TaskDetailsModals';
 import { useAuth } from '../context/AuthContext';
 import { TASK_TAGS } from '../utils/taskUtils';
@@ -68,6 +69,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
     // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
     const [reportPeriod, setReportPeriod] = useState('day'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
     const [periodOpen, setPeriodOpen] = useState(false);
+
+    // The rich "Atsisiųsti ataskaitą" modal (Markdown / JSON / CSV summary + per-worker selection).
+    // Manager-only (gated by canExport); owns its own period + worker scope, so it works in any mode.
+    const [exportModalOpen, setExportModalOpen] = useState(false);
 
     // --- TASKS REPORT STATE ---
     const [taskFilters, setTaskFilters] = useState({
@@ -1205,10 +1210,24 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 icon={Download}
                                 onClick={handleExportHoursCSV}
                                 disabled={loading || workData.length === 0}
-                                aria-label="Eksportuoti CSV"
+                                aria-label="Eksportuoti valandų CSV (val. per dieną)"
                                 className="shrink-0 px-3 sm:px-4"
                             >
-                                <span className="hidden sm:inline">Eksportuoti CSV</span>
+                                <span className="hidden sm:inline">CSV (val./diena)</span>
+                            </Button>
+                        )}
+                        {/* Rich export: Markdown for an LLM / JSON / per-worker CSV, with a worker
+                            subset picker. Manager-only; the modal owns its own period + scope, so it
+                            is offered in every mode (including 'day'). */}
+                        {canExport && (
+                            <Button
+                                variant="primary"
+                                icon={FileText}
+                                onClick={() => setExportModalOpen(true)}
+                                aria-label="Atsisiųsti ataskaitą (AI / JSON / CSV)"
+                                className="shrink-0 px-3 sm:px-4"
+                            >
+                                <span className="hidden sm:inline">Ataskaita</span>
                             </Button>
                         )}
                     </div>
@@ -1259,6 +1278,16 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             dateRange={dateRange}
                             view={isManagerRole(userRole) ? 'hours' : 'full'}
                             showTestUsers={showTestUsers}
+                        />
+                    )}
+
+                    {canExport && (
+                        <ReportExportModal
+                            open={exportModalOpen}
+                            onClose={() => setExportModalOpen(false)}
+                            users={users}
+                            scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
+                            defaultRange={{ start: dateRange.start, end: dateRange.end }}
                         />
                     )}
                 </div>
