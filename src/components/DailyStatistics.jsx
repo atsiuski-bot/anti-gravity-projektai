@@ -1800,7 +1800,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
             {(task.managerName || task.creatorName) && (
                 <div className="text-caption text-ink-muted mb-2 flex items-center gap-1">
                     <User className="w-3 h-3" />
-                    <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
+                    <span>Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                 </div>
             )}
 
@@ -2039,7 +2039,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                     {(task.managerName || task.creatorName) && (
                                                         <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                             <User className="w-2.5 h-2.5" />
-                                                            <span>Vadovas: <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
+                                                            <span>Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                                         </div>
                                                     )}
                                                 </>

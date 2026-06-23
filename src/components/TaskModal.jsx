@@ -4,14 +4,14 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, Calendar, MessageSquare, Sparkles, User, Pencil } from 'lucide-react';
+import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, MessageSquare, Sparkles, User, Pencil, LayoutTemplate } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { notify } from '../utils/notify';
 import { logError } from '../utils/errorLog';
 import { assignTask, createTask, humanActor, MODES } from '../domain';
-import { getPriorityOptions, getPriorityLabel, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
+import { getPriorityOptions, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
 import { compressImage } from '../utils/imageUtils';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes } from '../utils/timeUtils';
@@ -28,22 +28,18 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import DeletedBadge from './task/DeletedBadge';
 import TitleSuggestInput from './task/TitleSuggestInput';
+import TimeEstimatePicker from './TimeEstimatePicker';
 
-// Persistent field label — fields previously had only placeholders, which vanish on input
-// and leave a picked <select> value meaningless (DESIGN_SYSTEM §8, audit per-screen).
-const fieldLabel = 'mt-4 mb-1 block text-body font-medium text-ink';
+// The four one-tap time chips on the form spine: the most common quick durations. Everything else
+// (and a free-text custom value) lives one tap away behind the "+" button → TimeEstimatePicker.
+const QUICK_TIME_CHIPS = ['15min', '30min', '1h', '2h'];
 
-// Fallback one-tap time chips for a user with no history yet: six round anchors spanning a quick
-// job to a full day, chosen to include the values that actually dominate real tasks (audit of 171
-// tasks: 2h/1h/3h/4h are all top-6; the old set 15min/30min/1h/2h/4h/8h had no 3h and forced
-// "Kita…" on >55% of timed tasks). The long tail (1,5h, 5h, 6h, multi-day) stays behind "Kita…".
-// Once the creator has history, useTaskSuggestions.topTimes puts THEIR most-used values first.
-const DEFAULT_TIME_CHIPS = ['30min', '1h', '2h', '3h', '4h', '8h'];
-
-// Full estimated-time scale, preserved from the original picker — revealed on demand.
+// Canonical scale used only to VALIDATE history-driven suggestions (per-title guess) so legacy
+// free-text never leaks into the suggestion chip. The selectable scale itself lives in
+// TimeEstimatePicker (TIME_PICKER_OPTIONS). 30h/60h were dropped from the offered options.
 const ALL_TIMES = [
     '5min', '15min', '30min', '45min', '1h', '1,5h', '2h', '2,5h', '3h', '4h', '5h', '6h',
-    '8h', '10h', '12h', '15h', '20h', '25h', '30h', '40h', '50h', '60h', '70h', '80h',
+    '7,5h', '8h', '10h', '12,5h', '12h', '15h', '20h', '25h', '40h', '50h', '70h', '80h',
     '90h', '100h', '110h', '120h', '150h', '200h'
 ];
 
@@ -151,7 +147,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
 
     // Estimated-time picker: common values are one-tap chips; the full scale is revealed
     // on demand (or auto-revealed when the saved value isn't one of the common ones).
-    const [showTimeOther, setShowTimeOther] = useState(false);
+    const [timePickerOpen, setTimePickerOpen] = useState(false);
     // The assignee is self for ~2/3 of all tasks, so the picker stays collapsed behind a
     // "Keisti" affordance and only opens when assigning to someone else.
     const [showAssigneePicker, setShowAssigneePicker] = useState(false);
@@ -174,6 +170,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     const [templateSuggestion, setTemplateSuggestion] = useState(null);
     // Category chosen in the save view (empty = let it be inferred from the title on save).
     const [templateCategory, setTemplateCategory] = useState('');
+    // The browse/manage hub: lists existing templates (apply / edit / delete) and offers
+    // "save current as template". Replaces the old header loader + the inline list in the save view.
+    const [isPickingTemplate, setIsPickingTemplate] = useState(false);
+    // When set, the save view is editing THIS existing template (update by id) rather than
+    // creating a new one; `templateEditData` holds that template's stored field values so the
+    // field checkboxes act on the template's own data, not the in-progress task form.
+    const [editingTemplateId, setEditingTemplateId] = useState(null);
+    const [templateEditData, setTemplateEditData] = useState(null);
     const [selectedTemplateFields, setSelectedTemplateFields] = useState({
         title: true,
         priority: true,
@@ -209,24 +213,23 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         });
     }, [templates, workers]);
 
-    // Loader options grouped under category section headings (Select renders `isGroup` rows as
-    // non-selectable headers). Category order follows TEMPLATE_CATEGORIES; empty ones are omitted;
-    // within a category templates keep the sortedTemplates order.
-    const groupedTemplateOptions = useMemo(() => {
+    // Templates grouped under their category for the picker hub. Category order follows
+    // TEMPLATE_CATEGORIES; empty categories are omitted; within a category templates keep the
+    // sortedTemplates order. Full template objects are kept so each row can apply / edit / delete.
+    const groupedTemplates = useMemo(() => {
         const byCat = new Map();
         for (const t of sortedTemplates) {
             const cat = getTemplateCategory(t);
             if (!byCat.has(cat)) byCat.set(cat, []);
             byCat.get(cat).push(t);
         }
-        const opts = [];
+        const groups = [];
         for (const { id, label } of TEMPLATE_CATEGORIES) {
             const items = byCat.get(id);
             if (!items || items.length === 0) continue;
-            opts.push({ isGroup: true, label });
-            for (const t of items) opts.push({ value: t.id, label: t.templateName });
+            groups.push({ id, label, items });
         }
-        return opts;
+        return groups;
     }, [sortedTemplates]);
 
     const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.role === 'seniorManager' || w.id === currentUser.uid);
@@ -242,21 +245,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // History-driven create assistance: the creator's own past titles (type-ahead), their
     // most-used times (chip personalisation) and a per-title time guess. Loaded only while
     // CREATING (a single owner-scoped read; never on edit).
-    const { recentTitles, topTimes, suggestTimeForTitle, countSimilarTitles } = useTaskSuggestions({
+    const { recentTitles, suggestTimeForTitle, countSimilarTitles } = useTaskSuggestions({
         uid: currentUser?.uid,
         enabled: isOpen && !task,
     });
 
-    // The one-tap time chips: the user's own most-used values first (restricted to the canonical
-    // scale so legacy free-text like "1 val" never becomes a chip), then the data-driven defaults
-    // fill the row up to six (de-duplicated).
-    const timeChips = useMemo(() => {
-        const out = [];
-        const add = (t) => { if (t && !out.includes(t) && out.length < 6) out.push(t); };
-        topTimes.filter((t) => ALL_TIMES.includes(t)).forEach(add);
-        DEFAULT_TIME_CHIPS.forEach(add);
-        return out;
-    }, [topTimes]);
+    // The one-tap time chips on the spine are a FIXED quick-access subset; the full scale + a custom
+    // entry live behind the "+" button (TimeEstimatePicker).
+    const timeChips = QUICK_TIME_CHIPS;
 
     // A suggested time for the title being typed (create only), shown as a distinct chip the user
     // taps — never auto-written, so it informs without surprising. Restricted to the canonical
@@ -407,16 +403,16 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 description: !!task.description,
                 photos: photoCount > 0,
                 checklist: (task.checklist?.length || 0) > 0,
-                schedule: !!task.deadline,
+                schedule: !!task.managerId,
                 comment: (task.comments?.length || 0) > 0
             });
-            setShowTimeOther(!!task.estimatedTime && !DEFAULT_TIME_CHIPS.includes(task.estimatedTime));
+            setTimePickerOpen(false);
             // Reveal the assignee picker up-front when the task is already assigned to someone
             // other than the current user, so the manager can see/keep who it's on.
             setShowAssigneePicker(!!task.assignedUserId && task.assignedUserId !== currentUser?.uid);
         } else {
             setExpanded({ description: false, photos: false, checklist: false, schedule: false, comment: false });
-            setShowTimeOther(false);
+            setTimePickerOpen(false);
             setShowAssigneePicker(false);
         }
     }, [task, isOpen, currentUser]);
@@ -453,12 +449,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         if (data.assignedUserId && data.assignedUserId !== currentUser?.uid) setShowAssigneePicker(true);
     };
 
-    const handleLoadTemplate = (templateId) => {
-        const template = templates.find(t => t.id === templateId);
-        handleApplyTemplate(template);
-    };
-
     const handleSaveTemplateClick = () => {
+        setFormError('');
+        // Saving the CURRENT task as a brand-new template — not editing an existing one.
+        setEditingTemplateId(null);
+        setTemplateEditData(null);
         setIsSavingTemplate(true);
         // IMPORTANT: Clear the template name so users can type a new one or select existing
         setTemplateName('');
@@ -482,6 +477,47 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         setTemplateToDelete({ id: templateId, name });
     };
 
+    // Open the save view in EDIT mode for an existing template: seed the name, category and
+    // field checkboxes from the template's own stored data. The checkboxes act on
+    // `templateEditData` (the template's values), so the manager re-chooses which parts the
+    // template carries without touching the in-progress task form.
+    const handleEditTemplate = (template) => {
+        if (!template) return;
+        setFormError('');
+        const data = template.data || {};
+        // Legacy templates stored the assignee under `assignedWorkerId`; normalise so the
+        // checkbox + saved value both use the canonical key.
+        const editData = { ...data };
+        if (editData.assignedUserId === undefined && editData.assignedWorkerId !== undefined) {
+            editData.assignedUserId = editData.assignedWorkerId;
+        }
+        delete editData.assignedWorkerId;
+        const has = (v) => v !== undefined && v !== '' && v !== null;
+        setEditingTemplateId(template.id);
+        setTemplateEditData(editData);
+        setTemplateName(template.templateName || '');
+        setTemplateCategory(getTemplateCategory(template));
+        setSelectedTemplateFields({
+            title: has(editData.title),
+            priority: has(editData.priority),
+            estimatedTime: has(editData.estimatedTime),
+            description: has(editData.description),
+            assignedUserId: has(editData.assignedUserId),
+            managerId: has(editData.managerId),
+            deadline: has(editData.deadline),
+        });
+        setIsPickingTemplate(false);
+        setIsSavingTemplate(true);
+    };
+
+    // Leave the save view, clearing any edit context, and return to the task form.
+    const closeTemplateSaveView = () => {
+        setIsSavingTemplate(false);
+        setEditingTemplateId(null);
+        setTemplateEditData(null);
+        setFormError('');
+    };
+
     const confirmDeleteTemplate = async () => {
         if (!templateToDelete) return;
         try {
@@ -495,12 +531,14 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         }
     };
 
-    const buildTemplateData = () => {
+    // Build the template's `data` from the checked fields. The source is the in-progress task
+    // form when creating, or the template's own stored values when editing. Undefined values are
+    // skipped so Firestore never receives an undefined field.
+    const buildTemplateData = (source = formData) => {
         const dataToSave = {};
-        // Copy only selected fields
         Object.keys(selectedTemplateFields).forEach(key => {
-            if (selectedTemplateFields[key]) {
-                dataToSave[key] = formData[key];
+            if (selectedTemplateFields[key] && source[key] !== undefined) {
+                dataToSave[key] = source[key];
             }
         });
         return dataToSave;
@@ -510,6 +548,29 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         setFormError('');
         if (!templateName.trim()) {
             setFormError('Prašome įvesti šablono pavadinimą!');
+            return;
+        }
+
+        // EDIT mode — update the same template in place (a rename to an existing name is allowed;
+        // it simply renames this one). Field values come from the template's own stored data.
+        if (editingTemplateId) {
+            setLoading(true);
+            try {
+                await updateTaskTemplate(
+                    editingTemplateId,
+                    templateName,
+                    buildTemplateData(templateEditData || {}),
+                    currentUser,
+                    templateCategory || inferTemplateCategory({ templateName, data: { title: templateName } })
+                );
+                await fetchTemplates();
+                closeTemplateSaveView();
+            } catch (error) {
+                console.error("Failed to update template", error);
+                setFormError('Nepavyko atnaujinti šablono. Bandykite dar kartą.');
+            } finally {
+                setLoading(false);
+            }
             return;
         }
 
@@ -936,6 +997,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
             rememberDismissedTitle(templateSuggestion.title);
             setTemplateSuggestion(null);
         }
+        // Drop any open template hub / edit context so it never reappears on the next open.
+        setIsPickingTemplate(false);
+        setEditingTemplateId(null);
+        setTemplateEditData(null);
         onClose();
     };
 
@@ -1002,7 +1067,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-b border-line flex-shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
                         <h2 id="task-modal-title" className="text-lg font-bold text-ink-strong truncate min-w-0">
-                            {isSavingTemplate ? 'Išsaugoti šabloną' : (task ? 'Redaguoti užduotį' : 'Naujas darbas')}
+                            {isSavingTemplate ? (editingTemplateId ? 'Redaguoti šabloną' : 'Išsaugoti šabloną') : (task ? 'Redaguoti užduotį' : 'Naujas darbas')}
                         </h2>
                         {/* Read-only status — the form previously showed none; now it carries the same
                             Patvirtinta / Nepatvirtinta / Ištrinta the task shows on every other surface. */}
@@ -1014,16 +1079,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                     </div>
                     <div className="flex items-center gap-1 min-w-0">
                         {!isSavingTemplate && !task && isManagerRole(role) && templates.length > 0 && (
-                            <Select
-                                value=""
-                                onChange={handleLoadTemplate}
-                                options={groupedTemplateOptions}
-                                label="Šablonai"
-                                placeholder="Užkrauti šabloną..."
-                                ariaLabel="Užkrauti šabloną"
-                                alwaysSheet
-                                className="min-w-0 max-w-[10rem]"
-                            />
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setIsPickingTemplate(true)}
+                                title="Peržiūrėti, užkrauti, keisti ar ištrinti šablonus"
+                            >
+                                <LayoutTemplate className="h-4 w-4" aria-hidden="true" />
+                                Šablonai
+                            </Button>
                         )}
                         <IconButton icon={X} label="Uždaryti" onClick={handleClose} className="-mr-1.5" />
                     </div>
@@ -1063,30 +1127,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     aria-label="Šablono pavadinimas"
                                     className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand"
                                 />
-                                {templates.length > 0 && (
-                                    <div className="mt-3">
-                                        <p className="text-xs text-ink-muted mb-1">Egzistuojantys šablonai (paspauskite norėdami pasirinkti):</p>
-                                        <div className="max-h-40 overflow-y-auto border border-line rounded-lg bg-surface-sunken">
-                                            {sortedTemplates.map(t => (
-                                                <div key={t.id} className="flex justify-between items-center p-2 hover:bg-surface-sunken border-b last:border-b-0 border-line transition-colors">
-                                                    <button
-                                                        type="button"
-                                                        onClick={() => setTemplateName(t.templateName)}
-                                                        className="min-h-touch text-sm text-left flex-1 truncate text-ink hover:text-brand font-medium rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                                    >
-                                                        {t.templateName}
-                                                    </button>
-                                                    <IconButton
-                                                        icon={Trash2}
-                                                        label="Ištrinti šabloną"
-                                                        variant="danger"
-                                                        onClick={() => handleDeleteTemplate(t.id, t.templateName)}
-                                                    />
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
                             </div>
                             <div>
                                 <span className="mb-1 block text-body font-medium text-ink">Kategorija</span>
@@ -1145,15 +1185,15 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             </div>
 
                             {/* Estimated time — a per-title suggestion (when history has one) leads as a
-                                distinct chip; then the personalised one-tap values; the full scale stays
-                                one tap away behind "Kita…". */}
+                                distinct chip; then four one-tap quick durations; the full scale and a
+                                free-text custom value live one tap away behind the "+" picker. */}
                             <div>
                                 <span className="mb-1 block text-body font-medium text-ink">Planuojamas laikas</span>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                     {suggestedTime && formData.estimatedTime !== suggestedTime && (
                                         <button
                                             type="button"
-                                            onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: suggestedTime })); setShowTimeOther(false); }}
+                                            onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: suggestedTime })); setTimePickerOpen(false); }}
                                             disabled={fieldsLocked}
                                             aria-label={`Siūloma trukmė: ${suggestedTime}`}
                                             className="inline-flex items-center gap-1 min-h-touch rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
@@ -1170,7 +1210,7 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 <button
                                                     key={t}
                                                     type="button"
-                                                    onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: t })); setShowTimeOther(false); }}
+                                                    onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: t })); setTimePickerOpen(false); }}
                                                     disabled={fieldsLocked}
                                                     aria-pressed={active}
                                                     className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
@@ -1179,36 +1219,62 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 </button>
                                             );
                                         })}
+                                    {/* The current value when it is off the four quick chips (a "+"-picked or
+                                        custom duration) — shown as its own active chip so the choice stays visible;
+                                        tapping it reopens the picker. */}
                                     {(() => {
-                                        const valueInChips = timeChips.includes(formData.estimatedTime);
-                                        const otherActive = showTimeOther || (!!formData.estimatedTime && !valueInChips);
-                                        const showsValue = otherActive && !!formData.estimatedTime && !valueInChips;
+                                        const v = formData.estimatedTime;
+                                        const covered = !v || timeChips.includes(v) || (suggestedTime && v === suggestedTime);
+                                        if (covered) return null;
                                         return (
                                             <button
                                                 type="button"
-                                                onClick={() => setShowTimeOther((v) => !v)}
+                                                onClick={() => setTimePickerOpen(true)}
                                                 disabled={fieldsLocked}
-                                                aria-expanded={otherActive}
-                                                className={`min-h-touch rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${otherActive ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink-muted hover:bg-surface-sunken'}`}
+                                                aria-pressed="true"
+                                                className="min-h-touch rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
                                             >
-                                                {showsValue ? formData.estimatedTime : 'Kita…'}
+                                                {v}
                                             </button>
                                         );
                                     })()}
-                                </div>
-                                {(showTimeOther || (!!formData.estimatedTime && !timeChips.includes(formData.estimatedTime))) && (
-                                    <Select
-                                        value={formData.estimatedTime}
-                                        onChange={(val) => setFormData({ ...formData, estimatedTime: val })}
+                                    {/* "+" opens the full scrollable scale + custom entry. */}
+                                    <button
+                                        type="button"
+                                        onClick={() => setTimePickerOpen(true)}
                                         disabled={fieldsLocked}
-                                        options={ALL_TIMES.map((t) => ({ value: t, label: t }))}
-                                        label="Planuojamas laikas"
-                                        placeholder="Planuojamas laikas..."
-                                        ariaLabel="Planuojamas laikas (visi)"
-                                        alwaysSheet
-                                        className="mt-2"
-                                    />
-                                )}
+                                        aria-label="Pasirinkti kitą planuojamą laiką"
+                                        title="Daugiau…"
+                                        className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border border-line text-ink-muted transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                    >
+                                        <Plus className="h-5 w-5" aria-hidden="true" />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <TimeEstimatePicker
+                                open={timePickerOpen}
+                                value={formData.estimatedTime}
+                                onSelect={(val) => setFormData((prev) => ({ ...prev, estimatedTime: val }))}
+                                onClose={() => setTimePickerOpen(false)}
+                            />
+
+                            {/* Deadline — promoted onto the spine, directly under the planned time (was buried
+                                in the collapsed "Daugiau" section). The text→date type swap keeps the native
+                                picker's placeholder readable until the field is focused. */}
+                            <div>
+                                <span className="mb-1 block text-body font-medium text-ink">Atlikti iki</span>
+                                <input
+                                    type={formData.deadline ? "date" : "text"}
+                                    value={formData.deadline}
+                                    onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                                    onFocus={(e) => e.target.type = 'date'}
+                                    onBlur={(e) => !e.target.value && (e.target.type = 'text')}
+                                    aria-label="Atlikti iki"
+                                    placeholder="Atlikti iki"
+                                    disabled={fieldsLocked}
+                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
+                                />
                             </div>
 
                             {/* Worker (assignee) — defaults to self and stays collapsed (~2/3 of tasks are
@@ -1268,9 +1334,8 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             {/* Priority — kept as the signature colour swatches but demoted below the two
                                 real decisions: ~65% of tasks never move it off the default (Vidutinis). */}
                             <div>
-                                <div className="mb-1 flex items-center justify-between">
+                                <div className="mb-1 flex items-center">
                                     <span className="text-body font-medium text-ink">Prioritetas</span>
-                                    <span className="text-sm text-ink-muted">{getPriorityLabel(formData.priority)}</span>
                                 </div>
                                 <div role="group" aria-label="Prioritetas" className="flex gap-1 rounded-lg border border-line p-1">
                                     {[...getPriorityOptions()].reverse().map((p) => {
@@ -1284,10 +1349,17 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 aria-label={p.label}
                                                 aria-pressed={active}
                                                 title={p.label}
-                                                className={`flex h-9 flex-1 items-center justify-center rounded-md transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'ring-2 ring-brand' : 'ring-1 ring-line'}`}
+                                                className={`flex h-9 items-center justify-center gap-1 rounded-md px-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'flex-[2] ring-2 ring-brand' : 'flex-1 ring-1 ring-line'}`}
                                                 style={{ backgroundColor: getPriorityColor(p.id) }}
                                             >
-                                                {active && <Check className="h-4 w-4" style={{ color: getPriorityTextColor(p.id) }} aria-hidden="true" />}
+                                                {active && (
+                                                    <>
+                                                        <Check className="h-4 w-4 shrink-0" style={{ color: getPriorityTextColor(p.id) }} aria-hidden="true" />
+                                                        <span className="truncate text-caption font-medium" style={{ color: getPriorityTextColor(p.id) }}>
+                                                            {p.label}
+                                                        </span>
+                                                    </>
+                                                )}
                                             </button>
                                         );
                                     })}
@@ -1442,23 +1514,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                         )}
                                     </AdvancedSection>
 
-                                    {/* Schedule — deadline + the manager/auditor. Both have sensible
-                                        defaults, so they live here rather than on the spine. */}
-                                    <AdvancedSection icon={Calendar} label="Terminas ir vadovas" count={formData.deadline ? 1 : 0} open={expanded.schedule} onToggle={() => toggleSection('schedule')}>
-                                        <span className="mb-1 block text-body font-medium text-ink">Atlikti iki</span>
-                                        <input
-                                            type={formData.deadline ? "date" : "text"}
-                                            value={formData.deadline}
-                                            onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-                                            onFocus={(e) => e.target.type = 'date'}
-                                            aria-label="Atlikti iki"
-                                            onBlur={(e) => !e.target.value && (e.target.type = 'text')}
-                                            placeholder="Atlikti iki"
-                                            disabled={fieldsLocked}
-                                            className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
-                                        />
-
-                                        <span className={fieldLabel}>Vadovas</span>
+                                    {/* Manager / auditor — has a sensible default, so it stays here rather
+                                        than on the spine. (The deadline was promoted up next to the planned
+                                        time.) */}
+                                    <AdvancedSection icon={User} label="Vadovas" count={formData.managerId ? 1 : 0} open={expanded.schedule} onToggle={() => toggleSection('schedule')}>
+                                        <span className="mb-1 block text-body font-medium text-ink">Vadovas</span>
                                         <Select
                                             value={formData.managerId}
                                             onChange={(val) => setFormData({ ...formData, managerId: val })}
@@ -1529,12 +1589,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             <Button
                                 variant="secondary"
                                 size="md"
-                                onClick={() => (templateSuggestion ? handleClose() : setIsSavingTemplate(false))}
+                                onClick={() => (templateSuggestion ? handleClose() : closeTemplateSaveView())}
                             >
                                 {templateSuggestion ? 'Ne, ačiū' : 'Atšaukti'}
                             </Button>
                             <Button variant="primary" size="md" onClick={handleConfirmSaveTemplate} loading={loading}>
-                                Išsaugoti šabloną
+                                {editingTemplateId ? 'Atnaujinti šabloną' : 'Išsaugoti šabloną'}
                             </Button>
                         </>
                     ) : (
@@ -1544,9 +1604,10 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                     <Button
                                         variant="ghost"
                                         size="md"
-                                        onClick={handleSaveTemplateClick}
-                                        title="Išsaugoti, keisti ar ištrinti šabloną"
+                                        onClick={() => setIsPickingTemplate(true)}
+                                        title="Peržiūrėti, išsaugoti, keisti ar ištrinti šablonus"
                                     >
+                                        <LayoutTemplate className="h-4 w-4" aria-hidden="true" />
                                         Šablonai
                                     </Button>
                                 )}
@@ -1560,6 +1621,71 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                         </>
                     )}
                 </div>
+
+                {/* Template hub — browse existing templates (apply / edit / delete) and save the
+                    current task as a new one. Rendered as a sibling portal after the task modal, so
+                    its scrim layers above the task card; the delete confirm renders after it in turn
+                    and so stacks above the hub (same z-level, later in the DOM wins). */}
+                <Modal
+                    open={isPickingTemplate}
+                    onClose={() => setIsPickingTemplate(false)}
+                    title="Šablonai"
+                    size="md"
+                >
+                    <div className="space-y-5">
+                        <Button
+                            variant="secondary"
+                            size="md"
+                            fullWidth
+                            onClick={() => { setIsPickingTemplate(false); handleSaveTemplateClick(); }}
+                        >
+                            <Plus className="h-4 w-4" aria-hidden="true" />
+                            Išsaugoti dabartinį darbą kaip šabloną
+                        </Button>
+
+                        {groupedTemplates.length === 0 ? (
+                            <p className="py-6 text-center text-body text-ink-muted">
+                                Šablonų dar nėra. Išsaugokite dabartinį darbą kaip šabloną, kad kitą kartą būtų greičiau.
+                            </p>
+                        ) : (
+                            <div className="space-y-4">
+                                {groupedTemplates.map((group) => (
+                                    <div key={group.id}>
+                                        <p className="px-1 pb-1 text-caption font-semibold uppercase tracking-wide text-ink-muted">
+                                            {group.label}
+                                        </p>
+                                        <ul className="divide-y divide-line overflow-hidden rounded-card border border-line">
+                                            {group.items.map((t) => (
+                                                <li key={t.id} className="flex items-center gap-1 pr-1">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => { handleApplyTemplate(t); setIsPickingTemplate(false); }}
+                                                        className="min-h-touch flex-1 truncate rounded px-3 py-2.5 text-left text-body text-ink hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                                        title={`Užkrauti šabloną „${t.templateName}“`}
+                                                    >
+                                                        {t.templateName}
+                                                    </button>
+                                                    <IconButton
+                                                        icon={Pencil}
+                                                        label="Redaguoti šabloną"
+                                                        variant="ghost"
+                                                        onClick={() => handleEditTemplate(t)}
+                                                    />
+                                                    <IconButton
+                                                        icon={Trash2}
+                                                        label="Ištrinti šabloną"
+                                                        variant="danger"
+                                                        onClick={() => handleDeleteTemplate(t.id, t.templateName)}
+                                                    />
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                </Modal>
 
                 <ConfirmDialog
                     open={!!templateToDelete}
