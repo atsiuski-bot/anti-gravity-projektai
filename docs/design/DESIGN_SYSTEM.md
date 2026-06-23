@@ -259,6 +259,35 @@ Each replaces a cluster of today's copy-pasted variants (see
   two-per-row (e.g. Komandos darbai — `[Vykdytojas | Rūšiavimas]` over `[Prioritetas | Žyma]`),
   collapsing to one inline row from `lg+`.
 
+### Task people — `AssigneeChip` · `UserChip` · `PersonSelect`
+
+A task always has two people: the **Vykdytojas** (assignee — who does the work) and the
+**Vadovas** (manager/auditor — who oversees and signs it off). They are **one visual language**
+across the whole app: a person reads the **same — avatar + formatted name at one calm size
+(`caption` weight)** — whether you are *looking at* them or *choosing* them. There are exactly
+three components; never render a bare assignee/manager name or hand-roll a name dropdown.
+
+- **Showing — `AssigneeChip`** ([src](../../src/components/task/AssigneeChip.jsx)) for the
+  assignee: a small **leading dot in the worker's identity colour** + avatar + name. The colour
+  belongs to the *doer* (the same colour the session cards and calendar use) and is paired with
+  the avatar/name, so colour is never the only signal.
+- **Showing — `UserChip`** ([src](../../src/components/UserChip.jsx)) for the manager, preceded
+  by the short literal label **`Vad.`**: avatar + name, **no colour dot** (the overseer carries
+  no worker colour). The same chip renders any other person (comment author, notification actor).
+- **Choosing — `PersonSelect`** ([src](../../src/components/ui/PersonSelect.jsx)): the **one** way
+  a person is picked. It wraps `Select` so the **avatar + name show on the trigger AND in every
+  option row**, mirroring the chips above — picking someone looks like the someone you picked.
+  Use it for the assignee picker, the Vadovas picker, and any future person field.
+
+Binding rules:
+- Names **always** run through `formatDisplayName` ("Jonas Kazlauskas" → "Jonas K."), everywhere,
+  so the picker and the cards agree. Avatars resolve from the live users map (fresh photo/name).
+- All three are **clickable → profile** when a uid is known, and **degrade to static text**
+  (still with the avatar) when only a legacy name is carried.
+- On the **create/edit form** the assignee and the Vadovas sit **side by side on one row**, each a
+  `PersonSelect`; a non-manager sees their own name read-only in the same box shape. Defaults:
+  assignee = self; manager = the creator's default manager, or the creating manager themselves.
+
 ### `StatusPill` / `Badge`
 - One pill: `radius.full`, `caption` text, consistent padding. **Color-coded by state**
   (pending / running / done / waiting), not a single neutral gray for everything. Status
@@ -337,6 +366,8 @@ Each replaces a cluster of today's copy-pasted variants (see
 - [ ] Reused the canonical component (§8) instead of a new bespoke shell.
 - [ ] Single-choice controls use `Select` (§8), never a raw `<select>` or a hand-rolled menu;
   the field/category label is the panel heading, not the first option.
+- [ ] A task's people use the §8 "Task people" standard — `AssigneeChip` / `UserChip` to show,
+  `PersonSelect` to choose; never a bare assignee/manager name or a plain `Select` of names.
 - [ ] Motion (if any) uses a §12 utility, animates only `transform`/`opacity`, and is covered by
   the reduced-motion guard. No bounce/elastic, no animated layout properties, no new ambient loop
   where one already exists in that region.

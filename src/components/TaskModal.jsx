@@ -4,7 +4,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, MessageSquare, Sparkles, User, Pencil, LayoutTemplate } from 'lucide-react';
+import { X, Plus, Trash2, Clock, Camera, CheckSquare, Square, Check, ChevronDown, AlignLeft, MessageSquare, Sparkles, Pencil, LayoutTemplate } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
@@ -25,6 +25,8 @@ import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
 import Select from './ui/Select';
+import PersonSelect from './ui/PersonSelect';
+import Avatar from './ui/Avatar';
 import ConfirmDialog from './ui/ConfirmDialog';
 import TaskStatusPill from './task/TaskStatusPill';
 import DeletedBadge from './task/DeletedBadge';
@@ -154,15 +156,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // Estimated-time picker: common values are one-tap chips; the full scale is revealed
     // on demand (or auto-revealed when the saved value isn't one of the common ones).
     const [timePickerOpen, setTimePickerOpen] = useState(false);
-    // The assignee is self for ~2/3 of all tasks, so the picker stays collapsed behind a
-    // "Keisti" affordance and only opens when assigning to someone else.
-    const [showAssigneePicker, setShowAssigneePicker] = useState(false);
     // Which optional ("Daugiau") sections are currently expanded.
     const [expanded, setExpanded] = useState({
         description: false,
         photos: false,
         checklist: false,
-        schedule: false,
         comment: false
     });
 
@@ -269,12 +267,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         return ALL_TIMES.includes(t) ? t : '';
     }, [task, formData.title, suggestTimeForTitle]);
 
-    // Resolved display name for the current assignee (for the collapsed "Vykdytojas: …" row).
-    const assigneeName = useMemo(() => {
-        const w = workers.find((x) => x.id === formData.assignedUserId);
-        return w ? formatDisplayName(w.displayName || w.email) : '';
-    }, [workers, formData.assignedUserId]);
-    const isSelfAssignee = !!currentUser && formData.assignedUserId === currentUser.uid;
+    // Resolved record + display name for the current assignee (read-only self box shows the avatar).
+    const assigneeUser = useMemo(
+        () => workers.find((x) => x.id === formData.assignedUserId) || null,
+        [workers, formData.assignedUserId]
+    );
+    const assigneeName = assigneeUser ? formatDisplayName(assigneeUser.displayName || assigneeUser.email) : '';
 
     // Manager flag — defined here (not just before the early return) so the suggestions memo can
     // gate templates on it. Templates carry an assignee/manager preset, so they are a manager tool.
@@ -409,17 +407,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 description: !!task.description,
                 photos: photoCount > 0,
                 checklist: (task.checklist?.length || 0) > 0,
-                schedule: !!task.managerId,
                 comment: (task.comments?.length || 0) > 0
             });
             setTimePickerOpen(false);
-            // Reveal the assignee picker up-front when the task is already assigned to someone
-            // other than the current user, so the manager can see/keep who it's on.
-            setShowAssigneePicker(!!task.assignedUserId && task.assignedUserId !== currentUser?.uid);
         } else {
-            setExpanded({ description: false, photos: false, checklist: false, schedule: false, comment: false });
+            setExpanded({ description: false, photos: false, checklist: false, comment: false });
             setTimePickerOpen(false);
-            setShowAssigneePicker(false);
         }
     }, [task, isOpen, currentUser]);
 
@@ -451,8 +444,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
         delete data.assignedWorkerId;
         if (data.priority) data.priority = normalizePriority(data.priority);
         setFormData(prev => ({ ...prev, ...data }));
-        // Surface the assignee picker when the template puts the work on someone other than me.
-        if (data.assignedUserId && data.assignedUserId !== currentUser?.uid) setShowAssigneePicker(true);
     };
 
     const handleSaveTemplateClick = () => {
@@ -1014,7 +1005,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                 assignedUserId: d.assignedUserId || prev.assignedUserId,
                 ...(d.deadline ? { deadline: d.deadline } : {}),
             }));
-            if (d.assignedUserId) setShowAssigneePicker(true);
             setAiMsg({
                 text: d.assignedUserId ? 'Užpildyta — peržiūrėkite ir sukurkite.' : 'Užpildyta — patikslinkite vykdytoją.',
                 tone: d.assignedUserId ? 'ok' : 'err',
@@ -1204,14 +1194,23 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                             </div>
                         </div>
                     ) : (
-                        <form id="task-form" onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="space-y-5">
+                        <form id="task-form" onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="space-y-4">
                             {/* ─────────────── Spine: the few fields set on every task ─────────────── */}
-                            {/* Title — a type-ahead over the creator's OWN past titles. Each row shows that
-                                job's typical time; picking it fills both name and (if unset) the time. Free
-                                text is always allowed for a brand-new job. */}
+                            {/* Title — the placeholder carries the prompt (no separate label above); the
+                                ✨ AI parse button shares the title's own row. Type-ahead over the creator's
+                                own past titles + templates; free text is always allowed. */}
                             <div>
-                                <div className="mb-1 flex items-center justify-between gap-2">
-                                    <span className="block text-body font-medium text-ink">Ką reikia padaryti?</span>
+                                <div className="flex items-stretch gap-2">
+                                    <TitleSuggestInput
+                                        value={formData.title}
+                                        onChange={(val) => setFormData((prev) => ({ ...prev, title: val }))}
+                                        onSelect={handleSuggestionSelect}
+                                        suggestions={titleSuggestions}
+                                        disabled={fieldsLocked}
+                                        placeholder="Ką reikia padaryti?"
+                                        ariaLabel="Ką reikia padaryti?"
+                                        className="flex-1"
+                                    />
                                     {!task && (
                                         <Button
                                             type="button"
@@ -1221,20 +1220,12 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                             disabled={fieldsLocked}
                                             onClick={handleAiParse}
                                             title="AI: paversti tekstą darbu"
+                                            className="shrink-0"
                                         >
                                             AI
                                         </Button>
                                     )}
                                 </div>
-                                <TitleSuggestInput
-                                    value={formData.title}
-                                    onChange={(val) => setFormData((prev) => ({ ...prev, title: val }))}
-                                    onSelect={handleSuggestionSelect}
-                                    suggestions={titleSuggestions}
-                                    disabled={fieldsLocked}
-                                    placeholder="Pavadinimas"
-                                    ariaLabel="Pavadinimas"
-                                />
                                 {aiMsg && (
                                     <p className={`mt-1 text-caption ${aiMsg.tone === 'err' ? 'text-feedback-danger' : 'text-feedback-success'}`} role="status">
                                         {aiMsg.text}
@@ -1242,11 +1233,119 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 )}
                             </div>
 
+                            {/* Priority — directly under the title. Signature colour swatches; the active
+                                one carries its text label so colour is never the only signal. */}
+                            <div>
+                                <span className="mb-1 block text-caption font-medium text-ink-muted">Prioritetas</span>
+                                <div role="group" aria-label="Prioritetas" className="flex gap-1 rounded-lg border border-line p-1">
+                                    {[...getPriorityOptions()].reverse().map((p) => {
+                                        const active = normalizePriority(formData.priority) === p.id;
+                                        return (
+                                            <button
+                                                key={p.id}
+                                                type="button"
+                                                onClick={() => !fieldsLocked && setFormData({ ...formData, priority: p.id })}
+                                                disabled={fieldsLocked}
+                                                aria-label={p.label}
+                                                aria-pressed={active}
+                                                title={p.label}
+                                                className={`flex h-9 items-center justify-center gap-1 rounded-md px-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'flex-[2] ring-2 ring-brand' : 'flex-1 ring-1 ring-line'}`}
+                                                style={{ backgroundColor: getPriorityColor(p.id) }}
+                                            >
+                                                {active && (
+                                                    <>
+                                                        <Check className="h-4 w-4 shrink-0" style={{ color: getPriorityTextColor(p.id) }} aria-hidden="true" />
+                                                        <span className="truncate text-caption font-medium" style={{ color: getPriorityTextColor(p.id) }}>
+                                                            {p.label}
+                                                        </span>
+                                                    </>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {/* Deadline — optional; the placeholder carries the label. The text→date type
+                                swap keeps that placeholder readable until the field is focused. */}
+                            <div>
+                                <input
+                                    type={formData.deadline ? "date" : "text"}
+                                    value={formData.deadline}
+                                    onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                                    onFocus={(e) => e.target.type = 'date'}
+                                    onBlur={(e) => !e.target.value && (e.target.type = 'text')}
+                                    aria-label="Atlikti iki"
+                                    placeholder="Atlikti iki… (neprivalomas įrašas)"
+                                    disabled={fieldsLocked}
+                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
+                                />
+                            </div>
+
+                            {/* People — who does it (Vykdytojas) and who oversees it (Vadovas), side by side.
+                                Each is both SHOWN and CHOSEN as avatar + name (PersonSelect, DESIGN_SYSTEM §8
+                                "Task people"). Defaults: assignee = self; manager = the creator's default
+                                manager, or the creating manager themselves. */}
+                            <div>
+                                {/* History-learned "who usually does this kind of job" — one tap assigns. */}
+                                {assigneeSuggestions.length > 0 && (
+                                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                                        <span className="text-caption text-ink-muted">Siūloma:</span>
+                                        {assigneeSuggestions.map((s) => (
+                                            <button
+                                                key={s.id}
+                                                type="button"
+                                                onClick={() => setFormData({ ...formData, assignedUserId: s.id })}
+                                                className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            >
+                                                {s.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                                <div className="grid grid-cols-2 gap-3">
+                                    {/* Vykdytojas — manager picks from the scoped roster; a non-manager only
+                                        ever does their own work, shown read-only in the same box shape. */}
+                                    <div className="min-w-0">
+                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Vykdytojas</span>
+                                        {isManager ? (
+                                            <PersonSelect
+                                                value={formData.assignedUserId}
+                                                onChange={(val) => setFormData({ ...formData, assignedUserId: val })}
+                                                users={assignableWorkers}
+                                                label="Vykdytojas"
+                                                placeholder="Priskirti…"
+                                                ariaLabel="Vykdytojas"
+                                                disabled={fieldsLocked}
+                                            />
+                                        ) : (
+                                            <div className="flex min-h-touch items-center gap-2 rounded-input border border-line bg-surface-sunken px-3 text-base text-ink">
+                                                <Avatar src={assigneeUser?.photoURL || null} name={assigneeUser?.displayName || assigneeName} email={assigneeUser?.email} size="xs" />
+                                                <span className="min-w-0 flex-1 truncate">{assigneeName || 'Aš'}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    {/* Vadovas — the overseer/auditor; same picker, listing the managers. */}
+                                    <div className="min-w-0">
+                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Vadovas</span>
+                                        <PersonSelect
+                                            value={formData.managerId}
+                                            onChange={(val) => setFormData({ ...formData, managerId: val })}
+                                            users={managers}
+                                            label="Vadovas"
+                                            placeholder="Priskirti…"
+                                            ariaLabel="Vadovas"
+                                            disabled={fieldsLocked}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
                             {/* Estimated time — a per-title suggestion (when history has one) leads as a
                                 distinct chip; then four one-tap quick durations; the full scale and a
                                 free-text custom value live one tap away behind the "+" picker. */}
                             <div>
-                                <span className="mb-1 block text-body font-medium text-ink">Planuojamas laikas</span>
+                                <span className="mb-1 block text-caption font-medium text-ink-muted">Planuojamas laikas</span>
                                 <div className="flex flex-wrap items-center gap-2">
                                     {suggestedTime && formData.estimatedTime !== suggestedTime && (
                                         <button
@@ -1316,113 +1415,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 onSelect={(val) => setFormData((prev) => ({ ...prev, estimatedTime: val }))}
                                 onClose={() => setTimePickerOpen(false)}
                             />
-
-                            {/* Deadline — promoted onto the spine, directly under the planned time (was buried
-                                in the collapsed "Daugiau" section). The text→date type swap keeps the native
-                                picker's placeholder readable until the field is focused. */}
-                            <div>
-                                <span className="mb-1 block text-body font-medium text-ink">Atlikti iki</span>
-                                <input
-                                    type={formData.deadline ? "date" : "text"}
-                                    value={formData.deadline}
-                                    onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-                                    onFocus={(e) => e.target.type = 'date'}
-                                    onBlur={(e) => !e.target.value && (e.target.type = 'text')}
-                                    aria-label="Atlikti iki"
-                                    placeholder="Atlikti iki"
-                                    disabled={fieldsLocked}
-                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
-                                />
-                            </div>
-
-                            {/* Worker (assignee) — defaults to self and stays collapsed (~2/3 of tasks are
-                                self-assigned); a manager opens the picker only to hand work to someone else.
-                                A non-manager only ever sees themselves, shown read-only. */}
-                            <div>
-                                <span className="mb-1 block text-body font-medium text-ink">Vykdytojas</span>
-                                {/* History-learned "who usually does this kind of job" — one tap assigns. */}
-                                {assigneeSuggestions.length > 0 && (
-                                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                                        <span className="text-caption text-ink-muted">Siūloma:</span>
-                                        {assigneeSuggestions.map((s) => (
-                                            <button
-                                                key={s.id}
-                                                type="button"
-                                                onClick={() => { setFormData({ ...formData, assignedUserId: s.id }); setShowAssigneePicker(true); }}
-                                                className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                            >
-                                                {s.name}
-                                            </button>
-                                        ))}
-                                    </div>
-                                )}
-                                {isManager ? (
-                                    (showAssigneePicker || !isSelfAssignee) ? (
-                                        <Select
-                                            value={formData.assignedUserId}
-                                            onChange={(val) => setFormData({ ...formData, assignedUserId: val })}
-                                            options={assignableWorkers.map((worker) => ({ value: worker.id, label: formatDisplayName(worker.displayName || worker.email) }))}
-                                            label="Vykdytojas"
-                                            placeholder="Priskirti vykdytoją..."
-                                            ariaLabel="Vykdytojas"
-                                            alwaysSheet
-                                        />
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowAssigneePicker(true)}
-                                            className="flex w-full min-h-touch items-center gap-2 rounded-lg border border-line px-3 text-left text-base text-ink transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                        >
-                                            <User className="h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
-                                            <span className="flex-1 truncate">{assigneeName || 'Aš'}</span>
-                                            <span className="inline-flex items-center gap-1 text-caption text-brand">
-                                                <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                                                Keisti
-                                            </span>
-                                        </button>
-                                    )
-                                ) : (
-                                    <div className="flex min-h-touch items-center gap-2 rounded-lg border border-line bg-surface-sunken px-3 text-base text-ink-muted">
-                                        <User className="h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
-                                        <span className="flex-1 truncate">{assigneeName || 'Aš'}</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* Priority — kept as the signature colour swatches but demoted below the two
-                                real decisions: ~65% of tasks never move it off the default (Vidutinis). */}
-                            <div>
-                                <div className="mb-1 flex items-center">
-                                    <span className="text-body font-medium text-ink">Prioritetas</span>
-                                </div>
-                                <div role="group" aria-label="Prioritetas" className="flex gap-1 rounded-lg border border-line p-1">
-                                    {[...getPriorityOptions()].reverse().map((p) => {
-                                        const active = normalizePriority(formData.priority) === p.id;
-                                        return (
-                                            <button
-                                                key={p.id}
-                                                type="button"
-                                                onClick={() => !fieldsLocked && setFormData({ ...formData, priority: p.id })}
-                                                disabled={fieldsLocked}
-                                                aria-label={p.label}
-                                                aria-pressed={active}
-                                                title={p.label}
-                                                className={`flex h-9 items-center justify-center gap-1 rounded-md px-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'flex-[2] ring-2 ring-brand' : 'flex-1 ring-1 ring-line'}`}
-                                                style={{ backgroundColor: getPriorityColor(p.id) }}
-                                            >
-                                                {active && (
-                                                    <>
-                                                        <Check className="h-4 w-4 shrink-0" style={{ color: getPriorityTextColor(p.id) }} aria-hidden="true" />
-                                                        <span className="truncate text-caption font-medium" style={{ color: getPriorityTextColor(p.id) }}>
-                                                            {p.label}
-                                                        </span>
-                                                    </>
-                                                )}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
 
                             {/* ─────────────── "Daugiau" — optional, collapsed by default ─────────────── */}
                             <div className="border-t border-line pt-4">
@@ -1570,23 +1562,6 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                                 ))}
                                             </ul>
                                         )}
-                                    </AdvancedSection>
-
-                                    {/* Manager / auditor — has a sensible default, so it stays here rather
-                                        than on the spine. (The deadline was promoted up next to the planned
-                                        time.) */}
-                                    <AdvancedSection icon={User} label="Vadovas" count={formData.managerId ? 1 : 0} open={expanded.schedule} onToggle={() => toggleSection('schedule')}>
-                                        <span className="mb-1 block text-body font-medium text-ink">Vadovas</span>
-                                        <Select
-                                            value={formData.managerId}
-                                            onChange={(val) => setFormData({ ...formData, managerId: val })}
-                                            disabled={fieldsLocked}
-                                            options={managers.map((manager) => ({ value: manager.id, label: formatDisplayName(manager.displayName || manager.email) }))}
-                                            label="Vadovas"
-                                            placeholder="Priskirti vadovą..."
-                                            ariaLabel="Vadovas"
-                                            alwaysSheet
-                                        />
                                     </AdvancedSection>
 
                                     {/* Comment */}
