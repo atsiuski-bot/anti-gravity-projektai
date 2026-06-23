@@ -24,6 +24,9 @@ before changing anything.
 
 - `npm run lint` passes (zero warnings) and `npm run build` succeeds.
 - UI changes satisfy the checklist in `DESIGN_SYSTEM.md` §11.
+- **Visual QA:** the app is Google-popup-only, so to actually log in and look at a change, use the
+  dev-only test account (popup-free admin login on the Login page in `npm run dev`) —
+  [`docs/runbooks/visual-qa-test-account.md`](./docs/runbooks/visual-qa-test-account.md).
 
 ## Commits (audit trail)
 
