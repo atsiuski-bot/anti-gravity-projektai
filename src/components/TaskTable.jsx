@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import { db } from '../firebase';
 import { doc, updateDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp } from 'lucide-react';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, Trash2, ArrowUp, ArrowDown, ImageIcon, Undo2, Pencil, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp, Eye } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
@@ -27,6 +27,7 @@ import { addComment, updateComment, deleteComment } from '../utils/commentAction
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
 import SessionTypeIcon from './SessionTypeIcon';
+import { isSelfDirectedTask } from '../utils/selfDirectedTask';
 
 // ---------------------------------------------------------------------------------------------
 // Desktop data-grid header controls. Rendered only when the parent passes `gridControls`; without
@@ -611,9 +612,25 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </Button>
                                 )}
                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
-                                    <Button variant="primary" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
-                                        Patvirtinti atlikimą
-                                    </Button>
+                                    isSelfDirectedTask(task) ? (
+                                        // Self-directed work: same confirm path, distinct tone. The amber
+                                        // "review" framing (Eye icon + "savarankišką darbą" copy) reads as
+                                        // "self-directed, give it a glance" rather than a normal hand-off, so
+                                        // the manager still vets work that would otherwise have closed silently.
+                                        <Button
+                                            variant="secondary"
+                                            size="md"
+                                            icon={Eye}
+                                            className="border-feedback-warning-border bg-feedback-warning-soft text-feedback-warning-text hover:bg-feedback-warning-soft hover:brightness-95"
+                                            onClick={() => handleConfirmTask(task.id)}
+                                        >
+                                            Peržiūrėti savarankišką darbą
+                                        </Button>
+                                    ) : (
+                                        <Button variant="primary" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
+                                            Patvirtinti atlikimą
+                                        </Button>
+                                    )
                                 )}
                                 {canManage && task.status === 'unapproved' && (
                                     <Button variant="primary" size="md" onClick={() => handleApproveTask(task.id)}>
@@ -838,6 +855,11 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             const canConfirmRow = canManage && task.status === 'completed';
                                             const canApproveRow = canManage && task.status === 'unapproved';
                                             const canRevertRow = canManage && (task.completed || task.isDeleted);
+                                            // A completed self-directed job is confirmed through the SAME path as a
+                                            // normal hand-off, but is surfaced distinctly (amber "review" tone) so
+                                            // the manager treats it as "self-directed, give it a glance" — see
+                                            // isSelfDirectedTask. Mutually exclusive with the green hand-off confirm.
+                                            const isSelfReview = canConfirmRow && isSelfDirectedTask(task);
                                             return (
                                                 <div className="flex flex-col items-stretch gap-2">
                                                     {(canRevertRow || canConfirmRow || canApproveRow) && (
@@ -848,9 +870,21 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                                 <IconButton icon={Undo2} label="Grąžinti" variant="default" onClick={() => setRevertTarget(task)} />
                                                             )}
                                                             {canConfirmRow && (
-                                                                <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
-                                                                    Patvirtinti
-                                                                </Button>
+                                                                isSelfReview ? (
+                                                                    <Button
+                                                                        variant="secondary"
+                                                                        size="md"
+                                                                        icon={Eye}
+                                                                        className="border-feedback-warning-border bg-feedback-warning-soft text-feedback-warning-text hover:bg-feedback-warning-soft hover:brightness-95"
+                                                                        onClick={() => handleConfirmTask(task.id)}
+                                                                    >
+                                                                        Peržiūrėti
+                                                                    </Button>
+                                                                ) : (
+                                                                    <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
+                                                                        Patvirtinti
+                                                                    </Button>
+                                                                )
                                                             )}
                                                             {canApproveRow && (
                                                                 <Button variant="success" size="md" icon={CheckCircle2} onClick={() => handleApproveTask(task.id)}>
