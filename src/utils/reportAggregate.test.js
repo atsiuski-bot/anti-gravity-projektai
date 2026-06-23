@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildReport, renderReportMarkdown, renderReportCSV } from './reportAggregate';
+import { buildReport, renderReportMarkdown, renderReportJSON, renderTimesheetCSV } from './reportAggregate';
 
 // A worked session shaped like a Firestore work_sessions doc (only the fields the aggregator reads).
 const session = (date, hours) => ({
@@ -185,11 +185,10 @@ describe('buildReport — clock metrics carry no relative delta', () => {
 });
 
 describe('renderers', () => {
-    const report = buildOne(
-        baseWorker({ workSessions: [session('2026-06-10', 8)] }),
-        { startStr: '2026-06-01', endStr: '2026-06-30' },
-        { startStr: '2026-05-02', endStr: '2026-05-31' }
-    );
+    const window = { startStr: '2026-06-01', endStr: '2026-06-30' };
+    const prevWindow = { startStr: '2026-05-02', endStr: '2026-05-31' };
+    const worker = baseWorker({ workSessions: [session('2026-06-10', 8), session('2026-06-11', 5)] });
+    const report = buildOne(worker, window, prevWindow);
 
     it('Markdown includes the worker name and the reading-guide header', () => {
         const md = renderReportMarkdown(report);
@@ -198,11 +197,29 @@ describe('renderers', () => {
         expect(md).toContain('Skaitymo gairės modeliui');
     });
 
-    it('CSV has a header row keyed on a stable userId column', () => {
-        const csv = renderReportCSV(report);
-        const [header] = csv.split('\n');
+    it('Markdown omits the daily log by default and includes it (labeled) when requested', () => {
+        expect(renderReportMarkdown(report)).not.toContain('Dienų išklotinė');
+        const withDaily = renderReportMarkdown(
+            buildReport({ generatedAt: 'x', window, prevWindow, scopeLabel: 's', includeEarnings: true, includeDaily: true, workers: [worker] })
+        );
+        expect(withDaily).toContain('Dienų išklotinė (faktai, ne išvada)');
+        expect(withDaily).toContain('2026-06-10');
+    });
+
+    it('JSON carries the per-day array only when includeDaily is on', () => {
+        expect(JSON.parse(renderReportJSON(report)).workers[0].daily).toBeUndefined();
+        const withDaily = buildReport({ generatedAt: 'x', window, prevWindow, scopeLabel: 's', includeEarnings: true, includeDaily: true, workers: [worker] });
+        expect(JSON.parse(renderReportJSON(withDaily)).workers[0].daily).toHaveLength(2);
+    });
+
+    it('Timesheet CSV has the per-day header, one row per worked day, and a Viso total', () => {
+        const csv = renderTimesheetCSV([worker], window);
+        const header = csv.split('\n')[0];
         expect(header).toContain('Vykdytojas');
-        expect(header).toContain('userId');
-        expect(csv).toContain('u1');
+        expect(header).toContain('Data');
+        expect(header).toContain('Skirtumas (val:min)');
+        expect(csv).toContain('2026-06-10');
+        expect(csv).toContain('2026-06-11');
+        expect(csv).toContain('Viso');
     });
 });

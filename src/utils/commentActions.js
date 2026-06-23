@@ -3,6 +3,17 @@ import { db } from '../firebase';
 import { notifyMany } from './notify';
 
 /**
+ * Stable identity for a comment: its own `id` when present (comments created after this change),
+ * otherwise its `createdAt` (legacy / other-path comments). Edit and delete address a comment by
+ * this key — never by a positional index that could drift onto the wrong comment if the array
+ * shifts, and never by `createdAt` alone, which two comments posted in the same millisecond could
+ * share. New comments carry a collision-proof `id`, so the key is genuinely unique for them.
+ * @param {Object} comment
+ * @returns {string|undefined}
+ */
+export const getCommentKey = (comment) => comment?.id ?? comment?.createdAt;
+
+/**
  * Adds a new comment to a task.
  * @param {string} taskId 
  * @param {string} text 
@@ -27,6 +38,9 @@ export const addComment = async (taskId, text, currentUser, currentComments = nu
         }
 
         const newComment = {
+            // Collision-proof identity so edit/delete can never address the wrong comment, even if
+            // two are posted in the same millisecond (see getCommentKey).
+            id: `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
             text: text,
             user: currentUser.displayName || currentUser.email,
             userId: currentUser.uid,
@@ -60,30 +74,31 @@ export const addComment = async (taskId, text, currentUser, currentComments = nu
 };
 
 /**
- * Updates an existing comment.
- * @param {string} taskId 
- * @param {number} commentIndex 
- * @param {string} newText 
- * @param {Array} currentComments 
+ * Updates an existing comment, addressed by its stable `createdAt` key rather than a positional
+ * index. A render-time index can point at the wrong comment if the array shifted (a concurrent
+ * add/delete on the same task) before the write lands; matching on the comment's own identity
+ * always hits the intended one — or no-ops if it is already gone.
+ * @param {string} taskId
+ * @param {string} commentKey - the target comment's `createdAt`
+ * @param {string} newText
+ * @param {Array} currentComments
  * @returns {Promise<void>}
  */
-export const updateComment = async (taskId, commentIndex, newText, currentComments, collectionName = 'tasks') => {
+export const updateComment = async (taskId, commentKey, newText, currentComments, collectionName = 'tasks') => {
     if (!currentComments) return;
 
     try {
-        const updatedComments = [...currentComments];
-        if (updatedComments[commentIndex]) {
-            updatedComments[commentIndex] = {
-                ...updatedComments[commentIndex],
-                text: newText,
-                updatedAt: new Date().toISOString()
-            };
+        const idx = currentComments.findIndex((c) => getCommentKey(c) === commentKey);
+        if (idx === -1) return;
 
-            await updateDoc(doc(db, collectionName, taskId), {
-                comments: updatedComments,
-                updatedAt: new Date().toISOString()
-            });
-        }
+        const updatedComments = currentComments.map((c, i) =>
+            i === idx ? { ...c, text: newText, updatedAt: new Date().toISOString() } : c
+        );
+
+        await updateDoc(doc(db, collectionName, taskId), {
+            comments: updatedComments,
+            updatedAt: new Date().toISOString()
+        });
     } catch (err) {
         console.error("Error updating comment:", err);
         throw err;
@@ -91,17 +106,22 @@ export const updateComment = async (taskId, commentIndex, newText, currentCommen
 };
 
 /**
- * Deletes a comment.
- * @param {string} taskId 
- * @param {number} commentIndex 
- * @param {Array} currentComments 
+ * Deletes a comment, addressed by its stable `createdAt` key (see updateComment). Splicing the
+ * first match removes exactly one comment — filtering by key could drop two on the (vanishing)
+ * chance of duplicate keys, and an index could remove the wrong one after an array shift.
+ * @param {string} taskId
+ * @param {string} commentKey - the target comment's `createdAt`
+ * @param {Array} currentComments
  * @returns {Promise<void>}
  */
-export const deleteComment = async (taskId, commentIndex, currentComments, collectionName = 'tasks') => {
+export const deleteComment = async (taskId, commentKey, currentComments, collectionName = 'tasks') => {
     if (!currentComments) return;
 
     try {
-        const updatedComments = currentComments.filter((_, i) => i !== commentIndex);
+        const idx = currentComments.findIndex((c) => getCommentKey(c) === commentKey);
+        if (idx === -1) return;
+
+        const updatedComments = [...currentComments.slice(0, idx), ...currentComments.slice(idx + 1)];
         await updateDoc(doc(db, collectionName, taskId), {
             comments: updatedComments,
             updatedAt: new Date().toISOString()

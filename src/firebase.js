@@ -2,6 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { getFunctions } from "firebase/functions";
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyDXaHCrL8hKgaEedSXEIT-XSxhmIcCEuXU",
@@ -39,5 +40,9 @@ try {
 export { db };
 
 export const storage = getStorage(app);
+
+// Callable Cloud Functions. Region MUST match the functions' deploy region (europe-west1, set in
+// functions/index.js setGlobalOptions) or httpsCallable resolves the wrong endpoint and 404s.
+export const functions = getFunctions(app, 'europe-west1');
 
 export default app;

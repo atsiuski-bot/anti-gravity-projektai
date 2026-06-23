@@ -7,6 +7,7 @@ import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
 import DailyWorkProgress from '../components/DailyWorkProgress';
+import RecurringTasksPanel from '../components/RecurringTasksPanel';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
@@ -198,6 +199,8 @@ export default function ManagerView() {
                 The weekly planned-vs-worked summary that used to head this tab now lives in
                 Kom. kalendorius, next to the calendar it summarises. */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
+                {/* Recurring-task management: turn shared templates into auto-generated weekly jobs. */}
+                <RecurringTasksPanel />
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
                     <div role="tablist" aria-label="Komandos darbų rodinys">
                         <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">

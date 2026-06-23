@@ -9,7 +9,7 @@ import { scopeRoster } from '../utils/teamScope';
 import { formatDisplayName } from '../utils/formatters';
 import { getLithuanianDateString, addDaysToDateString } from '../utils/timeUtils';
 import { gatherReportData, reportFilename } from '../utils/reportData';
-import { buildReport, renderReportMarkdown, renderReportJSON, renderReportCSV } from '../utils/reportAggregate';
+import { buildReport, renderReportMarkdown, renderReportJSON, renderTimesheetCSV } from '../utils/reportAggregate';
 
 // Calendar-style presets (familiar from the report tab). Each resolves a [start, end] ending today.
 const PERIOD_PRESETS = [
@@ -57,7 +57,7 @@ function detectPreset(range) {
 const FORMATS = [
     { id: 'md', label: 'Markdown — AI analizei', hint: 'Apskaičiuotos metrikos + Δ, paruošta įkelti į LLM', icon: FileText, recommended: true },
     { id: 'json', label: 'JSON — struktūrinis', hint: 'Tas pats objektas mašininiam apdorojimui', icon: Braces },
-    { id: 'csv', label: 'CSV — suvestinė', hint: 'Viena eilutė / darbuotoją skaičiuoklei', icon: Table2 },
+    { id: 'csv', label: 'CSV — val./diena', hint: 'Timesheet: eilutė / darbuotoją-dieną skaičiuoklei', icon: Table2 },
 ];
 
 function triggerDownload(content, filename, mime) {
@@ -96,6 +96,8 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
     const [search, setSearch] = useState('');
     const [includeTest, setIncludeTest] = useState(false);
     const [includeEarnings, setIncludeEarnings] = useState(true);
+    // Per-day evidence log, only meaningful for the MD/JSON analysis artifacts (CSV is per-day anyway).
+    const [includeDaily, setIncludeDaily] = useState(false);
     const [selectedIds, setSelectedIds] = useState(() => new Set());
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
@@ -200,20 +202,22 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                     : ids.length === 1
                       ? workers[0]?.name || '1 darbuotojas'
                       : `${ids.length} darbuotojai`;
-            const generatedAt = new Date().toLocaleString('lt-LT', { timeZone: 'Europe/Vilnius' });
-            const report = buildReport({ generatedAt, window, prevWindow, scopeLabel, includeEarnings, workers });
-
             let content;
             let mime;
-            if (format === 'md') {
-                content = renderReportMarkdown(report);
-                mime = 'text/markdown;charset=utf-8;';
-            } else if (format === 'json') {
-                content = renderReportJSON(report);
-                mime = 'application/json;charset=utf-8;';
-            } else {
-                content = renderReportCSV(report);
+            if (format === 'csv') {
+                // Per-day timesheet straight from the raw slice — no aggregated report needed.
+                content = renderTimesheetCSV(workers, window);
                 mime = 'text/csv;charset=utf-8;';
+            } else {
+                const generatedAt = new Date().toLocaleString('lt-LT', { timeZone: 'Europe/Vilnius' });
+                const report = buildReport({ generatedAt, window, prevWindow, scopeLabel, includeEarnings, includeDaily, workers });
+                if (format === 'md') {
+                    content = renderReportMarkdown(report);
+                    mime = 'text/markdown;charset=utf-8;';
+                } else {
+                    content = renderReportJSON(report);
+                    mime = 'application/json;charset=utf-8;';
+                }
             }
             triggerDownload(content, reportFilename(format, window), mime);
             onClose?.();
@@ -366,17 +370,32 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                     </div>
                 )}
 
-                {/* OPTIONS */}
+                {/* OPTIONS. Earnings + daily-log shape the analysis artifacts (MD/JSON) only — the CSV
+                    is a per-day timesheet that ignores both — so they hide when CSV is selected. The
+                    test-account toggle gates the worker roster, so it applies to every format. */}
                 <div className="flex flex-wrap gap-x-6 gap-y-2">
-                    <label className="flex cursor-pointer items-center gap-2 min-h-touch">
-                        <input
-                            type="checkbox"
-                            checked={includeEarnings}
-                            onChange={(e) => setIncludeEarnings(e.target.checked)}
-                            className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-                        />
-                        <span className="text-body text-ink">Įtraukti uždarbį</span>
-                    </label>
+                    {format !== 'csv' && (
+                        <label className="flex cursor-pointer items-center gap-2 min-h-touch">
+                            <input
+                                type="checkbox"
+                                checked={includeEarnings}
+                                onChange={(e) => setIncludeEarnings(e.target.checked)}
+                                className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                            />
+                            <span className="text-body text-ink">Įtraukti uždarbį</span>
+                        </label>
+                    )}
+                    {format !== 'csv' && (
+                        <label className="flex cursor-pointer items-center gap-2 min-h-touch">
+                            <input
+                                type="checkbox"
+                                checked={includeDaily}
+                                onChange={(e) => setIncludeDaily(e.target.checked)}
+                                className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                            />
+                            <span className="text-body text-ink">Įtraukti dienų išklotinę</span>
+                        </label>
+                    )}
                     <label className="flex cursor-pointer items-center gap-2 min-h-touch">
                         <input
                             type="checkbox"
