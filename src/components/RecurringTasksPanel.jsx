@@ -6,6 +6,7 @@ import {
     getTaskTemplates,
     setTemplateRecurrence,
     setTemplateAssignee,
+    createManagerTask,
 } from '../utils/taskActions';
 import { runRecurringNow } from '../utils/recurringActions';
 import { scopeRoster } from '../utils/teamScope';
@@ -145,6 +146,26 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
         }
     };
 
+    // One-tap create from a NON-recurring template (client-side; the recurring path uses the
+    // server "Sukurti dabar" with dedup/absence handling instead).
+    const handleCreateOnce = async () => {
+        if (!baked) {
+            setMsg({ text: 'Šablonas be vykdytojo — atidarykite „Tvarkyti" ir priskirkite.', tone: 'err' });
+            return;
+        }
+        setBusyAction('create-once');
+        setMsg(null);
+        try {
+            await createManagerTask({ ...template.data, assignedUserId: baked, sourceTemplateId: template.id }, currentUser);
+            setMsg({ text: 'Darbas sukurtas.', tone: 'ok' });
+            onChanged?.();
+        } catch {
+            setMsg({ text: 'Nepavyko sukurti.', tone: 'err' });
+        } finally {
+            setBusyAction('');
+        }
+    };
+
     const next = isRecurring ? nextOccurrence(recurrence) : null;
 
     return (
@@ -160,6 +181,11 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                         {next && <> · Kita: <span className="font-mono">{next}</span></>}
                     </p>
                 </div>
+                {!isRecurring && (
+                    <Button variant="secondary" size="md" icon={Play} loading={busyAction === 'create-once'} onClick={handleCreateOnce}>
+                        Sukurti darbą
+                    </Button>
+                )}
                 <button
                     type="button"
                     onClick={openEditor}
@@ -282,8 +308,11 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
  * (generateRecurringTasks) materializes active rules each morning; "Sukurti dabar" runs the same
  * server logic on demand. Read-broad/write-scoped: any manager may edit shared templates (rules),
  * assignee choices are narrowed to the manager's own team.
+ *
+ * `embedded`: render only the inner list + intro (no collapsible header / section chrome), for use
+ * as a dedicated sub-tab panel where the surrounding tab switcher already provides the heading.
  */
-export default function RecurringTasksPanel() {
+export default function RecurringTasksPanel({ embedded = false }) {
     const { currentUser, userData } = useAuth();
     const { activeUsers } = useUsers();
 
@@ -314,6 +343,45 @@ export default function RecurringTasksPanel() {
 
     const activeCount = templates.filter((t) => t.recurrence && t.recurrence.active !== false).length;
 
+    const body = (
+        <>
+            <p className={cn('mb-3 px-1 text-caption text-ink-muted', embedded && 'mt-1')}>
+                Pažymėkite šabloną kaip pasikartojantį — sistema kas rytą automatiškai sukurs darbą pagal grafiką
+                ir priskirs pasirinktam vykdytojui. „Sukurti dabar“ paleidžia iškart.
+            </p>
+
+            {loading && (
+                <div className="flex justify-center py-6"><Spinner /></div>
+            )}
+            {error && !loading && (
+                <p className="px-1 py-3 text-body text-feedback-danger" role="alert">{error}</p>
+            )}
+            {!loading && !error && templates.length === 0 && (
+                <p className="px-1 py-3 text-body text-ink-muted">Šablonų dar nėra. Sukurkite šabloną kurdami darbą.</p>
+            )}
+
+            {!loading && !error && templates.length > 0 && (
+                <ul className="space-y-2">
+                    {templates.map((t) => (
+                        <RecurringTemplateRow
+                            key={t.id}
+                            template={t}
+                            assignableUsers={assignableUsers}
+                            currentUser={currentUser}
+                            onChanged={load}
+                        />
+                    ))}
+                </ul>
+            )}
+        </>
+    );
+
+    // Embedded as a sub-tab: the tab switcher already supplies the heading, so skip the
+    // collapsible section chrome and render the list directly.
+    if (embedded) {
+        return <div>{body}</div>;
+    }
+
     return (
         <section className="mb-4 rounded-card border border-line bg-surface-sunken">
             <button
@@ -330,38 +398,7 @@ export default function RecurringTasksPanel() {
                 <ChevronDown className={cn('h-5 w-5 shrink-0 text-ink-muted transition-transform', !collapsed && 'rotate-180')} aria-hidden="true" />
             </button>
 
-            {!collapsed && (
-                <div className="px-3 pb-3">
-                    <p className="mb-3 px-1 text-caption text-ink-muted">
-                        Pažymėkite šabloną kaip pasikartojantį — sistema kas rytą automatiškai sukurs darbą pagal grafiką
-                        ir priskirs pasirinktam vykdytojui. „Sukurti dabar“ paleidžia iškart.
-                    </p>
-
-                    {loading && (
-                        <div className="flex justify-center py-6"><Spinner /></div>
-                    )}
-                    {error && !loading && (
-                        <p className="px-1 py-3 text-body text-feedback-danger" role="alert">{error}</p>
-                    )}
-                    {!loading && !error && templates.length === 0 && (
-                        <p className="px-1 py-3 text-body text-ink-muted">Šablonų dar nėra. Sukurkite šabloną kurdami darbą.</p>
-                    )}
-
-                    {!loading && !error && templates.length > 0 && (
-                        <ul className="space-y-2">
-                            {templates.map((t) => (
-                                <RecurringTemplateRow
-                                    key={t.id}
-                                    template={t}
-                                    assignableUsers={assignableUsers}
-                                    currentUser={currentUser}
-                                    onChanged={load}
-                                />
-                            ))}
-                        </ul>
-                    )}
-                </div>
-            )}
+            {!collapsed && <div className="px-3 pb-3">{body}</div>}
         </section>
     );
 }

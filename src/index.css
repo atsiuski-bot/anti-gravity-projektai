@@ -234,6 +234,46 @@
   color: rgb(var(--brand-ring));
 }
 
+/* Surface parity with the team calendar (AllUsersCalendar). That view is a bespoke
+   token-built card — rounded surface-card panel, subtle line hairlines. The personal
+   planner is bare react-big-calendar, so its grid used to sit on the darker page base
+   with the vendor's off-brand blue events, reading as a different component. The grid
+   itself stays transparent (the WorkPlanner wrapper now supplies the surface-card card
+   chrome, so cells inherit that surface); here we only align the day-header band and the
+   event fill so both calendars share one visual language. */
+
+/* Day-name header row → calm, no heavy fill; it rides on the card surface like the team
+   calendar's header band. Borders already track --line via the subtree rule above. */
+.rbc-time-header .rbc-header {
+  color: rgb(var(--ink));
+  font-weight: 600;
+}
+
+/* Hour gutter labels → muted meta ink, matching the team calendar's hour scale. */
+.rbc-time-gutter .rbc-label,
+.rbc-time-gutter .rbc-time-slot {
+  color: rgb(var(--ink-muted));
+}
+
+/* Events → the brand indigo fill (replacing the vendor #3174ad), so a work shift reads in
+   the same colour family as the team calendar's bars and the rest of the app's brand.
+   Padding is zeroed so the custom event component (which sets its own padding and, for
+   vacation, a soft-brand fill) covers the block edge-to-edge with no vendor-blue ring. */
+.rbc-event,
+.rbc-day-slot .rbc-event {
+  background-color: rgb(var(--brand));
+  border: none;
+  padding: 0;
+}
+.rbc-event.rbc-selected,
+.rbc-day-slot .rbc-event.rbc-selected {
+  background-color: rgb(var(--brand-hover));
+}
+.rbc-event:focus {
+  outline: 2px solid rgb(var(--brand-ring));
+  outline-offset: 1px;
+}
+
 /* =====================================================================
    Motion system — subtle, purposeful animation (DESIGN_SYSTEM §7).
    Implemented locally (no animation dependency) so the timings track the

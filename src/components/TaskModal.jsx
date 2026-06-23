@@ -17,6 +17,7 @@ import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
 import useTaskSuggestions from '../hooks/useTaskSuggestions';
+import { useAssigneeAffinity } from '../hooks/useAssigneeAffinity';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
@@ -274,6 +275,19 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // Manager flag — defined here (not just before the early return) so the suggestions memo can
     // gate templates on it. Templates carry an assignee/manager preset, so they are a manager tool.
     const isManager = isManagerRole(role) || isManagerRole(userRole);
+
+    // "Who usually does this kind of job?" — learn the title-root → assignee routing from history and
+    // offer it as one-tap suggestions above the picker. Manager-only, new-task-only; the hook reads
+    // scoped archived history once while this modal is mounted (open).
+    const { suggestAssignees } = useAssigneeAffinity({ currentUser, userData, userRole, enabled: isManager && !task });
+    const assigneeSuggestions = (isManager && !task)
+        ? suggestAssignees(formData.title)
+            .filter((id) => id !== formData.assignedUserId && assignableWorkers.some((w) => w.id === id))
+            .map((id) => {
+                const w = assignableWorkers.find((x) => x.id === id);
+                return { id, name: formatDisplayName(w.displayName || w.email) };
+            })
+        : [];
 
     // The unified title type-ahead source: curated templates first (manager-only), then the
     // creator's own past titles each with its typical time. TitleSuggestInput filters this to the
@@ -1140,6 +1154,22 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 A non-manager only ever sees themselves, shown read-only. */}
                             <div>
                                 <span className="mb-1 block text-body font-medium text-ink">Vykdytojas</span>
+                                {/* History-learned "who usually does this kind of job" — one tap assigns. */}
+                                {assigneeSuggestions.length > 0 && (
+                                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                                        <span className="text-caption text-ink-muted">Siūloma:</span>
+                                        {assigneeSuggestions.map((s) => (
+                                            <button
+                                                key={s.id}
+                                                type="button"
+                                                onClick={() => { setFormData({ ...formData, assignedUserId: s.id }); setShowAssigneePicker(true); }}
+                                                className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            >
+                                                {s.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
                                 {isManager ? (
                                     (showAssigneePicker || !isSelfAssignee) ? (
                                         <Select

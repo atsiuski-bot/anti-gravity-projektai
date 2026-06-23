@@ -6,7 +6,7 @@ import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from
 import { privateScopeConstraints } from '../utils/teamScope';
 import { absenceLabel } from '../utils/absence';
 import { addComment } from '../utils/commentActions';
-import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, Calendar, FileText } from 'lucide-react';
+import { ChevronDown, ChevronUp, Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -60,8 +60,13 @@ function PeriodPicker({ presets, activeId, onChoose, open, onToggle, label, chil
         if (!wrapEl || !measureEl) return;
         const GAP = 8; // matches gap-2 between chips
         const compute = () => {
-            const chips = Array.from(measureEl.children);
             const avail = wrapEl.clientWidth;
+            // The picker can mount while its tab panel is still zero-width (hidden tab, pre-layout
+            // pass). Measuring then would wrongly conclude "nothing fits" and lock the row to a
+            // single chip even after it becomes wide. Skip until we have a real width — the
+            // ResizeObserver re-fires with the true size once the panel lays out.
+            if (avail <= 0) return;
+            const chips = Array.from(measureEl.children);
             let used = 0;
             let count = 0;
             for (let i = 0; i < chips.length; i++) {
@@ -87,12 +92,11 @@ function PeriodPicker({ presets, activeId, onChoose, open, onToggle, label, chil
 
     return (
         <div className="bg-surface-card rounded-card shadow-sm border border-line">
-            <div className="flex items-center gap-3 px-4 py-3 min-h-touch">
-                <span className="shrink-0 flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
-                    <Calendar className="w-4 h-4" aria-hidden="true" />
-                    <span className="hidden sm:inline">{label}</span>
-                </span>
-
+            {/* The bar matches the export button's height exactly: one min-h-touch row with no extra
+                vertical padding, so the chips (also min-h-touch) define the height. The old calendar
+                icon + "Laikotarpis" caption are dropped — the chips are self-describing, and removing
+                them frees the full width for as many presets as fit inline. */}
+            <div role="group" aria-label={label} className="flex items-center gap-2 px-2 min-h-touch">
                 {/* Inline chips: only those that fit on one line; the rest live in the panel below. */}
                 <div ref={wrapRef} className="relative flex-1 min-w-0 flex items-center gap-2 overflow-hidden">
                     {/* Hidden row at natural width — the single source of truth for chip widths. */}
@@ -126,18 +130,23 @@ function PeriodPicker({ presets, activeId, onChoose, open, onToggle, label, chil
 
             {open && (
                 <div className="border-t border-line p-3 space-y-3 animate-in fade-in slide-in-from-top-2">
-                    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                        {presets.map((p) => (
-                            <Button
-                                key={p.id}
-                                variant={activeId === p.id ? 'primary' : 'secondary'}
-                                onClick={() => onChoose(p.id)}
-                                className="justify-center"
-                            >
-                                {p.label}
-                            </Button>
-                        ))}
-                    </div>
+                    {/* Only the presets that did NOT fit inline — the visible ones already sit in the
+                        bar above, so repeating every preset here would be redundant. The panel always
+                        still carries the custom from/to range (children). */}
+                    {hiddenCount > 0 && (
+                        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                            {presets.slice(visibleCount).map((p) => (
+                                <Button
+                                    key={p.id}
+                                    variant={activeId === p.id ? 'primary' : 'secondary'}
+                                    onClick={() => onChoose(p.id)}
+                                    className="justify-center"
+                                >
+                                    {p.label}
+                                </Button>
+                            ))}
+                        </div>
+                    )}
                     {children}
                 </div>
             )}
@@ -290,8 +299,11 @@ export default function Reports({ users, canExport = false, viewRole }) {
             const getUserName = (uid, sessionName) => {
                 const u = users?.find(user => user.id === uid);
                 if (u) return u.displayName || u.email;
-                if (sessionName && sessionName !== 'Unknown') return sessionName;
-                return 'Unknown';
+                // Treat both the legacy English placeholder and the current Lithuanian one as
+                // "no real name" so an old doc storing 'Unknown' never surfaces English; fall
+                // back to the Lithuanian placeholder used everywhere else (resolveUserName).
+                if (sessionName && sessionName !== 'Unknown' && sessionName !== 'Nežinomas') return sessionName;
+                return 'Nežinomas';
             };
 
             // Helper to init user map
