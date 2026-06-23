@@ -72,6 +72,11 @@ const COMMAND_LABELS = {
     createTask: 'Sukurta užduotis',
     completeTask: 'Užduotis užbaigta',
     reopenTask: 'Užduotis grąžinta taisyti',
+    approveTask: 'Užduotis patvirtinta',
+    deleteTask: 'Užduotis ištrinta',
+    reprioritizeTask: 'Pakeistas prioritetas',
+    rescheduleTask: 'Pakeistas terminas',
+    'recognition.grantBadge': 'Suteiktas ženkliukas',
 };
 const commandLabel = (c) => COMMAND_LABELS[c] || c || '—';
 

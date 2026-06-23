@@ -25,6 +25,31 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-06-24** — **Undo affordance + guard-matches-reversibility rule.** Reworked the app's
+  control logic so the *guard* fits the *cost of being wrong*, not how consequential an action feels:
+  irreversible/destructive → confirm before (`ConfirmDialog`); cleanly reversible one-tap state
+  flips → act immediately + offer undo for a few seconds; continuous timer control → no undo (the
+  loud session color is the live feedback); trivially repeatable micro-edits → no undo. Built the
+  canonical undo affordance on the existing `Toast` (new `action` slot = a ≥44 px brand-tinted
+  "Atšaukti" pill + a GPU-safe draining countdown bar) and a one-line `useUndoableAction` hook
+  (`run`/`undo`/`message`); undo is a **compensating inverse committed now**, never a deferred write
+  (realtime + multi-device), routing through the audited `completeTask`↔`reopenTask` commands where
+  they exist. Wired to the completion/approval/confirmation lifecycle (founder follow-up extended undo to manager
+  **approve** with a DEFERRED outbound ping — the approve/confirm state commits now, but the worker
+  notification is held for the undo window via `deferredEffect` and fires only if NOT undone, so an
+  undo leaves the worker nothing to see and re-surfaces the manager's own request; approve's exact
+  prior status is snapshotted so undo restores it precisely) — the everyday high-frequency flips:
+  `TaskTable` complete↔reopen (its mark-complete confirm dialog removed — friction before a
+  cheap-to-undo action), `TaskCard` manager "confirm finished" (its confirm dialog removed), and
+  `ManagerNotifications` confirm-completion (single **and** the high-risk bulk "confirm all", which
+  now reverses the whole batch from one snackbar). **Deliberately NOT wired** (documented): hard
+  delete (irreversible — `deleteDoc` removes the doc), time-crediting finish (kept its confirm),
+  revert-for-rework / calendar decisions (dual-case inverse / compound writes
+  — confirm-before stays the right guard), and timers. Documented in `DESIGN_SYSTEM.md` §8 + the §11
+  checklist. Client-only — no rules/index/functions/data change. Gate green (lint + build + 288
+  tests); undo snackbar visually verified via Preview (44 px targets, brand-tinted pill, draining
+  bar, theme-correct tokens in dark mode).
+
 - **2026-06-23** — **"Task people" standard — one visual language to SHOW and to CHOOSE a task's
   Vykdytojas / Vadovas, plus a rebuilt create form.** Formalised in
   [`DESIGN_SYSTEM.md`](./design/DESIGN_SYSTEM.md) §8 ("Task people") + the §11 checklist: a person

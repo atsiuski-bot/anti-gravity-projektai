@@ -25,9 +25,10 @@ import Avatar from '../ui/Avatar';
  * @param {boolean} [props.ring] - use the colored-ring look (default plain)
  * @param {boolean} [props.firstNameOnly] - show only the first name (dense rows)
  * @param {boolean} [props.showIcon] - show the user glyph when there is no avatar (default true)
+ * @param {boolean} [props.showColor] - show the leading worker-colour dot on the ring variant (default true)
  * @param {string} [props.className]
  */
-export default function AssigneeChip({ name, userId, color, ring = false, firstNameOnly = false, showIcon = true, className }) {
+export default function AssigneeChip({ name, userId, color, ring = false, firstNameOnly = false, showIcon = true, showColor = true, className }) {
     const { usersMap } = useUsers();
     const { openProfile } = useProfileViewer();
     if (!name && !userId) return null;
@@ -64,7 +65,7 @@ export default function AssigneeChip({ name, userId, color, ring = false, firstN
                 {...tagProps}
                 className={cn('inline-flex min-w-0 items-center gap-1.5 px-2 py-0.5 rounded-full border border-line bg-surface-sunken text-caption font-medium text-ink', interactive, className)}
             >
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color || WORKER_FALLBACK_COLOR }} aria-hidden="true" />
+                {showColor && <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color || WORKER_FALLBACK_COLOR }} aria-hidden="true" />}
                 {leading}
                 <span className="truncate">{display}</span>
             </Tag>

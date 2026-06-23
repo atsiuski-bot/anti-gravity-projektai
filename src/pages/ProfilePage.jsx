@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor, Briefcase, Home } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
@@ -11,6 +11,7 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
+import { normalizeWorkLocation } from '../utils/workLocation';
 import { BADGE_ICONS, BADGE_CATALOG, tierKey } from '../utils/badgeCatalog';
 import BadgeDetailModal from '../components/BadgeDetailModal';
 import Card from '../components/ui/Card';
@@ -38,6 +39,15 @@ const THEME_OPTIONS = [
     { value: 'system', label: 'Sistemos', Icon: Monitor },
 ];
 
+// Default work-location for NEW calendar entries (mirrors the stored boolean in workLocation.js).
+// Picking one here pre-fills the planner's toggle so the user stops flipping every entry by hand;
+// any single entry can still be switched in the planner. Each option pairs an icon with its label
+// so the active choice is never color-only (DESIGN_SYSTEM §5).
+const WORK_LOCATION_OPTIONS = [
+    { value: 'office', label: 'Veikla', Icon: Briefcase },
+    { value: 'home', label: 'Veikla namuose', Icon: Home },
+];
+
 // A user photo stays small; cap the long edge and re-encode so the upload is light on a
 // field worker's mobile connection. Lives at a fixed per-user path so a new photo overwrites
 // the old one (no orphaned avatar files accumulate, unlike multi-file task attachments).
@@ -57,6 +67,8 @@ export default function ProfilePage() {
     const [notifError, setNotifError] = useState('');
     const [savingTheme, setSavingTheme] = useState(false);
     const [themeError, setThemeError] = useState('');
+    const [savingWorkLoc, setSavingWorkLoc] = useState(false);
+    const [workLocError, setWorkLocError] = useState('');
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [showInstall, setShowInstall] = useState(false);
     const [selectedBadge, setSelectedBadge] = useState(null);
@@ -140,6 +152,26 @@ export default function ProfilePage() {
             if (mountedRef.current) setThemeError('Nepavyko išsaugoti nustatymo.');
         } finally {
             if (mountedRef.current) setSavingTheme(false);
+        }
+    };
+
+    const currentWorkLocation = normalizeWorkLocation(userData?.defaultWorkLocation);
+
+    // Persist the default work-location for new calendar entries. Optimism isn't needed here
+    // (there's no instant local effect like the theme), so we just write and surface a calm
+    // note on failure — the saved value drives the planner the next time an entry is created.
+    const handleWorkLocationChange = async (next) => {
+        if (!currentUser || savingWorkLoc) return;
+        if (next === currentWorkLocation) return;
+        setWorkLocError('');
+        setSavingWorkLoc(true);
+        try {
+            await updateDoc(doc(db, 'users', currentUser.uid), { defaultWorkLocation: next });
+        } catch (err) {
+            logError(err, { source: 'profile:workLocationToggle' });
+            if (mountedRef.current) setWorkLocError('Nepavyko išsaugoti nustatymo.');
+        } finally {
+            if (mountedRef.current) setSavingWorkLoc(false);
         }
     };
 
@@ -303,6 +335,53 @@ export default function ProfilePage() {
                     {themeError && (
                         <p role="alert" className="mt-3 text-caption font-medium text-feedback-danger">
                             {themeError}
+                        </p>
+                    )}
+                </div>
+
+                {/* Default work-location — pre-fills the planner toggle for new entries so the user
+                    stops switching every entry by hand. A 2-way segmented control mirroring the theme
+                    picker; each option pairs an icon with a label (never color-only, §5). */}
+                <div className="border-b border-line p-4">
+                    <div className="min-w-0 flex-1">
+                        <p className="text-body font-medium text-ink-strong">Numatytoji veiklos vieta</p>
+                        <p className="text-caption text-ink-muted">
+                            Taikoma naujiems kalendoriaus įrašams. Kiekvieną įrašą galima keisti atskirai.
+                        </p>
+                    </div>
+                    <div
+                        role="radiogroup"
+                        aria-label="Numatytoji veiklos vieta"
+                        className="mt-3 grid grid-cols-2 gap-2"
+                    >
+                        {WORK_LOCATION_OPTIONS.map((opt) => {
+                            const selected = currentWorkLocation === opt.value;
+                            return (
+                                <button
+                                    key={opt.value}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={selected}
+                                    onClick={() => handleWorkLocationChange(opt.value)}
+                                    disabled={savingWorkLoc}
+                                    className={cn(
+                                        'flex min-h-touch flex-col items-center justify-center gap-1 rounded-control border px-2 py-2.5 text-caption font-medium transition-colors duration-base',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        'disabled:opacity-50',
+                                        selected
+                                            ? 'border-brand bg-brand-soft text-brand'
+                                            : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
+                                    )}
+                                >
+                                    <opt.Icon className="h-5 w-5" aria-hidden="true" />
+                                    {opt.label}
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {workLocError && (
+                        <p role="alert" className="mt-3 text-caption font-medium text-feedback-danger">
+                            {workLocError}
                         </p>
                     )}
                 </div>
