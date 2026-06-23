@@ -21,7 +21,8 @@ import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
-import { approveTask, humanActor, MODES } from '../domain';
+import { approveTask, completeTask, reopenTask, humanActor, MODES } from '../domain';
+import { useUndoableAction } from '../hooks/useUndoableAction';
 import { isManagerRole } from '../utils/formatters';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
@@ -112,6 +113,7 @@ function HeaderCell({ label, sortMode, sort, filter, filterLabel }) {
 
 const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown, hideCheckboxes, gridControls }) => {
     const { currentUser, userRole, userData } = useAuth();
+    const runUndoable = useUndoableAction();
     // Data-grid header wiring (see helpers above). Derived once per render; harmless no-ops when
     // `gridControls` is absent.
     const gc = gridControls;
@@ -130,7 +132,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     // Confirmation dialog targets (replace window.confirm — §8). Each destructive action gates
     // its own state so rapid clicks on different tasks can't race a single shared dialog.
     const [commentDeleteTarget, setCommentDeleteTarget] = useState(null); // { taskId, commentKey }
-    const [completeTarget, setCompleteTarget] = useState(null);        // taskId (marking completed)
     const [revertTarget, setRevertTarget] = useState(null);            // task object
     const [reverting, setReverting] = useState(false);
 
@@ -188,34 +189,29 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         }
     };
 
-    const performToggleComplete = async (taskId) => {
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-            await toggleTaskCompletion(task, currentUser, userRole);
-        } catch (err) {
-            console.error("Error toggling task completion:", err);
-        }
+    // Completion is a cleanly REVERSIBLE state flip, so it no longer gates behind a confirm dialog
+    // (friction before a cheap-to-undo action). It commits immediately and offers an undo for a few
+    // seconds (DESIGN_SYSTEM §8). The inverse is the audited mirror command — reopenTask undoes a
+    // completion, completeTask undoes an un-check — so the undo is itself a first-class decision.
+    const handleToggleComplete = (taskId) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        const willComplete = !task.completed;
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
+        runUndoable({
+            run: () => toggleTaskCompletion(task, currentUser, userRole),
+            undo: () => (willComplete
+                ? reopenTask({ task }, { actor, mode: MODES.COMMIT, reason: 'undo completion' })
+                : completeTask({ task }, { actor, mode: MODES.COMMIT, reason: 'undo reopen' })),
+            message: willComplete ? 'Užduotis pažymėta atlikta.' : 'Užduotis grąžinta į sąrašą.',
+            undoneMessage: willComplete ? 'Atšaukta — užduotis grąžinta į sąrašą.' : 'Atšaukta — užduotis vėl pažymėta atlikta.',
+        });
     };
 
-    const handleToggleComplete = (taskId, currentStatus) => {
-        // Marking a task complete requires confirmation (reversible → primary, not danger);
-        // un-checking proceeds directly, preserving the original behaviour.
-        if (!currentStatus) {
-            setCompleteTarget(taskId);
-            return;
-        }
-        performToggleComplete(taskId);
-    };
-
-    const confirmComplete = async () => {
-        if (!completeTarget) return;
-        const taskId = completeTarget;
-        setCompleteTarget(null);
-        await performToggleComplete(taskId);
-    };
-
-    const handleConfirmTask = async (taskId) => {
+    // Confirming finished work (completed -> confirmed) is a cleanly reversible sign-off, so it is
+    // immediate + undoable; undo restores the exact prior state. The table pings no one, so there is
+    // no notification to defer.
+    const handleConfirmTask = (taskId) => {
         // PERMISSION CHECK: Only explicit Managers or Admins can confirm tasks.
         // Task-level managers (who are not system managers) cannot confirm.
         if (!isManagerRole(userRole)) {
@@ -223,46 +219,44 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
             return;
         }
         setError('');
-
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-
-            const taskData = {
-                ...task,
-                status: 'confirmed',
-                confirmedBy: currentUser.uid,
-                confirmedAt: new Date().toISOString(),
-                updatedAt: new Date().toISOString()
-            };
-
-            // Sanitize data to remove undefined values
-            Object.keys(taskData).forEach(key => taskData[key] === undefined && delete taskData[key]);
-
-            // Do NOT archive immediately
-            await updateDoc(doc(db, 'tasks', taskId), taskData);
-        } catch (err) {
-            console.error("Error confirming task:", err);
-        }
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        const prior = { status: task.status ?? 'completed', confirmedBy: task.confirmedBy ?? null, confirmedAt: task.confirmedAt ?? null };
+        runUndoable({
+            run: async () => {
+                const now = new Date().toISOString();
+                await updateDoc(doc(db, 'tasks', taskId), { status: 'confirmed', confirmedBy: currentUser.uid, confirmedAt: now, updatedAt: now });
+            },
+            undo: () => updateDoc(doc(db, 'tasks', taskId), { status: prior.status, confirmedBy: prior.confirmedBy, confirmedAt: prior.confirmedAt, updatedAt: new Date().toISOString() }),
+            message: 'Atlikimas patvirtintas.',
+            undoneMessage: 'Atšaukta — laukiama patvirtinimo.',
+            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite vėliau.',
+        });
     };
 
     // Manual archiving removed per request. Archive only via nightly automation.
 
-    const handleApproveTask = async (taskId) => {
-        try {
-            const task = tasks.find(t => t.id === taskId);
-            if (!task) return;
-            // Approving an unapproved task clears the approval gate → status 'approved'
-            // ("Patvirtintas"), the canonical value the notification hub already writes. The worker
-            // then sees it is approved and may start it. (Was 'pending', which lost the signal.)
-            await approveTask(
-                { task },
-                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }), mode: MODES.COMMIT, reason: 'approved from task table' },
-            );
-        } catch (err) {
-            logError(err, { source: 'TaskTable.handleApproveTask' });
-            setError('Nepavyko patvirtinti užduoties. Bandykite vėliau.');
-        }
+    // Approving clears the approval gate → status 'approved' ("Patvirtintas"). Reversible, so it is
+    // immediate + undoable; undo restores the exact prior status. The table pings no one (unlike the
+    // bell's approve, whose worker ping is deferred for the undo window).
+    const handleApproveTask = (taskId) => {
+        const task = tasks.find(t => t.id === taskId);
+        if (!task) return;
+        const prior = { status: task.status ?? null, isApproved: !!task.isApproved };
+        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
+        runUndoable({
+            run: () => approveTask({ task }, { actor, mode: MODES.COMMIT, reason: 'approved from task table' }),
+            undo: () => updateDoc(doc(db, 'tasks', taskId), {
+                status: prior.status ?? 'pending',
+                isApproved: prior.isApproved,
+                approvedAt: null,
+                approvedBy: null,
+                updatedAt: new Date().toISOString(),
+            }),
+            message: 'Užduotis patvirtinta.',
+            undoneMessage: 'Atšaukta — patvirtinimas atšauktas.',
+            errorMessage: 'Nepavyko patvirtinti užduoties. Bandykite vėliau.',
+        });
     };
 
     const handleDeleteTask = (taskId, taskTitle) => {
@@ -593,7 +587,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         checked={task.completed || false}
                                         onChange={() => {
                                             if (isAssignedToMe) {
-                                                handleToggleComplete(task.id, task.completed);
+                                                handleToggleComplete(task.id);
                                             }
                                         }}
                                         disabled={checkboxDisabled}
@@ -726,7 +720,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 onClick={(e) => e.stopPropagation()}
                                                 onChange={() => {
                                                     if (isAssignedToMe) {
-                                                        handleToggleComplete(task.id, task.completed);
+                                                        handleToggleComplete(task.id);
                                                     }
                                                 }}
                                                 disabled={!isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved'}
@@ -957,18 +951,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                 taskTitle={deleteModalTask?.title || ''}
             />
 
-            {/* Confirm: mark a task complete (reversible → primary) */}
-            {completeTarget && (
-                <ConfirmDialog
-                    open
-                    title="Užbaigti užduotį?"
-                    message="Patvirtinkite, kad šią užduotį norite žymėti atlikta."
-                    confirmLabel="Užbaigti"
-                    variant="primary"
-                    onConfirm={confirmComplete}
-                    onCancel={() => setCompleteTarget(null)}
-                />
-            )}
+            {/* Marking a task complete is now an immediate, undoable action (see handleToggleComplete)
+                — no confirm dialog. Revert/delete keep their confirm because their inverse is
+                dual-case/destructive. */}
 
             {/* Confirm: revert (restore) a completed/deleted task */}
             {revertTarget && (
