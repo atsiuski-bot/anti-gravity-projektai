@@ -194,6 +194,43 @@ describe('pauseTask — ghost-time guards (the payroll-corruption failure mode)'
     });
 });
 
+describe('pauseTask — recovery return contract (drives the RecoveryNotice banner)', () => {
+    // useOrphanedTaskRecovery reads {creditedMinutes, wasCapped} off the resolved value to stamp
+    // (or suppress) the one-time "timer recovered" banner. These lock that shape so a refactor
+    // cannot silently make task recovery go dark.
+
+    it('returns {wasCapped:false} with the exact credit for a clean, in-bounds pause', async () => {
+        const task = {
+            id: 'r1', timerStatus: 'running', timerStartedAt: '2026-06-23T11:00:00.000Z', // 60 min
+            timerMinutes: 0, assignedUserId: 'u1',
+        };
+
+        const result = await pauseTask(task);
+
+        expect(result).toMatchObject({ wasCapped: false });
+        expect(result.creditedMinutes).toBe(60);
+        expect(result.rawMinutes).toBeCloseTo(60, 5); // unclamped == clamped for an in-bounds run
+    });
+
+    it('returns {wasCapped:true, creditedMinutes:~960} for a >16h orphan (the 16h ceiling fired)', async () => {
+        const orphan = {
+            id: 'r2', timerStatus: 'running', timerStartedAt: '2026-06-20T12:00:00.000Z', // 72h
+            timerMinutes: 0, assignedUserId: 'u1',
+        };
+
+        const result = await pauseTask(orphan);
+
+        expect(result.wasCapped).toBe(true);
+        expect(result.creditedMinutes).toBe(MAX_SESSION_MINUTES); // 960, the clamped credit
+        expect(result.rawMinutes).toBeGreaterThan(MAX_SESSION_MINUTES); // raw 72h dwarfs the cap
+    });
+
+    it('returns null for a no-op pause (already paused) so the hook stamps nothing', async () => {
+        const result = await pauseTask({ id: 'r3', timerStatus: 'paused', timerStartedAt: null });
+        expect(result).toBeNull();
+    });
+});
+
 describe('startTask / resumeTask — running-state writes', () => {
     it('startTask marks the task running with a fresh timerStartedAt and sets the user activeSession', async () => {
         await startTask({ id: 't1', title: 'Dig' }, 'u1');
