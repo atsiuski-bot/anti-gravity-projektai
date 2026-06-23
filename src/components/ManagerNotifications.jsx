@@ -9,6 +9,7 @@ import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
 import { deleteTask } from '../utils/taskActions';
+import { approveTask, humanActor, MODES } from '../domain';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
@@ -236,15 +237,11 @@ export default function ManagerNotifications({ onClose }) {
         if (!taskId) return;
         try {
             setActionError(null);
-            // 1. Approve the task
-            const taskRef = doc(db, 'tasks', taskId);
-            await updateDoc(taskRef, {
-                status: 'approved',
-                isApproved: true, // Redundant but explicit
-                approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid,
-                updatedAt: new Date().toISOString()
-            });
+            // 1. Approve the task (audited approveTask command — ADR 0015, increment 5)
+            await approveTask(
+                { task: { id: taskId, title: notif.taskTitle } },
+                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email }), mode: MODES.COMMIT, reason: 'approved from notification' },
+            );
 
             // 2. Dismiss notification + tell the worker
             await handleDismissTask(notif.id);
@@ -260,15 +257,12 @@ export default function ManagerNotifications({ onClose }) {
         if (!taskId) return;
         try {
             setActionError(null);
-            // 1. Approve the task
+            // 1. Approve the task (audited approveTask command — ADR 0015, increment 5)
             const taskRef = doc(db, 'tasks', taskId);
-            await updateDoc(taskRef, {
-                status: 'approved',
-                isApproved: true,
-                approvedAt: new Date().toISOString(),
-                approvedBy: currentUser.uid,
-                updatedAt: new Date().toISOString()
-            });
+            await approveTask(
+                { task: { id: taskId, title: notif.taskTitle } },
+                { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email }), mode: MODES.COMMIT, reason: 'approved (edit) from notification' },
+            );
 
             // 2. Dismiss notification + tell the worker
             await handleDismissTask(notif.id);

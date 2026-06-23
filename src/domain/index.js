@@ -25,3 +25,6 @@ export { assignTask } from './commands/assignTask';
 export { createTask } from './commands/createTask';
 export { completeTask } from './commands/completeTask';
 export { reopenTask } from './commands/reopenTask';
+export { approveTask } from './commands/approveTask';
+export { reprioritizeTask } from './commands/reprioritizeTask';
+export { rescheduleTask } from './commands/rescheduleTask';

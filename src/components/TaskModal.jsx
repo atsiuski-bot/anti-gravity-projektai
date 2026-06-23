@@ -991,24 +991,45 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
     // and adjust before pressing Sukurti. Available on create only (the assignee roster is scoped).
     const handleAiParse = async () => {
         const text = (formData.title || '').trim();
-        if (!text) { setAiMsg({ text: 'Įrašykite tekstą, kurį AI pavers darbu.', tone: 'err' }); return; }
+        if (!text) { setAiMsg({ text: 'Įrašykite sakinį, pvz. „rytoj Giedriui 2 val. kostiumų patikra“.', tone: 'err' }); return; }
         setAiBusy(true);
         setAiMsg(null);
         try {
             const roster = assignableWorkers.map((u) => ({ id: u.id, name: formatDisplayName(u.displayName || u.email) }));
             const d = await parseTaskText(text, roster);
+            // Smarter fill, in priority order: time STATED in the sentence → THIS title's historical
+            // typical time → the model's best guess. History (real data about how long the manager
+            // actually spends on this job) always beats a generic guess. Auto-writing is acceptable
+            // here because pressing AI is an explicit "fill it for me" intent — the manager still
+            // reviews the draft before Sukurti. Everything is clamped to the canonical chip scale.
+            let fillTime = (d.estimatedTime || '').trim();
+            if (!fillTime) {
+                const histTime = suggestTimeForTitle(d.title || text);
+                if (ALL_TIMES.includes(histTime)) fillTime = histTime;
+            }
+            if (!fillTime) {
+                const guess = (d.estimatedGuess || '').trim();
+                if (ALL_TIMES.includes(guess)) fillTime = guess;
+            }
             setFormData((prev) => ({
                 ...prev,
                 ...(d.title ? { title: d.title } : {}),
                 ...(d.priority ? { priority: normalizePriority(d.priority) } : {}),
-                ...(d.estimatedTime ? { estimatedTime: d.estimatedTime } : {}),
+                ...(fillTime ? { estimatedTime: fillTime } : {}),
                 assignedUserId: d.assignedUserId || prev.assignedUserId,
                 ...(d.deadline ? { deadline: d.deadline } : {}),
             }));
-            setAiMsg({
-                text: d.assignedUserId ? 'Užpildyta — peržiūrėkite ir sukurkite.' : 'Užpildyta — patikslinkite vykdytoją.',
-                tone: d.assignedUserId ? 'ok' : 'err',
-            });
+            // Create defaults the assignee to the creator, so one almost always exists already;
+            // only flag the worker when NOTHING resolves it. Keying the message off the AI's
+            // returned name (not the effective assignee) was the bug behind the misleading red
+            // "patikslinkite vykdytoją" shown even when a worker was clearly selected. (The redesign
+            // dropped the old showAssigneePicker collapse — the assignee is always visible now.)
+            const hasAssignee = Boolean(d.assignedUserId || formData.assignedUserId);
+            setAiMsg(
+                hasAssignee
+                    ? { text: 'Užpildyta — peržiūrėkite ir sukurkite.', tone: 'ok' }
+                    : { text: 'Užpildyta — pasirinkite vykdytoją.', tone: 'err' },
+            );
         } catch {
             setAiMsg({ text: 'AI nepavyko (ar funkcija/raktas įdiegti?).', tone: 'err' });
         } finally {
@@ -1229,6 +1250,11 @@ export default function TaskModal({ isOpen, onClose, task, role }) {
                                 {aiMsg && (
                                     <p className={`mt-1 text-caption ${aiMsg.tone === 'err' ? 'text-feedback-danger' : 'text-feedback-success'}`} role="status">
                                         {aiMsg.text}
+                                    </p>
+                                )}
+                                {!task && !aiMsg && (
+                                    <p className="mt-1 text-caption text-ink-muted">
+                                        Su AI parašykite sakinį, pvz. „rytoj Giedriui 2 val. kostiumų patikra“ — užpildys vykdytoją, laiką ir terminą.
                                     </p>
                                 )}
                             </div>

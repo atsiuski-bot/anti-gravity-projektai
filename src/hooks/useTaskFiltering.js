@@ -14,7 +14,7 @@ import { getLithuanianNow, getLithuanian3AMCutoff, getLithuanianDateString } fro
  * (user / priority / tag), but BEFORE free-text search and sort. Extracted so the list and the
  * search suggestions both read from the same scope (suggest only what is actually in view).
  */
-const scopeActiveTasks = (tasks, { filterUser, filterPriority, filterTag }) => {
+export const scopeActiveTasks = (tasks, { filterUser, filterPriority, filterTag, filterStatus }) => {
     let activeTasks = tasks.filter(t => {
         // Definition of "Today's Work Day" (Starts at 3:00 AM Europe/Vilnius)
         const now = getLithuanianNow();
@@ -66,13 +66,34 @@ const scopeActiveTasks = (tasks, { filterUser, filterPriority, filterTag }) => {
         activeTasks = activeTasks.filter(t => t.tag === filterTag);
     }
 
+    // Apply status filter — match the STORED lifecycle value (running/paused are timer-derived
+    // overlays, not stored states), defaulting a missing status to 'pending'.
+    if (filterStatus) {
+        activeTasks = activeTasks.filter(t => (t.status || 'pending') === filterStatus);
+    }
+
     return activeTasks;
+};
+
+/**
+ * Primary ordering for the "sort by tag" (Žymos) column: groups rows by their tag value
+ * alphabetically, with untagged rows last. Tie-breaking (priority then user) stays in the
+ * caller so it can reuse the shared comparators. Exported for unit coverage.
+ */
+export const compareTaskTag = (a, b) => {
+    const tagA = a.tag || '';
+    const tagB = b.tag || '';
+    if (!tagA && !tagB) return 0;
+    if (!tagA) return 1;
+    if (!tagB) return -1;
+    return tagA.localeCompare(tagB);
 };
 
 export const useTaskFiltering = (tasks, manualTaskOrder) => {
     const [filterUser, setFilterUser] = useState('');
     const [filterPriority, setFilterPriority] = useState('');
     const [filterTag, setFilterTag] = useState('');
+    const [filterStatus, setFilterStatus] = useState('');
     const [sortBy, setSortBy] = useState('none');
 
     // Free-text search, debounced so the list doesn't re-filter on every keystroke. Matches
@@ -90,12 +111,12 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
     // debounced one) so completions feel instant while the heavier list re-filter stays debounced.
     const searchSuggestions = useMemo(() => {
         if (!searchText.trim()) return [];
-        const scoped = scopeActiveTasks(tasks, { filterUser, filterPriority, filterTag });
+        const scoped = scopeActiveTasks(tasks, { filterUser, filterPriority, filterTag, filterStatus });
         return buildTaskSuggestions(scoped, searchText, getTaskSuggestionSources);
-    }, [tasks, searchText, filterUser, filterPriority, filterTag]);
+    }, [tasks, searchText, filterUser, filterPriority, filterTag, filterStatus]);
 
     const sortedTasks = useMemo(() => {
-        let activeTasks = scopeActiveTasks(tasks, { filterUser, filterPriority, filterTag });
+        let activeTasks = scopeActiveTasks(tasks, { filterUser, filterPriority, filterTag, filterStatus });
 
         // Apply fuzzy free-text search. When a query is present this returns the matches ordered
         // by relevance; that order is kept for the default 'none' sort and overridden by an
@@ -186,6 +207,16 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
                 // Then by user
                 return compareUser(a, b);
             });
+        } else if (sortBy === 'tag') {
+            // Group rows by their tag (alphabetical, untagged last); within a tag fall back to
+            // priority then user so the grouping stays readable.
+            sorted.sort((a, b) => {
+                const tagDiff = compareTaskTag(a, b);
+                if (tagDiff !== 0) return tagDiff;
+                const prioDiff = comparePriority(a, b);
+                if (prioDiff !== 0) return prioDiff;
+                return compareUser(a, b);
+            });
         } else if (sortBy.startsWith('tag-')) {
             const tag = sortBy.replace('tag-', '');
             sorted.sort((a, b) => {
@@ -202,7 +233,7 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         }
 
         return sorted;
-    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority, filterTag, debouncedSearch]);
+    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority, filterTag, filterStatus, debouncedSearch]);
 
     return {
         sortedTasks,
@@ -212,6 +243,8 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         setFilterPriority,
         filterTag,
         setFilterTag,
+        filterStatus,
+        setFilterStatus,
         searchText,
         setSearchText,
         searchSuggestions,
