@@ -94,6 +94,31 @@ export function computeReassignEligibility(tasks, workHoursDocs) {
     return { windowEnd, eligible, ineligible };
 }
 
+// How to fetch ONE worker's tasks for the reassign list, following the app's read-scope rule
+// (teamScope §privateScopeConstraints): a scoped overseer may only request rows their subtree stamp
+// covers, and a row's `teamManagerIds` array-contains the viewer is the ONLY filter the rules allow
+// them — it CANNOT be ANDed with an `assignedUserId ==` equality in the same query (Firestore would
+// need a composite index that does not exist, and the established surfaces never compose them, so
+// the query silently yields nothing). So for a scoped overseer we fetch their whole subtree slice
+// (`teamManagerIds array-contains`) and narrow to this worker client-side; a whole-team viewer
+// (admin / unscoped manager) queries the worker's rows directly. Returns the query constraints to
+// spread plus whether the result still needs the owner filter applied in JS.
+//
+// @returns {{ constraints: import('firebase/firestore').QueryConstraint[], filterOwnerClientSide: boolean }}
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export function workerTasksQuerySpec({ workerId, viewerData, viewerUid }) {
+    if (isScopedOverseer(viewerData) && viewerUid) {
+        return {
+            constraints: [where('teamManagerIds', 'array-contains', viewerUid)],
+            filterOwnerClientSide: true,
+        };
+    }
+    return {
+        constraints: [where('assignedUserId', '==', workerId)],
+        filterOwnerClientSide: false,
+    };
+}
+
 // The day-report drill-down is heavy (its own Firestore listeners), so it only mounts when a
 // manager actually switches to the "Statistika" tab — never on the achievements view.
 const DailyStatistics = lazy(() => import('./DailyStatistics'));
@@ -160,9 +185,10 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
     const workerName = formatDisplayName(worker?.displayName || worker?.email || 'Vykdytojas');
 
     // Load the worker's open tasks + absence window once on open. The task query mirrors the report
-    // surfaces: filter by assignedUserId, and for a SCOPED overseer also constrain by the subtree
-    // stamp (teamManagerIds array-contains the viewer) so the query never requests a row the rules
-    // would deny. A whole-team viewer (admin / unscoped manager) needs no extra constraint.
+    // surfaces (see workerTasksQuerySpec): a whole-team viewer queries the worker's rows by
+    // assignedUserId; a SCOPED overseer instead fetches their subtree slice by the teamManagerIds
+    // stamp — the only filter the rules allow them — then narrows to this worker client-side, because
+    // the two constraints cannot be ANDed in one query.
     useEffect(() => {
         let cancelled = false;
         if (!worker?.id) return undefined;
@@ -170,16 +196,20 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
             setLoading(true);
             setLoadError('');
             try {
-                const scoped = isScopedOverseer(viewerData) && viewerUid
-                    ? [where('teamManagerIds', 'array-contains', viewerUid)]
-                    : [];
-                const tasksQ = query(collection(db, 'tasks'), where('assignedUserId', '==', worker.id), ...scoped);
+                const { constraints, filterOwnerClientSide } = workerTasksQuerySpec({
+                    workerId: worker.id,
+                    viewerData,
+                    viewerUid,
+                });
+                const tasksQ = query(collection(db, 'tasks'), ...constraints);
                 // work_hours has no date field and is world-readable; fetch the worker's docs by userId
                 // and bucket the absence days client-side.
                 const whQ = query(collection(db, 'work_hours'), where('userId', '==', worker.id));
                 const [tasksSnap, whSnap] = await Promise.all([getDocs(tasksQ), getDocs(whQ)]);
                 if (cancelled) return;
-                const tasks = tasksSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                let tasks = tasksSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+                // Scoped overseer fetched their whole subtree slice — keep only this worker's tasks.
+                if (filterOwnerClientSide) tasks = tasks.filter((t) => t.assignedUserId === worker.id);
                 const whDocs = whSnap.docs.map((d) => d.data());
                 const { windowEnd: end, eligible: elig, ineligible } = computeReassignEligibility(tasks, whDocs);
                 setEligible(elig);

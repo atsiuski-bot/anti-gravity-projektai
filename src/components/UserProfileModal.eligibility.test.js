@@ -4,6 +4,7 @@ import {
     taskDeadlineDay,
     isOpenTask,
     computeReassignEligibility,
+    workerTasksQuerySpec,
 } from './UserProfileModal';
 
 // The eligibility core is pure and date-bucketed in Vilnius. These tests pin the founder constraint:
@@ -128,5 +129,72 @@ describe('computeReassignEligibility', () => {
         const { eligible, ineligible } = computeReassignEligibility(tasks, absentUntil24);
         expect(eligible.map((t) => t.id)).toEqual(['in']);
         expect(ineligible.map((t) => t.id).sort()).toEqual(['after', 'noDeadline']);
+    });
+});
+
+// Regression: a SCOPED overseer (scopedManager / seniorManager) must still load the worker's open
+// tasks. The old query ANDed `assignedUserId == worker` with `teamManagerIds array-contains viewer`,
+// which the rules/index never support together, so the reassign list was always empty for exactly
+// the overseers the feature exists for. The fix fetches the subtree slice by the stamp, then narrows
+// to the worker client-side. We can't introspect the opaque `where()` objects, so we assert the
+// SHAPE of the spec (which collection filter, whether a client-side owner filter is required) and
+// replay that filter over a realistic subtree slice.
+describe('workerTasksQuerySpec — read scope for the reassign task load', () => {
+    const VIEWER = 'overseer-1';
+    const WORKER = 'worker-7';
+
+    // A subtree slice as Firestore would return it for `teamManagerIds array-contains overseer-1`:
+    // several workers under the same overseer, NOT just the one being reassigned.
+    const subtreeSlice = [
+        { id: 't1', assignedUserId: WORKER, teamManagerIds: [VIEWER], status: 'pending' },
+        { id: 't2', assignedUserId: WORKER, teamManagerIds: [VIEWER, 'overseer-2'], status: 'in-progress' },
+        { id: 't3', assignedUserId: 'other-worker', teamManagerIds: [VIEWER], status: 'pending' },
+    ];
+
+    const applyClientFilter = (rows, spec) =>
+        spec.filterOwnerClientSide ? rows.filter((t) => t.assignedUserId === WORKER) : rows;
+
+    it('a scoped manager fetches the subtree slice, then keeps only this worker (non-empty)', () => {
+        const spec = workerTasksQuerySpec({
+            workerId: WORKER,
+            viewerData: { role: 'manager', scopedManager: true },
+            viewerUid: VIEWER,
+        });
+        // Subtree query + a client-side narrow, NOT an assignedUserId == AND array-contains query.
+        expect(spec.constraints).toHaveLength(1);
+        expect(spec.filterOwnerClientSide).toBe(true);
+        // The whole point: the worker's open tasks survive; the sibling worker's row is dropped.
+        const loaded = applyClientFilter(subtreeSlice, spec);
+        expect(loaded.map((t) => t.id)).toEqual(['t1', 't2']);
+        expect(loaded.length).toBeGreaterThan(0);
+    });
+
+    it('a senior manager is scoped the same way (subtree slice + client-side owner narrow)', () => {
+        const spec = workerTasksQuerySpec({
+            workerId: WORKER,
+            viewerData: { role: 'seniorManager' },
+            viewerUid: VIEWER,
+        });
+        expect(spec.filterOwnerClientSide).toBe(true);
+        expect(applyClientFilter(subtreeSlice, spec).map((t) => t.id)).toEqual(['t1', 't2']);
+    });
+
+    it('a whole-team viewer (unscoped manager) queries the worker directly, no client-side narrow', () => {
+        const spec = workerTasksQuerySpec({
+            workerId: WORKER,
+            viewerData: { role: 'manager', scopedManager: false },
+            viewerUid: VIEWER,
+        });
+        expect(spec.constraints).toHaveLength(1);
+        expect(spec.filterOwnerClientSide).toBe(false);
+    });
+
+    it('an admin queries the worker directly, no client-side narrow', () => {
+        const spec = workerTasksQuerySpec({
+            workerId: WORKER,
+            viewerData: { role: 'admin' },
+            viewerUid: VIEWER,
+        });
+        expect(spec.filterOwnerClientSide).toBe(false);
     });
 });
