@@ -35,6 +35,8 @@ export const NOTIFICATION_CATEGORY = {
     extension_granted: 'info',          // the manager extended the estimate
     extension_denied: 'info',           // the manager declined to extend
     calendar_decision: 'info',          // the manager approved/declined a calendar request
+    session_edited: 'info',             // an admin corrected the worker's logged (paid) time
+    session_deleted: 'info',            // an admin removed one of the worker's logged sessions
     // ── System → manager ─────────────────────────────────────────────────────
     recurring_reassign: 'action',       // a recurring job's usual assignee is away — reassign it
 };

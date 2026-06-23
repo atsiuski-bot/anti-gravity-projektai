@@ -766,6 +766,47 @@ export default function ManagerNotifications({ onClose }) {
                         );
                     }
 
+                    // Worker-facing INFO: an admin corrected or removed the worker's logged (paid)
+                    // time. A clear card (not a one-line row) because it changes payable time — the
+                    // worker should see WHICH day, the before→after, and WHY.
+                    if (notif.type === 'session_edited' || notif.type === 'session_deleted') {
+                        const isDelete = notif.type === 'session_deleted';
+                        const who = formatDisplayName(notif.createdByName) || 'Administratorius';
+                        const Icon = isDelete ? Trash2 : Edit;
+                        const headline = isDelete
+                            ? `${who} pašalino Jūsų įrašytą darbo laiką`
+                            : `${who} pakoregavo Jūsų įrašytą darbo laiką`;
+                        return (
+                            <div key={notif.id} className="rounded-card border border-feedback-info-border bg-feedback-info-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl relative">
+                                <IconButton
+                                    icon={X}
+                                    label="Pažymėti skaitytu"
+                                    variant="ghost"
+                                    onClick={() => handleDismissTask(notif.id)}
+                                    className="absolute top-2 right-2 text-ink-muted hover:text-feedback-info"
+                                />
+                                <div className="flex items-start gap-3 pr-6">
+                                    <Icon className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-info" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1 text-sm text-feedback-info-text">
+                                        <p className="font-medium leading-relaxed">{headline}</p>
+                                        {notif.day && <p className="mt-1">Diena: <span className="font-semibold">{notif.day}</span></p>}
+                                        {notif.summary && !isDelete && (
+                                            <p className="mt-1">Trukmė: <span className="font-semibold font-mono">{notif.summary}</span></p>
+                                        )}
+                                        {notif.reason && (
+                                            <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-info-border pl-2">
+                                                Priežastis: {notif.reason}
+                                            </p>
+                                        )}
+                                        <p className="mt-2 text-xs text-feedback-info-text/90">
+                                            Jei manote, kad tai klaida, susisiekite su vadovu.
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    }
+
                     if (notif.type === 'new_comment') {
                         return (
                             <div key={notif.id} className="bg-feedback-info-soft border border-feedback-info-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">

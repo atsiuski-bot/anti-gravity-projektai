@@ -55,6 +55,9 @@ function copyFor(n) {
             title: n.decision === 'approved' ? 'Kalendoriaus pakeitimas patvirtintas' : 'Kalendoriaus pakeitimas atmestas',
             body: 'Darbo kalendorius',
         };
+        // Admin → worker: their logged (paid) time was corrected / removed.
+        case 'session_edited': return { title: 'Pakoreguotas darbo laikas', body: n.day || 'Darbo laikas' };
+        case 'session_deleted': return { title: 'Pašalintas darbo laikas', body: n.day || 'Darbo laikas' };
         default: return { title: 'Naujas pranešimas', body: task };
     }
 }

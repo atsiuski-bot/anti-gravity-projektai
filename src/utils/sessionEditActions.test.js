@@ -16,7 +16,12 @@ vi.mock('firebase/firestore', () => ({
     addDoc: vi.fn(() => Promise.resolve({ id: 'generated-id' })),
 }));
 
+// notify() is exercised in its own surface; here we only assert the action layer hands it the
+// right worker-facing payload after a successful edit/delete (recipient, type, day, summary, reason).
+vi.mock('./notify', () => ({ notify: vi.fn(() => Promise.resolve()) }));
+
 import { updateDoc, addDoc } from 'firebase/firestore';
+import { notify } from './notify';
 import {
     deriveSessionFields,
     MAX_EDIT_SESSION_MINUTES,
@@ -262,5 +267,73 @@ describe('createWorkSession (admin-authored manual session)', () => {
         vi.clearAllMocks();
         await createWorkSession({ ...base, taskTitle: '  Roof repair  ' });
         expect(addDoc.mock.calls[0][1].taskTitle).toBe('Roof repair');
+    });
+});
+
+describe('worker notification on admin time correction (Step 4)', () => {
+    it('notifies the session owner with a before→after summary after a successful edit', async () => {
+        const session = {
+            id: 's1',
+            userId: 'worker-9',
+            taskTitle: 'Roof repair',
+            startTime: '2026-06-23T06:00:00.000Z',
+            endTime: '2026-06-23T07:00:00.000Z',
+            durationMinutes: 60,
+        };
+        await editWorkSession(session, {
+            startTime: '2026-06-23T08:00:00.000Z',
+            endTime: '2026-06-23T11:30:00.000Z', // 210 min
+            reason: '  clock skew  ',
+            editor: { uid: 'admin1', displayName: 'Admin One' },
+        });
+        expect(notify).toHaveBeenCalledTimes(1);
+        const payload = notify.mock.calls[0][0];
+        expect(payload).toMatchObject({
+            recipientId: 'worker-9',
+            type: 'session_edited',
+            actorUid: 'admin1',
+            actorName: 'Admin One',
+            day: '2026-06-23',
+            reason: 'clock skew', // trimmed by the action layer
+            taskTitle: 'Roof repair',
+        });
+        expect(payload.summary).toBe('1h → 3h 30m'); // before 60m, after 210m
+    });
+
+    it('phrases the summary without an arrow when the prior duration is unknown', async () => {
+        const session = { id: 's2', userId: 'w', startTime: 'x', endTime: 'y' }; // no durationMinutes
+        await editWorkSession(session, {
+            startTime: '2026-06-23T08:00:00.000Z',
+            endTime: '2026-06-23T09:00:00.000Z', // 60 min
+            reason: 'fix',
+            editor: { uid: 'admin1' },
+        });
+        expect(notify.mock.calls[0][0].summary).toBe('nustatyta trukmė 1h');
+    });
+
+    it('notifies the owner with the delete summary + stored day after a successful delete', async () => {
+        const session = { id: 's3', userId: 'worker-3', date: '2026-06-20', taskTitle: 'Demolition' };
+        await deleteWorkSession(session, { reason: '  orphaned timer  ', editor: { uid: 'admin1', email: 'a@b.lt' } });
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(notify.mock.calls[0][0]).toMatchObject({
+            recipientId: 'worker-3',
+            type: 'session_deleted',
+            actorUid: 'admin1',
+            actorName: 'a@b.lt',
+            day: '2026-06-20',
+            summary: 'pašalinta sesija',
+            reason: 'orphaned timer',
+            taskTitle: 'Demolition',
+        });
+    });
+
+    it('does NOT notify when the write itself fails', async () => {
+        updateDoc.mockRejectedValueOnce(new Error('boom'));
+        const res = await editWorkSession(
+            { id: 's4', userId: 'w', durationMinutes: 10 },
+            { startTime: '2026-06-23T08:00:00.000Z', endTime: '2026-06-23T09:00:00.000Z', reason: 'r', editor: { uid: 'a' } }
+        );
+        expect(res.ok).toBe(false);
+        expect(notify).not.toHaveBeenCalled();
     });
 });
