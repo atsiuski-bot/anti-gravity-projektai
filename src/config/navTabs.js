@@ -1,4 +1,4 @@
-import { UserCog } from 'lucide-react';
+import { UserCog, ScrollText } from 'lucide-react';
 import {
     TasksGlyph, TasksTeamGlyph,
     CalendarGlyph, CalendarTeamGlyph,
@@ -42,7 +42,10 @@ export function getNavSections(userRole) {
                 ? [{
                     id: 'admin',
                     label: 'Administravimas',
-                    items: [{ id: 'users', label: 'Vartotojai', icon: UserCog }],
+                    items: [
+                        { id: 'users', label: 'Vartotojai', icon: UserCog },
+                        { id: 'audit', label: 'Auditas', icon: ScrollText },
+                    ],
                 }]
                 : []),
         ];

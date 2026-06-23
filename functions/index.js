@@ -1287,6 +1287,15 @@ const OPENROUTER_API_KEY = defineSecret('OPENROUTER_API_KEY');
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const PARSE_MODEL = 'google/gemini-2.5-flash';
 const MAX_PARSE_INPUT = 2000;
+// MIRROR of ALL_TIMES in src/components/TaskModal.jsx — the canonical estimate chips. A model
+// guess is clamped to this set so it always lands on a real chip; keep both copies in lockstep.
+const ESTIMATE_SCALE = [
+    '5min', '15min', '30min', '45min', '1h', '1,5h', '2h', '2,5h', '3h', '4h', '5h', '6h',
+    '7,5h', '8h', '10h', '12,5h', '12h', '15h', '20h', '25h', '40h', '50h', '70h', '80h',
+    '90h', '100h', '110h', '120h', '150h', '200h',
+];
+// Short common subset shown to the model as guidance for its guess (full set is clamped above).
+const ESTIMATE_HINT = '15min, 30min, 45min, 1h, 1,5h, 2h, 3h, 4h, 6h, 8h';
 
 // Accent-insensitive lowercase, for matching Lithuanian names regardless of inflection/diacritics.
 function foldName(s) {
@@ -1334,11 +1343,14 @@ exports.parseTaskDraft = onCall(
             'Tu ištrauki VIENĄ darbo užduotį iš vadovo laisvo teksto (lietuvių kalba). Grąžink TIK ' +
             'JSON objektą su laukais: title (trumpas darbo pavadinimas BE vykdytojo/laiko/prioriteto ' +
             'žodžių), assigneeName (geriausiai atitinkantis vardas iš sąrašo arba ""), priority ' +
-            '(vienas iš: URGENT, HIGH, MEDIUM, LOW, VERY_LOW), estimate (pvz. "30min","1h","2h","1,5h" ' +
-            'arba ""), deadline (YYYY-MM-DD arba ""). Šiandien yra ' + today + ' (Europe/Vilnius), ' +
-            'savaitė prasideda pirmadienį — "rytoj","poryt","pirmadienį" ir pan. paversk į konkrečią ' +
-            'datą. Vykdytojų sąrašas: ' + (names.join(', ') || '(nėra)') + '. Jei prioritetas ' +
-            'nenurodytas, naudok MEDIUM. Atsakyk TIK JSON, be jokio kito teksto.';
+            '(vienas iš: URGENT, HIGH, MEDIUM, LOW, VERY_LOW), estimate (laikas TIK jei AIŠKIAI ' +
+            'nurodytas tekste, pvz. "30min","1h","2h","1,5h"; kitaip ""), estimateGuess (jei laiko ' +
+            'tekste NĖRA — tavo protingas spėjimas, kiek toks darbas užtruktų, VIENA reikšmė iš: ' +
+            ESTIMATE_HINT + '; jei estimate užpildytas, palik ""), deadline (YYYY-MM-DD arba ""). ' +
+            'Šiandien yra ' + today + ' (Europe/Vilnius), savaitė prasideda pirmadienį — "rytoj",' +
+            '"poryt","pirmadienį" ir pan. paversk į konkrečią datą. Vykdytojų sąrašas: ' +
+            (names.join(', ') || '(nėra)') + '. Jei prioritetas nenurodytas, naudok MEDIUM. ' +
+            'Atsakyk TIK JSON, be jokio kito teksto.';
 
         const body = {
             model: PARSE_MODEL,
@@ -1392,6 +1404,10 @@ exports.parseTaskDraft = onCall(
         }
 
         const estimate = typeof parsed.estimate === 'string' ? parsed.estimate.trim() : '';
+        // A best-guess time is surfaced ONLY when nothing was stated, and only if it lands on a real
+        // chip — the client prefers the manager's own history over this guess (history > guess).
+        const guessRaw = typeof parsed.estimateGuess === 'string' ? parsed.estimateGuess.trim() : '';
+        const estimatedGuess = (!estimate && ESTIMATE_SCALE.includes(guessRaw)) ? guessRaw : '';
         const deadline = (typeof parsed.deadline === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.deadline))
             ? parsed.deadline
             : '';
@@ -1401,6 +1417,7 @@ exports.parseTaskDraft = onCall(
             priority: normalizeRecurringPriority(parsed.priority),
             estimatedTime: estimate,
             estimatedTimeMinutes: parseEstimateMinutes(estimate),
+            estimatedGuess,
             deadline,
         };
     }
