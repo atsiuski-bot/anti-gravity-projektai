@@ -1,0 +1,34 @@
+
+> workz@0.0.0 test
+> vitest run
+
+
+[1m[7m[36m RUN [39m[27m[22m [36mv2.1.9 [39m[90mC:/Users/karol/Desktop/WORKZ/.claude/worktrees/stoic-proskuriakova-aad0bf[39m
+
+ [32m✓[39m src/utils/taskSearch.test.js [2m([22m[2m18 tests[22m[2m)[22m[90m 9[2mms[22m[39m
+[90mstdout[2m | src/utils/automationUtils.test.js[2m > [22m[2mcheckAndPromoteTasks — deadline buckets are computed in Vilnius time[2m > [22m[2mbuckets overdue/today/tomorrow -> Urgent, day-after-tomorrow -> High, 3+ days -> untouched
+[22m[39m[Automation] Promoted 4 tasks based on deadline proximity.
+
+[90mstdout[2m | src/utils/automationUtils.test.js[2m > [22m[2mcheckAndPromoteTasks — deadline buckets are computed in Vilnius time[2m > [22m[2muses the Vilnius day, not the UTC day, at the day boundary (the bug the fix closed)
+[22m[39m[Automation] Promoted 1 tasks based on deadline proximity.
+
+[90mstdout[2m | src/utils/automationUtils.test.js[2m > [22m[2mcheckAndPromoteTasks — deadline buckets are computed in Vilnius time[2m > [22m[2mskips tasks with no deadline and tasks already at the target priority
+[22m[39m[Automation] Promoted 0 tasks based on deadline proximity.
+
+[90mstdout[2m | src/utils/automationUtils.test.js[2m > [22m[2marchiveOldTasks — work-day cutoff flips at 03:00 Vilnius[2m > [22m[2mafter 03:00 Vilnius: archives tasks finished before today, keeps today
+[22m[39m[Automation] Checking for confirmed/deleted tasks to archive...
+[Automation] Archived 1 old confirmed/deleted tasks.
+
+[90mstdout[2m | src/utils/automationUtils.test.js[2m > [22m[2marchiveOldTasks — work-day cutoff flips at 03:00 Vilnius[2m > [22m[2mbefore 03:00 Vilnius: rolls the work-day back one day
+[22m[39m[Automation] Checking for confirmed/deleted tasks to archive...
+[Automation] Archived 1 old confirmed/deleted tasks.
+
+ [32m✓[39m src/utils/automationUtils.test.js [2m([22m[2m5 tests[22m[2m)[22m[90m 30[2mms[22m[39m
+ [32m✓[39m src/utils/sessionEditActions.test.js [2m([22m[2m23 tests[22m[2m)[22m[90m 33[2mms[22m[39m
+ [32m✓[39m src/utils/timeUtils.test.js [2m([22m[2m40 tests[22m[2m)[22m[90m 56[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m4 passed[39m[22m[90m (4)[39m
+[2m      Tests [22m [1m[32m86 passed[39m[22m[90m (86)[39m
+[2m   Start at [22m 03:40:15
+[2m   Duration [22m 1.32s[2m (transform 350ms, setup 0ms, collect 539ms, tests 128ms, environment 1ms, prepare 2.57s)[22m
+
