@@ -173,8 +173,39 @@ export const calculateCurrentTotalMinutes = (task) => {
     }
 };
 
+// A task whose accumulated timer exceeds its OWN estimate by this factor is "implausible vs plan"
+// — the forgot-to-stop / runaway-timer signature. Expressed as a RATIO, not absolute minutes, so a
+// legitimate multi-day job with a large estimate (e.g. 70h) is never flagged: the data showed 19 of
+// 22 >10h timers were genuine long jobs, and only the ratio separates those from real runaways.
+export const TASK_TIMER_ANOMALY_RATIO = 3;
+// Absolute floor so a tiny task tripping the ratio (15min estimate, 50min run) isn't nagged; only
+// flag once the accumulated total is itself non-trivial.
+const TASK_TIMER_ANOMALY_FLOOR_MINUTES = 60;
+
+// True when a task's accumulated time is implausible enough to warrant a manager's eye (a read-only
+// "⚠ Patikrinti" affordance), WITHOUT mutating anything. Two signatures: (a) a real estimate that
+// the total overruns by >= TASK_TIMER_ANOMALY_RATIO×, or (b) NO usable estimate but a total past
+// the single-shift ceiling (the abandoned-timer-with-no-bound case, e.g. the 145h photo task).
+// Deleted/non-time tasks never flag. Ratio-based by design so legitimate large-estimate jobs pass.
+export const isTaskTimerAnomalous = (task) => {
+    if (!task || typeof task !== 'object') return false;
+    if (task.isDeleted || task.status === 'deleted') return false;
+
+    const total = calculateCurrentTotalMinutes(task);
+    if (!Number.isFinite(total) || total < TASK_TIMER_ANOMALY_FLOOR_MINUTES) return false;
+
+    // Prefer the persisted numeric estimate; fall back to parsing the legacy free-text string so
+    // rows written before estimatedTimeMinutes existed are still evaluated.
+    const est = (Number.isFinite(task.estimatedTimeMinutes) && task.estimatedTimeMinutes > 0)
+        ? task.estimatedTimeMinutes
+        : parseTimeStringToMinutes(task.estimatedTime || '');
+
+    if (est > 0) return total >= est * TASK_TIMER_ANOMALY_RATIO;
+    return isImplausibleSessionMinutes(total);
+};
+
 /**
- * Returns a Date object representing the current moment, 
+ * Returns a Date object representing the current moment,
  * but ensures operations can be performed in Lithuanian context.
  */
 export const getLithuanianNow = () => {

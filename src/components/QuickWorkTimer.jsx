@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
+import { useFrequentQuickWork } from '../hooks/useFrequentQuickWork';
 import { Zap, Square, Check, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
@@ -13,7 +14,7 @@ import Button from './ui/Button';
 import Modal from './ui/Modal';
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '' }) => {
+const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '', frequentChips = [] }) => {
     const textareaRef = useRef(null);
     // Which manager confirms this work. Primary pre-selected so the common case is one tap;
     // the worker can switch before saving. Initialized once — by the time the prompt opens the
@@ -55,6 +56,30 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                     <label htmlFor="quickWorkTextarea" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
                         Ką nuveikėte?
                     </label>
+
+                    {/* One-tap "frequent activity" chips, derived from THIS worker's own quick-work
+                        history (shown only to the repetitive cohort — see useFrequentQuickWork). A tap
+                        pre-fills the title; it never auto-submits, so the worker stays in control. */}
+                    {frequentChips.length > 0 && (
+                        <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Dažni darbai">
+                            {frequentChips.map((chip) => (
+                                <button
+                                    key={chip}
+                                    type="button"
+                                    onClick={() => {
+                                        if (textareaRef.current) {
+                                            textareaRef.current.value = chip;
+                                            textareaRef.current.focus();
+                                        }
+                                    }}
+                                    className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                >
+                                    {chip}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
                     <textarea
                         ref={textareaRef}
                         id="quickWorkTextarea"
@@ -132,6 +157,10 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
     const { usersMap } = useUsers();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
+
+    // Per-user "frequent activity" chips for the finish prompt — derived read-only from this
+    // worker's own quick-work history; empty (no chips) for one-off loggers. One-shot read.
+    const frequentChips = useFrequentQuickWork(currentUser);
 
     // The worker's managers, resolved to {id, name} for the finish prompt. Managers/admins
     // self-confirm their own quick work, so they get no picker (empty list). Source of truth is
@@ -262,6 +291,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             isSubmitting={isSubmitting}
             managers={managers}
             defaultManagerId={defaultManagerId}
+            frequentChips={frequentChips}
         />
     );
 

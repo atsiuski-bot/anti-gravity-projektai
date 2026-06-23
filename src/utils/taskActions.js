@@ -389,6 +389,55 @@ export const updateTaskTemplate = async (templateId, templateName, selectedData,
 };
 
 /**
+ * Sets (or clears) a template's recurrence descriptor — the WHEN that turns a plain template into a
+ * recurring job the scheduled generator materializes. Pass the full recurrence object (see
+ * utils/recurrence.js) or null to make the template non-recurring. Manager/admin-writable per the
+ * task_templates rules (no new rule needed).
+ *
+ * @param {string} templateId
+ * @param {Object|null} recurrence
+ * @param {Object} user - current user (for the audit stamp)
+ */
+export const setTemplateRecurrence = async (templateId, recurrence, user) => {
+    try {
+        await updateDoc(doc(db, 'task_templates', templateId), {
+            recurrence: recurrence || null,
+            updatedBy: user.uid,
+            updatedByName: user.displayName || user.email,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error("Error setting template recurrence:", err);
+        throw err;
+    }
+};
+
+/**
+ * Sets a template's baked assignee to the single CANONICAL field (`data.assignedUserId`), which the
+ * generator reads. This is also the place the legacy `assignedWorkerId` drift is healed: writing the
+ * canonical field and clearing the old one removes the ambiguity the data exposed (templates split
+ * 5 old / 9 new). Pass an empty string to leave it unassigned.
+ *
+ * @param {string} templateId
+ * @param {string} assignedUserId
+ * @param {Object} user
+ */
+export const setTemplateAssignee = async (templateId, assignedUserId, user) => {
+    try {
+        await updateDoc(doc(db, 'task_templates', templateId), {
+            'data.assignedUserId': assignedUserId || '',
+            'data.assignedWorkerId': null, // heal the old-field drift on write
+            updatedBy: user.uid,
+            updatedByName: user.displayName || user.email,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (err) {
+        console.error("Error setting template assignee:", err);
+        throw err;
+    }
+};
+
+/**
  * Deletes a task by.
  * Depending on options, it either archives it as deleted (keeping hours) or hard-deletes it and marks sessions as deleted.
  * @param {Object} task - The task to delete.
