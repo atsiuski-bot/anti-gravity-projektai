@@ -110,6 +110,30 @@ export const isManagerRole = (role) =>
     role === 'manager' || role === 'admin' || role === 'seniorManager';
 
 /**
+ * Decide the status a task takes when its assignee finishes it, and whether the caller may
+ * stamp the manager-acceptance fields (confirmedBy/confirmedAt). The SINGLE source of this
+ * decision — both completion entry points (the timer "Užbaigti" button via TaskTimerControls
+ * and the checkbox/table path via the audited completeTask command) call it, so the client
+ * stays in lock-step with firestore.rules.
+ *
+ * The acceptance gate is granted ONLY by being a manager BY ROLE. Owning the task's `managerId`
+ * (the self-managed worker case — Vadovas defaulted to self at create) does NOT: such a user is
+ * still role 'worker', and firestore.rules rejects a non-role-manager writing status into the
+ * approval set (changesApprovalFields on the ownsAssignedUser update path). A self-managed worker
+ * therefore takes the normal worker path — status 'completed' ("Laukia priėmimo") — and may later
+ * accept it via the manager UI. Writing 'confirmed' as a worker previously failed the rule and
+ * left the task stuck in-progress. Lives here (not taskActions) so the domain completeTask command
+ * can import it without a domain↔taskActions cycle.
+ *
+ * @param {string} role - the acting user's role
+ * @returns {{ status: 'confirmed'|'completed', isAcceptance: boolean }}
+ */
+export const resolveCompletionStatus = (role) => {
+    const isAcceptance = isManagerRole(role);
+    return { status: isAcceptance ? 'confirmed' : 'completed', isAcceptance };
+};
+
+/**
  * Resolves the user ID from a record that may use different field names
  * due to legacy schema variations.
  * 

@@ -51,11 +51,17 @@ describe('completeTask — plan (manager auto-confirm rule)', () => {
     expect(p.payload.completedBy).toBe('w1');
   });
 
-  it("the task's OWN manager (by managerId) auto-confirms even without a manager role", () => {
-    const ownManager = humanActor({ uid: 'mgrOwn', role: 'worker' }); // role worker, but owns the task
-    const p = __buildCompletePlan({ task: { id: 't1', status: 'pending', completed: false, managerId: 'mgrOwn' } }, ownManager);
-    expect(p.payload.status).toBe('confirmed');
-    expect(p.payload.confirmedBy).toBe('mgrOwn');
+  it("a self-managed worker (owns managerId but role 'worker') does NOT auto-confirm", () => {
+    // Regression guard (2026-06-24): owning the task's managerId previously auto-confirmed
+    // even for a role 'worker'. That wrote status 'confirmed', which firestore.rules rejects
+    // on the ownsAssignedUser path (changesApprovalFields) → permission-denied, task stuck
+    // in-progress. The decision now hinges ONLY on role (shared resolveCompletionStatus), so a
+    // self-managed worker lands as 'completed' awaiting acceptance via the manager UI.
+    const selfManaged = humanActor({ uid: 'mgrOwn', role: 'worker' }); // role worker, but owns the task
+    const p = __buildCompletePlan({ task: { id: 't1', status: 'pending', completed: false, managerId: 'mgrOwn' } }, selfManaged);
+    expect(p.payload.status).toBe('completed');
+    expect(p.payload.confirmedBy).toBeNull();
+    expect(p.payload.confirmedAt).toBeNull();
   });
 
   it('rejects a missing task', () => {

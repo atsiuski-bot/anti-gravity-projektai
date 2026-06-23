@@ -1,7 +1,7 @@
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { logError } from '../../utils/errorLog';
-import { isManagerRole } from '../../utils/formatters';
+import { resolveCompletionStatus } from '../../utils/formatters';
 import { defineCommand, MODES } from '../command';
 import { isAgent } from '../actor';
 
@@ -10,9 +10,11 @@ import { isAgent } from '../actor';
  *
  * Task status used to mutate in place (the analysis flagged that the "who / why" of a transition
  * vanished at the write). This command makes "mark complete" a named operation that records ONE
- * decision: who completed it, the before/after status, and the manager auto-confirm. A manager (or
- * the task's own manager) completing a task auto-confirms it (status 'confirmed'); a worker's
- * completion lands as 'completed' awaiting a manager's confirmation — preserving the prior rule.
+ * decision: who completed it, the before/after status, and the manager auto-confirm. A manager BY
+ * ROLE completing a task auto-confirms it (status 'confirmed'); a worker's completion — INCLUDING a
+ * self-managed worker (actor.id == task.managerId, who is still role 'worker') — lands as
+ * 'completed' awaiting a manager's confirmation. The decision is shared with the timer path via
+ * resolveCompletionStatus so neither door can drift out of lock-step with firestore.rules.
  *
  * The caller (the completion util) still stops a running timer BEFORE invoking this, so the command
  * stays a pure status write (and avoids importing the timer code — which would cycle back here).
@@ -24,9 +26,13 @@ import { isAgent } from '../actor';
 const buildPlan = (input, actor) => {
   const task = input && input.task;
   if (!task || !task.id) throw new Error('completeTask: a task with an id is required');
-  const isManagerOrAdmin = isManagerRole(actor.role) || actor.id === task.managerId;
+  // Single source of the acceptance-gate decision, shared with the timer path
+  // (TaskTimerControls). Only a manager BY ROLE may auto-confirm; a self-managed worker
+  // (role 'worker', actor.id == task.managerId) is NOT one, so it lands as 'completed'
+  // awaiting acceptance — writing 'confirmed' there is rejected by firestore.rules and
+  // previously left the task stuck in-progress.
+  const { status, isAcceptance: isManagerOrAdmin } = resolveCompletionStatus(actor.role);
   const nowIso = new Date().toISOString();
-  const status = isManagerOrAdmin ? 'confirmed' : 'completed';
 
   const payload = {
     completed: true,

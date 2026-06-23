@@ -4,7 +4,7 @@ import { doc, updateDoc, collection, addDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
-import { isManagerRole } from '../utils/formatters';
+import { isManagerRole, resolveCompletionStatus } from '../utils/formatters';
 import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
 import { SoundManager } from '../utils/soundUtils';
@@ -206,8 +206,13 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 finalTimerMinutes += clampSessionMinutes((now - start) / (1000 * 60));
             }
 
-            // 2. Prepare task data for completion
-            const isManagerOrAdmin = isManagerRole(userRole) || currentUser?.uid === task.managerId;
+            // 2. Prepare task data for completion. resolveCompletionStatus keeps the
+            // client status decision in lock-step with firestore.rules: only a manager
+            // BY ROLE may stamp the acceptance gate ('confirmed' + confirmedBy). A
+            // self-managed worker (uid == task.managerId) is still role 'worker', so it
+            // takes the normal worker path → 'completed' ("Laukia priėmimo"); writing
+            // 'confirmed' there is rejected by the rules and left the task stuck.
+            const { isAcceptance: isManagerOrAdmin } = resolveCompletionStatus(userRole);
             const totalMinutes = finalTimerMinutes + currentManualMinutes;
             const formattedTime = formatMinutesToTimeString(totalMinutes);
 
