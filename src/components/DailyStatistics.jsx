@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
@@ -14,8 +14,9 @@ import { MetricWorkedGlyph, MetricTotalGlyph } from './icons/metricGlyphs';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
 import { addComment } from '../utils/commentActions';
+import { notifyMany } from '../utils/notify';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, RotateCcw, X, Pencil, Plus } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, RotateCcw, X, Pencil, Plus, Flag } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
@@ -52,6 +53,31 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const [sessionEditTarget, setSessionEditTarget] = useState(null);
     const openEditSession = (item, targetUser, dayTotal) => setSessionEditTarget({ mode: 'edit', session: item, targetUser, dayTotal });
     const openCreateSession = (targetUser, dayTotal) => setSessionEditTarget({ mode: 'create', session: null, targetUser, dayTotal });
+
+    // Worker self-service: flag one of MY OWN logged-time rows as wrong. A worker cannot edit a
+    // session (that stays admin-only via SessionEditModal), so instead they send the manager a
+    // correction request — a notification carrying the row's day + duration + the worker's reason.
+    // The manager then opens the day timeline and fixes it with the editor they already have.
+    // `errorReportTarget` holds the timeline item awaiting a reason; null when the prompt is closed.
+    const [errorReportTarget, setErrorReportTarget] = useState(null);
+    // The worker's managers, the recipients of any correction request. Mirrors QuickWorkTimer's
+    // resolution: the team (teamManagerIds), falling back to the single legacy defaultManager.
+    const myManagerIds = useMemo(() => {
+        const ids = Array.isArray(userData?.teamManagerIds) && userData.teamManagerIds.length
+            ? userData.teamManagerIds
+            : (userData?.defaultManager ? [userData.defaultManager] : []);
+        return ids.filter(Boolean);
+    }, [userData?.teamManagerIds, userData?.defaultManager]);
+    // A row is reportable when it is the signed-in worker's OWN real, finished work session — not a
+    // break, gap, live session, or legacy synthetic adjustment — and they actually have a manager to
+    // route it to. Admins/managers use the inline editor instead, so the affordance is workers-only.
+    const canReportRow = (item) =>
+        !isManagerRole(userRole) &&
+        myManagerIds.length > 0 &&
+        item.type === 'session' &&
+        !item.isActive &&
+        !item.isManualAdjustment &&
+        resolveUserId(item) === currentUser?.uid;
     const [selectedDate, setSelectedDate] = useState(initialDate ?? getLithuanianDateString());
     const [, setLoading] = useState(false);
 
@@ -892,6 +918,45 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         }
     };
 
+    // Worker → manager(s): "this logged time row is wrong". We don't mutate the session (workers
+    // have no edit right); we send a correction REQUEST the manager resolves with their own editor.
+    // The row's day + time span + credited duration are folded into the message so the manager can
+    // find the exact session, and the worker's free-text reason is the only thing they type.
+    const handleSubmitErrorReport = async (reason) => {
+        const item = errorReportTarget;
+        const trimmed = (reason || '').trim();
+        if (!item || !trimmed || myManagerIds.length === 0) {
+            setErrorReportTarget(null);
+            return;
+        }
+        const day = item.date || getLithuanianDateString(item.startTime);
+        const span = `${formatTime(item.startTime)}–${formatTime(item.endTime)}`;
+        const dur = formatMinutesToTimeString(item.duration);
+        const label = item.title || 'Darbas';
+        // One human line the manager reads in the bell: what, when, how long, and why it's wrong.
+        const commentText = `Pranešimas apie klaidą darbo laike. ${day} ${span} (${dur}) — „${label}“. Priežastis: ${trimmed}`;
+        const actorName = formatDisplayName(currentUser?.displayName || currentUser?.email) || currentUser?.email || '';
+        try {
+            await notifyMany(myManagerIds, {
+                type: 'session_correction_request',
+                actorUid: currentUser?.uid,
+                actorName,
+                commentText,
+                // Locator fields so a future bell renderer (or an export) can deep-link the row.
+                day,
+                sessionRef: item.id || null,
+                userId: currentUser?.uid,
+                userName: actorName,
+            });
+            setActionError('');
+        } catch (err) {
+            console.error('Error reporting session error:', err);
+            setActionError('Nepavyko išsiųsti pranešimo apie klaidą. Bandykite vėl.');
+        } finally {
+            setErrorReportTarget(null);
+        }
+    };
+
     // Open the restore confirmation (replaces window.confirm — §8).
     const handleRestore = (task) => {
         setRestoreTarget(task);
@@ -1322,6 +1387,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 // Real, finished work sessions are editable; legacy synthetic delta rows
                                 // (isManualAdjustment) and live sessions are not.
                                 const canEditRow = canEditSessions && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+                                const reportable = canReportRow(item);
                                 return (
                                 <li key={item.id || idx} className="flex items-center justify-between gap-3 p-4">
                                     <div className="min-w-0">
@@ -1356,6 +1422,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         {canEditRow && (
                                             <IconButton icon={Pencil} label="Redaguoti sesijos laiką" onClick={() => openEditSession(item, sessionEditTargetUser, totalWorkedMinutes)} />
                                         )}
+                                        {reportable && (
+                                            <IconButton icon={Flag} label="Pranešti apie klaidą" onClick={() => setErrorReportTarget(item)} />
+                                        )}
                                     </div>
                                 </li>
                                 );
@@ -1379,6 +1448,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                             <tbody className="divide-y divide-line">
                                 {combinedTimelineItems.map((item, idx) => {
                                     const canEditRow = canEditSessions && item.type === 'session' && !item.isActive && !item.isManualAdjustment;
+                                    const reportable = canReportRow(item);
                                     return (
                                     <tr key={item.id || idx} className={`text-xs hover:bg-surface-sunken border-b border-line last:border-0 ${item.type === 'break' ? 'text-feedback-warning-text bg-feedback-warning-soft/10' : item.type === 'inactive' ? 'text-ink-muted italic' : 'text-ink-muted'}`}>
                                         <td className="px-4 py-3 font-mono text-ink-muted w-24">
@@ -1405,6 +1475,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                 {formatMinutesToTimeString(item.duration)}
                                                 {canEditRow && (
                                                     <IconButton icon={Pencil} label="Redaguoti sesijos laiką" onClick={() => openEditSession(item, sessionEditTargetUser, totalWorkedMinutes)} />
+                                                )}
+                                                {reportable && (
+                                                    <IconButton icon={Flag} label="Pranešti apie klaidą" onClick={() => setErrorReportTarget(item)} />
                                                 )}
                                             </span>
                                         </td>
@@ -1587,7 +1660,90 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     onClose={() => setSessionEditTarget(null)}
                 />
             )}
+
+            {/* Worker error-report prompt — collects a free-text reason, then sends the worker's
+                manager(s) a correction request for the flagged time row. */}
+            {errorReportTarget && (
+                <SessionErrorReportModal
+                    item={errorReportTarget}
+                    onSubmit={handleSubmitErrorReport}
+                    onClose={() => setErrorReportTarget(null)}
+                />
+            )}
         </div>
+    );
+}
+
+// Worker error-report prompt — a tiny reason collector. A worker cannot edit their own logged time
+// (that stays an admin action), so when a row is wrong they type WHY and we notify their manager,
+// who fixes it with the session editor. Mirrors SessionEditModal's reason field + ConfirmDialog
+// gating so the two correction paths feel like one family. The row's day/time/duration are shown
+// read-only as context so the worker confirms they are flagging the right segment.
+function SessionErrorReportModal({ item, onSubmit, onClose }) {
+    const [reason, setReason] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const fieldId = useId();
+
+    const span = `${formatTime(item.startTime)} – ${formatTime(item.endTime)}`;
+    const dur = formatMinutesToTimeString(item.duration);
+    const day = item.date || getLithuanianDateString(item.startTime);
+    const canSend = reason.trim().length > 0;
+
+    const handleSend = async () => {
+        if (!canSend || submitting) return;
+        setSubmitting(true);
+        try {
+            await onSubmit(reason);
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    return (
+        <Modal
+            open
+            onClose={onClose}
+            title="Pranešti apie klaidą"
+            size="md"
+            closeOnBackdrop={false}
+            footer={
+                <div className="flex gap-3">
+                    <Button variant="secondary" fullWidth onClick={onClose} disabled={submitting}>
+                        Atšaukti
+                    </Button>
+                    <Button variant="primary" fullWidth icon={Flag} loading={submitting} disabled={!canSend} onClick={handleSend}>
+                        Siųsti vadovui
+                    </Button>
+                </div>
+            }
+        >
+            <div className="space-y-4">
+                <p className="text-body text-ink">
+                    Pranešite vadovui, kad ši užfiksuoto darbo laiko eilutė neteisinga. Laiko Jūs
+                    pakeisti negalite — vadovas jį pataisys.
+                </p>
+                <div className="rounded-control border border-line bg-surface-sunken p-3">
+                    <p className="text-caption uppercase font-bold tracking-wide text-ink-muted">Eilutė</p>
+                    <p className="mt-1 text-body text-ink-strong break-words">{item.title || 'Darbas'}</p>
+                    <p className="mt-0.5 font-mono text-caption text-ink-muted">
+                        {day} · {span} · {dur}
+                    </p>
+                </div>
+                <div>
+                    <label htmlFor={`${fieldId}-reason`} className="mb-1 block text-caption font-medium text-ink-muted">
+                        Kas negerai? (privaloma)
+                    </label>
+                    <textarea
+                        id={`${fieldId}-reason`}
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        rows={3}
+                        placeholder="pvz. Pamiršau sustabdyti laikmatį — baigiau 16:00, ne 18:30"
+                        className="min-h-touch w-full rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    />
+                </div>
+            </div>
+        </Modal>
     );
 }
 

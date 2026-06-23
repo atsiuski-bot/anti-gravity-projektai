@@ -19,6 +19,11 @@ before changing anything.
   signal).
 - **No secrets in git:** no API keys, tokens, or credentials.
 - **Don't deploy autonomously:** deploy (Netlify) is a human-initiated action.
+- **Deploy is post-ship, never pre-ship:** `firebase deploy` blindly overwrites the one shared
+  project from the CWD's files (git-blind, last-write-wins, no version guard). **Never suggest
+  deploying rules/functions from a worktree before the change is merged to main** — deploy only
+  from an up-to-date `main` checkout *after* `/ship`, then verify the live state via the Firebase
+  MCP, not the deploy log. (Full rationale: CLAUDE.md → Human-only boundary.)
 
 ## Before you finish a code change
 
