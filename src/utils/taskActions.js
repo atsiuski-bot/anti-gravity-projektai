@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
 import { logError } from './errorLog';
-import { createTask, humanActor, MODES } from '../domain';
+import { createTask, reopenTask, humanActor, MODES } from '../domain';
 
 /**
  * Updates the user's work status in Firestore.
@@ -592,27 +592,12 @@ export const deleteTask = async (task, userId, options = { keepWorkHours: false 
  * @param {Object} task - The task to revert.
  * @returns {Promise<void>}
  */
-export const revertTask = async (task) => {
+export const revertTask = async (task, user) => {
     if (!task || !task.id) return;
-
-    try {
-        await updateDoc(doc(db, 'tasks', task.id), {
-            status: 'pending',
-            completed: false,
-            completedAt: null,
-            completedBy: null,
-            confirmedBy: null,
-            confirmedAt: null,
-            isDeleted: false,
-            deletedAt: null,
-            deletedBy: null,
-            timerStatus: task.timerMinutes > 0 ? 'paused' : null,
-            updatedAt: new Date().toISOString()
-        });
-    } catch (err) {
-        console.error("Error reverting task:", err);
-        throw err;
-    }
+    // Routed through the audited reopenTask command (ADR 0015, increment 4): the same status/
+    // completion/deletion reset, now plus a decision_log entry naming who reopened it. The previous
+    // inline updateDoc is gone.
+    await reopenTask({ task }, { actor: humanActor(user), mode: MODES.COMMIT, reason: 'reverted to active' });
 };
 
 export const extendTaskTime = async (taskId, additionalTimeString, extendedBy) => {
