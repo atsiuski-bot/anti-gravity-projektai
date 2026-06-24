@@ -37,6 +37,20 @@ function resolveMessaging() {
 }
 
 /**
+ * True if this browser can do FCM web push at all (Notification API + service worker + a messaging
+ * context the SDK supports). Async because firebase/messaging's isSupported() probes the environment.
+ * Lets the UI distinguish "push unsupported here" from "permission not yet granted".
+ */
+export async function isPushSupported() {
+    if (typeof Notification === 'undefined' || !('serviceWorker' in navigator)) return false;
+    try {
+        return await isSupported();
+    } catch {
+        return false;
+    }
+}
+
+/**
  * Register (or refresh) this device's FCM token and persist it for the user. Returns a status
  * string ('ok' | 'no-user' | 'no-vapid' | 'denied' | 'unsupported' | 'error') so callers can
  * react (e.g. hint an iOS user to install the PWA).

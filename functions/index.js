@@ -96,8 +96,25 @@ async function sendToUser(uid, notification, data) {
             ...(data || {})
         },
         webpush: {
-            // Honor the per-message deep link (the SW notificationclick reads data.link too).
-            fcmOptions: { link: (data && data.link) || '/' }
+            // Delivery hints handed to the browser's push service (RFC 8030). These affect when/
+            // whether the push is DELIVERED and wakes the device — NOT how the notification looks.
+            headers: {
+                // 'high' so a backgrounded / low-battery phone still wakes promptly for a
+                // time-sensitive task/approval alert; omitting it defaults to 'normal'. Must be one
+                // of very-low|low|normal|high — we only ever send this single literal. NB: this is a
+                // prioritisation hint to the web push service, not an Android-native Doze guarantee.
+                Urgency: 'high',
+                // Keep an undelivered alert for 24h (seconds, as a string) so it still arrives when
+                // an offline worker reconnects, rather than being dropped on the floor.
+                TTL: '86400'
+            },
+            fcmOptions: {
+                // Honor the per-message deep link (the SW notificationclick reads data.link too).
+                link: (data && data.link) || '/',
+                // Group deliveries by notification type in the FCM / BigQuery reports (observability
+                // only, no delivery effect). The registry type ids are already label-charset safe.
+                analyticsLabel: String((data && data.type) || 'workz_notification')
+            }
         }
     });
 
@@ -123,6 +140,31 @@ async function sendToUser(uid, notification, data) {
 // imported across the deploy boundary, so this is hand-copied — and src/__tests__/firebaseConsistency.test.js
 // evaluates this function and fails the gate if its title/body output drifts from the registry. Change
 // a string here? Change it in the registry too (and vice versa).
+// MIRROR of the registry's per-type `category` ('action' = a decision is owed → floats to the top of
+// the bell and gets requireInteraction on a desktop push; 'info' = FYI). The service worker has no
+// access to the client registry, so the category travels in the push DATA payload; this map is the
+// server side of that mirror. src/__tests__/firebaseConsistency.test.js locks it against
+// notificationCategory() in the registry, exactly like the copy lockstep below. Kept OUTSIDE the
+// copyForRequestNotification slice the copy-lockstep test extracts, so it never disturbs that test.
+const CATEGORY_BY_TYPE = {
+    task_approval: 'action',
+    task_completion: 'action',
+    time_extension_request: 'action',
+    session_correction_request: 'action',
+    task_reverted: 'action',
+    account_approval: 'action',
+    recurring_reassign: 'action',
+    new_comment: 'info',
+    task_assigned: 'info',
+    task_approved: 'info',
+    task_confirmed: 'info',
+    extension_granted: 'info',
+    extension_denied: 'info',
+    calendar_decision: 'info',
+    session_edited: 'info',
+    session_deleted: 'info',
+};
+
 function copyForRequestNotification(n) {
     const title = n.taskTitle || 'WORKZ';
     switch (n.type) {
@@ -193,6 +235,9 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
         await sendToUser(n.recipientId, { title, body }, {
             type: String(n.type || ''),
             taskId: String(n.taskId || ''),
+            // Category rides along so the SW can render an 'action' push as requireInteraction
+            // (desktop) without importing the client registry. MIRROR — see CATEGORY_BY_TYPE.
+            category: CATEGORY_BY_TYPE[n.type] || 'info',
             // Per-event id → unique notification tag (so distinct alerts don't collapse).
             notifId: String(event.params.id),
             link
@@ -216,6 +261,8 @@ exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', as
         await Promise.all(recipients.map((uid) =>
             sendToUser(uid, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
                 type: 'calendar_request',
+                // A pending approval is a decision owed → 'action' (sticky on a desktop push).
+                category: 'action',
                 // Per-event id → unique tag, so multiple pending requests don't collapse onto one slot.
                 notifId: String(event.params.id),
                 link: '/?tab=team-calendar'
@@ -383,6 +430,8 @@ async function announceBadge(uid, key, tier) {
     try {
         await sendToUser(uid, { title: 'Naujas ženkliukas', body: `${badge.name}: ${TIER_NAMES[tier]}` }, {
             type: 'achievement',
+            // An earned-badge alert is FYI, not a decision owed → 'info' (not sticky).
+            category: 'info',
             badgeId: key,
             tier: String(tier),
             notifId: `${key}:${tier}`,
