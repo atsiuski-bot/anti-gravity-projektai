@@ -519,6 +519,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const shownTodayTasks = view === 'approval' ? approvalTodayTasks.filter(matchesApprovalPhase) : todayTasks;
     const shownEarlierTasks = view === 'approval' ? approvalEarlierTasks.filter(matchesApprovalPhase) : earlierTasks;
 
+    // Worker (full) view: 'laukia priėmimo' sections must show only 'completed' tasks.
+    const isFullView = view === 'full';
+    const displayTodayPending = isFullView ? shownTodayTasks.filter(t => t.status === 'completed') : shownTodayTasks;
+    const displayEarlierPending = isFullView ? shownEarlierTasks.filter(t => t.status === 'completed') : shownEarlierTasks;
+
     // Test/founder accounts are kept out of the report unless the manager opted in (showTestUsers),
     // resolved against each user's isTest flag — applied to every session/timeline source below.
     const testUserIds = useMemo(() => new Set((users || []).filter(u => u.isTest).map(u => u.id)), [users]);
@@ -1573,13 +1578,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 by default, the history archive collapsed). */}
             {view !== 'hours' && (
               <>
-            {shownTodayTasks.length > 0 && (
+            {displayTodayPending.length > 0 && (
                 <TaskListTable
-                    tasks={shownTodayTasks}
+                    tasks={displayTodayPending}
                     title={
                         view === 'approval'
                             ? (approvalPhase === 'accepted' ? 'Šiandien priimtos užduotys' : 'Užbaigta šiandien, laukia priėmimo')
-                            : (isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}`)
+                            : (isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}, laukia priėmimo`)
                     }
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
@@ -1596,13 +1601,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 />
             )}
 
-            {shownEarlierTasks.length > 0 && (
+            {displayEarlierPending.length > 0 && (
                 <TaskListTable
-                    tasks={shownEarlierTasks}
+                    tasks={displayEarlierPending}
                     title={
                         view === 'approval' && approvalPhase === 'accepted'
                             ? 'Priimta anksčiau'
-                            : 'Užduotys atliktos anksčiau, laukia priėmimo'
+                            : 'Atliktos užduotys, laukiančios priėmimo'
                     }
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
