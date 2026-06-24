@@ -97,6 +97,7 @@ export default function ManagerNotifications({ onClose }) {
     const [taskNotifications, setTaskNotifications] = useState([]);
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
+    const [actionNotice, setActionNotice] = useState(null); // neutral Lithuanian notice (e.g. an orphaned request was cleared) — not an error
     const [bulkConfirming, setBulkConfirming] = useState(false); // batch "approve all completions" in flight
     const [bulkApprovingCal, setBulkApprovingCal] = useState(false); // batch "approve all calendar requests" in flight
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
@@ -207,9 +208,17 @@ export default function ManagerNotifications({ onClose }) {
         }
     };
 
+    // Reset BOTH feedback banners before any action. Kept as one helper so the neutral notice
+    // (e.g. "task already deleted") can never linger across an unrelated action — every handler
+    // that used to clear only the error now clears both through this single call.
+    const clearActionFeedback = () => {
+        setActionError(null);
+        setActionNotice(null);
+    };
+
     const handleApproveCalendarRequest = async (request) => {
         try {
-            setActionError(null);
+            clearActionFeedback();
             const { type, requestedEvent, userId, userName } = request;
             const now = new Date().toISOString();
             
@@ -256,7 +265,7 @@ export default function ManagerNotifications({ onClose }) {
 
     const handleDeclineCalendarRequest = async (request) => {
         try {
-            setActionError(null);
+            clearActionFeedback();
             await updateDoc(doc(db, 'calendar_requests', request.id), {
                 status: 'declined',
                 declinedAt: new Date().toISOString(),
@@ -284,7 +293,7 @@ export default function ManagerNotifications({ onClose }) {
     const handleApproveAllCalendarRequests = async () => {
         if (!calBatchEligible) return;
         setBulkApprovingCal(true);
-        setActionError(null);
+        clearActionFeedback();
         try {
             for (const request of bulkApprovableCalRequests) {
                 await handleApproveCalendarRequest(request);
@@ -318,19 +327,34 @@ export default function ManagerNotifications({ onClose }) {
     // start"). That ping is DEFERRED for the undo window and cancelled on undo, so an undo leaves
     // nothing for the worker to see; the approval state itself commits now (other managers see it
     // live). Undo restores the exact prior status + re-surfaces the manager's approval request.
-    const handleApproveTask = (notif) => {
+    const handleApproveTask = async (notif) => {
         const taskId = notif?.taskId;
         if (!taskId) return undefined;
-        setActionError(null);
+        clearActionFeedback();
+        // An approval request can outlive its task: the worker who submitted it may hard-delete the
+        // task before the manager acts, leaving this notification dangling. Acting on the orphan used
+        // to updateDoc a missing doc and surface "Nepavyko patvirtinti — bandykite dar kartą", which
+        // reads as a permission denial. Detect the gone task, clear the stale request, and say so.
+        // The read sits OUTSIDE runUndoable, so it owns its own error surface: a transient read
+        // failure must still show the friendly error (runUndoable only guards the write below).
+        let prior; // snapshotted here, restored in undo
+        try {
+            const snap = await getDoc(doc(db, 'tasks', taskId));
+            if (!snap.exists()) {
+                await handleDismissTask(notif.id);
+                setActionNotice('Ši užduotis jau ištrinta — pasenęs prašymas pašalintas.');
+                return undefined;
+            }
+            const d = snap.data();
+            prior = { status: d.status ?? null, isApproved: !!d.isApproved };
+        } catch (err) {
+            console.error('Error reading task before approve:', err);
+            setActionError('Nepavyko patvirtinti užduoties. Bandykite dar kartą.');
+            return undefined;
+        }
         const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
-        let prior = { status: null, isApproved: false }; // snapshotted in run, restored in undo
         return runUndoable({
             run: async () => {
-                const snap = await getDoc(doc(db, 'tasks', taskId));
-                if (snap.exists()) {
-                    const d = snap.data();
-                    prior = { status: d.status ?? null, isApproved: !!d.isApproved };
-                }
                 // Audited approveTask command — ADR 0015, increment 5 (prior state feeds its audit before/after).
                 await approveTask(
                     { task: { id: taskId, title: notif.taskTitle, status: prior.status, isApproved: prior.isApproved } },
@@ -356,9 +380,19 @@ export default function ManagerNotifications({ onClose }) {
         const taskId = notif?.taskId;
         if (!taskId) return;
         try {
-            setActionError(null);
-            // 1. Approve the task (audited approveTask command — ADR 0015, increment 5)
+            clearActionFeedback();
+            // 0. The task may have been hard-deleted out from under this request (see handleApproveTask).
+            // Read it once: if it's gone, clear the orphan and stop; otherwise reuse this snapshot to
+            // open the editor below (no second fetch).
             const taskRef = doc(db, 'tasks', taskId);
+            const taskSnap = await getDoc(taskRef);
+            if (!taskSnap.exists()) {
+                await handleDismissTask(notif.id);
+                setActionNotice('Ši užduotis jau ištrinta — pasenęs prašymas pašalintas.');
+                return;
+            }
+
+            // 1. Approve the task (audited approveTask command — ADR 0015, increment 5)
             await approveTask(
                 { task: { id: taskId, title: notif.taskTitle } },
                 { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email }), mode: MODES.COMMIT, reason: 'approved (edit) from notification' },
@@ -374,11 +408,8 @@ export default function ManagerNotifications({ onClose }) {
             // 3. Open the task for editing in whichever view hosts the modal, and close the bell. The
             // transient __suppressEditNotice marker rides the in-memory task only (TaskModal builds
             // its Firestore write from the form, never by spreading this object), so it never persists.
-            const taskSnap = await getDoc(taskRef);
-            if (taskSnap.exists()) {
-                onClose?.();
-                window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data(), __suppressEditNotice: true } } }));
-            }
+            onClose?.();
+            window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data(), __suppressEditNotice: true } } }));
         } catch (err) {
             console.error("Error in edit and approve:", err);
             setActionError("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
@@ -393,7 +424,7 @@ export default function ManagerNotifications({ onClose }) {
         if (!deleteModalData) return;
         const { taskId, notificationId } = deleteModalData;
         try {
-            setActionError(null);
+            clearActionFeedback();
             // Fetch the full task data first so we can archive it properly
             const taskRef = doc(db, 'tasks', taskId);
             const taskSnap = await getDoc(taskRef);
@@ -426,7 +457,7 @@ export default function ManagerNotifications({ onClose }) {
         const taskId = notif?.taskId;
         if (!taskId || grantingExt) return;
         setGrantingExt(notif.id);
-        setActionError(null);
+        clearActionFeedback();
         try {
             await extendTaskTime(taskId, additionalTimeString, currentUser.uid);
             await notify({
@@ -484,7 +515,7 @@ export default function ManagerNotifications({ onClose }) {
     const handleConfirmAllCompletions = () => {
         const completions = taskNotifications.filter(n => n.type === 'task_completion');
         if (completions.length === 0) return undefined;
-        setActionError(null);
+        clearActionFeedback();
         setBulkConfirming(true);
         return runUndoable({
             run: async () => { for (const n of completions) await confirmCompletionWrite(n); },
@@ -525,7 +556,7 @@ export default function ManagerNotifications({ onClose }) {
         const targetUid = notif?.targetUserId;
         if (!targetUid || decidingAccount) return;
         setDecidingAccount(notif.id);
-        setActionError(null);
+        clearActionFeedback();
         try {
             await updateDoc(doc(db, 'users', targetUid), approve
                 ? { isDisabled: false, status: 'active' }
@@ -613,6 +644,19 @@ export default function ManagerNotifications({ onClose }) {
                     className="rounded-control border border-feedback-danger/30 bg-feedback-danger/10 px-4 py-3 text-body text-feedback-danger"
                 >
                     {actionError}
+                </div>
+            )}
+
+            {/* Neutral notice — e.g. an orphaned approval request was cleared because its task no
+                longer exists. Distinct from the danger banner so a benign self-heal never reads as a
+                failure (which is what the misleading "couldn't approve" error did before). */}
+            {actionNotice && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    className="rounded-control border border-line bg-surface-sunken px-4 py-3 text-body text-ink-muted"
+                >
+                    {actionNotice}
                 </div>
             )}
 
