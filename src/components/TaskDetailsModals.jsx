@@ -150,7 +150,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                                             {comment.isOptimistic ? <span className="text-brand italic text-sm">{comment.user}</span> : <UserChip userId={comment.userId} name={comment.user} />}
                                         </span>
                                         <div className="flex items-center gap-1 flex-shrink-0">
-                                            <span className="text-xs text-ink-muted">
+                                            <span className="text-caption text-ink">
                                                 {new Date(comment.createdAt).toLocaleString()}
                                             </span>
                                             {mayEdit && !isEditing && (

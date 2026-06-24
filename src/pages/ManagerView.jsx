@@ -22,6 +22,8 @@ import { PRIORITIES, getPriorityLabel } from '../utils/priority';
 import { STATUS_LABELS } from '../utils/taskConstants';
 
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
+import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
+import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import { useManagerData } from '../hooks/useManagerData';
@@ -72,6 +74,13 @@ export default function ManagerView() {
     // Task time monitoring — 80% warning and 100% limit for manager's own tasks (ownTasks, so a
     // scoped manager whose team listener excludes their own rows is still monitored correctly).
     const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(ownTasks);
+
+    // Crash/reload recovery — managers also start own-task timers and break/call/quick-work
+    // sessions (the work-controls pill is role-agnostic), so they need the same orphan recovery
+    // WorkerView has, or a manager crash credits ghost time with no notice. Scope task recovery to
+    // the manager's OWN tasks (ownTasks), never the team list. (Full-sweep C2, 2026-06-24.)
+    useOrphanedTaskRecovery(ownTasks);
+    useOrphanedSessionRecovery(currentUser);
 
     // Worker-created tasks still awaiting THIS manager's approval (status 'unapproved' — the same
     // items the notification bell surfaces). Derived from the raw team `tasks`, independent of the

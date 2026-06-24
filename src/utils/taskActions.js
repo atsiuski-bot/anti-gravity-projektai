@@ -25,7 +25,11 @@ const updateUserWorkStatus = async (userId, isWorking, status, taskId) => {
             // overwrite activeSession to null, killing all session tracking.
         });
     } catch (err) {
+        // A failed user-doc write desyncs workStatus from the task doc and is otherwise invisible
+        // in production. Keep it non-fatal (no rethrow — pause/delete must not fail on this), but
+        // record it durably in the ring buffer + error_logs like every other write-fail here.
         console.error("Error updating user work status:", err);
+        logError(err, { source: 'taskActions.updateUserWorkStatus', userId });
     }
 };
 

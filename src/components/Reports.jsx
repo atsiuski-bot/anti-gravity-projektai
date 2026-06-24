@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, vilniusWallClockToISO, addDaysToDateString, calculateCurrentTotalMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, scopeRoster } from '../utils/teamScope';
 import { cn } from '../utils/cn';
@@ -423,9 +423,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
             let allTasks = [...archivedTasks, ...Array.from(activeMap.values())];
 
-            const start = new Date(taskFilters.startDate);
-            const end = new Date(taskFilters.endDate);
-            end.setHours(23, 59, 59); // End of day
+            // Date range anchored to the VILNIUS calendar day, not UTC/browser-local midnight, so a
+            // task completed in the last Vilnius hours of a day (or just after midnight) lands on the
+            // correct side of the boundary. Half-open interval [start, end): `end` is the EXCLUSIVE
+            // next-Vilnius-day 00:00. startDate/endDate are getLithuanianDateString output, so the
+            // helper never returns null in practice; the || fallbacks are purely defensive. (M1.)
+            const start = new Date(vilniusWallClockToISO(taskFilters.startDate, '00:00') || taskFilters.startDate);
+            const end = new Date(vilniusWallClockToISO(addDaysToDateString(taskFilters.endDate, 1), '00:00') || addDaysToDateString(taskFilters.endDate, 1));
 
             // Global filter
             allTasks = allTasks.filter(t => {
@@ -437,7 +441,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     const dateStr = t.completedAt || t.archivedAt || t.updatedAt;
                     if (!dateStr) return false;
                     const d = new Date(dateStr);
-                    if (d < start || d > end) return false;
+                    if (d < start || d >= end) return false;
                 }
 
                 const tAssignedUserId = resolveUserId(t);
@@ -622,11 +626,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
     const groupedTasks = React.useMemo(() => {
         const groups = {};
 
-        // Helper to get date string (YYYY-MM-DD)
+        // Helper to get the VILNIUS calendar-day key (YYYY-MM-DD). Using getLithuanianDateString
+        // (not a raw UTC split) keeps a task finished 00:00–03:00 Vilnius on the correct day, so the
+        // grouped view agrees with DailyStatistics' 03:00 work-day boundary. (Full-sweep M2.)
         const getDateStr = (t) => {
             const dateStr = t.completedAt || t.archivedAt || t.updatedAt;
             if (!dateStr) return 'No Date';
-            return dateStr.split('T')[0];
+            return getLithuanianDateString(dateStr);
         };
 
         filteredTasks.forEach(t => {

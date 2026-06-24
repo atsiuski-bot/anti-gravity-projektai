@@ -37,7 +37,7 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
                     Aprašykite, ką nuveikėte.
                 </p>
 
-                <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-red-200 flex items-center justify-between">
+                <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-session-quickWork-soft flex items-center justify-between">
                     <span className="text-session-quickWork-accent font-semibold text-body-lg">Užfiksuotas laikas:</span>
                     <span className="text-4xl font-mono font-bold text-session-quickWork-accent">
                         {formatMinutesToTimeString(minutes)}

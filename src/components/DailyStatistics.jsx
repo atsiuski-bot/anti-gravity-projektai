@@ -2049,12 +2049,12 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
                                 disabled={task.archivedAt}
                                 className="w-4 h-4 rounded border-line text-feedback-success focus:ring-feedback-success"
                             />
-                            <span className={clsx("text-xs font-medium", isConfirmed ? "text-feedback-success" : "text-ink-muted")}>
+                            <span className={clsx("text-xs font-medium", isConfirmed ? "text-feedback-success-text" : "text-ink-muted")}>
                                 {isConfirmed ? "Priimtas" : "Laukia priėmimo"}
                             </span>
                         </label>
                     ) : (
-                        <span className={clsx("text-xs font-medium", isConfirmed ? "text-feedback-success" : "text-ink-muted")}>
+                        <span className={clsx("text-xs font-medium", isConfirmed ? "text-feedback-success-text" : "text-ink-muted")}>
                             {isConfirmed ? "Būsena: Priimtas" : "Būsena: Laukiama priėmimo"}
                         </span>
                     )}

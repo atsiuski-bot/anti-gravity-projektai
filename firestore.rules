@@ -495,8 +495,32 @@ service cloud.firestore {
     // Any authenticated user may APPEND a crash report (kept permissive so a broken
     // session can still record its failure); only managers/admins may read them.
     // Entries are immutable; only admins may clear them.
+    //
+    // CREATE shape guards (full-sweep L2): the client (errorLog.js) clamps message<=2000 and
+    // stack/componentStack<=8000, but leaves url/userAgent UNbounded — so a compromised client
+    // could flood the manager-visible log with arbitrarily large strings. The bounds below sit
+    // ABOVE the client clamps so every legitimate append passes unchanged; they only reject the
+    // absurd/oversized payloads corruption produces (the request_notifications/decision_log idiom:
+    // each field is checked only when PRESENT). userId must be the caller's own uid OR null — the
+    // null branch is REQUIRED: errorLog.js writes userId=null when auth is not ready, which is the
+    // earliest-crash case the durable log exists to capture, so pinning to uid alone would silently
+    // drop the most important reports. Rules cannot rate-limit (no cross-write counting).
     match /error_logs/{logId} {
-      allow create: if isAuthenticated();
+      allow create: if isAuthenticated()
+                    && (!('message' in request.resource.data) ||
+                        (request.resource.data.message is string && request.resource.data.message.size() <= 4000))
+                    && (!('stack' in request.resource.data) ||
+                        (request.resource.data.stack is string && request.resource.data.stack.size() <= 16000))
+                    && (!('componentStack' in request.resource.data) ||
+                        (request.resource.data.componentStack is string && request.resource.data.componentStack.size() <= 16000))
+                    && (!('url' in request.resource.data) ||
+                        (request.resource.data.url is string && request.resource.data.url.size() <= 4000))
+                    && (!('userAgent' in request.resource.data) ||
+                        (request.resource.data.userAgent is string && request.resource.data.userAgent.size() <= 1000))
+                    && (!('source' in request.resource.data) ||
+                        (request.resource.data.source is string && request.resource.data.source.size() <= 200))
+                    && (request.resource.data.get('userId', null) == null ||
+                        request.resource.data.userId == request.auth.uid);
       allow read:   if isManagerOrAdmin();
       allow update: if false;
       allow delete: if isAdmin();

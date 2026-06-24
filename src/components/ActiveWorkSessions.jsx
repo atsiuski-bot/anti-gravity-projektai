@@ -431,8 +431,8 @@ const ActiveSessionRow = React.memo(({ session, canEnd = false, onEnd }) => {
                     </div>
                     <div className="text-xs truncate">
                         {session.label}
-                        {startLabel && <span className="opacity-70"> · nuo {startLabel}</span>}
-                        {hasBudget && <span className="opacity-70"> · planas {plannedTime}</span>}
+                        {startLabel && <span> · nuo {startLabel}</span>}
+                        {hasBudget && <span> · planas {plannedTime}</span>}
                     </div>
                 </div>
                 <span className={`font-mono font-bold text-body-lg ml-4 whitespace-nowrap ${isOver ? 'text-feedback-danger' : ''}`}>

@@ -3,6 +3,7 @@ import { XOctagon, PauseCircle, BellOff } from 'lucide-react';
 import { SoundManager } from '../utils/soundUtils';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import Modal from './ui/Modal';
+import Button from './ui/Button';
 
 /**
  * Hard stop shown to the worker when 100% of the estimated time is reached. The task is
@@ -47,8 +48,9 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
             ariaLabelledby="time-limit-title"
             initialFocusRef={ackButtonRef}
         >
-            {/* Header — darkened so the white title clears WCAG 1.4.3 (red-500 was ~3.99:1). */}
-            <div className="flex flex-shrink-0 items-center gap-3 bg-gradient-to-r from-red-600 to-red-700 px-6 py-4">
+            {/* Header — darkened so the white title clears WCAG 1.4.3 (red-500 was ~3.99:1). Sourced
+                from the feedback-danger token (red-600 → red-700), not raw utilities (Rule B). */}
+            <div className="flex flex-shrink-0 items-center gap-3 bg-gradient-to-r from-feedback-danger to-feedback-danger-hover px-6 py-4">
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white/20 backdrop-blur-sm">
                     <XOctagon className="h-6 w-6 text-white" aria-hidden="true" />
                 </div>
@@ -89,23 +91,16 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                 </p>
             </div>
 
-            {/* Footer */}
+            {/* Footer — canonical Button (Rule §8). Mute = secondary outline; acknowledge = danger
+                (token-sourced red). BellOff rendered inline to keep its w-4 sizing. */}
             <div className="flex flex-shrink-0 justify-end gap-2 px-6 pb-5">
-                <button
-                    onClick={handleMute}
-                    disabled={muted}
-                    className="inline-flex min-h-touch items-center gap-2 rounded-control border border-line bg-surface-card px-4 text-body font-semibold text-ink shadow-sm transition-colors hover:bg-surface-sunken disabled:opacity-50 disabled:pointer-events-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                >
+                <Button variant="secondary" onClick={handleMute} disabled={muted}>
                     <BellOff className="h-4 w-4" aria-hidden="true" />
                     {muted ? 'Nutildyta' : 'Nutildyti garsą'}
-                </button>
-                <button
-                    ref={ackButtonRef}
-                    onClick={handleAcknowledge}
-                    className="min-h-touch rounded-control bg-red-600 px-6 text-body font-semibold text-white shadow-sm transition-colors hover:bg-red-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-700 focus-visible:ring-offset-2"
-                >
+                </Button>
+                <Button ref={ackButtonRef} variant="danger" className="px-6" onClick={handleAcknowledge}>
                     Supratau
-                </button>
+                </Button>
             </div>
         </Modal>
     );

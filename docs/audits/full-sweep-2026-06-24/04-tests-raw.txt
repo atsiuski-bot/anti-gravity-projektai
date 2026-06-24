@@ -1,0 +1,13 @@
+
+> workz@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.9 C:/Users/karol/Desktop/WORKZ/.claude/worktrees/hopeful-raman-68c93c
+
+
+ Test Files  39 passed (39)
+      Tests  428 passed (428)
+   Start at  03:50:12
+   Duration  8.57s (transform 5.87s, setup 0ms, import 22.67s, tests 742ms, environment 6ms)
+

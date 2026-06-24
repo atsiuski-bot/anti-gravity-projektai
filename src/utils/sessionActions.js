@@ -374,7 +374,14 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
                                         }
                                     }
                                 } catch (fetchErr) {
-                                    console.warn("Could not check latest user state in doResume", fetchErr);
+                                    // Fail CLOSED: we couldn't prove the resume is safe, so skip it
+                                    // rather than risk resurrecting the old task over a live new
+                                    // session the user just started (resumeTask overwrites
+                                    // activeSession — silent data loss). A non-resumed paused task is
+                                    // recoverable (manual resume / orphan recovery); a wiped live
+                                    // session is not. Record the fetch failure durably.
+                                    userStartedAnotherTask = true;
+                                    logError(fetchErr, { source: 'doResume:userStateCheck', userId, taskId });
                                 }
 
                                 if (!userStartedAnotherTask &&
@@ -479,7 +486,11 @@ const endLegacySession = async (userId, type, userData) => {
             wasCapped: rawMinutes - duration > 1,
         };
     } catch (err) {
-        console.error("Error in endLegacySession:", err);
+        // Mirror the endSession upgrade (see its catch above): the guarded updateDoc clears the
+        // stuck legacy flag, so a swallowed failure leaves the user in a phantom session with no
+        // durable trace. Record it in the ring buffer + error_logs. No rethrow — callers use
+        // `return await endLegacySession(...)`, matching the sibling's deliberate non-fatal contract.
+        logError(err, { source: 'endLegacySession', userId, type });
     }
 };
 

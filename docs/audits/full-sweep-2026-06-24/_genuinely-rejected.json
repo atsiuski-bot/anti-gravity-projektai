@@ -1,0 +1,110 @@
+[
+  {
+    "t": "Bespoke <button> in TaskTimeWarningPopup instead of canonical Button",
+    "dim": "discipline",
+    "sev": "medium",
+    "votes": "0/3"
+  },
+  {
+    "t": "Raw hex literal VACATION_COLOR in AllUsersCalendar bypasses design tokens",
+    "dim": "discipline",
+    "sev": "low",
+    "votes": "0/3"
+  },
+  {
+    "t": "QuickWorkTimer chip buttons bypass canonical Button (radio-group pattern)",
+    "dim": "discipline",
+    "sev": "low",
+    "votes": "0/3"
+  },
+  {
+    "t": "calculateCurrentTotalMinutes: timeAdjustments not sanitized, can add to already-summed manualMinutes+timerMinutes",
+    "dim": "timetracking",
+    "sev": "medium",
+    "votes": "0/3"
+  },
+  {
+    "t": "startTask / resumeTask write timerStartedAt with new Date() before any await, but Firestore commit is async — clock skew between client and server is unguarded",
+    "dim": "timetracking",
+    "sev": "low",
+    "votes": "0/3"
+  },
+  {
+    "t": "calculateCurrentTotalMinutes: live timer delta uses new Date() instead of getLithuanianNow(), inconsistent with all other elapsed-time paths",
+    "dim": "timetracking",
+    "sev": "low",
+    "votes": "0/3"
+  },
+  {
+    "t": "endSession quickWork/call partial-segment double-count: the restored session's FULL duration is written to work_sessions AND the task's manualMinutes, but partial segment is a separate work_session with isQuickWork:true",
+    "dim": "timetracking",
+    "sev": "medium",
+    "votes": "0/3"
+  },
+  {
+    "t": "archiveOldTasks cutoff comparison: task with no completedAt, confirmedAt, or updatedAt is silently skipped",
+    "dim": "timetracking",
+    "sev": "low",
+    "votes": "0/3"
+  },
+  {
+    "t": "computeWorkerStats planned-shift window check uses getLithuanianDateString(p.start) where p.start may be a raw ISO string rather than a Date",
+    "dim": "timetracking",
+    "sev": "low",
+    "votes": "0/3"
+  },
+  {
+    "t": "pausedSession nesting only goes one level deep in endSession restore path",
+    "dim": "crashsafety",
+    "sev": "medium",
+    "votes": "0/3"
+  },
+  {
+    "t": "handleLegacyLogging for call and quickWork has no per-write catch on the critical setDoc/addDoc pairs",
+    "dim": "crashsafety",
+    "sev": "low",
+    "votes": "0/3"
+  },
+  {
+    "t": "Rule C — TaskTimeLimitPopup uses full-saturation red outside the quick-work state",
+    "dim": "session-color",
+    "sev": "high",
+    "votes": "0/3"
+  },
+  {
+    "t": "Rule A — BreakTimer compact button loses visible text label when SideRail is collapsed (hideLabel=true)",
+    "dim": "session-color",
+    "sev": "medium",
+    "votes": "0/3"
+  },
+  {
+    "t": "Hardcoded Firebase API key and config committed to git history",
+    "dim": "security",
+    "sev": "high",
+    "votes": "0/3"
+  },
+  {
+    "t": "Disabled user can still update their own user doc (non-security fields)",
+    "dim": "security",
+    "sev": "medium",
+    "votes": "0/3"
+  },
+  {
+    "t": "Worker can self-confirm a task on CREATE via call/quick-work path (design choice with no server-side owner check)",
+    "dim": "security",
+    "sev": "medium",
+    "votes": "1/3"
+  },
+  {
+    "t": "Legacy inline request_notifications writes bypass notify() funnel and the commentText size clamp",
+    "dim": "security",
+    "sev": "low",
+    "votes": "0/3"
+  },
+  {
+    "t": "Orphan rule: shift_logs — locked but never accessed by the client",
+    "dim": "firebase-coupling",
+    "sev": "low",
+    "votes": "0/2"
+  }
+]

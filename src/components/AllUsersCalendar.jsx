@@ -315,16 +315,16 @@ export default function AllUsersCalendar() {
                                             </span>
                                         );
                                         // Interactive (manager drill-down) bar: the visible pill stays 24px (h-6), but a
-                                        // transparent ::before extends the tappable area +9px top & bottom -> a ~42px hit
-                                        // target (toward the 44px AA floor) with no visual change. Rows pitch at 44px
-                                        // (h-8 + space-y-3 = 20px inter-bar gap), so +9px keeps a 2px clearance and never
-                                        // overlaps the neighbour bar's target.
+                                        // transparent ::before extends the tappable area +10px top & bottom -> a 44px hit
+                                        // target (the AA / DESIGN_SYSTEM floor) with no visual change. Rows pitch at 44px
+                                        // (h-8 + space-y-3 = 20px inter-bar gap), so +10px makes adjacent targets abut at
+                                        // exactly 0px — they touch but never overlap, so there is no wrong-row mis-tap.
                                         return canDrillUser(user) ? (
                                             <button
                                                 key={event.id}
                                                 type="button"
                                                 onClick={() => setReportUser(user)}
-                                                className={cn(baseBar, "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 before:absolute before:inset-x-0 before:-inset-y-[9px] before:content-['']")}
+                                                className={cn(baseBar, "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 before:absolute before:inset-x-0 before:-inset-y-[10px] before:content-['']")}
                                                 style={barStyle}
                                                 title={`${event.title} (${timeRange}) — peržiūrėti dienos ataskaitą`}
                                                 aria-label={`${labelBase}. Atidaryti dienos ataskaitą.`}

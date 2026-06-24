@@ -993,7 +993,7 @@ export default function ManagerNotifications({ onClose }) {
                                         <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
                                         <div className="min-w-0 text-sm text-feedback-warning-text">
                                             <p><UserChip userId={notif.userId} name={notif.userName} /> pranešė apie klaidą darbo laike:</p>
-                                            {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
+                                            {notif.commentText && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
                                             <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio darbuotojo dieną.</p>
                                         </div>
                                     </div>
@@ -1154,7 +1154,7 @@ export default function ManagerNotifications({ onClose }) {
                                             <p><UserChip userId={notif.createdById} name={notif.createdByName} /> priskyrė Jus vadovu užduočiai:</p>
                                             <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
                                             {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
-                                            {notif.description && <p className="mt-1 text-xs italic opacity-80 border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}
+                                            {notif.description && <p className="mt-1 text-xs italic border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}
                                         </div>
                                     </div>
                                 </div>
