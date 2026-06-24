@@ -93,6 +93,11 @@ export function NotificationsProvider({ children }) {
                 if (notificationsEnabledRef.current) {
                     let cue = null; // play ONE sound per snapshot batch — 'alert' outranks 'info'
                     fresh.forEach((n) => {
+                        // The badge toast is owned by AchievementCelebrator (a listener on the
+                        // achievements subcollection), so skip it here to avoid a double-toast — the
+                        // bell row and the unread count (driven by the snapshot, not this loop) still
+                        // include it, and the background push is unaffected.
+                        if (n.type === 'achievement') return;
                         const { title, body } = notificationCopy(n);
                         showToast(body, { title, tone: 'notification' });
                         const s = notificationSound(n.type);

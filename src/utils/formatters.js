@@ -110,6 +110,17 @@ export const isManagerRole = (role) =>
     role === 'manager' || role === 'admin' || role === 'seniorManager';
 
 /**
+ * True only for the ADMIN tier (both the English key and the Lithuanian display value that some
+ * legacy docs store). Distinct from {@link isManagerRole}: curating the SHARED ("team") task
+ * template library is an admin-only authority, so this gates that affordance specifically.
+ *
+ * @param {string} role - The role to check
+ * @returns {boolean}
+ */
+export const isAdminRole = (role) =>
+    role === 'admin' || role === 'Administratorius';
+
+/**
  * Resolves a finished task's lifecycle status from the COMPLETING actor's ROLE — the single source
  * BOTH completion doors read (the timer's "Užbaigti" in TaskTimerControls and the audited
  * completeTask command), so they can never drift. Confirm authority is a manager ROLE, never a

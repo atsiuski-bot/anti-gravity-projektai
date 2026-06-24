@@ -41,6 +41,7 @@ const clamp = (text, max = 100) => String(text || '').replace(/\s+/g, ' ').trim(
 // Deep-link targets. The Cloud Function mirrors the same rule when it builds the push `link`.
 const TAB_TASKS = '/?tab=tasks';
 const TAB_CALENDAR = '/?tab=calendar';
+const TAB_PROFILE = '/?tab=profile';
 
 export const NOTIFICATIONS = {
     // ── Worker → manager (a decision is owed) ────────────────────────────────────────────────────
@@ -88,6 +89,15 @@ export const NOTIFICATIONS = {
             return { title: 'Naujas komentaras', body: snippet ? `${task}: ${snippet}` : task };
         },
     },
+    new_photo: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        // Fired to the OTHER party (manager ↔ worker) when a photo is added from the task sheet; the
+        // uploader is dropped by notify()'s self-guard, exactly like new_comment.
+        copy: (n) => ({ title: 'Nauja nuotrauka', body: n.taskTitle || 'WORKZ' }),
+    },
 
     // ── Manager → worker ─────────────────────────────────────────────────────────────────────────
     task_assigned: {
@@ -102,7 +112,31 @@ export const NOTIFICATIONS = {
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Užduotis patvirtinta', body: n.taskTitle || 'WORKZ' }),
+        // When a manager approves a worker-created task AND edits it in the same step ("Redaguoti" on
+        // the approval card), the two facts collapse into ONE notice via the `edited` flag — instead
+        // of a separate task_approved + task_edited pair. The push MIRROR branches the same way.
+        copy: (n) => ({ title: n.edited ? 'Užduotis patvirtinta ir pakeista' : 'Užduotis patvirtinta', body: n.taskTitle || 'WORKZ' }),
+    },
+    task_edited: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Užduotis pakeista', body: n.taskTitle || 'WORKZ' }),
+    },
+    task_unassigned: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Užduotis nebepriskirta jums', body: n.taskTitle || 'WORKZ' }),
+    },
+    task_deleted: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Užduotis ištrinta', body: n.taskTitle || 'WORKZ' }),
     },
     task_confirmed: {
         category: 'info',
@@ -118,7 +152,10 @@ export const NOTIFICATIONS = {
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Užduotis grąžinta taisyti', body: n.taskTitle || 'WORKZ' }),
+        // Returning a finished task from the bell ALWAYS reopens the editor (the only two actions
+        // there are Priimti / Grąžinti), so the return + the manager's fixes collapse into ONE notice
+        // via the `edited` flag — never a separate task_reverted + task_edited pair. Mirror branches same.
+        copy: (n) => ({ title: n.edited ? 'Užduotis grąžinta taisyti ir pakeista' : 'Užduotis grąžinta taisyti', body: n.taskTitle || 'WORKZ' }),
     },
     extension_granted: {
         category: 'info',
@@ -160,6 +197,16 @@ export const NOTIFICATIONS = {
         link: TAB_TASKS,
         copy: (n) => ({ title: 'Pašalintas veiklos laikas', body: n.day || 'Veiklos laikas' }),
     },
+    // System → worker: a forgotten break/call/quick-work timer the worker never stopped was
+    // auto-closed server-side and the (clamped) time credited — surfaced so recovered time is never
+    // an unexplained entry. The body is the affected day, mirroring session_edited/deleted.
+    session_auto_closed: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' }),
+    },
 
     // ── System → worker (deadline closing in → priority auto-raised) ─────────────────────────────
     task_priority_escalated: {
@@ -173,6 +220,27 @@ export const NOTIFICATIONS = {
             title: 'Artėja terminas',
             body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'WORKZ'),
         }),
+    },
+
+    // ── System → worker (a newly-earned recognition tier) ────────────────────────────────────────
+    // The bell row + push for a badge. Its FOREGROUND toast is owned by AchievementCelebrator (a
+    // listener on the achievements subcollection), so NotificationsContext suppresses the toast for
+    // this type to avoid a double-toast — but the bell entry and the push ride the normal pipeline.
+    achievement: {
+        category: 'info',
+        sound: null,
+        push: true,
+        link: TAB_PROFILE,
+        copy: (n) => ({ title: 'Naujas ženkliukas', body: n.badgeName ? (n.tierName ? `${n.badgeName}: ${n.tierName}` : n.badgeName) : 'WORKZ' }),
+    },
+
+    // ── System → manager (oversight: a deadline was missed) ──────────────────────────────────────
+    task_overdue: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Praleistas terminas', body: n.taskTitle || 'WORKZ' }),
     },
 
     // ── System → admin / manager ─────────────────────────────────────────────────────────────────

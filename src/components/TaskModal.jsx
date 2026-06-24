@@ -4,10 +4,11 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate } from 'lucide-react';
-import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate, Tag, EyeOff, Eye } from 'lucide-react';
+import { formatDisplayName, isManagerRole, isAdminRole } from '../utils/formatters';
+import { TASK_TAGS } from '../utils/taskUtils';
 import { scopeRoster } from '../utils/teamScope';
-import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
+import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate, hideTemplateForUser, unhideTemplateForUser } from '../utils/taskActions';
 import { parseTaskText } from '../utils/aiActions';
 import { notify } from '../utils/notify';
 import { logError } from '../utils/errorLog';
@@ -183,6 +184,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         comments: [],
         completed: false,
         deadline: '',
+        tag: '',
         attachmentUrl: '',
         attachmentUrls: [], // New field for multiple attachments
         checklist: []
@@ -212,6 +214,10 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
     const [templateSuggestion, setTemplateSuggestion] = useState(null);
     // Category chosen in the save view (empty = let it be inferred from the title on save).
     const [templateCategory, setTemplateCategory] = useState('');
+    // Visibility of the template being saved: 'personal' (private to me, the default for everyone)
+    // or 'team' (the shared, admin-curated library). The "Visai komandai" option is offered only
+    // to admins; the Firestore rules enforce the same boundary on write.
+    const [templateScope, setTemplateScope] = useState('personal');
     // The browse/manage hub: lists existing templates (apply / edit / delete) and offers
     // "save current as template". Replaces the old header loader + the inline list in the save view.
     const [isPickingTemplate, setIsPickingTemplate] = useState(false);
@@ -230,8 +236,35 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         deadline: false
     });
 
+    // Templates that CONCERN the current user at all: the whole shared team library plus this
+    // user's OWN personal templates. Other people's personal templates never surface. Legacy
+    // templates carry no `scope` and count as 'team'. This is what the management HUB lists — so a
+    // template the user hid can still be un-hidden there. (Declared BEFORE the sort/suggest memos
+    // that read it — a useMemo factory runs during render, so a later `const` would be a TDZ crash.)
+    const hiddenTemplateIds = useMemo(
+        () => new Set(userData?.hiddenTemplateIds || []),
+        [userData]
+    );
+    const manageableTemplates = useMemo(
+        () => templates.filter((t) => {
+            const scope = t.scope || 'team';
+            if (scope === 'personal') return t.createdBy === currentUser?.uid;
+            return true; // team templates (hidden or not) — the hub shows them so they can be un-hidden
+        }),
+        [templates, currentUser]
+    );
+    // The everyday quick-pick set: the same, minus team templates this user hid from their view.
+    // Drives the title type-ahead — hiding declutters the suggestions without losing the template.
+    const visibleTemplates = useMemo(
+        () => manageableTemplates.filter((t) => {
+            const scope = t.scope || 'team';
+            return scope === 'personal' || !hiddenTemplateIds.has(t.id);
+        }),
+        [manageableTemplates, hiddenTemplateIds]
+    );
+
     const sortedTemplates = useMemo(() => {
-        return [...templates].sort((a, b) => {
+        return [...manageableTemplates].sort((a, b) => {
             const getWorkerName = (tmpl) => {
                 const userId = tmpl.data?.assignedUserId;
                 if (!userId) return null;
@@ -253,7 +286,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             // Secondary sort: Template Name
             return (a.templateName || '').localeCompare(b.templateName || '');
         });
-    }, [templates, workers]);
+    }, [manageableTemplates, workers]);
 
     // Templates grouped under their category for the picker hub. Category order follows
     // TEMPLATE_CATEGORIES; empty categories are omitted; within a category templates keep the
@@ -313,8 +346,21 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
     const assigneeName = assigneeUser ? formatDisplayName(assigneeUser.displayName || assigneeUser.email) : '';
 
     // Manager flag — defined here (not just before the early return) so the suggestions memo can
-    // gate templates on it. Templates carry an assignee/manager preset, so they are a manager tool.
+    // read it. Both role sources are checked because the prop and the AuthContext value can differ.
     const isManager = isManagerRole(role) || isManagerRole(userRole);
+    // Admin flag — only an admin may CREATE or re-scope a SHARED ("team") template. Everyone else
+    // (managers + workers) can still keep their own personal templates.
+    const isAdmin = isAdminRole(role) || isAdminRole(userRole);
+
+    // Who may EDIT/DELETE a given template — mirrors the Firestore write rule so the UI only offers
+    // actions that will actually succeed: a personal template only by its owner; a team template by
+    // an admin OR its creator. Everyone else can merely HIDE a team template from their own list.
+    const canEditTemplate = (t) => {
+        if (!t) return false;
+        const scope = t.scope || 'team';
+        if (scope === 'personal') return t.createdBy === currentUser?.uid;
+        return isAdmin || t.createdBy === currentUser?.uid;
+    };
 
     // "Who usually does this kind of job?" — learn the title-root → assignee routing from history and
     // offer it as one-tap suggestions above the picker. Manager-only, new-task-only; the hook reads
@@ -329,35 +375,35 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             })
         : [];
 
-    // The unified title type-ahead source: curated templates first (manager-only), then the
-    // creator's own past titles each with its typical time. TitleSuggestInput filters this to the
-    // typed text; picking a template applies its full preset, picking a history title fills time.
+    // The unified title type-ahead source: templates first (the user's visible set — team library
+    // + own personal), then the creator's own past titles each with its typical time.
+    // TitleSuggestInput filters this to the typed text; picking a template applies its preset,
+    // picking a history title fills time. Templates surface for EVERYONE now (workers self-create
+    // tasks too); the per-user `visibleTemplates` filter already hid other people's personal ones.
     const titleSuggestions = useMemo(() => {
         const items = [];
-        if (isManager) {
-            for (const t of templates) {
-                const tTitle = t.data?.title || t.templateName || '';
-                if (!t.templateName && !tTitle) continue;
-                // Search a template by its name, task title, description AND assignee — a manager
-                // may recall "the one assigned to Giedrius" or a word from its instructions.
-                const desc = t.data?.description || '';
-                const aId = t.data?.assignedUserId || t.data?.assignedWorkerId || '';
-                const w = aId ? workers.find((x) => x.id === aId) : null;
-                const aName = w ? formatDisplayName(w.displayName || w.email) : '';
-                items.push({
-                    value: t.templateName || tTitle,
-                    kind: 'template',
-                    time: t.data?.estimatedTime || '',
-                    matchText: `${t.templateName || ''} ${tTitle} ${desc} ${aName}`,
-                    template: t,
-                });
-            }
+        for (const t of visibleTemplates) {
+            const tTitle = t.data?.title || t.templateName || '';
+            if (!t.templateName && !tTitle) continue;
+            // Search a template by its name, task title, description AND assignee — a user may
+            // recall "the one assigned to Giedrius" or a word from its instructions.
+            const desc = t.data?.description || '';
+            const aId = t.data?.assignedUserId || t.data?.assignedWorkerId || '';
+            const w = aId ? workers.find((x) => x.id === aId) : null;
+            const aName = w ? formatDisplayName(w.displayName || w.email) : '';
+            items.push({
+                value: t.templateName || tTitle,
+                kind: 'template',
+                time: t.data?.estimatedTime || '',
+                matchText: `${t.templateName || ''} ${tTitle} ${desc} ${aName}`,
+                template: t,
+            });
         }
         for (const title of recentTitles) {
             items.push({ value: title, kind: 'history', time: suggestTimeForTitle(title), matchText: title });
         }
         return items;
-    }, [isManager, templates, recentTitles, suggestTimeForTitle, workers]);
+    }, [visibleTemplates, recentTitles, suggestTimeForTitle, workers]);
 
     useEffect(() => {
         if (task) {
@@ -378,6 +424,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 comments: task.comments || [],
                 completed: task.completed || false,
                 deadline: task.deadline || '',
+                tag: task.tag || '',
                 attachmentUrl: task.attachmentUrl || '', // Keep for legacy
                 attachmentUrls: existingUrls,
                 checklist: task.checklist || []
@@ -399,6 +446,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 comments: [],
                 completed: false,
                 deadline: d.deadline || '',
+                tag: '',
                 attachmentUrl: '',
                 attachmentUrls: [],
                 checklist: []
@@ -431,6 +479,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     comments: [],
                     completed: false,
                     deadline: '',
+                    tag: '',
                     attachmentUrl: '',
                     attachmentUrls: [],
                     checklist: []
@@ -440,11 +489,14 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         setSelectedFiles([]);
     }, [task, editTemplate, role, currentUser]);
 
+    // Load templates whenever the CREATE form is open — for everyone, not just managers. Workers
+    // now have their own personal templates plus the shared team library, so the old manager-only
+    // gate is gone. Skipped on task-edit and template-edit (the list isn't shown there).
     useEffect(() => {
-        if (isManagerRole(role)) {
+        if (isOpen && !task && !editTemplate) {
             fetchTemplates();
         }
-    }, [role, isOpen]);
+    }, [isOpen, task, editTemplate]);
 
     // Clear any stale error / pending confirmations from a previous open.
     useEffect(() => {
@@ -456,6 +508,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         setIsSavingTemplate(false);
         setTimePickerOpen(false);
         setCreateAsTemplate(false);
+        setTemplateScope('personal');
     }, [isOpen]);
 
     // The description is always shown (no longer collapsed); size it to its content whenever the
@@ -493,6 +546,13 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         if (!data.assignedUserId && data.assignedWorkerId) data.assignedUserId = data.assignedWorkerId;
         delete data.assignedWorkerId;
         if (data.priority) data.priority = normalizePriority(data.priority);
+        // A non-manager self-assigns, so drop a template's preset WHO (assignee/manager) for them —
+        // keep only the WHAT (title/priority/time/description/checklist). Otherwise a shared team
+        // template's named assignee would land in the form and the create rule would reject it.
+        if (!isManager) {
+            delete data.assignedUserId;
+            delete data.managerId;
+        }
         setFormData(prev => ({ ...prev, ...data }));
     };
 
@@ -517,11 +577,40 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         });
         // Pre-pick a category inferred from the title; the manager can override it.
         setTemplateCategory(inferTemplateCategory({ templateName: formData.title, data: { title: formData.title } }));
+        // New templates start PERSONAL (private). An admin can switch to "Visai komandai" in the
+        // save view; non-admins only ever save personal ones.
+        setTemplateScope('personal');
     };
 
     const handleDeleteTemplate = (templateId, name) => {
         setFormError('');
         setTemplateToDelete({ id: templateId, name });
+    };
+
+    // Hide a shared team template from THIS user's own list (it stays for everyone else). The hidden
+    // set lives on the user's own doc; AuthContext re-emits userData, so `visibleTemplates`
+    // recomputes and the row disappears. No confirmation — it is reversible and low-stakes.
+    const handleHideTemplate = async (templateId) => {
+        if (!currentUser?.uid || !templateId) return;
+        setFormError('');
+        try {
+            await hideTemplateForUser(currentUser.uid, templateId);
+        } catch (error) {
+            console.error('Failed to hide template', error);
+            setFormError('Nepavyko paslėpti šablono. Bandykite dar kartą.');
+        }
+    };
+
+    // Bring a previously hidden team template back into this user's list. Mirror of the hide above.
+    const handleUnhideTemplate = async (templateId) => {
+        if (!currentUser?.uid || !templateId) return;
+        setFormError('');
+        try {
+            await unhideTemplateForUser(currentUser.uid, templateId);
+        } catch (error) {
+            console.error('Failed to un-hide template', error);
+            setFormError('Nepavyko grąžinti šablono. Bandykite dar kartą.');
+        }
     };
 
     // Open the save view in EDIT mode for an existing template: seed the name, category and
@@ -544,6 +633,8 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         setTemplateEditData(editData);
         setTemplateName(template.templateName || '');
         setTemplateCategory(getTemplateCategory(template));
+        // Reflect the template's current scope so the toggle shows where it lives (legacy = team).
+        setTemplateScope((template.scope || 'team') === 'personal' ? 'personal' : 'team');
         setSelectedTemplateFields({
             title: has(editData.title),
             priority: has(editData.priority),
@@ -608,7 +699,9 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     templateName,
                     buildTemplateData(templateEditData || {}),
                     currentUser,
-                    templateCategory || inferTemplateCategory({ templateName, data: { title: templateName } })
+                    templateCategory || inferTemplateCategory({ templateName, data: { title: templateName } }),
+                    // Only an admin may re-scope on edit; for everyone else leave scope untouched.
+                    isAdmin ? templateScope : undefined
                 );
                 await fetchTemplates();
                 closeTemplateSaveView();
@@ -621,8 +714,12 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             return;
         }
 
-        // Check for existing template to overwrite — gate behind an explicit confirmation.
-        const existingTemplate = templates.find(t => t.templateName.toLowerCase() === templateName.trim().toLowerCase());
+        // Check for an existing template to overwrite — but only one the user can actually write
+        // (their own, or a team one if admin/creator); otherwise a worker naming a personal template
+        // after a shared one would hit a permission-denied. Same-name personal vs team can coexist.
+        const existingTemplate = templates.find(
+            t => canEditTemplate(t) && (t.templateName || '').toLowerCase() === templateName.trim().toLowerCase()
+        );
         if (existingTemplate) {
             setOverwriteTemplate(existingTemplate);
             return;
@@ -630,7 +727,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
 
         setLoading(true);
         try {
-            await saveTaskTemplate(templateName, buildTemplateData(), currentUser, templateCategory || inferTemplateCategory({ templateName, data: { title: formData.title } }));
+            await saveTaskTemplate(templateName, buildTemplateData(), currentUser, templateCategory || inferTemplateCategory({ templateName, data: { title: formData.title } }), templateScope);
             await fetchTemplates();
             setIsSavingTemplate(false);
             // If this save came from the post-create nudge, the task is already created — close.
@@ -650,7 +747,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         if (!overwriteTemplate) return;
         setLoading(true);
         try {
-            await updateTaskTemplate(overwriteTemplate.id, templateName, buildTemplateData(), currentUser, templateCategory || inferTemplateCategory({ templateName, data: { title: formData.title } }));
+            await updateTaskTemplate(overwriteTemplate.id, templateName, buildTemplateData(), currentUser, templateCategory || inferTemplateCategory({ templateName, data: { title: formData.title } }), isAdmin ? templateScope : undefined);
             await fetchTemplates();
             setOverwriteTemplate(null);
             setIsSavingTemplate(false);
@@ -736,6 +833,8 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
     // Save the in-progress create form as a template (the "Kurti kaip šabloną" path). The template
     // carries exactly the fields the user filled — empty values are skipped so Firestore never
     // receives a blank field — and the title doubles as the template name. No task is created.
+    // This quick path always makes a PERSONAL template; sharing one to the whole team is a
+    // deliberate admin action done from the template hub's save view (with the scope toggle).
     const handleCreateTemplateFromForm = async () => {
         const templateFields = ['title', 'priority', 'estimatedTime', 'description', 'assignedUserId', 'managerId', 'deadline'];
         const data = {};
@@ -751,6 +850,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 data,
                 currentUser,
                 inferTemplateCategory({ templateName: name, data: { title: name } }),
+                'personal',
             );
             onClose();
         } catch (error) {
@@ -961,20 +1061,32 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     }
                 }
 
-                // Tell the worker about manager-side edits that concern them. Both are gated on
-                // "assignee is someone other than me" so a self-edit never notifies the author.
-                const assignee = formData.assignedUserId;
-                const actor = { actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email };
-                if (assignee && assignee !== currentUser.uid) {
-                    // The estimate was lifted on a task whose limit the worker had already hit →
-                    // their time-extension request was effectively granted.
-                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
-                        await notify({ recipientId: assignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                // Tell the worker(s) about a manager-side edit that concerns them — ONE notice per
+                // save, chosen by precedence so a single edit never fans out into several pings:
+                //   1. reassigned        → the NEW assignee gets "assigned", the OLD one "unassigned";
+                //   2. estimate lifted after the limit was hit → "time extended" (the specific story);
+                //   3. any other field   → "edited".
+                // All are gated on "the affected person isn't the editor" so a self-edit is silent,
+                // and the whole branch is skipped when handleEditAndApprove already sent the combined
+                // "approved + edited" notice (__suppressEditNotice), so approve-and-edit stays one ping.
+                const newAssignee = formData.assignedUserId;
+                const oldAssignee = task.assignedUserId;
+                const editorUid = currentUser.uid;
+                const actor = { actorUid: editorUid, actorName: currentUser.displayName || currentUser.email };
+                const reassigned = oldAssignee !== newAssignee && !reassignmentFailed;
+
+                if (reassigned) {
+                    if (newAssignee && newAssignee !== editorUid) {
+                        await notify({ recipientId: newAssignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
-                    // The task was (re)assigned to a new worker — but only notify if the reassignment
-                    // write actually landed (a failed assignTask must not announce a non-existent move).
-                    if (task.assignedUserId !== assignee && !reassignmentFailed) {
-                        await notify({ recipientId: assignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    if (oldAssignee && oldAssignee !== editorUid) {
+                        await notify({ recipientId: oldAssignee, type: 'task_unassigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    }
+                } else if (newAssignee && newAssignee !== editorUid) {
+                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
+                        await notify({ recipientId: newAssignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                    } else if (!task.__suppressEditNotice) {
+                        await notify({ recipientId: newAssignee, type: 'task_edited', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
                 }
             } else {
@@ -1235,7 +1347,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                         )}
                     </div>
                     <div className="flex items-center gap-1 min-w-0">
-                        {!isSavingTemplate && !task && !editTemplate && isManagerRole(role) && templates.length > 0 && (
+                        {!isSavingTemplate && !task && !editTemplate && manageableTemplates.length > 0 && (
                             <Button
                                 variant="ghost"
                                 size="sm"
@@ -1296,6 +1408,44 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     ariaLabel="Šablono kategorija"
                                     alwaysSheet
                                 />
+                            </div>
+                            {/* Visibility: personal (private) vs team (shared). Only an admin may pick
+                                "Visai komandai"; everyone else sees a read-only note of where it lives. */}
+                            <div>
+                                <span className="mb-1 block text-body font-medium text-ink">Kam matomas</span>
+                                {isAdmin ? (
+                                    <>
+                                        <div role="group" aria-label="Šablono matomumas" className="flex gap-1 rounded-lg border border-line p-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setTemplateScope('personal')}
+                                                aria-pressed={templateScope === 'personal'}
+                                                className={`min-h-touch flex-1 rounded-md px-3 py-2 text-body transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${templateScope === 'personal' ? 'bg-brand/10 font-semibold text-brand ring-2 ring-brand' : 'text-ink ring-1 ring-line'}`}
+                                            >
+                                                Tik man
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setTemplateScope('team')}
+                                                aria-pressed={templateScope === 'team'}
+                                                className={`min-h-touch flex-1 rounded-md px-3 py-2 text-body transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${templateScope === 'team' ? 'bg-brand/10 font-semibold text-brand ring-2 ring-brand' : 'text-ink ring-1 ring-line'}`}
+                                            >
+                                                Visai komandai
+                                            </button>
+                                        </div>
+                                        <p className="mt-1 text-caption text-ink-muted">
+                                            {templateScope === 'team'
+                                                ? 'Komandinį šabloną matys visa komanda.'
+                                                : 'Asmeninį šabloną matote tik jūs.'}
+                                        </p>
+                                    </>
+                                ) : (
+                                    <p className="text-body text-ink-muted">
+                                        {templateScope === 'team'
+                                            ? 'Komandinis šablonas — tvarko administratorius.'
+                                            : 'Asmeninis šablonas — matomas tik jums.'}
+                                    </p>
+                                )}
                             </div>
                             <div>
                                 <h4 className="font-medium mb-3">Pasirinkite laukus, kuriuos išsaugoti:</h4>
@@ -1400,27 +1550,49 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                 </div>
                             </div>
 
-                            {/* Deadline — optional; the placeholder carries the label. The text→date type
-                                swap keeps that placeholder readable until the field is focused, and a tap
-                                immediately pops the native calendar (showPicker) instead of needing a second
-                                tap on the tiny date glyph. */}
-                            <div>
-                                <input
-                                    type={formData.deadline ? "date" : "text"}
-                                    value={formData.deadline}
-                                    onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-                                    onFocus={(e) => { e.target.type = 'date'; }}
-                                    onClick={(e) => {
-                                        e.target.type = 'date';
-                                        // showPicker needs a user gesture (this click) and isn't in every
-                                        // browser; ignore if unsupported/blocked — the field still works.
-                                        try { e.target.showPicker?.(); } catch { /* no-op */ }
-                                    }}
-                                    onBlur={(e) => { if (!e.target.value) e.target.type = 'text'; }}
-                                    aria-label="Atlikti iki"
-                                    placeholder="Atlikti iki… (neprivalomas įrašas)"
+                            {/* Deadline + tag — one row (deadline left, tag right). */}
+                            <div className="grid grid-cols-2 gap-3">
+                                {/* Deadline — optional. The field is ALWAYS a native date control, so a single
+                                    click opens the calendar (showPicker) with no intermediate text-edit step.
+                                    An overlay carries the Lithuanian label while empty; the native empty value
+                                    (yyyy-mm-dd) is hidden by rendering the input text transparent until a date
+                                    is chosen. (Replaces the old text→date type swap that needed a second tap.) */}
+                                <div className="relative min-w-0">
+                                    <input
+                                        type="date"
+                                        value={formData.deadline}
+                                        onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                                        onClick={(e) => {
+                                            // showPicker needs a user gesture (this click) and isn't in every
+                                            // browser; ignore if unsupported/blocked — the field still works.
+                                            try { e.currentTarget.showPicker?.(); } catch { /* no-op */ }
+                                        }}
+                                        aria-label="Atlikti iki"
+                                        disabled={fieldsLocked}
+                                        className={`w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base ${formData.deadline ? '' : 'text-transparent'}`}
+                                    />
+                                    {!formData.deadline && (
+                                        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base text-ink-muted">
+                                            Atlikti iki…
+                                        </span>
+                                    )}
+                                </div>
+                                {/* Žyma — optional single tag from the canonical list. Opens a list panel
+                                    (Select sheet) just like the other pickers; "Be žymos" clears it. */}
+                                <Select
+                                    value={formData.tag}
+                                    onChange={(val) => setFormData({ ...formData, tag: val })}
+                                    options={[
+                                        { value: '', label: 'Be žymos' },
+                                        ...TASK_TAGS.map((t) => ({ value: t, label: t })),
+                                    ]}
+                                    label="Žyma"
+                                    placeholder="Žyma"
+                                    ariaLabel="Žyma"
+                                    icon={Tag}
+                                    alwaysSheet
                                     disabled={fieldsLocked}
-                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
+                                    className="min-w-0"
                                 />
                             </div>
 
@@ -1816,8 +1988,12 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             {group.label}
                                         </p>
                                         <ul className="divide-y divide-line overflow-hidden rounded-card border border-line">
-                                            {group.items.map((t) => (
-                                                <li key={t.id} className="flex items-center gap-1 pr-1">
+                                            {group.items.map((t) => {
+                                                const tScope = t.scope || 'team';
+                                                const editable = canEditTemplate(t);
+                                                const isHidden = tScope === 'team' && hiddenTemplateIds.has(t.id);
+                                                return (
+                                                <li key={t.id} className={`flex items-center gap-1 pr-1 ${isHidden ? 'opacity-60' : ''}`}>
                                                     <button
                                                         type="button"
                                                         onClick={() => { handleApplyTemplate(t); setIsPickingTemplate(false); }}
@@ -1825,21 +2001,53 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                         title={`Užkrauti šabloną „${t.templateName}“`}
                                                     >
                                                         {t.templateName}
+                                                        {tScope === 'personal' && (
+                                                            <span className="ml-2 align-middle rounded-full bg-surface-sunken px-1.5 py-0.5 text-caption text-ink-muted">
+                                                                asmeninis
+                                                            </span>
+                                                        )}
+                                                        {isHidden && (
+                                                            <span className="ml-2 align-middle rounded-full bg-surface-sunken px-1.5 py-0.5 text-caption text-ink-muted">
+                                                                paslėptas
+                                                            </span>
+                                                        )}
                                                     </button>
-                                                    <IconButton
-                                                        icon={Pencil}
-                                                        label="Redaguoti šabloną"
-                                                        variant="ghost"
-                                                        onClick={() => handleEditTemplate(t)}
-                                                    />
-                                                    <IconButton
-                                                        icon={Trash2}
-                                                        label="Ištrinti šabloną"
-                                                        variant="danger"
-                                                        onClick={() => handleDeleteTemplate(t.id, t.templateName)}
-                                                    />
+                                                    {isHidden ? (
+                                                        // Hidden from this user's own list — offer to bring it back.
+                                                        <IconButton
+                                                            icon={Eye}
+                                                            label="Rodyti mano sąraše"
+                                                            variant="ghost"
+                                                            onClick={() => handleUnhideTemplate(t.id)}
+                                                        />
+                                                    ) : editable ? (
+                                                        <>
+                                                            <IconButton
+                                                                icon={Pencil}
+                                                                label="Redaguoti šabloną"
+                                                                variant="ghost"
+                                                                onClick={() => handleEditTemplate(t)}
+                                                            />
+                                                            <IconButton
+                                                                icon={Trash2}
+                                                                label="Ištrinti šabloną"
+                                                                variant="danger"
+                                                                onClick={() => handleDeleteTemplate(t.id, t.templateName)}
+                                                            />
+                                                        </>
+                                                    ) : (
+                                                        // A shared template the user can't edit — they can only HIDE it from
+                                                        // their own list (reversible; it stays for everyone else).
+                                                        <IconButton
+                                                            icon={EyeOff}
+                                                            label="Paslėpti iš mano sąrašo"
+                                                            variant="ghost"
+                                                            onClick={() => handleHideTemplate(t.id)}
+                                                        />
+                                                    )}
                                                 </li>
-                                            ))}
+                                                );
+                                            })}
                                         </ul>
                                     </div>
                                 ))}
