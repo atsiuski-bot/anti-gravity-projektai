@@ -3,7 +3,8 @@ import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
 import { logError } from './errorLog';
-import { createTask, reopenTask, deleteTask as deleteTaskCommand, humanActor, MODES } from '../domain';
+import { notify, categoryOf } from './notify';
+import { createTask, reopenTask, deleteTask as deleteTaskCommand, completeTask, humanActor, MODES } from '../domain';
 
 /**
  * Updates the user's work status in Firestore.
@@ -596,5 +597,134 @@ export const extendTaskTime = async (taskId, additionalTimeString, extendedBy) =
         console.error('Error extending task time:', err);
         throw err;
     }
+};
+
+/**
+ * requestTimeExtension — the worker explicitly asks their manager for more time once the whole
+ * estimate is spent. This used to be auto-fired by useTaskTimeMonitor the moment 100% was hit;
+ * it is now a deliberate worker action chosen from the time-limit popup, so it may carry a note
+ * and/or photos. The task stays paused; the manager granting (extendTaskTime) re-arms the monitor.
+ *
+ * Written with a DIRECT addDoc (not the best-effort `notify()`), because this is a deliberate
+ * worker action that the popup must be able to report as failed — `notify()` swallows write errors,
+ * which would let the popup falsely show "sent". We still stamp `category` from the one type→category
+ * map (so the bell can never disagree) and keep the `userId` worker-as-author provenance the rule
+ * and the manager card both expect. `commentText` is trimmed and capped to the rule's 2000-char limit.
+ */
+export const requestTimeExtension = async ({ task, currentUser, estimatedTime, actualMinutes, commentText = '', attachmentUrls = [] }) => {
+    const recipientId = task?.managerId || task?.taskAuditor;
+    // No manager to ask — signal the caller so it can surface friendly LT copy instead of writing
+    // a doc that violates the recipientId rule.
+    if (!recipientId) throw new Error('no-manager');
+
+    const payload = {
+        recipientId,
+        type: 'time_extension_request',
+        category: categoryOf('time_extension_request'),
+        taskId: task.id,
+        taskTitle: task.title || 'Užduotis',
+        estimatedTime: estimatedTime || task.estimatedTime || null,
+        actualMinutes: Number.isFinite(actualMinutes)
+            ? actualMinutes
+            : Math.round((task.timerMinutes || 0) + (task.manualMinutes || 0)),
+        userName: currentUser?.displayName || currentUser?.email || 'Vykdytojas',
+        userId: currentUser?.uid,
+        isRead: false,
+        createdAt: new Date().toISOString()
+    };
+
+    const trimmed = (commentText || '').trim();
+    if (trimmed) payload.commentText = trimmed.slice(0, 2000);
+    if (Array.isArray(attachmentUrls) && attachmentUrls.length) payload.attachmentUrls = attachmentUrls;
+
+    await addDoc(collection(db, 'request_notifications'), payload);
+};
+
+/**
+ * completeTaskAtLimit — finalize an ALREADY-PAUSED task straight from the time-limit popup.
+ *
+ * The monitor pauses the timer (committing minutes + the work_sessions row) BEFORE the popup
+ * appears, so — unlike performFinish, which finishes a still-running timer — this neither
+ * recomputes elapsed time nor logs another session.
+ *
+ * The status/approval transition is delegated to the audited domain `completeTask` command, so the
+ * auto-confirm rule (manager/admin or own-manager → 'confirmed'; worker → 'completed' awaiting
+ * acceptance) lives in ONE place and this path also gets a decision_log entry. The command derives
+ * the rule from the ACTOR's role, which lives on `userData`/`userRole` — NOT on the Firebase auth
+ * `currentUser` — so we build the actor with the app role explicitly. On top of the command we set
+ * the denormalized `actualTime` + clear the alarm latch, clear the worker's active session, and
+ * (workers only) notify the manager so the task reaches the pridavimas queue.
+ */
+export const completeTaskAtLimit = async (task, { currentUser, userData, userRole }) => {
+    const totalMinutes = (task.timerMinutes || 0) + (task.manualMinutes || 0);
+    const formattedTime = formatMinutesToTimeString(totalMinutes);
+
+    // 1. Audited status write (single source of the auto-confirm rule + decision_log entry).
+    const actor = humanActor({
+        uid: currentUser?.uid,
+        displayName: currentUser?.displayName,
+        email: currentUser?.email,
+        role: userRole
+    });
+    const result = await completeTask({ task }, {
+        actor,
+        mode: MODES.COMMIT,
+        reason: 'finished from time-limit popup'
+    });
+    // The command reports the resulting status: 'confirmed' = a manager/own-manager auto-confirmed
+    // (no review needed), 'completed' = a worker's task now awaiting the manager's acceptance.
+    const isManagerOrAdmin = result?.effect?.after?.status === 'confirmed';
+
+    // 2. Denormalized fields the command does not own: the displayed total + the alarm latch.
+    try {
+        await updateDoc(doc(db, 'tasks', task.id), {
+            actualTime: formattedTime,
+            timeLimitReached: false,
+            updatedAt: new Date().toISOString()
+        });
+    } catch (e) {
+        logError(e, { source: 'completeTaskAtLimit.actualTime' });
+    }
+
+    // 3. Clear the worker's active session if it still points at this task. pauseTask already cleared
+    // activeSession on auto-pause, but workStatus.activeTaskId can still reference the finished task.
+    if (task.assignedUserId === currentUser?.uid) {
+        try {
+            await updateDoc(doc(db, 'users', currentUser.uid), {
+                workStatus: {
+                    isWorking: false,
+                    status: 'idle',
+                    activeTaskId: null,
+                    lastUpdated: new Date().toISOString()
+                },
+                activeSession: null
+            });
+        } catch (e) {
+            logError(e, { source: 'completeTaskAtLimit.clearSession' });
+        }
+    }
+
+    // 4. Notify the manager (workers only — a manager/admin completing auto-confirms, no review
+    // needed). Best-effort via notify(): the task IS already completed, so a failed notice must not
+    // surface as a completion failure (mirrors performFinish).
+    if (!isManagerOrAdmin) {
+        let recipientId = task.managerId || null;
+        if (!recipientId || recipientId === currentUser?.uid) {
+            recipientId = userData?.defaultManager || null;
+        }
+        await notify({
+            recipientId,
+            type: 'task_completion',
+            taskId: task.id,
+            taskTitle: task.title || 'Užduotis',
+            actualTime: formattedTime,
+            actualMinutes: totalMinutes,
+            userName: currentUser?.displayName || currentUser?.email || 'Vykdytojas',
+            userId: currentUser?.uid,
+            completedAt: new Date().toISOString()
+        });
+    }
+
+    return { isManagerOrAdmin };
 };
 
