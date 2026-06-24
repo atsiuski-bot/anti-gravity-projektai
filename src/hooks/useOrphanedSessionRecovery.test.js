@@ -11,7 +11,7 @@ vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn(() => ({ userData: nul
 vi.mock('../utils/sessionActions', () => ({ endSession: vi.fn() }));
 vi.mock('../utils/errorLog', () => ({ logError: vi.fn() }));
 
-import { getSecondarySession } from './useOrphanedSessionRecovery';
+import { getSecondarySession, isAbandonedSession } from './useOrphanedSessionRecovery';
 
 describe('getSecondarySession — which session the orphan-recovery hook will end', () => {
     it('resolves a canonical activeSession of each secondary type', () => {
@@ -50,5 +50,38 @@ describe('getSecondarySession — which session the orphan-recovery hook will en
             activeSession: { type: 'call', startTime: 'NEW' },
             breakState: { isTakingBreak: true, lastStartedAt: 'OLD' },
         })).toEqual({ type: 'call', startTime: 'NEW' });
+    });
+});
+
+describe('isAbandonedSession — resume a live pre-boot session vs. finalize an abandoned one', () => {
+    // All instants are UTC ISO; Vilnius is UTC+3 in June (summer), so the Vilnius calendar day is
+    // the UTC day shifted +3h. The reference "now" is fixed so the assertions are deterministic.
+    const NOW = new Date('2026-06-24T12:00:00Z'); // 15:00 Vilnius, 2026-06-24
+
+    it('RESUMES a same-Vilnius-day session well under 16h (not abandoned)', () => {
+        // 09:00 Vilnius start, 6h elapsed, same day → keep running.
+        expect(isAbandonedSession('2026-06-24T06:00:00Z', NOW)).toBe(false);
+    });
+
+    it('RESUMES a session that just started this app session', () => {
+        expect(isAbandonedSession('2026-06-24T11:59:00Z', NOW)).toBe(false);
+    });
+
+    it('FINALIZES a session that crossed a Vilnius calendar day even if under 16h elapsed', () => {
+        // 22:00 Vilnius on the 23rd → 11:00 Vilnius on the 24th is ~13h, but it is a DIFFERENT
+        // Vilnius day, so it is abandoned by the day-boundary clause alone.
+        const now = new Date('2026-06-24T08:00:00Z'); // 11:00 Vilnius, 2026-06-24
+        expect(isAbandonedSession('2026-06-23T19:00:00Z', now)).toBe(true); // 22:00 Vilnius, 2026-06-23
+    });
+
+    it('FINALIZES a same-day session whose elapsed exceeds the 16h ceiling', () => {
+        // 04:00 Vilnius start, 18h elapsed, still the same Vilnius day → abandoned by the 16h clause.
+        const now = new Date('2026-06-24T19:00:00Z'); // 22:00 Vilnius, 2026-06-24
+        expect(isAbandonedSession('2026-06-24T01:00:00Z', now)).toBe(true); // 04:00 Vilnius, 2026-06-24
+    });
+
+    it('does NOT finalize on an unparseable start time (filtered upstream; never finalize blindly)', () => {
+        expect(isAbandonedSession('not-a-date', NOW)).toBe(false);
+        expect(isAbandonedSession(undefined, NOW)).toBe(false);
     });
 });

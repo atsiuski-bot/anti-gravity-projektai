@@ -9,7 +9,7 @@ import TaskModal from '../components/TaskModal';
 import PendingApprovalDisclosure from '../components/PendingApprovalDisclosure';
 
 import DailyWorkProgress from '../components/DailyWorkProgress';
-import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
+import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, TASK_TAGS } from '../utils/taskUtils';
 import { getPriorityRank } from '../utils/priority';
 import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
@@ -21,7 +21,6 @@ import {
     getTaskMatchFields,
     getTaskSuggestionSources,
 } from '../utils/taskSearch';
-import { getLithuanianDateString, getLithuanian3AMCutoff } from '../utils/timeUtils';
 import { logError } from '../utils/errorLog';
 import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
@@ -58,7 +57,7 @@ export default function WorkerView() {
     const [error, setError] = useState(null);
 
     // Task time monitoring — 80% warning and 100% limit
-    const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(tasks);
+    const { warningPopup, limitPopup, dismissWarning, requestExtension, finishFromLimit } = useTaskTimeMonitor(tasks);
 
     // Crash/reload recovery — auto-pause any task left "running" across a restart so
     // it cannot credit hours of ghost time on the next pause.
@@ -103,17 +102,10 @@ export default function WorkerView() {
                 // Apply visibility filtering based on day of week and time
                 tasksData = filterTasksByVisibility(tasksData);
 
-                // Additional filter: only show done tasks from "Today's Work Day" (3AM - 3AM)
-                const cutoff = getLithuanian3AMCutoff(getLithuanianDateString());
-
-                tasksData = tasksData.filter(t => {
-                    if (t.completed || t.status === 'completed' || t.status === 'confirmed') {
-                        const finishedAt = t.completedAt || t.confirmedAt || t.updatedAt;
-                        if (!finishedAt) return false;
-                        return new Date(finishedAt) >= cutoff;
-                    }
-                    return true;
-                });
+                // Personal day window: keep done tasks only for the current "work day" (03:00–03:00
+                // Vilnius). Unapproved own tasks stay visible — the worker must see their own
+                // pending-approval item; only the SHARED team list hides those.
+                tasksData = scopePersonalDayWindow(tasksData);
 
                 // Sort by Day -> Priority
                 tasksData = sortWorkerTasks(tasksData);
@@ -461,7 +453,9 @@ export default function WorkerView() {
                     task={limitPopup.task}
                     estimatedTime={limitPopup.estimatedTime}
                     actualMinutes={limitPopup.actualMinutes}
-                    onDismiss={dismissLimit}
+                    uid={currentUser?.uid}
+                    onRequestExtension={requestExtension}
+                    onFinish={finishFromLimit}
                 />
             )}
 

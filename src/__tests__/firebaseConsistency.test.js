@@ -40,6 +40,7 @@ const read = (rel) => readFileSync(resolve(ROOT, rel), 'utf8');
 const FUNCTIONS_SRC = read('functions/index.js');
 const RULES_SRC = read('firestore.rules');
 const TASK_MODAL_SRC = read('src/components/TaskModal.jsx');
+const SESSION_ACTIONS_SRC = read('src/utils/sessionActions.js');
 
 // --- small extraction helpers ---------------------------------------------------------------
 
@@ -356,5 +357,27 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
       }
     }
     expect(disagreements, `notification copy diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// 8. SECONDARY-SESSION RECORD-ID LOCKSTEP — a finished break/call/quick-work is logged with a
+//    DETERMINISTIC doc id (sess_<kind>_<uid>_<startMs>) by BOTH the client (sessionActions.js
+//    handleLegacyLogging) and the server net (functions/index.js writeSecondaryCloseRecords). That
+//    shared id is what dedups the two independent closers so an abandoned session is never credited
+//    twice. If one side renames a prefix, the dedup silently breaks and the double-credit race
+//    returns — exactly the kind of hand-copied drift this gate exists to catch.
+// =============================================================================================
+
+describe('secondary-session record-id lockstep (client sessionActions ↔ functions net)', () => {
+  const ID_PREFIXES = ['sess_break_', 'sess_call_task_', 'sess_call_ws_', 'sess_qw_task_', 'sess_qw_ws_'];
+
+  it('both the client logger and the server net use the identical deterministic id prefixes', () => {
+    const missingClient = ID_PREFIXES.filter((p) => !SESSION_ACTIONS_SRC.includes(p));
+    const missingServer = ID_PREFIXES.filter((p) => !FUNCTIONS_SRC.includes(p));
+    expect(missingClient, `sessionActions.js is missing record-id prefixes (dedup would break): ${missingClient.join(', ')}`)
+      .toEqual([]);
+    expect(missingServer, `functions/index.js is missing record-id prefixes (dedup would break): ${missingServer.join(', ')}`)
+      .toEqual([]);
   });
 });

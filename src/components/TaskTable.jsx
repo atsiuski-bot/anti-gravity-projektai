@@ -23,6 +23,7 @@ import { toggleTaskCompletion } from '../utils/taskCompletionActions';
 import { approveTask, unapproveTask, completeTask, reopenTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { isManagerRole } from '../utils/formatters';
+import { canEditTask } from '../utils/taskPermissions';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
@@ -593,7 +594,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
                             {/* Actions — always-visible 44px targets (no group-hover on touch) */}
                             <div className="mt-3 flex flex-wrap items-center gap-2">
-                                {onEdit && (
+                                {onEdit && canEditTask({ task, currentUser, role, userRole }) && (
                                     <Button variant="secondary" size="md" icon={Pencil} onClick={() => onEdit(task)}>
                                         Redaguoti
                                     </Button>
@@ -883,7 +884,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     <td className="px-1 py-3 align-top" onClick={(e) => e.stopPropagation()}>
                                         <div className="flex flex-col items-end gap-2">
                                             <div className="flex flex-wrap items-center justify-end gap-1">
-                                                {onEdit && (
+                                                {onEdit && canEditTask({ task, currentUser, role, userRole }) && (
                                                     <IconButton icon={Pencil} label="Redaguoti" variant="default" onClick={() => onEdit(task)} />
                                                 )}
                                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
@@ -969,7 +970,8 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 isOpen={activeModal.type === 'checklist'}
                                 onClose={() => setActiveModal({ type: null, taskId: null })}
                                 checklist={task.checklist}
-                                canEdit={(canManage || currentUser?.uid === task.assignedUserId) && !task.isDeleted}
+                                canToggle={(canManage || currentUser?.uid === task.assignedUserId) && !task.isDeleted}
+                                canManageItems={canEditTask({ task, currentUser, role, userRole }) && !task.isDeleted}
                                 onToggle={(itemId) => handleToggleChecklist(task.id, itemId)}
                                 onAdd={(text) => handleAddChecklist(task.id, text)}
                                 onDelete={(itemId) => handleDeleteChecklist(task.id, itemId)}
@@ -994,7 +996,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                 canManage={canManage}
                 canDelete={canDelete}
                 showManagerLine={showManagerLine}
-                onEdit={onEdit ? editFromDetail : undefined}
+                onEdit={onEdit && detailTask && canEditTask({ task: detailTask, currentUser, role, userRole }) ? editFromDetail : undefined}
                 onDelete={deleteFromDetail}
                 onRevert={revertFromDetail}
                 onConfirm={confirmFromDetail}

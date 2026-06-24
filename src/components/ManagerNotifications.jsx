@@ -1058,6 +1058,30 @@ export default function ManagerNotifications({ onClose }) {
                                             </div>
                                         </div>
                                     </div>
+
+                                    {/* Worker's note attached to the request (optional). */}
+                                    {notif.commentText && (
+                                        <blockquote className="rounded-control border-l-2 border-feedback-danger-border bg-surface-card px-3 py-2 text-sm italic text-ink">
+                                            „{notif.commentText}“
+                                        </blockquote>
+                                    )}
+
+                                    {/* Photos attached to the request (optional) — open full-size in a new tab. */}
+                                    {Array.isArray(notif.attachmentUrls) && notif.attachmentUrls.length > 0 && (
+                                        <div className="flex flex-wrap gap-2">
+                                            {notif.attachmentUrls.map((url, idx) => (
+                                                <a
+                                                    key={url}
+                                                    href={url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="block h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                >
+                                                    <img src={url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
+                                                </a>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Quick-grant chips — one tap extends the estimate and tells the worker,
