@@ -41,6 +41,10 @@ const SELECT_CLASS =
 export default function TaskHistory({ userId, users = [], canExport = false, approvalManagerUid = null }) {
     const { userRole, currentUser, userData } = useAuth();
     const isManagerOrAdmin = isManagerRole(userRole);
+    // The team report (manager, userId='all') keeps the full filter set; the *personal* history
+    // (a worker's own, or a manager's own report) is pared down to just the date-range picker —
+    // no tag/sort/user filters there, per founder request.
+    const isPersonal = !(isManagerOrAdmin && userId === 'all');
     // Scoped managers only ever read their team's archived tasks (array-contains); this surface
     // is manager/admin-only (rendered when "all" is selected), so the effective role is never 'worker'.
     const scoped = isScopedOverseer(userData);
@@ -712,7 +716,8 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     </div>
                 )}
 
-                {/* Tag Filter */}
+                {/* Tag Filter — team report only; the personal history keeps just the date range. */}
+                {!isPersonal && (
                 <div className="flex flex-col gap-1 min-w-[120px]">
                     <label className={FILTER_LABEL_CLASS}>Žyma</label>
                     <Select
@@ -726,9 +731,11 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         ariaLabel="Filtruoti pagal žymą"
                     />
                 </div>
+                )}
 
                 {/* Sort — a segmented switch (Pagal datą / Pagal būseną) rather than a dropdown,
-                    so both choices are visible at once and it reads at a glance. */}
+                    so both choices are visible at once and it reads at a glance. Team report only. */}
+                {!isPersonal && (
                 <div className="flex flex-col gap-1">
                     <label className={FILTER_LABEL_CLASS}>Rūšiuoti</label>
                     <div
@@ -763,6 +770,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         </button>
                     </div>
                 </div>
+                )}
 
                 {/* Reset Button */}
                 <div className="sm:ml-auto">
