@@ -1294,9 +1294,9 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
             aria-label="Komandos laikotarpio suvestinė"
         >
             <div className="mb-3 flex items-center gap-2">
+                <span className="font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
                 <Users className="h-5 w-5 text-brand" aria-hidden="true" />
                 <h3 className="text-body font-bold text-ink-strong">Komandos suvestinė</h3>
-                <span className="ml-auto font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
             </div>
 
             {/* Time triplet — the period's worked / break / total hours to the minute, from the same
