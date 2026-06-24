@@ -17,7 +17,7 @@ import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
 
-import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
+import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, TASK_TAGS } from '../utils/taskUtils';
 import { PRIORITIES, getPriorityLabel } from '../utils/priority';
 import { STATUS_LABELS } from '../utils/taskConstants';
 
@@ -520,7 +520,10 @@ export default function ManagerView() {
                 {(() => {
                     // Own tasks come from the dedicated owner-scoped listener (ownTasks), so a
                     // scoped manager — whose team listener excludes their own rows — still sees them.
-                    const filteredMyTasks = ownTasks;
+                    // "Mano darbai" is a PERSONAL list, so it keeps the same day window as the
+                    // worker's "Mano užduotys": own finished work lingers for the rest of the work
+                    // day, then clears (the shared team list instead hides finished items at once).
+                    const filteredMyTasks = scopePersonalDayWindow(ownTasks);
                     const sortedMyTasks = sortWorkerTasks(filteredMyTasks);
 
                     return (

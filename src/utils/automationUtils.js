@@ -1,84 +1,13 @@
 import { db } from '../firebase';
-import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
+import { collection, query, where, getDocs } from 'firebase/firestore';
 import { archiveTask } from './taskActions';
 import { getLithuanianNow, getLithuanianDateString, getLithuanian3AMCutoff, addDaysToDateString } from './timeUtils';
-import { PRIORITIES, normalizePriority } from './priority';
 
-/**
- * Checks all active tasks and promotes their priority based on deadline proximity.
- * - Tasks due today, tomorrow, or overdue -> Priority: Urgent
- * - Tasks due day after tomorrow -> Priority: High
- * 
- * This should be called once per session (or daily) by managers/admins.
- */
-export async function checkAndPromoteTasks() {
-    try {
-        // Fetch all non-completed tasks. 'approved' = gate cleared but not yet started, so it still
-        // needs deadline-based priority promotion (it is the canonical post-approval status now).
-        const tasksQuery = query(
-            collection(db, 'tasks'),
-            where('status', 'in', ['pending', 'in-progress', 'approved'])
-        );
-
-        const snapshot = await getDocs(tasksQuery);
-        const tasks = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-        // Compare deadlines as Vilnius calendar-day strings (YYYY-MM-DD), which sort
-        // lexically and are timezone-correct. The old code built local-midnight Date
-        // objects from the browser's timezone, so a UTC-stamped deadline (e.g.
-        // 2025-12-01T22:00:00Z = 2025-12-02 in Vilnius) was bucketed on the wrong day and
-        // priority promotion fired a day late.
-        const now = getLithuanianNow();
-        const todayStr = getLithuanianDateString(now);
-        const dayAfterTomorrowStr = addDaysToDateString(todayStr, 2);
-        const threeDaysStr = addDaysToDateString(todayStr, 3);
-
-        let updatedCount = 0;
-
-        for (const task of tasks) {
-            if (!task.deadline) continue;
-
-            // Bucket the deadline to its Vilnius calendar day, however it was stored.
-            const deadlineStr = getLithuanianDateString(new Date(task.deadline));
-
-            let newPriority = null;
-
-            // Compare against the CANONICAL priority, not the raw stored value: tasks may carry
-            // either casing historically (e.g. 'Urgent' vs 'URGENT'), and an un-normalized
-            // comparison would re-promote an already-urgent task on every run (a redundant write,
-            // and a casing flip-flop). normalizePriority collapses both to the PRIORITIES token.
-            const currentPriority = normalizePriority(task.priority);
-
-            // Overdue, today, or tomorrow -> Urgent. (dayAfterTomorrowStr == today+2, so
-            // deadlineStr < it covers everything up to and including tomorrow.)
-            if (deadlineStr < dayAfterTomorrowStr) {
-                if (currentPriority !== PRIORITIES.URGENT) {
-                    newPriority = PRIORITIES.URGENT;
-                }
-            } else if (deadlineStr < threeDaysStr) {
-                // Day after tomorrow -> High
-                if (currentPriority !== PRIORITIES.URGENT && currentPriority !== PRIORITIES.HIGH) {
-                    newPriority = PRIORITIES.HIGH;
-                }
-            }
-
-            // Update if needed
-            if (newPriority) {
-                await updateDoc(doc(db, 'tasks', task.id), {
-                    priority: newPriority,
-                    updatedAt: new Date().toISOString()
-                });
-                updatedCount++;
-            }
-        }
-
-        console.log(`[Automation] Promoted ${updatedCount} tasks based on deadline proximity.`);
-        return updatedCount;
-    } catch (error) {
-        console.error('[Automation] Error promoting tasks:', error);
-        return 0;
-    }
-}
+// NOTE: deadline-based PRIORITY ESCALATION used to live here (checkAndPromoteTasks) and ran in the
+// browser, gated to whole-team admins/managers. It was MOVED to a scheduled Cloud Function
+// (functions/index.js → escalateTaskPriorities) so it runs deterministically every day regardless of
+// who opens the app, and so it can NOTIFY the assignee (a same-origin client write could not reach
+// the worker reliably). Only ARCHIVING remains client-side below.
 
 /**
  * Checks if automation should run today.
@@ -97,15 +26,13 @@ export function shouldRunAutomation() {
 }
 
 /**
- * Runs the FULL daily automation set (promote + archive) behind the once-per-day latch.
- * Both Dashboard and Layout call this. Previously each gated `shouldRunAutomation()` and then
- * ran a different subset (Dashboard: promote + archive; Layout: promote only), so whichever
- * mounted first consumed the latch — and when Layout won, archiveOldTasks never ran that day.
- * Defining the latch and the work it gates together makes them impossible to drift.
+ * Runs the client-side daily automation (now just ARCHIVING) behind the once-per-day latch.
+ * Both Dashboard and Layout call this; defining the latch and the work it gates together keeps
+ * them from drifting. Priority escalation moved server-side (see the note at the top of this file),
+ * so the only remaining browser-side daily job is sweeping confirmed/deleted tasks into the archive.
  */
 export async function runDailyAutomation() {
     if (!shouldRunAutomation()) return;
-    await checkAndPromoteTasks();
     await archiveOldTasks();
 }
 

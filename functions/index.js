@@ -178,6 +178,14 @@ function copyForRequestNotification(n) {
                     ? `${n.day || 'Veiklos laikas'}: ${String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)}`
                     : (n.day || 'Veiklos laikas'),
             };
+        case 'task_priority_escalated':
+            // System → worker: a task's deadline closed in, so its priority was auto-raised. The new
+            // level's Lithuanian label is precomputed onto the doc (priorityLabel), so this MIRROR
+            // needs no priority map — keep identical to the registry entry.
+            return {
+                title: 'Artėja terminas',
+                body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'WORKZ'),
+            };
         default:
             return { title: 'WORKZ pranešimas', body: title };
     }
@@ -1589,6 +1597,118 @@ exports.runRecurringTasksNow = onCall(async (request) => {
         throw new HttpsError('internal', 'Generation failed.');
     }
 });
+
+// ---------------------------------------------------------------------------
+// Deadline priority escalation — scheduled (moved server-side from the client)
+// ---------------------------------------------------------------------------
+//
+// This WAS a browser-side once-per-day pass (src/utils/automationUtils.checkAndPromoteTasks) gated
+// to whole-team admins/managers — so on any day nobody with that role opened the app, NOTHING was
+// escalated, and even when it ran it NEVER told the worker. Moving it to a schedule makes it
+// deterministic AND lets it notify the assignee, which a same-origin client write could not do
+// reliably (the worker is rarely the one running the pass).
+//
+// Buckets (Vilnius calendar days, lexically comparable — MIRROR of the old client logic):
+//   • deadline today / tomorrow / overdue  → URGENT (Skubus)
+//   • deadline the day after tomorrow       → HIGH   (Aukštas)
+//   • 3+ days out                           → untouched
+// Only ever RAISES priority, and only past the canonical current value, so a task already at (or
+// above) the target is skipped. That guard is also the idempotency net: a Cloud Scheduler retry
+// re-scans, finds the task already escalated, and re-notifies nothing.
+
+// Add whole calendar days to a YYYY-MM-DD string — MIRROR of src/utils/timeUtils addDaysToDateString
+// (pure UTC calendar arithmetic, DST-independent). Day strings sort lexically, so the buckets above
+// are plain string comparisons against today±N.
+function addDaysToDayStr(dayStr, days) {
+    const [y, m, d] = dayStr.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+// User-facing Lithuanian labels for the only two priorities this job assigns — MIRROR of the
+// matching PRIORITY_CONFIG labels in src/utils/priority.js. Stamped onto the notification doc so the
+// in-app copy and the push MIRROR both read one field (no priority→label map needed on either side).
+const ESCALATION_LABELS = { URGENT: 'Skubus', HIGH: 'Aukštas' };
+
+exports.escalateTaskPriorities = onSchedule(
+    // 04:30 Vilnius — after the 03:00 work-day flip, before the 05:00 recurring generator and the
+    // managers' ~09:00 creation peak, so a freshly-urgent task is escalated before the day starts.
+    { schedule: 'every day 04:30', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const todayStr = lithuanianDay(new Date());
+        const dayAfterTomorrowStr = addDaysToDayStr(todayStr, 2); // today+2
+        const threeDaysStr = addDaysToDayStr(todayStr, 3);        // today+3
+
+        let snap;
+        try {
+            // Same status set as the old client pass: not-yet-finished work that still warrants a
+            // deadline-driven bump. The single-field `status in` query needs no composite index.
+            snap = await db.collection('tasks')
+                .where('status', 'in', ['pending', 'in-progress', 'approved']).get();
+        } catch (err) {
+            logger.error('escalateTaskPriorities query failed', { err: err.message });
+            return;
+        }
+
+        let escalated = 0;
+        let notified = 0;
+
+        for (const docSnap of snap.docs) {
+            const t = docSnap.data();
+            if (!t.deadline) continue;
+
+            const deadlineDate = new Date(t.deadline);
+            if (Number.isNaN(deadlineDate.getTime())) continue;
+            const deadlineStr = lithuanianDay(deadlineDate); // bucket to its Vilnius calendar day
+
+            // Compare against the CANONICAL priority (data carries mixed casing historically), so an
+            // already-urgent task is not re-written or re-notified on every run.
+            const current = normalizeRecurringPriority(t.priority);
+            let target = null;
+            if (deadlineStr < dayAfterTomorrowStr) {
+                if (current !== 'URGENT') target = 'URGENT';
+            } else if (deadlineStr < threeDaysStr) {
+                if (current !== 'URGENT' && current !== 'HIGH') target = 'HIGH';
+            }
+            if (!target) continue;
+
+            const nowIso = new Date().toISOString();
+            try {
+                await docSnap.ref.update({ priority: target, updatedAt: nowIso });
+                escalated += 1;
+            } catch (err) {
+                logger.warn('escalateTaskPriorities update failed', { taskId: docSnap.id, err: err.message });
+                continue; // don't notify about an escalation that did not actually land
+            }
+
+            // Tell the assignee their task got more urgent: one request_notifications doc drives the
+            // in-app toast + bell row AND the FCM push (via notifyOnRequestNotification). Best-effort —
+            // a notify failure never undoes the escalation, and the guard above keeps a retry quiet.
+            const uid = t.assignedUserId;
+            if (uid) {
+                try {
+                    await db.collection('request_notifications').add({
+                        recipientId: uid,
+                        type: 'task_priority_escalated',
+                        category: 'info',
+                        taskId: docSnap.id,
+                        taskTitle: t.title || 'Veikla',
+                        priorityLabel: ESCALATION_LABELS[target] || '',
+                        isRead: false,
+                        createdAt: nowIso,
+                        // Provenance: a system-authored notice (no human actor). The admin SDK write
+                        // bypasses the client provenance rule; this is for audit/readability.
+                        createdBy: 'system_priority_escalation',
+                    });
+                    notified += 1;
+                } catch (err) {
+                    logger.warn('escalateTaskPriorities notify failed', { taskId: docSnap.id, err: err.message });
+                }
+            }
+        }
+
+        logger.info('escalateTaskPriorities done', { todayStr, escalated, notified });
+    }
+);
 
 // ---------------------------------------------------------------------------
 // AI task-draft parser — free-text → structured task (server-side, manager-only)

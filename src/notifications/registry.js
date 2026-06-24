@@ -161,6 +161,20 @@ export const NOTIFICATIONS = {
         copy: (n) => ({ title: 'Pašalintas veiklos laikas', body: n.day || 'Veiklos laikas' }),
     },
 
+    // ── System → worker (deadline closing in → priority auto-raised) ─────────────────────────────
+    task_priority_escalated: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        // The new level's Lithuanian label is precomputed server-side onto the doc (priorityLabel), so
+        // this copy and the push MIRROR both read one field — no priority→label map on either side.
+        copy: (n) => ({
+            title: 'Artėja terminas',
+            body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'WORKZ'),
+        }),
+    },
+
     // ── System → admin / manager ─────────────────────────────────────────────────────────────────
     account_approval: {
         category: 'action',

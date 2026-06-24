@@ -379,6 +379,26 @@ export const getLithuanian3AMCutoff = (dateStr) => {
 };
 
 /**
+ * The start instant of the CURRENT "work day" — 03:00 Europe/Vilnius. Before 03:00 the work
+ * day still belongs to the PREVIOUS calendar day, so the cutoff steps back one day; without
+ * that, a task finished just after midnight would sit before "today's" (still-future) 03:00 and
+ * wrongly drop out of every day-windowed list. The shared team scope (scopeActiveTasks) and both
+ * personal lists (scopePersonalDayWindow) read this one helper so their "today" boundary can
+ * never disagree.
+ *
+ * @param {Date} [now=getLithuanianNow()] - Reference instant (injectable for tests).
+ * @returns {Date} The current work day's 03:00 Vilnius cutoff as a Date.
+ */
+export const getCurrentWorkDayCutoff = (now = getLithuanianNow()) => {
+    let cutoffDate = getLithuanianDateString(now);
+    // If it's before 3AM, the work day started at 03:00 the previous calendar day.
+    if (now.getHours() < 3) {
+        cutoffDate = addDaysToDateString(cutoffDate, -1);
+    }
+    return getLithuanian3AMCutoff(cutoffDate);
+};
+
+/**
  * Build a UTC instant (ISO string) from a Vilnius LOCAL wall-clock date + time. This is the
  * inverse of the pair getLithuanianDateString()/formatTime(): those render a stored UTC ISO as
  * the Vilnius day + clock an admin sees; this takes the day + clock the admin TYPES back and
