@@ -1,12 +1,23 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Zap, Check, PencilLine } from 'lucide-react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Zap, Check, PencilLine, Mic } from 'lucide-react';
+import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
+import { useUsers } from '../context/UsersContext';
 import { useUndescribedQuickWork } from '../hooks/useUndescribedQuickWork';
+import { useSpeechDictation } from '../hooks/useSpeechDictation';
 import { addQuickWorkDescription } from '../utils/sessionActions';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
+import { formatDisplayName } from '../utils/formatters';
+import {
+    buildTemplateOptions,
+    resolveQuickWorkEntry,
+    canSubmitQuickWork,
+} from '../utils/quickWorkTemplates';
 import { logError } from '../utils/errorLog';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
+import IconButton from './ui/IconButton';
+import PersonSelect from './ui/PersonSelect';
 
 // Recorded clock time of an auto-stopped entry, e.g. "14:32". Empty string if unparseable.
 function formatCompletedTime(iso) {
@@ -16,16 +27,42 @@ function formatCompletedTime(iso) {
     return d.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-// The describe dialog. Memoized + uncontrolled textarea (defaultValue + ref) so typing never
-// re-renders the parent's live task subscription. Mirrors the live QuickWorkTimer modal copy.
-const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClose, isSubmitting }) {
+// The describe dialog. Mirrors the live QuickWorkTimer finish modal so the worker meets the SAME
+// surface whether they describe now or later: a template picker (label becomes the title; the box
+// turns into an optional comment) over an uncontrolled textarea (ref-driven, so typing never
+// re-renders the parent's live task subscription). The manager picker and "defer" path are absent
+// here — the routing was already chosen when the session was logged; this step only adds a title.
+const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClose, isSubmitting, templateOptions = [], roster = [] }) {
     const textareaRef = useRef(null);
     const minutes = task?.manualMinutes || 0;
 
+    // Which quick-work TEMPLATE (category) is chosen — its label becomes the title and the textarea
+    // turns into an optional comment. null = free-write mode (textarea IS the title).
+    const [selectedTemplateId, setSelectedTemplateId] = useState(null);
+    const [helpUserId, setHelpUserId] = useState('');
+    // Track only WHETHER the textarea has text (cheap), keeping the field uncontrolled so the
+    // dictation hook can write el.value directly (its dispatched 'input' event keeps this in sync).
+    const [hasText, setHasText] = useState(false);
+    const { supported: dictationSupported, isListening, toggle: toggleDictation } = useSpeechDictation(textareaRef);
+
+    const selectedTemplate = templateOptions.find((o) => o.id === selectedTemplateId) || null;
+    const isHelp = selectedTemplate?.kind === 'help';
+    const textIsComment = !!selectedTemplate;
+
+    const canSubmit = canSubmitQuickWork({ template: selectedTemplate, helpUserId, text: hasText ? 'x' : '' });
+
     const handleSubmit = (e) => {
         e.preventDefault();
-        const value = textareaRef.current?.value || '';
-        if (value.trim()) onSubmit(value);
+        const helpName = isHelp
+            ? formatDisplayName(roster.find((u) => u.id === helpUserId)?.displayName || roster.find((u) => u.id === helpUserId)?.email || '')
+            : '';
+        const { title, comment } = resolveQuickWorkEntry({
+            template: selectedTemplate,
+            helpName,
+            text: textareaRef.current?.value || '',
+        });
+        if (!title) return;
+        onSubmit(title, comment);
     };
 
     return (
@@ -34,7 +71,7 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
                 <p className="text-body text-ink-muted mb-4 flex items-start gap-2">
                     <Zap className="w-5 h-5 text-session-quickWork-accent fill-current shrink-0 mt-0.5" aria-hidden="true" />
                     Ši greitos veiklos sesija buvo užbaigta kitame įrenginyje, todėl liko be aprašymo.
-                    Aprašykite, ką nuveikėte.
+                    Pasirinkite šabloną arba įrašykite, ką nuveikėte.
                 </p>
 
                 <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-session-quickWork-soft flex items-center justify-between">
@@ -44,27 +81,97 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
                     </span>
                 </div>
 
+                {/* Template (category) picker — built-ins + this worker's own profile templates.
+                    Single-select: tapping the active one again clears it (back to free-write). */}
+                <div className="mb-4">
+                    <span id="describeTemplateLabel" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
+                        Greito darbo šablonas
+                    </span>
+                    <div role="radiogroup" aria-labelledby="describeTemplateLabel" className="grid grid-cols-2 gap-2">
+                        {templateOptions.map((opt) => {
+                            const selected = opt.id === selectedTemplateId;
+                            return (
+                                <button
+                                    key={opt.id}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={selected}
+                                    onClick={() => setSelectedTemplateId(selected ? null : opt.id)}
+                                    className={clsx(
+                                        'flex min-h-touch flex-col items-start justify-center gap-0.5 rounded-card border px-3 py-2 text-left transition-colors',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        selected
+                                            ? 'border-brand bg-brand-soft text-ink-strong'
+                                            : 'border-line bg-surface-card text-ink hover:bg-surface-sunken'
+                                    )}
+                                >
+                                    <span className="flex items-center gap-1.5 text-body font-medium">
+                                        {selected && <Check className="h-4 w-4 text-brand shrink-0" aria-hidden="true" />}
+                                        {opt.label}
+                                    </span>
+                                    {opt.hint && (
+                                        <span className="text-caption text-ink-muted">{opt.hint}</span>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* "Pagalba" expands a full-roster member picker; the title becomes "Pagalba: <vardas>". */}
+                {isHelp && (
+                    <div className="mb-4">
+                        <PersonSelect
+                            value={helpUserId}
+                            onChange={setHelpUserId}
+                            users={roster}
+                            label="Kuriam nariui padėjote?"
+                            placeholder="Pasirinkite narį"
+                        />
+                    </div>
+                )}
+
                 <div>
                     <label htmlFor="describeQuickWorkTextarea" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
-                        Ką nuveikėte?
+                        {textIsComment ? 'Komentaras (nebūtinas)' : 'Ką nuveikėte?'}
                     </label>
-                    <textarea
-                        ref={textareaRef}
-                        id="describeQuickWorkTextarea"
-                        name="taskDescription"
-                        defaultValue=""
-                        placeholder="Trumpai aprašykite atliktą veiklą..."
-                        rows={4}
-                        className="w-full p-3 text-body-lg text-left border-2 border-line rounded-card bg-surface-card text-ink-strong resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                        required
-                    />
+                    <div className="relative">
+                        <textarea
+                            ref={textareaRef}
+                            id="describeQuickWorkTextarea"
+                            name="taskDescription"
+                            defaultValue=""
+                            onInput={(e) => setHasText(e.currentTarget.value.trim().length > 0)}
+                            placeholder={textIsComment ? 'Papildoma informacija (nebūtina)...' : 'Trumpai aprašykite atliktą veiklą...'}
+                            rows={textIsComment ? 2 : 4}
+                            className="w-full text-body-lg text-left border-2 border-line rounded-card bg-surface-card text-ink-strong resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            style={{ padding: dictationSupported ? '12px 12px 52px 12px' : '12px' }}
+                        />
+                        {/* Voice dictation — feature-detected; hidden where the Web Speech API is
+                            absent. Listening state is color + label + filled/outline mic glyph (§5). */}
+                        {dictationSupported && (
+                            <IconButton
+                                icon={Mic}
+                                label={isListening ? 'Stabdyti diktavimą' : 'Diktuoti balsu'}
+                                variant={isListening ? 'danger-solid' : 'default'}
+                                aria-pressed={isListening}
+                                onClick={toggleDictation}
+                                className={clsx('absolute bottom-2 right-2', isListening && 'wz-pulse-soft')}
+                            />
+                        )}
+                    </div>
+                    {isListening && (
+                        <p className="mt-2 text-caption text-feedback-danger" role="status">
+                            Klausomasi… kalbėkite, tekstas atsiras laukelyje.
+                        </p>
+                    )}
                 </div>
 
                 <div className="mt-6 flex gap-3 justify-end">
                     <Button type="button" variant="secondary" onClick={onClose}>
                         Praleisti
                     </Button>
-                    <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
+                    <Button type="submit" variant="primary" loading={isSubmitting} icon={Check} disabled={!canSubmit}>
                         {isSubmitting ? 'Saugoma...' : 'Išsaugoti'}
                     </Button>
                 </div>
@@ -85,8 +192,17 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
  * a live state, so the banner stays on a calm card with only a quick-work accent strip + icon.
  */
 export default function QuickWorkDescribePrompt() {
-    const { currentUser } = useAuth();
+    const { currentUser, userData } = useAuth();
+    const { activeUsers } = useUsers();
     const items = useUndescribedQuickWork(currentUser);
+
+    // Same template set + roster the live finish modal uses, so describing later offers the
+    // identical choices (built-in categories + this worker's own profile templates).
+    const templateOptions = useMemo(() => buildTemplateOptions(userData?.quickWorkTemplates), [userData?.quickWorkTemplates]);
+    const roster = useMemo(() => (activeUsers || [])
+        .filter((u) => u.id !== currentUser?.uid)
+        .map((u) => ({ id: u.id, displayName: u.displayName, email: u.email, photoURL: u.photoURL })),
+    [activeUsers, currentUser?.uid]);
 
     const [activeTask, setActiveTask] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -102,12 +218,12 @@ export default function QuickWorkDescribePrompt() {
         setActiveTask(items[0]);
     }, [items]);
 
-    const handleSubmit = useCallback(async (text) => {
+    const handleSubmit = useCallback(async (title, comment) => {
         if (!activeTask) return;
         setIsSubmitting(true);
         setError('');
         try {
-            await addQuickWorkDescription(activeTask, text);
+            await addQuickWorkDescription(activeTask, { title, comment });
             setActiveTask(null);
         } catch (err) {
             logError(err, { source: 'QuickWorkDescribePrompt.submit', taskId: activeTask?.id });
@@ -174,6 +290,8 @@ export default function QuickWorkDescribePrompt() {
                     onSubmit={handleSubmit}
                     onClose={() => setActiveTask(null)}
                     isSubmitting={isSubmitting}
+                    templateOptions={templateOptions}
+                    roster={roster}
                 />
             )}
         </section>
