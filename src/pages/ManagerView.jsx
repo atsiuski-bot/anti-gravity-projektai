@@ -73,7 +73,7 @@ export default function ManagerView() {
 
     // Task time monitoring — 80% warning and 100% limit for manager's own tasks (ownTasks, so a
     // scoped manager whose team listener excludes their own rows is still monitored correctly).
-    const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(ownTasks);
+    const { warningPopup, limitPopup, dismissWarning, requestExtension, finishFromLimit } = useTaskTimeMonitor(ownTasks);
 
     // Crash/reload recovery — managers also start own-task timers and break/call/quick-work
     // sessions (the work-controls pill is role-agnostic), so they need the same orphan recovery
@@ -698,7 +698,9 @@ export default function ManagerView() {
                     task={limitPopup.task}
                     estimatedTime={limitPopup.estimatedTime}
                     actualMinutes={limitPopup.actualMinutes}
-                    onDismiss={dismissLimit}
+                    uid={currentUser?.uid}
+                    onRequestExtension={requestExtension}
+                    onFinish={finishFromLimit}
                 />
             )}
         </div>
