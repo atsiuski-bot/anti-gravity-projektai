@@ -23,9 +23,10 @@ boot script in `index.html`, owned at runtime by `ThemeProvider`) swaps the whol
 light values below are unchanged; the table is the LIGHT source of truth, `index.css` is the dark
 override.
 
-**Theme-INVARIANT (literal hex in the config, no dark variant):** the **session** colors (§ below
-— the loud whole-screen identity), the **tier** medallions, and `feedback.scrim`. The loud
-time-warning / time-limit popups are likewise kept vivid in both themes.
+**Theme-INVARIANT (literal hex in the config, no dark variant):** the **tier** medallions and
+`feedback.scrim`. The loud time-warning / time-limit popups are likewise kept vivid in both themes.
+The **session** colors USED to be theme-invariant but are now theme-reactive (ADR 0016, § below):
+their pale light tints glared on the dark canvas, so dark mode keeps the four hues but as deep tones.
 
 **Feedback gained a tint triad.** Each of `feedback.{success,warning,danger,info}` now carries
 sub-tokens — `DEFAULT` (solid fill / on-white icon), `soft` (tinted bg, was `*-50`), `border`
@@ -86,6 +87,20 @@ secondary control). **All session-aware code reads this one map.**
 > **Accent contrast note:** the `quickWork` accent (`#B91C1C`) and `break` accent (`#B45309`)
 > were darkened from red-600/amber-600 to red-700/amber-700 so the timer/icon/label text clears
 > ≥4.5:1 against the session `surface` tint (WCAG 1.4.3).
+
+**Dark theme (ADR 0016).** The light tints above glared on the near-black canvas, so dark mode keeps
+the four hues but as DEEP `*-900` tones. All four shells take WHITE on-shell text (≥7:1); `surface`
+becomes a deep low-saturation hued card and `soft` a deep hued border. `accent` is UNCHANGED (it is a
+fill — white text rides on it); only `accent` used as FOREGROUND text lightens to the `*-400` shade
+via a `[data-theme="dark"] .text-session-*-accent` override (the fill-vs-foreground split, as for
+`feedback`). Dark channel values live in `src/index.css`.
+
+| Session | `shell` (dark) | `surface` (dark) | `soft` (dark) | accent-as-text (dark) |
+|---|---|---|---|---|
+| `session.quickWork` | red-900 (`#7F1D1D`) | `#3A1518` | `#5A1F22` | red-400 (`#F87171`) |
+| `session.call` | blue-900 (`#1E3A8A`) | `#15233D` | `#1E3A66` | blue-400 (`#60A5FA`) |
+| `session.break` | amber-900 (`#78350F`) | `#3A2C0C` | `#5A4413` | amber-400 (`#FBBF24`) |
+| `session.task` | green-900 (`#14532D`) | `#102A1A` | `#1B4D33` | green-400 (`#4ADE80`) |
 
 ### Achievement tiers (closed set — badges only, never the session shell)
 

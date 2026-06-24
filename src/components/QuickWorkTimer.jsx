@@ -14,6 +14,7 @@ import { startSession, endSession } from '../utils/sessionActions';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
+import SessionToggleButton from './ui/SessionToggleButton';
 
 // Separate memoized modal component to prevent re-renders from timer updates
 const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '', frequentChips = [] }) => {
@@ -360,19 +361,13 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             <div className="flex flex-col items-center">
                 {/* Live time is surfaced by ActiveSessionReadout above the bar, so the column
                     itself stays as short as button + label (no reserved readout row). */}
-                <button
-                    onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
+                <SessionToggleButton
+                    session="quickWork"
+                    variant="compact"
+                    active={isQuickWorking}
                     disabled={isDisabled}
+                    onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                     aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
-                    className={clsx(
-                        "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
-                        isDisabled
-                            ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
-                            : isQuickWorking
-                                ? 'bg-session-quickWork-shell text-white ring-2 ring-session-quickWork-soft shadow-lg shadow-session-quickWork-shell/20'
-                                : 'bg-surface-sunken text-ink hover:bg-line'
-                    )}
                     title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
                 >
                     {isQuickWorking ? (
@@ -380,7 +375,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                     ) : (
                         <Zap className="w-5 h-5 fill-current" aria-hidden="true" />
                     )}
-                </button>
+                </SessionToggleButton>
 
                 {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1).
                     Suppressed only in the collapsed side rail (`hideLabel`), where the icon SHAPE

@@ -29,6 +29,15 @@ export function AuthProvider({ children }) {
     const [loading, setLoading] = useState(true);
     const isProcessingRedirect = useRef(false);
     const isProcessingAuth = useRef(false);
+    // While the popup/redirect login flow is provisioning OR evaluating an account, it OWNS the
+    // sign-out decision. The user-doc onSnapshot below must NOT also sign out during this window.
+    // Why this matters: provisioning a brand-new account calls setDoc({isDisabled:true}), which
+    // updates Firestore's LOCAL cache optimistically and fires that listener BEFORE the server
+    // ACKs the write. If the listener signs out then, it invalidates the auth token mid-write —
+    // the pending-doc creation is rejected (permission-denied), nothing persists for an admin to
+    // approve, and the real "pending approval" reason is masked by a generic error. (Same race
+    // also broke the existing-disabled read: signOut beat getDoc, so the coded message was lost.)
+    const isProvisioning = useRef(false);
 
     // Helper function to detect Opera browser
     function isOperaBrowser() {
@@ -72,48 +81,57 @@ export function AuthProvider({ children }) {
 
     // Helper function to process user after successful login
     async function processUserAfterLogin(user) {
+        // Claim sign-out ownership for the entire evaluation so the user-doc onSnapshot defers to
+        // us (see isProvisioning). Cleared in `finally` AFTER our own signOut completes, so the
+        // listener can never sign out mid-write and reject the pending-doc creation.
+        isProvisioning.current = true;
+        try {
+            // Check if user exists in Firestore
+            const userRef = doc(db, 'users', user.uid);
+            const userSnap = await getDoc(userRef);
 
-        // Check if user exists in Firestore
+            if (!userSnap.exists()) {
 
-        const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
-
-        if (!userSnap.exists()) {
-
-            // New accounts are provisioned in a PENDING (disabled) state — an admin must
-            // approve them in User Management before they get any access. This replaces silent
-            // auto-provisioning, where anyone who reached the URL became an active worker with
-            // team-wide read access to tasks, sessions, calendars and the full roster. We sign
-            // the user out and surface a clear "pending approval" message (mapped in Login).
-            const newUserData = {
-                email: user.email,
-                displayName: user.displayName,
-                photoURL: user.photoURL,
-                role: 'worker',
-                createdAt: new Date().toISOString(),
-                isDisabled: true,
-                status: 'pending'
-            };
-            await setDoc(userRef, newUserData);
-
-            await signOut(auth);
-            const pendingErr = new Error('Account pending approval');
-            pendingErr.code = 'app/pending-approval';
-            throw pendingErr;
-        } else {
-            const data = userSnap.data();
-            if (data.isDisabled) {
+                // New accounts are provisioned in a PENDING (disabled) state — an admin must
+                // approve them in User Management before they get any access. This replaces silent
+                // auto-provisioning, where anyone who reached the URL became an active worker with
+                // team-wide read access to tasks, sessions, calendars and the full roster. We sign
+                // the user out and surface a clear "pending approval" message (mapped in Login).
+                const newUserData = {
+                    email: user.email,
+                    displayName: user.displayName,
+                    photoURL: user.photoURL,
+                    role: 'worker',
+                    createdAt: new Date().toISOString(),
+                    isDisabled: true,
+                    status: 'pending'
+                };
+                // Must persist BEFORE we sign out — and it now can, because the onSnapshot
+                // disabled-handler defers while isProvisioning is set (otherwise its signOut
+                // would race this write and Firestore would reject it with permission-denied).
+                await setDoc(userRef, newUserData);
 
                 await signOut(auth);
-                // Distinguish a not-yet-approved account from a manually blocked one so Login
-                // can show the right message (coded, never a raw thrown string — §10).
-                const disabledErr = new Error('Account disabled');
-                disabledErr.code = data.status === 'pending' ? 'app/pending-approval' : 'app/account-disabled';
-                throw disabledErr;
+                const pendingErr = new Error('Account pending approval');
+                pendingErr.code = 'app/pending-approval';
+                throw pendingErr;
+            } else {
+                const data = userSnap.data();
+                if (data.isDisabled) {
+
+                    await signOut(auth);
+                    // Distinguish a not-yet-approved account from a manually blocked one so Login
+                    // can show the right message (coded, never a raw thrown string — §10).
+                    const disabledErr = new Error('Account disabled');
+                    disabledErr.code = data.status === 'pending' ? 'app/pending-approval' : 'app/account-disabled';
+                    throw disabledErr;
+                }
+
+
+                // Don't set state here - let the onSnapshot listener handle it
             }
-
-
-            // Don't set state here - let the onSnapshot listener handle it
+        } finally {
+            isProvisioning.current = false;
         }
     }
 
@@ -191,7 +209,13 @@ export function AuthProvider({ children }) {
                 // Check periodically (e.g., every minute)
                 expirationCheckInterval = setInterval(checkExpiration, 60000);
 
-                // Subscribe to User Document changes (Role + Break State + Disabled Status)
+                // Subscribe to User Document changes (Role + Break State + Disabled Status).
+                // Detach any listener left over from a previous auth identity first, so a
+                // re-login never stacks a second listener on top of the old one.
+                if (unsubscribeSnapshot) {
+                    unsubscribeSnapshot();
+                    unsubscribeSnapshot = null;
+                }
                 const userRef = doc(db, 'users', user.uid);
 
                 // We use onSnapshot to get real-time updates for role and break status
@@ -200,6 +224,17 @@ export function AuthProvider({ children }) {
                         const data = docSnap.data();
 
                         if (data.isDisabled) {
+                            // Defer to the login flow while it is provisioning/evaluating this
+                            // account: signing out here would race its in-flight pending-doc write
+                            // (this snapshot fires from the OPTIMISTIC local cache before the server
+                            // ACK) and reject it. processUserAfterLogin signs out deliberately once
+                            // the write has persisted, and onAuthStateChanged(null) then tears the
+                            // session down — so nothing is leaked by waiting. This guard only skips
+                            // the INITIAL-login window; an admin disabling a LIVE session still
+                            // signs out normally (isProvisioning is false then).
+                            if (isProvisioning.current) {
+                                return;
+                            }
                             console.log("Auth: User account is disabled, logging out...");
                             // Clear state first
                             setCurrentUser(null);
@@ -266,6 +301,13 @@ export function AuthProvider({ children }) {
                         }
                     }
                 }, (error) => {
+                    // A permission-denied that arrives because the user just SIGNED OUT is expected
+                    // teardown noise, not a first-login race: the listener outlives the auth session
+                    // for a tick. Swallow it and bail — retrying processUserAfterLogin here against the
+                    // now-stale user is what used to leave the logout half-finished and hang the page.
+                    if (error.code === 'permission-denied' && !auth.currentUser) {
+                        return;
+                    }
                     logError(error, { source: 'onSnapshot:authUser' });
                     // On permission-denied, the user document may not exist yet (first login).
                     // Retry creating it so the snapshot can re-attach successfully.
@@ -281,6 +323,14 @@ export function AuthProvider({ children }) {
 
             } else {
                 if (expirationCheckInterval) clearInterval(expirationCheckInterval);
+                // Detach the user-document listener bound to the session that just ended. Leaving it
+                // attached makes it fire a permission-denied the moment auth clears, and the stale
+                // listener (still backed by the persistent cache) fights the cleared state — the race
+                // that hung the page on logout.
+                if (unsubscribeSnapshot) {
+                    unsubscribeSnapshot();
+                    unsubscribeSnapshot = null;
+                }
                 setCurrentUser(null);
                 setUserRole(null);
                 setBreakState(null);
