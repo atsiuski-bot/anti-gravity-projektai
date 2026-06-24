@@ -264,6 +264,55 @@ describe('endSession — orphan recovery path (useOrphanedSessionRecovery)', () 
     });
 });
 
+describe('endSession — quick-work title + template comment', () => {
+    // The finish modal sends a template label as customTitle and the free text as customComment;
+    // the task title must be the clean label and the comment must be folded into the description
+    // alongside the recorded time (free-write entries carry no comment).
+    const baseQuickUser = (overrides) => ({
+        displayName: 'Worker',
+        role: 'worker',
+        activeSession: { type: 'quickWork', startTime: '2026-06-23T11:30:00.000Z', ...overrides }, // 30 min
+        quickWorkState: {},
+    });
+
+    it('folds a template comment into the task description and keeps the label as the title', async () => {
+        await endSession('u1', baseQuickUser({ customTitle: 'Tvarkos', customComment: 'rakinau garažą' }));
+        await flush();
+
+        const tasks = setsTo('tasks');
+        expect(tasks).toHaveLength(1);
+        expect(tasks[0].title).toBe('Tvarkos');
+        expect(tasks[0].autoStopped).toBe(false);
+        // Comment first, then the recorded time on its own line.
+        expect(tasks[0].description.startsWith('rakinau garažą\n')).toBe(true);
+        expect(tasks[0].description).not.toContain('Automatiškai');
+
+        // The timeline work_session mirrors the clean title.
+        const ws = setsTo('work_sessions');
+        expect(ws[0].taskTitle).toBe('Tvarkos');
+        expect(ws[0].isQuickWork).toBe(true);
+    });
+
+    it('a free-write title (no comment) leaves the description as just the time', async () => {
+        await endSession('u1', baseQuickUser({ customTitle: 'Ploviau langus' }));
+        await flush();
+
+        const tasks = setsTo('tasks');
+        expect(tasks[0].title).toBe('Ploviau langus');
+        expect(tasks[0].description).not.toContain('Automatiškai');
+        expect(tasks[0].description).not.toContain('\n'); // no comment line
+    });
+
+    it('a deferred (untitled) quick work stays auto-stopped with the placeholder title', async () => {
+        await endSession('u1', baseQuickUser({})); // no customTitle / customComment
+        await flush();
+
+        const tasks = setsTo('tasks');
+        expect(tasks[0].autoStopped).toBe(true);
+        expect(tasks[0].description).toContain('(Automatiškai sukurtas)');
+    });
+});
+
 describe('endSession — recovery return contract (drives the RecoveryNotice banner)', () => {
     // useOrphanedSessionRecovery reads {creditedMinutes, wasCapped} off the resolved value to
     // stamp (or suppress) the one-time "timer recovered" banner. These lock that shape so a
