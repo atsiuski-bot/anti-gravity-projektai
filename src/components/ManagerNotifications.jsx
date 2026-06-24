@@ -12,6 +12,7 @@ import { notificationCopy } from '../notifications/registry';
 import { cn } from '../utils/cn';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
+import TaskActionRow from './task/TaskActionRow';
 import { deleteTask, extendTaskTime } from '../utils/taskActions';
 import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
@@ -904,26 +905,13 @@ export default function ManagerNotifications({ onClose }) {
                                         <p className="text-sm text-feedback-info-text italic">&quot;{notif.reason}&quot;</p>
                                     </div>
 
-                                    <div className="mt-4 flex gap-3">
-                                        <Button
-                                            variant="success"
-                                            size="md"
-                                            icon={Check}
-                                            className="flex-1"
-                                            onClick={() => handleApproveCalendarRequest(notif)}
-                                        >
-                                            Patvirtinti
-                                        </Button>
-                                        <Button
-                                            variant="danger"
-                                            size="md"
-                                            icon={X}
-                                            className="flex-1"
-                                            onClick={() => handleDeclineCalendarRequest(notif)}
-                                        >
-                                            Atmesti
-                                        </Button>
-                                    </div>
+                                    <TaskActionRow
+                                        className="mt-4"
+                                        actions={[
+                                            { key: 'approve', label: 'Patvirtinti', icon: Check, variant: 'success', onClick: () => handleApproveCalendarRequest(notif) },
+                                            { key: 'decline', label: 'Atmesti', icon: X, variant: 'danger', onClick: () => handleDeclineCalendarRequest(notif) },
+                                        ]}
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -1019,31 +1007,28 @@ export default function ManagerNotifications({ onClose }) {
                                         </p>
                                     </div>
                                 </div>
-                                <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
-                                    <Button variant="secondary" size="md" icon={X} onClick={() => handleDismissTask(notif.id)}>
-                                        Pažymėti skaitytu
-                                    </Button>
-                                    <Button
-                                        variant="primary"
-                                        size="md"
-                                        icon={Edit}
-                                        onClick={async () => {
-                                            // Dismiss, then open the generated task so the manager can reassign it.
-                                            await handleDismissTask(notif.id);
-                                            try {
-                                                const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
-                                                if (taskSnap.exists()) {
-                                                    onClose?.();
-                                                    window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                                <TaskActionRow
+                                    className="mt-4"
+                                    actions={[
+                                        { key: 'dismiss', label: 'Pažymėti skaitytu', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
+                                        {
+                                            key: 'reassign', label: 'Priskirti kitą', icon: Edit, variant: 'primary',
+                                            onClick: async () => {
+                                                // Dismiss, then open the generated task so the manager can reassign it.
+                                                await handleDismissTask(notif.id);
+                                                try {
+                                                    const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
+                                                    if (taskSnap.exists()) {
+                                                        onClose?.();
+                                                        window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                                                    }
+                                                } catch (e) {
+                                                    console.error('Failed to load recurring task for reassign:', e);
                                                 }
-                                            } catch (e) {
-                                                console.error('Failed to load recurring task for reassign:', e);
-                                            }
-                                        }}
-                                    >
-                                        Priskirti kitą
-                                    </Button>
-                                </div>
+                                            },
+                                        },
+                                    ]}
+                                />
                             </div>
                         );
                     }
@@ -1059,28 +1044,27 @@ export default function ManagerNotifications({ onClose }) {
                                         <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
                                     </div>
                                 </div>
-                                <div className="mt-3 flex items-center justify-end gap-2">
-                                    <Button variant="secondary" size="md" onClick={() => handleDismissTask(notif.id)}>Supratau</Button>
-                                    <Button
-                                        variant="primary"
-                                        size="md"
-                                        icon={Edit}
-                                        onClick={async () => {
-                                            await handleDismissTask(notif.id);
-                                            try {
-                                                const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
-                                                if (taskSnap.exists()) {
-                                                    onClose?.();
-                                                    window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                                <TaskActionRow
+                                    className="mt-3"
+                                    actions={[
+                                        { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
+                                        {
+                                            key: 'open', label: 'Atidaryti užduotį', icon: Edit, variant: 'primary',
+                                            onClick: async () => {
+                                                await handleDismissTask(notif.id);
+                                                try {
+                                                    const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
+                                                    if (taskSnap.exists()) {
+                                                        onClose?.();
+                                                        window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                                                    }
+                                                } catch (e) {
+                                                    console.error('Failed to load reverted task:', e);
                                                 }
-                                            } catch (e) {
-                                                console.error('Failed to load reverted task:', e);
-                                            }
-                                        }}
-                                    >
-                                        Atidaryti užduotį
-                                    </Button>
-                                </div>
+                                            },
+                                        },
+                                    ]}
+                                />
                             </div>
                         );
                     }
@@ -1146,26 +1130,13 @@ export default function ManagerNotifications({ onClose }) {
                                         )}
                                     </div>
                                 </div>
-                                <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
-                                    <Button
-                                        variant="danger"
-                                        size="md"
-                                        icon={Ban}
-                                        disabled={inFlight}
-                                        onClick={() => handleAccountDecision(notif, false)}
-                                    >
-                                        Užblokuoti
-                                    </Button>
-                                    <Button
-                                        variant="success"
-                                        size="md"
-                                        icon={Check}
-                                        loading={inFlight}
-                                        onClick={() => handleAccountDecision(notif, true)}
-                                    >
-                                        Patvirtinti
-                                    </Button>
-                                </div>
+                                <TaskActionRow
+                                    className="mt-4"
+                                    actions={[
+                                        { key: 'block', label: 'Užblokuoti', icon: Ban, variant: 'danger', disabled: inFlight, onClick: () => handleAccountDecision(notif, false) },
+                                        { key: 'approve', label: 'Patvirtinti', icon: Check, variant: 'success', loading: inFlight, onClick: () => handleAccountDecision(notif, true) },
+                                    ]}
+                                />
                             </div>
                         );
                     }
@@ -1224,26 +1195,13 @@ export default function ManagerNotifications({ onClose }) {
                                             <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio vykdytojo dieną.</p>
                                         </div>
                                     </div>
-                                    <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
-                                        <Button
-                                            variant="secondary"
-                                            size="md"
-                                            onClick={() => handleDismissTask(notif.id)}
-                                            title="Pažymėti perskaitytu"
-                                        >
-                                            Supratau
-                                        </Button>
-                                        <Button
-                                            variant="primary"
-                                            size="md"
-                                            icon={Edit}
-                                            className="whitespace-nowrap"
-                                            onClick={() => { setActiveTab('reports'); onClose?.(); }}
-                                            title="Atidaryti komandos ataskaitas ir pataisyti įrašą"
-                                        >
-                                            Atidaryti ataskaitas
-                                        </Button>
-                                    </div>
+                                    <TaskActionRow
+                                        className="mt-1"
+                                        actions={[
+                                            { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
+                                            { key: 'open', label: 'Atidaryti ataskaitas', icon: Edit, variant: 'primary', onClick: () => { setActiveTab('reports'); onClose?.(); } },
+                                        ]}
+                                    />
                                 </div>
                             </div>
                         );
@@ -1319,71 +1277,40 @@ export default function ManagerNotifications({ onClose }) {
 
                                 {/* Quick-grant chips — one tap extends the estimate and tells the worker,
                                     instead of the multi-step edit-modal round-trip. The success-toned icon
-                                    pairs the meaning with shape, so color is never the sole signal. */}
-                                <div className="flex items-center gap-2 flex-wrap mt-3">
-                                    <Button
-                                        variant="success"
-                                        size="md"
-                                        icon={TimeGrantedGlyph}
-                                        className="whitespace-nowrap"
-                                        loading={grantingExt === notif.id}
-                                        disabled={!!grantingExt}
-                                        onClick={() => handleGrantExtension(notif, '30min')}
-                                    >
-                                        Pratęsti +30 min
-                                    </Button>
-                                    <Button
-                                        variant="success"
-                                        size="md"
-                                        icon={TimeGrantedGlyph}
-                                        className="whitespace-nowrap"
-                                        loading={grantingExt === notif.id}
-                                        disabled={!!grantingExt}
-                                        onClick={() => handleGrantExtension(notif, '1h')}
-                                    >
-                                        Pratęsti +1 val.
-                                    </Button>
-                                </div>
+                                    pairs the meaning with shape, so color is never the sole signal. One
+                                    adaptive row (collapses to icon-only together when too tight). */}
+                                <TaskActionRow
+                                    className="mt-3"
+                                    actions={[
+                                        { key: 'grant30', label: 'Pratęsti +30 min', icon: TimeGrantedGlyph, variant: 'success', loading: grantingExt === notif.id, disabled: !!grantingExt, onClick: () => handleGrantExtension(notif, '30min') },
+                                        { key: 'grant1h', label: 'Pratęsti +1 val.', icon: TimeGrantedGlyph, variant: 'success', loading: grantingExt === notif.id, disabled: !!grantingExt, onClick: () => handleGrantExtension(notif, '1h') },
+                                    ]}
+                                />
 
-                                {/* Action Buttons */}
-                                <div className="flex items-center justify-end mt-4 mb-1 gap-3 flex-wrap">
-                                    {/* Do Not Extend */}
-                                    <Button
-                                        variant="secondary"
-                                        size="md"
-                                        icon={X}
-                                        className="whitespace-nowrap"
-                                        disabled={!!grantingExt}
-                                        onClick={() => handleDismissExtension(notif)}
-                                    >
-                                        Nepratęsti
-                                    </Button>
-
-                                    {/* Edit Task To Extend — escape hatch for a precise custom amount. */}
-                                    <Button
-                                        variant="primary"
-                                        size="md"
-                                        icon={Edit}
-                                        className="whitespace-nowrap"
-                                        disabled={!!grantingExt}
-                                        onClick={async () => {
-                                            // Dismiss the request, then open the task so the manager can extend the
-                                            // estimate (saving a longer time fires the worker's extension_granted notice).
-                                            await handleDismissTask(notif.id);
-                                            try {
-                                                const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
-                                                if (taskSnap.exists()) {
-                                                    onClose?.();
-                                                    window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                                {/* Decision row — do-not-extend, or open the task for a precise custom amount. */}
+                                <TaskActionRow
+                                    className="mt-3 mb-1"
+                                    actions={[
+                                        { key: 'deny', label: 'Nepratęsti', icon: X, variant: 'secondary', disabled: !!grantingExt, onClick: () => handleDismissExtension(notif) },
+                                        {
+                                            key: 'edit', label: 'Redaguoti užduotį', icon: Edit, variant: 'primary', disabled: !!grantingExt,
+                                            onClick: async () => {
+                                                // Dismiss the request, then open the task so the manager can extend the
+                                                // estimate (saving a longer time fires the worker's extension_granted notice).
+                                                await handleDismissTask(notif.id);
+                                                try {
+                                                    const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
+                                                    if (taskSnap.exists()) {
+                                                        onClose?.();
+                                                        window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                                                    }
+                                                } catch (e) {
+                                                    console.error("Failed to load task for extending time:", e);
                                                 }
-                                            } catch (e) {
-                                                console.error("Failed to load task for extending time:", e);
-                                            }
-                                        }}
-                                    >
-                                        Redaguoti užduotį
-                                    </Button>
-                                </div>
+                                            },
+                                        },
+                                    ]}
+                                />
                             </div>
                         );
                     }
@@ -1410,40 +1337,14 @@ export default function ManagerNotifications({ onClose }) {
                                     </div>
                                 </div>
 
-                                <div className="mt-3 mb-1 flex flex-wrap items-center gap-2">
-                                    <Button
-                                        variant="success"
-                                        size="md"
-                                        icon={Check}
-                                        className="whitespace-nowrap"
-                                        onClick={() => handleApproveTask(notif)}
-                                        title="Patvirtinti užduotį"
-                                    >
-                                        Patvirtinti
-                                    </Button>
-
-                                    <Button
-                                        variant="primary"
-                                        size="md"
-                                        icon={Edit}
-                                        className="whitespace-nowrap"
-                                        onClick={() => handleEditAndApprove(notif)}
-                                        title="Patvirtinti ir redaguoti užduotį"
-                                    >
-                                        Redaguoti
-                                    </Button>
-
-                                    <Button
-                                        variant="danger"
-                                        size="md"
-                                        icon={Trash2}
-                                        className="whitespace-nowrap"
-                                        onClick={() => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle)}
-                                        title="Ištrinti užduotį"
-                                    >
-                                        Ištrinti
-                                    </Button>
-                                </div>
+                                <TaskActionRow
+                                    className="mt-3 mb-1"
+                                    actions={[
+                                        { key: 'approve', label: 'Patvirtinti', icon: Check, variant: 'success', onClick: () => handleApproveTask(notif) },
+                                        { key: 'edit', label: 'Redaguoti', icon: Edit, variant: 'primary', onClick: () => handleEditAndApprove(notif) },
+                                        { key: 'delete', label: 'Ištrinti', icon: Trash2, variant: 'danger', onClick: () => handleDeleteTaskAction(notif.id, notif.taskId, notif.taskTitle) },
+                                    ]}
+                                />
                             </div>
                         </div>
                     );

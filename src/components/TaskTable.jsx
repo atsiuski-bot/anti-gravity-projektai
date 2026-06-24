@@ -682,9 +682,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.priority)}>
                                 {gc ? <HeaderCell label="Prior." sortMode={sortCols.priority} sort={gc.sort} filter={filters.priority} filterLabel="Filtruoti pagal prioritetą" /> : 'Prior.'}
                             </th>
-                            <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.status)}>
-                                {gc ? <HeaderCell label="Būsena" sortMode={sortCols.status} sort={gc.sort} filter={filters.status} filterLabel="Filtruoti pagal būseną" /> : 'Būsena'}
-                            </th>
                             <th className="px-1 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-24" title="Sugaišta / numatyta">Laikas</th>
                             {/* Žymos sits as far right as possible — directly before the actions block. */}
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.tag)}>
@@ -845,9 +842,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </td>
                                     <td className="px-1 py-3 align-top whitespace-nowrap">
                                         <PriorityBadge priority={task.priority} />
-                                    </td>
-                                    <td className="px-1 py-3 align-top whitespace-nowrap">
-                                        <TaskStatusPill task={task} isRunning={isTaskRunning(task)} doneIcon />
                                     </td>
                                     {/* Laikas — actual over planned in one cell (replaces the buried in-status
                                         time + the near-empty "Num." column). */}

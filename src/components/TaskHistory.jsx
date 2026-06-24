@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, getDocs } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, Trash2, MessageCircle, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, Trash2, Clock, AlertCircle, ChevronDown, ChevronUp, MessageSquare } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { confirmTask, humanActor, MODES } from '../domain';
 import { getPriorityLabel } from '../utils/priority';
@@ -21,13 +21,11 @@ import InfoPopover from './ui/InfoPopover';
 import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import DatePicker from './ui/DatePicker';
-import TaskStatusPill from './task/TaskStatusPill';
-import PriorityBadge from './task/PriorityBadge';
-import DeletedBadge from './task/DeletedBadge';
 import CompletedMarker from './task/CompletedMarker';
 import TimeChangedWarning from './task/TimeChangedWarning';
-import AssigneeChip from './task/AssigneeChip';
 import UserChip from './UserChip';
+import TaskCard from './TaskCard';
+import TaskRow from './task/TaskRow';
 
 // Filter field label — shared by every filter control. 12px floor (§5): was text-[10px].
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
@@ -508,51 +506,30 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         filterUser !== 'all' ||
         filterTag !== 'all';
 
-    // Comments IconButton with an always-visible count badge. The count is bumped to the 12px
-    // floor (§5); the badge stays inside the 44px IconButton target.
-    const CommentsButton = ({ task }) => (
-        <span className="relative inline-flex">
-            <IconButton
-                icon={MessageCircle}
-                label="Komentarai"
-                onClick={() => setCommentsModalTask(task)}
-            />
-            {task.comments?.length > 0 && (
-                <span className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 bg-brand text-white text-caption font-bold flex items-center justify-center rounded-full leading-none">
-                    {task.comments.length}
-                </span>
-            )}
-        </span>
-    );
 
-    // Shared action cluster — always-visible 44px targets (no hover dependency, so it works on
-    // touch). Same controls + role gating in both the desktop table and the mobile card (§7/§9).
-    const TaskActions = ({ task }) => (
-        <div className="flex items-center gap-1">
-            {task.status !== 'confirmed' && isManagerOrAdmin && (
-                <IconButton
-                    icon={UserCheck}
-                    label="Priimti"
-                    onClick={() => handleConfirm(task)}
-                    className="text-feedback-success hover:bg-feedback-success/10"
-                />
-            )}
-            <CommentsButton task={task} />
-            <IconButton
-                icon={RotateCcw}
-                label="Grąžinti"
-                onClick={() => handleRestore(task)}
-            />
-            {isManagerOrAdmin && (
-                <IconButton
-                    icon={Trash2}
-                    label="Ištrinti"
-                    variant="danger"
-                    onClick={() => handleDelete(task)}
-                />
-            )}
-        </div>
-    );
+    // Archive-surface props for the shared TaskCard (mobile): the SAME card the active lists use,
+    // but its timer is hidden and its buttons act on archived semantics — accept (archived confirm),
+    // restore (move back to active), delete. The footer set mirrors what the shared detail modal
+    // shows when the card is tapped, so the two never disagree. `isArchived` is stamped so the card's
+    // checklist / detail comments write to the archived_tasks collection.
+    const archiveCardProps = (task) => {
+        const deleted = task.isDeleted || task.status === 'deleted';
+        const canAccept = isManagerOrAdmin && task.status === 'completed' && !deleted;
+        const acts = [];
+        if (canAccept) acts.push({ key: 'confirm', label: 'Priimti', icon: UserCheck, variant: 'success', onClick: () => handleConfirm(task) });
+        acts.push({ key: 'restore', label: 'Grąžinti', icon: RotateCcw, variant: 'secondary', onClick: () => handleRestore(task) });
+        if (isManagerOrAdmin) acts.push({ key: 'delete', label: 'Trinti', icon: Trash2, variant: 'danger', onClick: () => handleDelete(task) });
+        return {
+            actions: acts,
+            detailOverrides: {
+                canManage: isManagerOrAdmin,
+                canDelete: isManagerOrAdmin,
+                onConfirm: canAccept ? () => handleConfirm(task) : undefined,
+                onRevert: () => handleRestore(task),
+                onDelete: isManagerOrAdmin ? () => handleDelete(task) : undefined,
+            },
+        };
+    };
 
     // Admin-only read-only history trigger — opens the legacy time-correction list (deltas) for
     // review. Shown only when the task actually has corrections; new corrections are made on the
@@ -769,109 +746,20 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
             </div>
 
-            {/* Mobile / touch: one card per task — never a horizontally-scrolling table (§9).
-                Hover-only table actions are surfaced here as always-visible 44px buttons. */}
+            {/* Mobile / touch: one card per task — the SAME shared TaskCard the active lists use
+                (archive surface: timer hidden, archive-semantics buttons). Never a table (§9). */}
             <ul className="space-y-3 md:hidden">
                 {tasks.map((task) => {
-                    const deleted = task.isDeleted || task.status === 'deleted';
-                    const actualMinutes = calculateCurrentTotalMinutes(task);
-                    const actualLabel = actualMinutes !== 0 ? formatMinutesToTimeString(actualMinutes) : '-';
+                    const { actions, detailOverrides } = archiveCardProps(task);
                     return (
-                        <li
-                            key={task.id}
-                            className="bg-surface-card rounded-card shadow-sm border border-line p-4 space-y-3"
-                        >
-                            {/* Title row + priority */}
-                            <div className="flex items-start justify-between gap-2">
-                                <button
-                                    type="button"
-                                    onClick={() => toggleExpand(task.id)}
-                                    aria-expanded={expandedTasks.has(task.id)}
-                                    className="min-w-0 flex-1 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                >
-                                    <span className={clsx(
-                                        "text-body-lg font-bold break-words",
-                                        deleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
-                                    )}>
-                                        {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
-                                        {task.title}
-                                    </span>
-                                    {task.tag && (
-                                        <span className="ml-2 inline-block px-2 py-0.5 text-caption font-medium bg-brand-soft text-brand-hover rounded align-middle">
-                                            {task.tag}
-                                        </span>
-                                    )}
-                                </button>
-                                <PriorityBadge priority={task.priority} />
-                            </div>
-
-                            {/* Meta chips: worker + deadline + archive date */}
-                            <div className="flex flex-wrap items-center gap-2">
-                                {task.assignedUserName && (
-                                    <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} firstNameOnly showIcon={false} />
-                                )}
-                                {task.deadline && (
-                                    <span className="inline-flex items-center gap-1 text-caption text-ink-muted">
-                                        <Calendar className="w-3.5 h-3.5" aria-hidden="true" />
-                                        {task.deadline}
-                                    </span>
-                                )}
-                                <span className="text-caption text-ink-muted">
-                                    Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}
-                                </span>
-                            </div>
-
-                            {/* Est. / Actual time — the core metric, read at a glance */}
-                            <div className="flex items-center gap-2">
-                                <span className="text-caption text-ink-muted">Plan. / Tikras:</span>
-                                <span className="text-body-lg font-mono font-semibold text-ink-strong">
-                                    <span className="text-brand">{task.estimatedTime || '-'}</span>
-                                    <span className="text-ink-muted mx-1">/</span>
-                                    <span>{actualLabel}</span>
-                                </span>
-                                <TimeEditButton task={task} />
-                            </div>
-                            <TimeChangedWarning task={task} />
-
-                            {/* Description */}
-                            {task.description && (
-                                <div className={clsx(
-                                    "text-caption text-ink-muted flex items-start gap-1 break-words",
-                                    expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                )}>
-                                    <SessionTypeIcon
-                                        type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
-                                        className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
-                                    />
-                                    {task.description}
-                                </div>
-                            )}
-
-                            {/* Manager */}
-                            {(task.managerName || task.creatorName) && (
-                                <div className="text-caption text-ink-muted flex items-center gap-1">
-                                    <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                    <span>Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
-                                </div>
-                            )}
-
-                            {/* Expanded comments */}
-                            {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                <div className="pl-4 border-l-2 border-line">
-                                    <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
-                                    {task.comments.map((comment, idx) => (
-                                        <div key={idx} className="text-caption text-ink mb-1">
-                                            <UserChip userId={comment.userId} name={comment.user} />: {comment.text}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-
-                            {/* Footer: status + always-visible action buttons */}
-                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
-                                {deleted ? <DeletedBadge /> : <TaskStatusPill task={task} />}
-                                <TaskActions task={task} />
-                            </div>
+                        <li key={task.id}>
+                            <TaskCard
+                                task={{ ...task, isArchived: true }}
+                                role={isManagerOrAdmin ? 'manager' : 'worker'}
+                                surface="archive"
+                                actions={actions}
+                                detailOverrides={detailOverrides}
+                            />
                         </li>
                     );
                 })}
@@ -889,106 +777,118 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         <thead className="bg-surface-sunken">
                             <tr>
                                 <th className="px-2 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider min-w-[200px] w-auto">UŽDUOTIS</th>
-                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">DARB.</th>
+                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">VYKD.</th>
+                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIOR.</th>
                                 <th className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-24">PLAN. / TIKRAS</th>
-                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIO</th>
-                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-20">BŪSENA</th>
+                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-20">ŽYMOS</th>
                                 <th className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-44"></th>
                             </tr>
                         </thead>
                         <tbody className="bg-surface-card divide-y divide-line">
-                            {tasks.map((task) => (
-                                <tr key={task.id} className="hover:bg-surface-sunken transition-colors border-b border-line last:border-0">
-                                    <td className="px-2 py-2" onClick={() => toggleExpand(task.id)}>
-                                        <div
-                                            role="button"
-                                            tabIndex={0}
-                                            aria-expanded={expandedTasks.has(task.id)}
-                                            onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
-                                            className={clsx(
-                                            "text-body font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
-                                            (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
-                                        )}>
-                                            {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
-                                            {task.title}
-                                            {task.tag && (
-                                                <span className="ml-2 inline-block px-1.5 py-0.5 text-caption font-medium bg-brand-soft text-brand-hover rounded align-middle">
-                                                    {task.tag}
-                                                </span>
-                                            )}
-                                        </div>
-                                        {task.deadline && (
-                                            <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                                                <Calendar className="w-3.5 h-3.5" aria-hidden="true" />
-                                                <span>{task.deadline}</span>
-                                                <span className="text-line">|</span>
-                                                <span>Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}</span>
-                                            </div>
-                                        )}
-                                        {!task.deadline && (
-                                            <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
-                                                <span>Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}</span>
-                                            </div>
-                                        )}
-                                        {task.description && (
-                                            <div className={clsx(
-                                                "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
-                                                expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                            )}>
-                                                <SessionTypeIcon
-                                                    type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
-                                                    className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
-                                                />
-                                                {task.description}
-                                            </div>
-                                        )}
-                                        {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                            <div className="mt-2 pl-4 border-l-2 border-line">
-                                                <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
-                                                {task.comments.map((comment, idx) => (
-                                                    <div key={idx} className="text-caption text-ink mb-1">
-                                                        <UserChip userId={comment.userId} name={comment.user} />: {comment.text}
+                            {tasks.map((task) => {
+                                const deleted = task.isDeleted || task.status === 'deleted';
+                                const canAccept = isManagerOrAdmin && task.status === 'completed' && !deleted;
+                                return (
+                                    <TaskRow
+                                        key={task.id}
+                                        task={task}
+                                        rowClassName="hover:bg-surface-sunken transition-colors border-b border-line last:border-0"
+                                        assigneeName={task.assignedUserName}
+                                        titleCell={
+                                            <>
+                                                <div
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    aria-expanded={expandedTasks.has(task.id)}
+                                                    onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
+                                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
+                                                    className={clsx(
+                                                        "text-body font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                        deleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
+                                                    )}>
+                                                    {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
+                                                    {task.title}
+                                                </div>
+                                                <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
+                                                    {task.deadline && (
+                                                        <>
+                                                            <Calendar className="w-3.5 h-3.5" aria-hidden="true" />
+                                                            <span>{task.deadline}</span>
+                                                            <span className="text-line">|</span>
+                                                        </>
+                                                    )}
+                                                    <span>Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}</span>
+                                                </div>
+                                                {task.description && (
+                                                    <div className={clsx(
+                                                        "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
+                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
+                                                    )}>
+                                                        <SessionTypeIcon
+                                                            type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
+                                                            className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
+                                                        />
+                                                        {task.description}
                                                     </div>
-                                                ))}
+                                                )}
+                                                {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
+                                                    <div className="mt-2 pl-4 border-l-2 border-line">
+                                                        <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
+                                                        {task.comments.map((comment, idx) => (
+                                                            <div key={idx} className="text-caption text-ink mb-1">
+                                                                <UserChip userId={comment.userId} name={comment.user} />: {comment.text}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {(task.managerName || task.creatorName) && (
+                                                    <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
+                                                        <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                                                        <span>Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
+                                                    </div>
+                                                )}
+                                            </>
+                                        }
+                                        timeCell={
+                                            <>
+                                                <div className="inline-flex items-center justify-end gap-1">
+                                                    <span>
+                                                        <span className="text-brand">{task.estimatedTime || '-'}</span>
+                                                        <span className="text-ink-muted mx-1">/</span>
+                                                        <span className="text-ink-strong">{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
+                                                    </span>
+                                                    <TimeEditButton task={task} />
+                                                </div>
+                                                <TimeChangedWarning task={task} alignEnd className="mt-0.5" />
+                                            </>
+                                        }
+                                        actions={
+                                            <div className="flex items-center justify-end gap-1">
+                                                {canAccept && (
+                                                    <IconButton
+                                                        icon={UserCheck}
+                                                        label="Priimti"
+                                                        onClick={() => handleConfirm(task)}
+                                                        className="text-feedback-success hover:bg-feedback-success/10"
+                                                    />
+                                                )}
+                                                <span className="relative inline-flex">
+                                                    <IconButton icon={MessageSquare} label="Komentarai" onClick={() => setCommentsModalTask(task)} />
+                                                    {task.comments?.length > 0 && (
+                                                        <span className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 bg-brand text-white text-caption font-bold flex items-center justify-center rounded-full leading-none">
+                                                            {task.comments.length}
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                <IconButton icon={RotateCcw} label="Grąžinti" onClick={() => handleRestore(task)} />
+                                                {isManagerOrAdmin && (
+                                                    <IconButton icon={Trash2} label="Ištrinti" variant="danger" onClick={() => handleDelete(task)} />
+                                                )}
                                             </div>
-                                        )}
-                                        {(task.managerName || task.creatorName) && (
-                                            <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
-                                                <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                                <span>Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
-                                            </div>
-                                        )}
-                                    </td>
-                                    <td className="px-1 py-2 whitespace-nowrap align-top">
-                                        {task.assignedUserName && (
-                                            <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} firstNameOnly showIcon={false} />
-                                        )}
-                                    </td>
-                                    <td className="px-1 py-2 whitespace-nowrap text-right text-body font-medium text-ink-strong align-top font-mono">
-                                        <div className="inline-flex items-center justify-end gap-1">
-                                            <span>
-                                                <span className="text-brand">{task.estimatedTime || '-'}</span>
-                                                <span className="text-ink-muted mx-1">/</span>
-                                                <span className="text-ink-strong">{calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}</span>
-                                            </span>
-                                            <TimeEditButton task={task} />
-                                        </div>
-                                        <TimeChangedWarning task={task} alignEnd className="mt-0.5" />
-                                    </td>
-                                    <td className="px-1 py-2 whitespace-nowrap align-top">
-                                        <PriorityBadge priority={task.priority} />
-                                    </td>
-                                    <td className="px-1 py-2 whitespace-nowrap align-top">
-                                        {(task.isDeleted || task.status === 'deleted') ? <DeletedBadge /> : <TaskStatusPill task={task} />}
-                                    </td>
-                                    <td className="px-1 py-2 whitespace-nowrap text-right align-top">
-                                        <div className="flex items-center justify-end">
-                                            <TaskActions task={task} />
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
+                                        }
+                                    />
+                                );
+                            })}
                             {tasks.length === 0 && (
                                 <tr>
                                     <td colSpan="6" className="px-6 py-12 text-center text-ink-muted text-body">

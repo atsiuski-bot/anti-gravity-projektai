@@ -13,6 +13,7 @@ import Modal from '../ui/Modal';
 import Linkify from '../ui/Linkify';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
+import TaskActionRow from './TaskActionRow';
 import PriorityBadge from './PriorityBadge';
 import TaskStatusPill from './TaskStatusPill';
 import TaskFlagToggles from './TaskFlagToggles';
@@ -81,6 +82,7 @@ export default function TaskDetailModal({
     canManage = false,
     canDelete = false,
     showManagerLine = true,
+    allowPhotoAdd = true,
     onEdit,
     onDelete,
     onRevert,
@@ -151,13 +153,26 @@ export default function TaskDetailModal({
     const samePerson = !!task.assignedUserId && managerId === task.assignedUserId;
 
     const isAssignee = currentUser?.uid === task.assignedUserId;
-    const canAddPhoto = canManage || isAssignee;
+    // Photo-add is an ACTIVE-task affordance. Off the active surface (archive / report) the task is
+    // historical, so the preview is read-only for photos — `allowPhotoAdd` gates it (the gallery
+    // still shows existing photos; only the add controls are withheld).
+    const canAddPhoto = (canManage || isAssignee) && allowPhotoAdd;
     const collectionName = task.isArchived ? 'archived_tasks' : 'tasks';
 
     const canConfirm = canManage && task.status === 'completed';
     const canApprove = canManage && task.status === 'unapproved';
     const canRevert = canManage && (task.completed || isDeleted);
     const hasFooterActions = !!onEdit || canConfirm || canApprove || canRevert || canDelete;
+
+    // Footer actions, data-driven so the SAME adaptive one-line row the card uses backs the modal
+    // too (revert → approve/confirm → edit → delete, destructive last per §8). They share the row
+    // width and collapse to icon-only together when the labels no longer fit — never wrapping.
+    const footerActions = [];
+    if (canRevert && onRevert) footerActions.push({ key: 'revert', label: 'Grąžinti', icon: Undo2, variant: 'secondary', onClick: () => onRevert(task) });
+    if (canApprove && onApprove) footerActions.push({ key: 'approve', label: 'Patvirtinti', icon: CheckCircle2, variant: 'success', onClick: () => onApprove(task.id) });
+    if (canConfirm && onConfirm) footerActions.push({ key: 'confirm', label: 'Priimti', icon: CheckCircle2, variant: 'success', onClick: () => onConfirm(task.id) });
+    if (onEdit) footerActions.push({ key: 'edit', label: 'Redaguoti', icon: Pencil, variant: 'primary', onClick: () => onEdit(task) });
+    if (canDelete && onDelete) footerActions.push({ key: 'delete', label: 'Ištrinti', icon: Trash2, variant: 'danger', onClick: () => onDelete(task) });
 
     const onSubmitComment = async (e) => {
         e.preventDefault();
@@ -511,39 +526,12 @@ export default function TaskDetailModal({
                 )}
             </div>
 
-            {/* Footer — sticky management actions; the primary (Redaguoti) outweighs the
-                destructive (Ištrinti, demoted to the far edge) per DESIGN_SYSTEM §8. */}
+            {/* Footer — sticky management actions on one adaptive row (TaskActionRow): the primary
+                (Redaguoti) outweighs the destructive (Ištrinti, last per DESIGN_SYSTEM §8); the row
+                stays on a single line and collapses to icon-only together when too tight. */}
             {hasFooterActions && (
-                <div className="flex flex-shrink-0 flex-wrap items-center justify-between gap-2 border-t border-line bg-surface-card px-5 py-3">
-                    <div>
-                        {canDelete && onDelete && (
-                            <Button variant="ghost" size="md" icon={Trash2} className="text-feedback-danger-text" onClick={() => onDelete(task)}>
-                                Ištrinti
-                            </Button>
-                        )}
-                    </div>
-                    <div className="flex flex-wrap items-center justify-end gap-2">
-                        {canRevert && onRevert && (
-                            <Button variant="secondary" size="md" icon={Undo2} onClick={() => onRevert(task)}>
-                                Grąžinti
-                            </Button>
-                        )}
-                        {canApprove && onApprove && (
-                            <Button variant="success" size="md" icon={CheckCircle2} onClick={() => onApprove(task.id)}>
-                                Patvirtinti
-                            </Button>
-                        )}
-                        {canConfirm && onConfirm && (
-                            <Button variant="success" size="md" icon={CheckCircle2} onClick={() => onConfirm(task.id)}>
-                                Priimti
-                            </Button>
-                        )}
-                        {onEdit && (
-                            <Button variant="primary" size="md" icon={Pencil} onClick={() => onEdit(task)}>
-                                Redaguoti
-                            </Button>
-                        )}
-                    </div>
+                <div className="flex-shrink-0 border-t border-line bg-surface-card px-5 py-3">
+                    <TaskActionRow actions={footerActions} />
                 </div>
             )}
 

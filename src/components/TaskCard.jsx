@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Clock, Calendar, Trash2, ArrowUp, ArrowDown, Undo2, Edit, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
@@ -12,8 +12,9 @@ import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStrin
 import { getChecklistProgress } from '../utils/checklistActions';
 import { isManagerRole } from '../utils/formatters';
 import { canEditTask } from '../utils/taskPermissions';
-import Button from './ui/Button';
+import { canApproveTask, canConfirmTask, canRevertTask } from '../utils/taskActionVisibility';
 import IconButton from './ui/IconButton';
+import TaskActionRow from './task/TaskActionRow';
 import ConfirmDialog from './ui/ConfirmDialog';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
@@ -43,50 +44,6 @@ const DEADLINE_TONE = {
 };
 
 /**
- * useOneLineActions — keeps the footer action buttons on a SINGLE row, full-width-adaptive, and
- * collapses every label to icon-only the moment the labelled set no longer fits.
- *
- * It measures fit instead of guessing a viewport breakpoint: an invisible mirror row holds the
- * SAME buttons at their natural (labelled) width; we compare that needed width to the real row's
- * available width. Because the mirror always carries labels, the measurement is independent of
- * the current compact state — so the decision can't oscillate.
- *
- * Re-measurement is belt-and-suspenders: a cheap pass after every render (one reflow per commit;
- * the card already re-renders on its time ticker) covers becoming-visible — e.g. mounting inside
- * an inactive tab, where clientWidth is 0 and any decision would be wrong — plus a ResizeObserver
- * for instant response to width changes that don't trigger a render (dragging a desktop window
- * edge, orientation change).
- */
-function useOneLineActions() {
-    const rowRef = useRef(null);
-    const mirrorRef = useRef(null);
-    const [compact, setCompact] = useState(false);
-
-    const measure = useCallback(() => {
-        const row = rowRef.current;
-        const mirror = mirrorRef.current;
-        if (!row || !mirror) return;
-        // Skip while hidden (clientWidth 0): a later render/resize re-measures once visible.
-        // mirror is overflow-hidden, so scrollWidth is the full labelled width even when wider
-        // than the card. setCompact bails on an unchanged value, so this can never loop.
-        if (row.clientWidth === 0) return;
-        setCompact(mirror.scrollWidth > row.clientWidth + 0.5);
-    }, []);
-
-    useLayoutEffect(() => { measure(); });
-
-    useLayoutEffect(() => {
-        const row = rowRef.current;
-        if (!row || typeof ResizeObserver === 'undefined') return undefined;
-        const ro = new ResizeObserver(() => measure());
-        ro.observe(row);
-        return () => ro.disconnect();
-    }, [measure]);
-
-    return { rowRef, mirrorRef, compact };
-}
-
-/**
  * TaskCard — the spacious mobile list card. A compact summary that OPENS the shared task preview
  * (TaskDetailModal) on tap. Top-to-bottom: a leading status glyph + the title (which wraps with a
  * hanging indent), then priority (· deadline · tag), then the time hero with an always-present
@@ -98,7 +55,7 @@ function useOneLineActions() {
  * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the edit
  * button opens the create/edit form directly, bypassing the preview.
  */
-const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown, onConfirmed, onReverted, onDeleted, signoffOnly = false }) => {
+const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null }) => {
     const { currentUser, userRole } = useAuth();
     const runUndoable = useUndoableAction();
     const [activeModal, setActiveModal] = useState(null); // 'checklist' | 'timeAdjustments'
@@ -314,9 +271,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     // Manager sign-off actions, mirroring TaskDetailModal so the card and the preview agree:
     // a finished task ("Laukia priėmimo") can be accepted OR sent back, an unapproved task can be
     // approved, and any finished/deleted task can be reverted.
-    const canConfirm = isManager && taskStatus === 'completed';
-    const canApprove = isManager && taskStatus === 'unapproved';
-    const canRevert = isManager && (task.completed || task.isDeleted);
+    const canConfirm = canConfirmTask({ task, role, userRole });
+    const canApprove = canApproveTask({ task, role, userRole });
+    const canRevert = canRevertTask({ task, role, userRole });
 
     // Footer actions, data-driven so the SAME list feeds both the visible (adaptive) row and the
     // hidden measuring mirror. Order: revert → approve/confirm → edit → delete, so the
@@ -342,11 +299,27 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         onClick: (e) => { e.stopPropagation(); onEdit(task); },
     });
     if (!signoffOnly && isManager) actions.push({
-        key: 'delete', label: 'Trinti', icon: Trash2, variant: 'danger',
+        key: 'delete', label: 'Ištrinti', icon: Trash2, variant: 'danger',
         onClick: (e) => { e.stopPropagation(); handleDeleteTask(); },
     });
-    const { rowRef: actionsRowRef, mirrorRef: actionsMirrorRef, compact: actionsCompact } =
-        useOneLineActions();
+
+    // Footer buttons: a caller (archive / report surface) may hand a ready-made action set whose
+    // semantics differ from an active task (restore-from-archive, archived-confirm); otherwise the
+    // card computes the active-task set above. Either way it renders through the one adaptive row.
+    const footerActions = actionsProp ?? actions;
+
+    // Detail-modal action wiring. The active surface uses the card's own audited flows; a non-active
+    // surface passes its own handlers (so the SAME preview opens everywhere, but acts on the right
+    // collection). Checklist / time-adjust stay internal — they already key off task.isArchived.
+    const detail = detailOverrides || {
+        canManage: isManager,
+        canDelete: isManager,
+        onEdit: onEdit && canEdit ? onEdit : undefined,
+        onDelete: () => handleDeleteTask(),
+        onRevert: () => { setRevertError(''); setConfirmRevert(true); },
+        onApprove: () => performApprove(),
+        onConfirm: isManager ? () => performConfirm() : undefined,
+    };
 
     const openDetail = () => setShowDetail(true);
 
@@ -552,55 +525,18 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                     </p>
                 )}
                 <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                    <TaskTimerControls
-                        task={task}
-                        role={role}
-                    />
+                    {/* Timer is an active-task control only — hidden on the archive / report surfaces. */}
+                    {surface === 'active' && (
+                        <TaskTimerControls
+                            task={task}
+                            role={role}
+                        />
+                    )}
 
                     {/* One adaptive row: every action is the SAME kind of button (Redaguoti and
-                        Trinti included), they share the width and stay on a single line. A hidden
-                        mirror (same buttons at natural, labelled width) measures whether the labels
-                        fit; when they don't, all buttons drop to icon-only together — still real,
-                        bordered/filled buttons with a 44px target and an accessible name (via
-                        aria-label/title), never a bare glyph. */}
-                    {actions.length > 0 && (
-                        <div className="relative mt-2">
-                            <div
-                                ref={actionsMirrorRef}
-                                aria-hidden="true"
-                                className="pointer-events-none invisible absolute inset-x-0 top-0 flex gap-1.5 overflow-hidden"
-                            >
-                                {actions.map((a) => (
-                                    <Button
-                                        key={a.key}
-                                        variant={a.variant}
-                                        size="md"
-                                        icon={a.icon}
-                                        tabIndex={-1}
-                                        className="shrink-0 whitespace-nowrap px-3"
-                                    >
-                                        {a.label}
-                                    </Button>
-                                ))}
-                            </div>
-                            <div ref={actionsRowRef} className="flex items-center gap-1.5">
-                                {actions.map((a) => (
-                                    <Button
-                                        key={a.key}
-                                        variant={a.variant}
-                                        size="md"
-                                        icon={a.icon}
-                                        aria-label={a.label}
-                                        title={a.label}
-                                        className="min-w-0 flex-auto px-3"
-                                        onClick={a.onClick}
-                                    >
-                                        {!actionsCompact && <span className="truncate">{a.label}</span>}
-                                    </Button>
-                                ))}
-                            </div>
-                        </div>
-                    )}
+                        Trinti included), they share the width and stay on a single line, collapsing
+                        to icon-only together when the labels no longer fit (TaskActionRow). */}
+                    <TaskActionRow actions={footerActions} className={surface === 'active' ? 'mt-2' : ''} />
                 </div>
             </div>
 
@@ -611,14 +547,15 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 onClose={() => setShowDetail(false)}
                 task={task}
                 isRunning={isRunning}
-                canManage={isManager}
-                canDelete={isManager}
+                canManage={detail.canManage}
+                canDelete={detail.canDelete}
                 showManagerLine
-                onEdit={onEdit && canEdit ? (t) => { setShowDetail(false); onEdit(t); } : undefined}
-                onDelete={() => { setShowDetail(false); handleDeleteTask(); }}
-                onRevert={() => { setShowDetail(false); setRevertError(''); setConfirmRevert(true); }}
-                onApprove={() => { setShowDetail(false); performApprove(); }}
-                onConfirm={isManager ? () => { setShowDetail(false); performConfirm(); } : undefined}
+                allowPhotoAdd={surface === 'active'}
+                onEdit={detail.onEdit ? (t) => { setShowDetail(false); detail.onEdit(t); } : undefined}
+                onDelete={detail.onDelete ? (t) => { setShowDetail(false); detail.onDelete(t); } : undefined}
+                onRevert={detail.onRevert ? (t) => { setShowDetail(false); detail.onRevert(t); } : undefined}
+                onApprove={detail.onApprove ? (id) => { setShowDetail(false); detail.onApprove(id); } : undefined}
+                onConfirm={detail.onConfirm ? (id) => { setShowDetail(false); detail.onConfirm(id); } : undefined}
                 onOpenChecklist={() => { setShowDetail(false); setActiveModal('checklist'); }}
                 onOpenTimeAdjustments={isManager ? () => { setShowDetail(false); setActiveModal('timeAdjustments'); } : undefined}
             />
@@ -627,8 +564,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 isOpen={activeModal === 'checklist'}
                 onClose={() => setActiveModal(null)}
                 checklist={task.checklist}
-                canToggle={(isManager || isAssignedToMe) && !task.isDeleted}
-                canManageItems={canEdit && !task.isDeleted}
+                canToggle={(isManager || isAssignedToMe) && !task.isDeleted && surface === 'active'}
+                canManageItems={canEdit && !task.isDeleted && surface === 'active'}
                 onToggle={handleToggleChecklist}
                 onAdd={handleAddChecklist}
                 onDelete={handleDeleteChecklist}
