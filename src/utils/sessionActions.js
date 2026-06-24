@@ -715,14 +715,24 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
  * @param {Object} task - the auto-stopped task doc (needs id, assignedUserId; workSessionId if linked)
  * @param {string} text - worker-entered description; trimmed, becomes the new title
  */
-export const addQuickWorkDescription = async (task, text) => {
-    const title = (text || '').trim();
+export const addQuickWorkDescription = async (task, entry) => {
+    // Back-compat: a bare string is treated as a free-write title (the legacy call shape).
+    const { title: rawTitle, comment: rawComment } = typeof entry === 'string'
+        ? { title: entry, comment: '' }
+        : (entry || {});
+    const title = (rawTitle || '').trim();
+    const comment = (rawComment || '').trim();
     if (!task?.id || !title) return;
     try {
         // Keep the originally recorded time in the description, only strip the "(auto)" suffix.
-        const cleanedDescription = (task.description || '')
+        // A template-titled entry folds its optional comment in above the recorded time, exactly
+        // like the live finish path does (sessionActions endSession quickWork branch).
+        const recordedTime = (task.description || '')
             .replace(/\s*\(Automatiškai sukurtas\)\s*$/, '')
             .trim();
+        const cleanedDescription = comment
+            ? (recordedTime ? `${comment}\n${recordedTime}` : comment)
+            : recordedTime;
 
         // Rename the durable task record and clear the flag (the value the report reads).
         await updateDoc(doc(db, 'tasks', task.id), {

@@ -1599,11 +1599,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {shownEarlierTasks.length > 0 && (
                 <TaskListTable
                     tasks={shownEarlierTasks}
-                    title={
-                        view === 'approval' && approvalPhase === 'accepted'
-                            ? 'Priimta anksčiau'
-                            : 'Užduotys atliktos anksčiau, laukia priėmimo'
-                    }
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
@@ -1614,9 +1609,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     expandedTasks={expandedTasks}
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
-                    highlight={true}
-                    collapsible={view === 'approval'}
-                    defaultOpen
                 />
             )}
 
@@ -2141,34 +2133,34 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
 
     return (
         <div className={clsx("rounded-card shadow-sm border border-line overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-surface-card")}>
-            <div className={clsx(
-                "px-4 border-b border-line",
-                highlight ? "bg-brand text-white py-6" : "py-3 bg-surface-sunken text-ink",
-                viewMode === 'mobile' && "rounded-control mb-2 border"
-            )}>
-                {collapsible ? (
-                    <button
-                        type="button"
-                        onClick={() => setOpen((o) => !o)}
-                        aria-expanded={open}
-                        className={clsx(
-                            "w-full min-h-touch flex items-center justify-between gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2",
-                            // The highlighted (bg-brand) header needs a white focus ring — an indigo
-                            // ring-brand on the indigo fill is invisible (WCAG 2.4.7 Focus Visible).
-                            highlight ? "focus-visible:ring-white" : "focus-visible:ring-brand"
-                        )}
-                    >
+            {title && (
+                <div className={clsx(
+                    "px-4 border-b border-line",
+                    highlight ? "bg-brand text-white py-6" : "py-3 bg-surface-sunken text-ink",
+                    viewMode === 'mobile' && "rounded-control mb-2 border"
+                )}>
+                    {collapsible ? (
+                        <button
+                            type="button"
+                            onClick={() => setOpen((o) => !o)}
+                            aria-expanded={open}
+                            className={clsx(
+                                "w-full min-h-touch flex items-center justify-between gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2",
+                                highlight ? "focus-visible:ring-white" : "focus-visible:ring-brand"
+                            )}
+                        >
+                            <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
+                            {open
+                                ? <ChevronUp className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />
+                                : <ChevronDown className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />}
+                        </button>
+                    ) : (
                         <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
-                        {open
-                            ? <ChevronUp className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />
-                            : <ChevronDown className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />}
-                    </button>
-                ) : (
-                    <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
-                )}
-            </div>
+                    )}
+                </div>
+            )}
 
-            {(!collapsible || open) && (viewMode === 'mobile' ? (
+            {(!collapsible || !title || open) && (viewMode === 'mobile' ? (
                 <div className="space-y-1">
                     {tasks.map(task => (
                         <MobileStatsCard
