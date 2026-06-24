@@ -109,6 +109,31 @@
   --priority-verylow-bg: #FAFAFA; --priority-verylow-text: #111111;
   --priority-hairline: rgba(0, 0, 0, 0.05);
 
+  /* Session colors (ADR 0016) — the loud full-screen state identity (§4). LIGHT values are
+     byte-identical to the old literal-hex config (behaviour-neutral migration). Per session:
+     shell (full-screen bg), surface (the running card / pill bg), accent (timer/icon/label —
+     ONE fill-safe value in both themes, lightened only as foreground text in the dark block),
+     soft (the *-200 border/ring tint). Dark overrides live in the [data-theme="dark"] block. */
+  --session-quickwork-shell: 239 68 68;     /* red-500   #EF4444 */
+  --session-quickwork-surface: 254 242 242; /* red-50    #FEF2F2 */
+  --session-quickwork-accent: 185 28 28;    /* red-700   #B91C1C */
+  --session-quickwork-soft: 254 202 202;    /* red-200   #FECACA */
+
+  --session-call-shell: 219 234 254;        /* blue-100  #DBEAFE */
+  --session-call-surface: 239 246 255;      /* blue-50   #EFF6FF */
+  --session-call-accent: 37 99 235;         /* blue-600  #2563EB */
+  --session-call-soft: 191 219 254;         /* blue-200  #BFDBFE */
+
+  --session-break-shell: 254 243 199;       /* amber-100 #FEF3C7 */
+  --session-break-surface: 255 251 235;     /* amber-50  #FFFBEB */
+  --session-break-accent: 180 83 9;         /* amber-700 #B45309 */
+  --session-break-soft: 253 230 138;        /* amber-200 #FDE68A */
+
+  --session-task-shell: 187 247 208;        /* green-200 #BBF7D0 */
+  --session-task-surface: 220 252 231;      /* green-100 #DCFCE7 */
+  --session-task-accent: 21 128 61;         /* green-700 #15803D */
+  --session-task-soft: 187 247 208;         /* green-200 #BBF7D0 */
+
   color-scheme: light;
 }
 
@@ -166,6 +191,34 @@
   --priority-verylow-bg: #2A303C; --priority-verylow-text: #9AA3B2;
   --priority-hairline: rgba(255, 255, 255, 0.10);
 
+  /* Session colors — DARK (ADR 0016). The light theme's pale tints (#DBEAFE/#FEF3C7/#BBF7D0)
+     glared as bright washes on the near-black canvas. Dark keeps the SAME four hues but as DEEP,
+     saturated *-900 tones, so the loud whole-screen shell still reads unmistakably as red / blue /
+     amber / green while sitting in the dark theme. All four shells take WHITE on-shell text in dark
+     (≥7:1) — the wz-on-shell rule below forces white regardless of shell kind. `surface` becomes a
+     deep low-saturation hued card (mirrors the feedback `*-soft` washes); `soft` a deep hued border.
+     `accent` is UNCHANGED (fill-safe, white text rides on it); foreground accent text is lightened
+     to the *-400 shade via the .text-session-*-accent overrides further down. */
+  --session-quickwork-shell: 127 29 29;     /* red-900   #7F1D1D — deep alarm red, white 8.9:1 */
+  --session-quickwork-surface: 58 21 24;    /* deep red wash #3A1518 */
+  --session-quickwork-accent: 185 28 28;    /* red-700 — fill-safe, unchanged */
+  --session-quickwork-soft: 90 31 34;       /* deep red border #5A1F22 */
+
+  --session-call-shell: 30 58 138;          /* blue-900  #1E3A8A — deep blue, white 8.4:1 */
+  --session-call-surface: 21 35 61;         /* deep blue wash #15233D */
+  --session-call-accent: 37 99 235;         /* blue-600 — fill-safe, unchanged */
+  --session-call-soft: 30 58 102;           /* deep blue border #1E3A66 */
+
+  --session-break-shell: 120 53 15;         /* amber-900 #78350F — deep amber, white 7.2:1 */
+  --session-break-surface: 58 44 12;        /* deep amber wash #3A2C0C */
+  --session-break-accent: 180 83 9;         /* amber-700 — fill-safe, unchanged */
+  --session-break-soft: 90 68 19;           /* deep amber border #5A4413 */
+
+  --session-task-shell: 20 83 45;           /* green-900 #14532D — deep green, white 7.9:1 */
+  --session-task-surface: 16 42 26;         /* deep green wash #102A1A */
+  --session-task-accent: 21 128 61;         /* green-700 — fill-safe, unchanged */
+  --session-task-soft: 27 77 51;            /* deep green border #1B4D33 */
+
   color-scheme: dark;
 }
 
@@ -177,6 +230,10 @@
    elements — never on text inside a card (it would force dark text onto a dark card). */
 [data-session-shell="light"] .wz-on-shell { color: #111827; } /* dark text on the light tint shells */
 [data-session-shell="red"] .wz-on-shell { color: #ffffff; }   /* white text on the quick-work red shell */
+/* In DARK mode every session shell is a DEEP tone (ADR 0016), so on-shell text is always white —
+   override the light-shell dark-text rule above for both shell kinds. */
+[data-theme="dark"] [data-session-shell="light"] .wz-on-shell,
+[data-theme="dark"] [data-session-shell="red"] .wz-on-shell { color: #ffffff; }
 
 /* Foreground decoupling: brand/feedback DEFAULTs are tuned as FILLS (white text rides on
    them), so the same value used as FOREGROUND text is too dark on the dark canvas. Override
@@ -187,6 +244,15 @@
 [data-theme="dark"] .text-feedback-warning { color: rgb(251 191 36); }  /* amber-400 */
 [data-theme="dark"] .text-feedback-danger { color: rgb(248 113 113); }  /* red-400 */
 [data-theme="dark"] .text-feedback-info { color: rgb(165 180 252); }    /* indigo-300 */
+
+/* Session accent as FOREGROUND text (timer/icon/label on a card or the deep session surface). The
+   `accent` token is tuned as a fill (white text rides on it), so the same dark-ish value is too
+   low-contrast as text on the dark canvas — lighten each to its *-400 shade (ADR 0016). Fills
+   (`bg-session-*-accent`, bars, the active-toggle buttons) keep the unchanged token value. */
+[data-theme="dark"] .text-session-quickWork-accent { color: rgb(248 113 113); } /* red-400 */
+[data-theme="dark"] .text-session-call-accent { color: rgb(96 165 250); }       /* blue-400 */
+[data-theme="dark"] .text-session-break-accent { color: rgb(251 191 36); }      /* amber-400 */
+[data-theme="dark"] .text-session-task-accent { color: rgb(74 222 128); }       /* green-400 */
 
 @layer base {
   /* Native input/textarea placeholder: route through the muted-ink token so it themes with
