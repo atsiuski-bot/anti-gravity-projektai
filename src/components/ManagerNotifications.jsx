@@ -41,10 +41,10 @@ import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyp
  * task list uses, so a manager sees (and acts on) a reported task identically in both places.
  *
  * The notification carries only taskId/taskTitle, so this wrapper subscribes to the live task doc
- * and feeds it to TaskCard. TaskCard already exposes the manager sign-off buttons for a finished
- * task (Priimti / Grąžinti / Redaguoti / Trinti); the optional post-action hooks below are
- * what keep the two-way feed honest — after the card's own write succeeds they dismiss this
- * notification and notify the worker.
+ * and feeds it to TaskCard in `signoffOnly` mode, so the completion card offers exactly the two
+ * decisions a finished task needs — Priimti / Grąžinti (Grąžinti reopens the editor). The optional
+ * post-action hooks below are what keep the two-way feed honest — after the card's own write
+ * succeeds they dismiss this notification and notify the worker.
  */
 function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDeleted }) {
     const [task, setTask] = useState(null);
@@ -81,6 +81,7 @@ function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDelet
                 onConfirmed={onConfirmed}
                 onReverted={onReverted}
                 onDeleted={onDeleted}
+                signoffOnly
             />
         </div>
     );
@@ -298,13 +299,15 @@ export default function ManagerNotifications({ onClose }) {
 
 
     // Notify the worker who submitted a task that it was approved (they may start). The submitter
-    // is the notification's author (createdBy); a manager self-submitting gets no echo.
-    const notifyTaskApproved = async (notif) => {
+    // is the notification's author (createdBy); a manager self-submitting gets no echo. `edited`
+    // collapses the approve+edit path into a single "patvirtinta ir pakeista" notice (see registry).
+    const notifyTaskApproved = async (notif, { edited = false } = {}) => {
         await notify({
             recipientId: notif.createdBy,
             type: 'task_approved',
             taskId: notif.taskId,
             taskTitle: notif.taskTitle,
+            ...(edited ? { edited: true } : {}),
             actorUid: currentUser.uid,
             actorName: currentUser.displayName || currentUser.email,
         });
@@ -361,15 +364,20 @@ export default function ManagerNotifications({ onClose }) {
                 { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email }), mode: MODES.COMMIT, reason: 'approved (edit) from notification' },
             );
 
-            // 2. Dismiss notification + tell the worker
+            // 2. Dismiss notification + tell the worker in ONE notice: "patvirtinta ir pakeista".
+            // Sending the combined notice now (rather than a plain "approved" here and a separate
+            // "edited" when the editor saves) is what keeps approve-and-edit to a single ping; the
+            // __suppressEditNotice flag below stops TaskModal's save from adding a second one.
             await handleDismissTask(notif.id);
-            await notifyTaskApproved(notif);
+            await notifyTaskApproved(notif, { edited: true });
 
-            // 3. Open the task for editing in whichever view hosts the modal, and close the bell.
+            // 3. Open the task for editing in whichever view hosts the modal, and close the bell. The
+            // transient __suppressEditNotice marker rides the in-memory task only (TaskModal builds
+            // its Firestore write from the form, never by spreading this object), so it never persists.
             const taskSnap = await getDoc(taskRef);
             if (taskSnap.exists()) {
                 onClose?.();
-                window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
+                window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data(), __suppressEditNotice: true } } }));
             }
         } catch (err) {
             console.error("Error in edit and approve:", err);
@@ -499,8 +507,11 @@ export default function ManagerNotifications({ onClose }) {
 
     const handleCardReverted = async (notif) => {
         await handleDismissTask(notif.id);
-        // Tell the worker their task came back for rework (action item in their bell).
-        await notify({ recipientId: notif.userId, type: 'task_reverted', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+        // Tell the worker their task came back for rework in ONE notice: "grąžinta taisyti ir
+        // pakeista". The completion card's Grąžinti ALWAYS reopens the editor (see TaskCard
+        // performRevert), and the reopened task carries __suppressEditNotice so the manager's save
+        // adds no second ping — this is the single combined notice the worker sees.
+        await notify({ recipientId: notif.userId, type: 'task_reverted', edited: true, taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
     };
 
     // --- Account approval (system → admin) ---

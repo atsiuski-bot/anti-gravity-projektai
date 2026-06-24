@@ -19,6 +19,7 @@ import { buildChecklistItem, reconcileChecklist } from '../utils/checklistAction
 import { parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
+import { resolveInitialTaskStatus } from '../utils/taskStatus';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
 import useTaskSuggestions from '../hooks/useTaskSuggestions';
 import { useAssigneeAffinity } from '../hooks/useAssigneeAffinity';
@@ -1060,44 +1061,55 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     }
                 }
 
-                // Tell the worker about manager-side edits that concern them. Both are gated on
-                // "assignee is someone other than me" so a self-edit never notifies the author.
-                const assignee = formData.assignedUserId;
-                const actor = { actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email };
-                if (assignee && assignee !== currentUser.uid) {
-                    // The estimate was lifted on a task whose limit the worker had already hit →
-                    // their time-extension request was effectively granted.
-                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
-                        await notify({ recipientId: assignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                // Tell the worker(s) about a manager-side edit that concerns them — ONE notice per
+                // save, chosen by precedence so a single edit never fans out into several pings:
+                //   1. reassigned        → the NEW assignee gets "assigned", the OLD one "unassigned";
+                //   2. estimate lifted after the limit was hit → "time extended" (the specific story);
+                //   3. any other field   → "edited".
+                // All are gated on "the affected person isn't the editor" so a self-edit is silent,
+                // and the whole branch is skipped when handleEditAndApprove already sent the combined
+                // "approved + edited" notice (__suppressEditNotice), so approve-and-edit stays one ping.
+                const newAssignee = formData.assignedUserId;
+                const oldAssignee = task.assignedUserId;
+                const editorUid = currentUser.uid;
+                const actor = { actorUid: editorUid, actorName: currentUser.displayName || currentUser.email };
+                const reassigned = oldAssignee !== newAssignee && !reassignmentFailed;
+
+                if (reassigned) {
+                    if (newAssignee && newAssignee !== editorUid) {
+                        await notify({ recipientId: newAssignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
-                    // The task was (re)assigned to a new worker — but only notify if the reassignment
-                    // write actually landed (a failed assignTask must not announce a non-existent move).
-                    if (task.assignedUserId !== assignee && !reassignmentFailed) {
-                        await notify({ recipientId: assignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    if (oldAssignee && oldAssignee !== editorUid) {
+                        await notify({ recipientId: oldAssignee, type: 'task_unassigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    }
+                } else if (newAssignee && newAssignee !== editorUid) {
+                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
+                        await notify({ recipientId: newAssignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                    } else if (!task.__suppressEditNotice) {
+                        await notify({ recipientId: newAssignee, type: 'task_edited', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
                 }
             } else {
-                // Determine if user is a manager/admin based on Context OR Prop
+                // Initial status — decided purely by WHO creates and FOR WHOM (resolveInitialTaskStatus,
+                // unit-locked): non-manager -> 'unapproved'; manager-for-others -> 'pending'; manager
+                // self-assigning -> 'approved'. Role comes from Context OR the surface prop.
                 const isManagerOrAdmin = isManagerRole(userRole) || isManagerRole(role);
-                // const isSelfAssigned = formData.assignedUserId === currentUser.uid; // Unused
-                // const isOtherManagerAssigned = formData.managerId && formData.managerId !== currentUser.uid; // Unused
+                const isSelfAssigned = formData.assignedUserId === currentUser.uid;
+                const initialStatus = resolveInitialTaskStatus({ isManagerOrAdmin, isSelfAssigned });
 
-
-
-                // Determine initial status:
-                // - If manager/admin creates: pending (no approval needed)
-                let initialStatus = 'pending';
-                if (!isManagerOrAdmin) {
-                    initialStatus = 'unapproved';
-
-                }
+                // For a manager's own (auto-approved) task, stamp the full approval shape so the stored
+                // doc matches what approveTask would have written. Starting the timer overwrites status to
+                // 'in-progress', so the green "Patvirtintas" only shows in the not-yet-started window.
+                const approvalStamp = initialStatus === 'approved'
+                    ? { isApproved: true, approvedBy: currentUser.uid, approvedAt: new Date().toISOString() }
+                    : {};
 
                 // Create through the audited createTask command (ADR 0015, increment 3): it
                 // canonicalizes, stamps provenance from the actor, writes the tasks doc, and records
                 // one decision_log entry — replacing the inline addDoc so creation has a single,
                 // audited path. The caller still owns the role-derived status + auditor.
                 const createResult = await createTask(
-                    { fields: { ...taskData, status: initialStatus, taskAuditor: activeAuditorId } },
+                    { fields: { ...taskData, status: initialStatus, ...approvalStamp, taskAuditor: activeAuditorId } },
                     {
                         actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }),
                         mode: MODES.COMMIT,

@@ -9,6 +9,7 @@ import { useNavigation } from '../context/NavigationContext';
 import { useAchievements } from '../hooks/useAchievements';
 import { useWorkerStats } from '../hooks/useWorkerStats';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
+import { useNotificationPermission } from '../hooks/useNotificationPermission';
 import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
@@ -123,6 +124,10 @@ export default function ProfilePage() {
     const { goToPreviousTab } = useNavigation();
     const { achievements, progress } = useAchievements(currentUser?.uid);
     const { canPromptNative, isIOS, isStandalone, promptInstall } = useInstallPrompt();
+    // The OS notification gate — separate from the notificationsEnabled preference. Lets the toggle
+    // explain a silent block (denied / not-yet-granted / iOS-needs-install) instead of failing quietly.
+    const { permission: notifPermission, supported: notifSupported, request: requestNotifPermission } =
+        useNotificationPermission(currentUser);
 
     // Self-insight metrics: the same compute engine the manager panel uses, but the viewer IS the
     // target (strictly own data — owner-scoped reads, no peer comparison). `useWorkerStats` keys its
@@ -190,6 +195,9 @@ export default function ProfilePage() {
     const role = ROLE_META[userRole] || ROLE_META.worker;
     // Default ON: a missing field means notifications were never turned off.
     const notificationsEnabled = userData?.notificationsEnabled !== false;
+    // On a non-standalone iPhone/iPad, web push is impossible until the PWA is added to the Home
+    // Screen — so enabling the preference there does nothing until the user installs.
+    const iosNeedsInstall = isIOS && !isStandalone;
 
     const memberSince = userData?.createdAt
         ? new Date(userData.createdAt).toLocaleDateString('lt-LT', { year: 'numeric', month: 'long' })
@@ -313,7 +321,16 @@ export default function ProfilePage() {
 
     const toggleNotifications = async () => {
         if (savingNotif) return;
+        const enabling = !notificationsEnabled;
         setNotifError('');
+        // When enabling on a device where push is actually possible, ask for the OS permission within
+        // THIS tap (a user gesture — iOS rejects a request detached from one). Fire-and-forget so it
+        // doesn't block the preference write; the status line below reflects the outcome. On a
+        // non-standalone iPhone push is impossible, so we skip the ask and the status line guides the
+        // user to install instead.
+        if (enabling && notifSupported && notifPermission === 'default' && !iosNeedsInstall) {
+            requestNotifPermission();
+        }
         setSavingNotif(true);
         try {
             await updateDoc(doc(db, 'users', currentUser.uid), {
@@ -338,6 +355,35 @@ export default function ProfilePage() {
             setShowInstall(true);
         }
     };
+
+    // Reconcile the app preference with the OS permission + iOS install precondition into ONE status
+    // line shown under the toggle, so the switch never sits ON while the phone silently blocks push.
+    // Only evaluated when the preference is ON — a user who turned notifications off isn't nagged.
+    let notifStatus = null;
+    if (notificationsEnabled) {
+        if (iosNeedsInstall) {
+            notifStatus = {
+                tone: 'warn',
+                text: 'Kad „iPhone“ ar „iPad“ rodytų pranešimus, pirmiausia įdiekite programėlę į pradžios ekraną.',
+                action: { label: 'Kaip įdiegti', onClick: () => setShowInstall(true) },
+            };
+        } else if (!notifSupported) {
+            notifStatus = { tone: 'muted', text: 'Ši naršyklė nepalaiko pranešimų telefono ekrane.' };
+        } else if (notifPermission === 'default') {
+            notifStatus = {
+                tone: 'warn',
+                text: 'Pranešimai telefone dar neįjungti.',
+                action: { label: 'Įjungti pranešimus', onClick: () => requestNotifPermission() },
+            };
+        } else if (notifPermission === 'denied') {
+            notifStatus = {
+                tone: 'warn',
+                text: 'Pranešimai užblokuoti. Įjunkite juos telefono arba naršyklės nustatymuose ir grįžkite į programėlę.',
+            };
+        } else if (notifPermission === 'granted') {
+            notifStatus = { tone: 'ok', text: 'Pranešimai įjungti.' };
+        }
+    }
 
     return (
         <div className="mx-auto max-w-md">
@@ -622,12 +668,12 @@ export default function ProfilePage() {
                     )}
                 </div>
 
-                <div className="flex items-center gap-3 border-b border-line p-4">
+                <div className={cn('flex items-center gap-3 p-4', !notifStatus && 'border-b border-line')}>
                     <Bell className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
                         <p className="text-body font-medium text-ink-strong">Pranešimai</p>
                         <p className="text-caption text-ink-muted">
-                            Apie aktyvias veiklos sesijas telefono ekrane
+                            Pranešimai apie užduotis ir veiklą telefono ekrane
                         </p>
                     </div>
                     <button
@@ -654,6 +700,29 @@ export default function ProfilePage() {
                         </span>
                     </button>
                 </div>
+                {notifStatus && (
+                    <div
+                        role="status"
+                        aria-live="polite"
+                        className="flex flex-wrap items-center gap-2 border-b border-line px-4 pb-3 pt-1"
+                    >
+                        <p
+                            className={cn(
+                                'min-w-0 flex-1 text-caption',
+                                notifStatus.tone === 'warn' && 'text-feedback-warning-text',
+                                notifStatus.tone === 'ok' && 'text-feedback-success-text',
+                                notifStatus.tone === 'muted' && 'text-ink-muted'
+                            )}
+                        >
+                            {notifStatus.text}
+                        </p>
+                        {notifStatus.action && (
+                            <Button variant="secondary" size="md" onClick={notifStatus.action.onClick}>
+                                {notifStatus.action.label}
+                            </Button>
+                        )}
+                    </div>
+                )}
                 {notifError && (
                     <p role="alert" className="border-b border-line px-4 pb-3 pt-1 text-caption font-medium text-feedback-danger">
                         {notifError}

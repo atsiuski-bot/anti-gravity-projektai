@@ -25,6 +25,7 @@ import { formatMinutesToTimeString, calculateCurrentTotalMinutes, relativeDeadli
 import { getChecklistProgress } from '../../utils/checklistActions';
 import { addComment, updateComment, deleteComment, getCommentKey } from '../../utils/commentActions';
 import { uploadAttachments, MAX_ATTACHMENTS } from '../../utils/attachmentUpload';
+import { notifyMany } from '../../utils/notify';
 import { logError } from '../../utils/errorLog';
 import { preventEnterSubmit } from '../../utils/formUtils';
 
@@ -189,6 +190,15 @@ export default function TaskDetailModal({
             await updateDoc(doc(db, collectionName, task.id), {
                 attachmentUrls: [...imageUrls, ...urls],
                 updatedAt: new Date().toISOString(),
+            });
+            // Tell the OTHER party a photo landed (manager ↔ worker), exactly like a new comment —
+            // notifyMany de-dupes and drops the uploader, so it never echoes back to its author.
+            await notifyMany([task.managerId, task.assignedUserId], {
+                type: 'new_photo',
+                taskId: task.id,
+                taskTitle: task.title || 'Užduotis',
+                actorUid: currentUser.uid,
+                actorName: currentUser.displayName || currentUser.email,
             });
         } catch (err) {
             logError(err, { source: 'TaskDetailModal.onPickPhotos' });

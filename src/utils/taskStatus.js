@@ -71,6 +71,27 @@ export function deriveTaskStatus(task, { isRunning = false } = {}) {
 }
 
 /**
+ * The lifecycle status a NEWLY CREATED task should carry, decided purely by WHO creates it and
+ * FOR WHOM. Kept pure and separate from the create form so every create path agrees and the rule is
+ * unit-locked:
+ *  - a non-manager's task is 'unapproved' — it must clear the creation/approval gate before work
+ *    starts (an auditor is notified by the caller);
+ *  - a manager creating for someone else gets 'pending' — ready to start, the approval gate is moot;
+ *  - a manager self-assigning gets 'approved' — a manager's OWN task is self-evidently approved, so
+ *    it reads "Patvirtintas" at once and never asks the manager to approve their own work
+ *    (founder, 2026-06-24). The caller additionally stamps isApproved/approvedBy/approvedAt so the
+ *    stored shape matches what approveTask would have written.
+ *
+ * @param {{ isManagerOrAdmin: boolean, isSelfAssigned: boolean }} ctx
+ * @returns {'unapproved'|'pending'|'approved'}
+ */
+export function resolveInitialTaskStatus({ isManagerOrAdmin, isSelfAssigned } = {}) {
+    if (!isManagerOrAdmin) return 'unapproved';
+    if (isSelfAssigned) return 'approved';
+    return 'pending';
+}
+
+/**
  * Confirmation-only descriptor for finished-work surfaces (daily statistics, reports) that
  * track the manager-confirmation toggle rather than the full lifecycle. Mirrors the
  * completed/confirmed labels above so on-screen copy and exports never disagree.
