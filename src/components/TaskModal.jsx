@@ -18,6 +18,7 @@ import { buildChecklistItem, reconcileChecklist } from '../utils/checklistAction
 import { parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
+import { resolveInitialTaskStatus } from '../utils/taskStatus';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
 import useTaskSuggestions from '../hooks/useTaskSuggestions';
 import { useAssigneeAffinity } from '../hooks/useAssigneeAffinity';
@@ -977,27 +978,26 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     }
                 }
             } else {
-                // Determine if user is a manager/admin based on Context OR Prop
+                // Initial status — decided purely by WHO creates and FOR WHOM (resolveInitialTaskStatus,
+                // unit-locked): non-manager -> 'unapproved'; manager-for-others -> 'pending'; manager
+                // self-assigning -> 'approved'. Role comes from Context OR the surface prop.
                 const isManagerOrAdmin = isManagerRole(userRole) || isManagerRole(role);
-                // const isSelfAssigned = formData.assignedUserId === currentUser.uid; // Unused
-                // const isOtherManagerAssigned = formData.managerId && formData.managerId !== currentUser.uid; // Unused
+                const isSelfAssigned = formData.assignedUserId === currentUser.uid;
+                const initialStatus = resolveInitialTaskStatus({ isManagerOrAdmin, isSelfAssigned });
 
-
-
-                // Determine initial status:
-                // - If manager/admin creates: pending (no approval needed)
-                let initialStatus = 'pending';
-                if (!isManagerOrAdmin) {
-                    initialStatus = 'unapproved';
-
-                }
+                // For a manager's own (auto-approved) task, stamp the full approval shape so the stored
+                // doc matches what approveTask would have written. Starting the timer overwrites status to
+                // 'in-progress', so the green "Patvirtintas" only shows in the not-yet-started window.
+                const approvalStamp = initialStatus === 'approved'
+                    ? { isApproved: true, approvedBy: currentUser.uid, approvedAt: new Date().toISOString() }
+                    : {};
 
                 // Create through the audited createTask command (ADR 0015, increment 3): it
                 // canonicalizes, stamps provenance from the actor, writes the tasks doc, and records
                 // one decision_log entry — replacing the inline addDoc so creation has a single,
                 // audited path. The caller still owns the role-derived status + auditor.
                 const createResult = await createTask(
-                    { fields: { ...taskData, status: initialStatus, taskAuditor: activeAuditorId } },
+                    { fields: { ...taskData, status: initialStatus, ...approvalStamp, taskAuditor: activeAuditorId } },
                     {
                         actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }),
                         mode: MODES.COMMIT,
