@@ -6,6 +6,7 @@ import { useUsers } from '../context/UsersContext';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
+import PendingApprovalDisclosure from '../components/PendingApprovalDisclosure';
 
 import DailyWorkProgress from '../components/DailyWorkProgress';
 import { filterTasksByVisibility, sortWorkerTasks, TASK_TAGS } from '../utils/taskUtils';
@@ -200,8 +201,24 @@ export default function WorkerView() {
         });
     }, [tasks, searchText, filterTag]);
 
+    // Tasks THIS user created that a manager has not yet approved. They are not
+    // actionable until approved, so they are lifted out of the main list and shown in
+    // the collapsible "Laukia patvirtinimo" disclosure above it (kept sorted by reading
+    // from the already-sorted `tasks`).
+    const pendingApprovalMine = useMemo(
+        () => tasks.filter(
+            (t) => t.createdBy === currentUser?.uid && t.status === 'unapproved' && !t.isDeleted
+        ),
+        [tasks, currentUser?.uid]
+    );
+    const pendingApprovalIds = useMemo(
+        () => new Set(pendingApprovalMine.map((t) => t.id)),
+        [pendingApprovalMine]
+    );
+
     const sortedTasks = useMemo(() => {
-        let result = [...tasks];
+        // Exclude the user's own not-yet-approved tasks — they live in the disclosure above.
+        let result = tasks.filter((t) => !pendingApprovalIds.has(t.id));
 
         if (filterTag) {
             result = result.filter(t => t.tag === filterTag);
@@ -244,7 +261,7 @@ export default function WorkerView() {
         }
 
         return result;
-    }, [tasks, sortBy, filterTag, debouncedSearch]);
+    }, [tasks, sortBy, filterTag, debouncedSearch, pendingApprovalIds]);
 
     // Desktop data-grid wiring (worker subset). The worker's table headers carry priority/status
     // sort + the tag filter; there is no user/priority filter and no composite/manual sort here, so
@@ -337,6 +354,11 @@ export default function WorkerView() {
 
                 <DailyWorkProgress currentUser={currentUser} tasks={sortedTasks} />
 
+                <PendingApprovalDisclosure
+                    tasks={pendingApprovalMine}
+                    onEdit={handleEditTask}
+                    role="worker"
+                />
 
                 {sortedTasks.length === 0 ? (
                     <div className="rounded-card border border-line bg-surface-card shadow-sm">
