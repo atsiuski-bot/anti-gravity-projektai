@@ -11,7 +11,7 @@ import { cn } from '../utils/cn';
  * label pill (its per-second timer lives on the task card, not here). Renders nothing when idle.
  *
  * For a running task the pill also surfaces the task TITLE (from activeSession.taskTitle) next to
- * the calm "Vyksta darbas" label, so the worker can see WHAT is running without opening a card.
+ * the calm "Vyksta veikla" label, so the worker can see WHAT is running without opening a card.
  * Quick-work / call / break stay title-less by design (their readout is a live timer, not a task).
  *
  * This replaces the old full-width session strip: the icon + label still pairs with the

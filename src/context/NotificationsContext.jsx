@@ -5,6 +5,8 @@ import { useAuth } from './AuthContext';
 import { useToast } from './ToastContext';
 import { isManagerRole } from '../utils/formatters';
 import { registerFcmToken } from '../utils/messaging';
+import { notificationCopy, notificationSound } from '../notifications/registry';
+import { SoundManager } from '../utils/soundUtils';
 
 /**
  * App-wide notification state for managers — a single always-mounted source of the unread
@@ -36,35 +38,9 @@ function setAppBadge(count) {
     }
 }
 
-function copyFor(n) {
-    const task = n.taskTitle || 'WORKZ';
-    switch (n.type) {
-        // Worker → manager
-        case 'time_extension_request': return { title: 'Laiko pratęsimo prašymas', body: task };
-        case 'task_completion': return { title: 'Užduotis atlikta', body: task };
-        case 'task_approval': return { title: 'Nauja užduotis tvirtinimui', body: task };
-        case 'new_comment': return { title: 'Naujas komentaras', body: n.commentText ? `${task}: ${n.commentText}` : task };
-        // Manager → worker
-        case 'task_assigned': return { title: 'Nauja užduotis', body: task };
-        case 'task_approved': return { title: 'Užduotis patvirtinta', body: task };
-        case 'task_confirmed': return { title: 'Užduotis užbaigta ir priimta', body: task };
-        case 'task_reverted': return { title: 'Užduotis grąžinta taisyti', body: task };
-        case 'extension_granted': return { title: 'Laikas pratęstas', body: task };
-        case 'extension_denied': return { title: 'Laikas nepratęstas', body: task };
-        case 'calendar_decision': return {
-            title: n.decision === 'approved' ? 'Kalendoriaus pakeitimas patvirtintas' : 'Kalendoriaus pakeitimas atmestas',
-            body: 'Darbo kalendorius',
-        };
-        // Admin → worker: their logged (paid) time was corrected / removed.
-        case 'session_edited': return { title: 'Pakoreguotas darbo laikas', body: n.day || 'Darbo laikas' };
-        case 'session_deleted': return { title: 'Pašalintas darbo laikas', body: n.day || 'Darbo laikas' };
-        // Worker → manager: a logged-time error report.
-        case 'session_correction_request': return { title: 'Pranešimas apie darbo laiko klaidą', body: n.commentText ? `${n.day || 'Darbo laikas'}: ${n.commentText}` : (n.day || 'Darbo laikas') };
-        // System → admin: a new sign-up awaits approval.
-        case 'account_approval': return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'WORKZ' };
-        default: return { title: 'Naujas pranešimas', body: task };
-    }
-}
+// The toast copy and the per-type sound cue both come from the ONE notification registry
+// (src/notifications/registry.js), which the server's push copy mirrors — so the toast a user sees in
+// the foreground and the push they get in the background always read the same.
 
 export function NotificationsProvider({ children }) {
     const { currentUser, userRole, userData } = useAuth();
@@ -115,10 +91,18 @@ export function NotificationsProvider({ children }) {
                 // Suppress foreground toasts when the user has notifications off — but still mark
                 // these ids seen, so re-enabling does not retroactively toast the backlog.
                 if (notificationsEnabledRef.current) {
+                    let cue = null; // play ONE sound per snapshot batch — 'alert' outranks 'info'
                     fresh.forEach((n) => {
-                        const { title, body } = copyFor(n);
+                        const { title, body } = notificationCopy(n);
                         showToast(body, { title, tone: 'notification' });
+                        const s = notificationSound(n.type);
+                        if (s === 'alert') cue = 'alert';
+                        else if (s && !cue) cue = s;
                     });
+                    // The visible toast and an audible cue are now the SAME foreground event, for every
+                    // type — not just time-extensions, and not only while the bell panel is open. The OS
+                    // notification sound on a background push is separate (owned by the OS).
+                    if (cue) { try { SoundManager.playNotificationCue(cue); } catch { /* audio is best-effort */ } }
                 }
                 seenRef.current = ids;
             }

@@ -11,6 +11,7 @@ how the product should look and how the repo is run.
 | [`design/tokens.md`](./design/tokens.md) | Canonical design tokens (color/type/space/radius/shadow/z-index) + the proposed `tailwind.config.js` block. |
 | [`adr/`](./adr/) | Architecture Decision Records — the *why* behind major choices. |
 | [`decisions-log.md`](./decisions-log.md) | Chronological index of ADRs + notable inline decisions. **Read first for orientation.** |
+| [`guides/`](./guides/) | How-to procedures for recurring tasks — e.g. [`adding-a-notification.md`](./guides/adding-a-notification.md) (the step-by-step to add a new alert + its trigger). |
 
 ## Conventions
 

@@ -56,7 +56,7 @@ export default function WorkerView() {
     const [error, setError] = useState(null);
 
     // Task time monitoring — 80% warning and 100% limit
-    const { warningPopup, limitPopup, dismissWarning, dismissLimit } = useTaskTimeMonitor(tasks);
+    const { warningPopup, limitPopup, dismissWarning, requestExtension, finishFromLimit } = useTaskTimeMonitor(tasks);
 
     // Crash/reload recovery — auto-pause any task left "running" across a restart so
     // it cannot credit hours of ghost time on the next pause.
@@ -335,7 +335,7 @@ export default function WorkerView() {
                         <EmptyState
                             icon={ClipboardList}
                             title="Kol kas užduočių nėra"
-                            description="Kai vadovas priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą darbą ar skambutį mygtukais apačioje."
+                            description="Kai vadovas priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą veiklą ar skambutį mygtukais apačioje."
                             action={
                                 <Button
                                     variant="primary"
@@ -431,7 +431,9 @@ export default function WorkerView() {
                     task={limitPopup.task}
                     estimatedTime={limitPopup.estimatedTime}
                     actualMinutes={limitPopup.actualMinutes}
-                    onDismiss={dismissLimit}
+                    uid={currentUser?.uid}
+                    onRequestExtension={requestExtension}
+                    onFinish={finishFromLimit}
                 />
             )}
 

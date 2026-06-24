@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -16,7 +16,6 @@ import { useUndoableAction } from '../hooks/useUndoableAction';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
-import { SoundManager } from '../utils/soundUtils';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import EmptyState from './ui/EmptyState';
@@ -101,7 +100,6 @@ export default function ManagerNotifications({ onClose }) {
     const [bulkApprovingCal, setBulkApprovingCal] = useState(false); // batch "approve all calendar requests" in flight
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
     const [grantingExt, setGrantingExt] = useState(null); // notif.id of an in-flight one-tap time grant
-    const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
 
 
     // 1. Calendar Notifications (manager-only — workers don't monitor the team calendar)
@@ -151,13 +149,9 @@ export default function ManagerNotifications({ onClose }) {
                 ...doc.data()
             }));
 
-            // Play sound if a new time_extension_request appeared
-            const timeExtNotifs = notifs.filter(n => n.type === 'time_extension_request');
-            if (timeExtNotifs.length > prevTaskNotifCountRef.current) {
-                try { SoundManager.playBeep(); } catch (e) { /* ignore */ }
-            }
-            prevTaskNotifCountRef.current = timeExtNotifs.length;
-
+            // The audible cue for a new notification now lives on the always-on foreground plane
+            // (NotificationsContext → SoundManager.playNotificationCue), so it fires for every type and
+            // regardless of whether this panel is open — no per-panel playBeep needed here.
             setTaskNotifications(notifs);
         }, (error) => {
             console.error("ManagerNotifications: Task Notifications Listener Error:", error);
@@ -652,7 +646,7 @@ export default function ManagerNotifications({ onClose }) {
                                 <AlertCircle className="w-5 h-5 text-feedback-info mt-0.5 flex-shrink-0" />
                                 <div>
                                     <h4 className="font-medium text-feedback-info-text">
-                                        <UserChip userId={notif.userId} name={notif.userName} /> atnaujino darbo kalendorių
+                                        <UserChip userId={notif.userId} name={notif.userName} /> atnaujino veiklos kalendorių
                                     </h4>
                                     <div className="mt-2 text-sm text-feedback-info-text space-y-1">
                                         {notif.changes && notif.changes.map((change, index) => {
@@ -699,9 +693,9 @@ export default function ManagerNotifications({ onClose }) {
                         oldTimeRange = `${format(oldStart, 'HH:mm')} - ${format(oldEnd, 'HH:mm')}`;
                     }
                     
-                    const actionText = notif.type === 'delete' ? 'nori atšaukti (ištrinti) darbo laiką' :
-                                       notif.type === 'add' ? 'nori pridėti darbo laiką' :
-                                       'nori pakeisti darbo laiką';
+                    const actionText = notif.type === 'delete' ? 'nori atšaukti (ištrinti) veiklos laiką' :
+                                       notif.type === 'add' ? 'nori pridėti veiklos laiką' :
+                                       'nori pakeisti veiklos laiką';
 
                     return (
                         <div key={notif.id} className="bg-feedback-info-soft border border-feedback-info-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
@@ -781,14 +775,14 @@ export default function ManagerNotifications({ onClose }) {
 
                     // System → manager ACTION: a recurring job's usual assignee is away — reassign.
                     if (notif.type === 'recurring_reassign') {
-                        const task = notif.taskTitle ? `„${notif.taskTitle}“` : 'pasikartojantis darbas';
+                        const task = notif.taskTitle ? `„${notif.taskTitle}“` : 'pasikartojanti veikla';
                         return (
                             <div key={notif.id} className="rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                                 <div className="flex items-start gap-3">
                                     <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
                                     <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
                                         <p className="font-medium leading-relaxed">
-                                            Pasikartojantis darbas {task}: įprastas vykdytojas šiandien nepasiekiamas (atostogos / nebuvimas). Priskirkite kitą vykdytoją.
+                                            Pasikartojanti veikla {task}: įprastas vykdytojas šiandien nepasiekiamas (atostogos / nebuvimas). Priskirkite kitą vykdytoją.
                                         </p>
                                     </div>
                                 </div>
@@ -866,8 +860,8 @@ export default function ManagerNotifications({ onClose }) {
                         const who = formatDisplayName(notif.createdByName) || 'Administratorius';
                         const Icon = isDelete ? Trash2 : Edit;
                         const headline = isDelete
-                            ? `${who} pašalino Jūsų įrašytą darbo laiką`
-                            : `${who} pakoregavo Jūsų įrašytą darbo laiką`;
+                            ? `${who} pašalino Jūsų įrašytą veiklos laiką`
+                            : `${who} pakoregavo Jūsų įrašytą veiklos laiką`;
                         return (
                             <div key={notif.id} className="rounded-card border border-feedback-info-border bg-feedback-info-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl relative">
                                 <IconButton
@@ -992,9 +986,9 @@ export default function ManagerNotifications({ onClose }) {
                                     <div className="flex items-start gap-3">
                                         <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
                                         <div className="min-w-0 text-sm text-feedback-warning-text">
-                                            <p><UserChip userId={notif.userId} name={notif.userName} /> pranešė apie klaidą darbo laike:</p>
+                                            <p><UserChip userId={notif.userId} name={notif.userName} /> pranešė apie klaidą veiklos laike:</p>
                                             {notif.commentText && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
-                                            <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio darbuotojo dieną.</p>
+                                            <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio vykdytojo dieną.</p>
                                         </div>
                                     </div>
                                     <div className="mt-1 flex flex-wrap items-center justify-end gap-2">
@@ -1064,6 +1058,30 @@ export default function ManagerNotifications({ onClose }) {
                                             </div>
                                         </div>
                                     </div>
+
+                                    {/* Worker's note attached to the request (optional). */}
+                                    {notif.commentText && (
+                                        <blockquote className="rounded-control border-l-2 border-feedback-danger-border bg-surface-card px-3 py-2 text-sm italic text-ink">
+                                            „{notif.commentText}“
+                                        </blockquote>
+                                    )}
+
+                                    {/* Photos attached to the request (optional) — open full-size in a new tab. */}
+                                    {Array.isArray(notif.attachmentUrls) && notif.attachmentUrls.length > 0 && (
+                                        <div className="flex flex-wrap gap-2">
+                                            {notif.attachmentUrls.map((url, idx) => (
+                                                <a
+                                                    key={url}
+                                                    href={url}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="block h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                >
+                                                    <img src={url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
+                                                </a>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
 
                                 {/* Quick-grant chips — one tap extends the estimate and tells the worker,

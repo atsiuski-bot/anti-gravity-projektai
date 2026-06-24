@@ -29,7 +29,7 @@ export const SESSION_TYPES = ['quickWork', 'call', 'break', 'task'];
 export const SESSION_COLORS = {
     quickWork: {
         type: 'quickWork',
-        label: 'Greitas darbas',
+        label: 'Greita veikla',
         Icon: Zap,
         shell: 'bg-session-quickWork-shell',
         surface: 'bg-session-quickWork-surface',
@@ -62,7 +62,7 @@ export const SESSION_COLORS = {
     },
     task: {
         type: 'task',
-        label: 'Vyksta darbas',
+        label: 'Vyksta veikla',
         Icon: Hammer,
         shell: 'bg-session-task-shell',
         surface: 'bg-session-task-surface',

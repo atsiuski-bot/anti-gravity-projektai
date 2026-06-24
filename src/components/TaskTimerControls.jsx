@@ -7,6 +7,7 @@ import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole, resolveCompletionStatus } from '../utils/formatters';
 import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
+import { notify } from '../utils/notify';
 import { reopenTask, humanActor, MODES } from '../domain';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
@@ -429,7 +430,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         recipientId = userData?.defaultManager || null;
                     }
                     if (recipientId && recipientId !== currentUser.uid) {
-                        await addDoc(collection(db, 'request_notifications'), {
+                        // Worker-authored (userId = caller); notify() stamps provenance + registry category.
+                        await notify({
                             recipientId,
                             type: 'task_completion',
                             taskId: task.id,
@@ -439,8 +441,6 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                             userName: currentUser.displayName || currentUser.email || 'Vykdytojas',
                             userId: currentUser.uid,
                             completedAt: now.toISOString(),
-                            isRead: false,
-                            createdAt: new Date().toISOString()
                         });
                     }
                 } catch (notifErr) {
@@ -461,7 +461,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 // but a fat-finger / wrong-task tap deserves a quiet way back. Tapping "Atšaukti"
                 // re-arms the task to paused, clears completion, and voids this finish's segment.
                 showToast('Užduotis užbaigta. Galite atšaukti.', {
-                    title: 'Puikus darbas!',
+                    title: 'Puiki veikla!',
                     tone: 'success',
                     duration: FINISH_UNDO_WINDOW_MS,
                     onClick: () => undoFinish({ preFinishTimerMinutes, sessionDocRef })

@@ -214,7 +214,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
     );
 }
 
-export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, onToggle, onAdd, onDelete }) {
+export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, canToggle = canEdit, canManageItems = canEdit, onToggle, onAdd, onDelete }) {
     const [newItem, setNewItem] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     // Removing a checklist item writes through to Firestore, so it is gated behind a confirm.
@@ -267,8 +267,8 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                             <li key={item.id} className="flex items-stretch gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => canEdit && onToggle?.(item.id)}
-                                    disabled={!canEdit}
+                                    onClick={() => canToggle && onToggle?.(item.id)}
+                                    disabled={!canToggle}
                                     aria-pressed={!!item.done}
                                     className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-surface-sunken disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                 >
@@ -287,7 +287,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                                         )}
                                     </span>
                                 </button>
-                                {canEdit && (
+                                {canManageItems && (
                                     <IconButton
                                         icon={Trash2}
                                         label="Ištrinti punktą"
@@ -302,7 +302,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                     )}
                 </ul>
 
-                {canEdit && (
+                {canManageItems && (
                     <form onSubmit={handleAdd} onKeyDown={preventEnterSubmit} className="mt-auto flex gap-2 border-t border-line pt-4">
                         <input
                             type="text"
@@ -639,7 +639,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                                 }}
                                 className="w-full px-4 py-3 bg-feedback-warning-soft text-feedback-warning-text border border-feedback-warning-border text-sm font-medium rounded-lg hover:bg-feedback-warning-soft transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                             >
-                                Palikti darbo valandas, perbraukti užduotį ir ją užbaigti
+                                Palikti veiklos valandas, perbraukti užduotį ir ją užbaigti
                             </button>
                         )}
 
@@ -650,7 +650,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                             className={`w-full px-4 py-3 bg-feedback-danger-soft text-feedback-danger-text border border-feedback-danger-border text-sm font-bold rounded-lg hover:bg-feedback-danger-soft transition-colors flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-feedback-danger focus-visible:ring-offset-2 ${isTask ? 'text-left' : 'justify-center'} leading-tight`}
                         >
                             <Trash2 className="w-5 h-5 flex-shrink-0" />
-                            <span>{isTask ? 'IŠTRINTI DARBO VALANDAS ir visą užduotį' : 'IŠTRINTI'}</span>
+                            <span>{isTask ? 'IŠTRINTI VEIKLOS VALANDAS ir visą užduotį' : 'IŠTRINTI'}</span>
                         </button>
                     </div>
                 </div>

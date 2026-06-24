@@ -29,11 +29,11 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
     };
 
     return (
-        <Modal open onClose={onClose} title="Greito darbo aprašymas" size="md" initialFocusRef={textareaRef}>
+        <Modal open onClose={onClose} title="Greitos veiklos aprašymas" size="md" initialFocusRef={textareaRef}>
             <form onSubmit={handleSubmit} className="flex flex-col">
                 <p className="text-body text-ink-muted mb-4 flex items-start gap-2">
                     <Zap className="w-5 h-5 text-session-quickWork-accent fill-current shrink-0 mt-0.5" aria-hidden="true" />
-                    Ši greito darbo sesija buvo užbaigta kitame įrenginyje, todėl liko be aprašymo.
+                    Ši greitos veiklos sesija buvo užbaigta kitame įrenginyje, todėl liko be aprašymo.
                     Aprašykite, ką nuveikėte.
                 </p>
 
@@ -53,7 +53,7 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
                         id="describeQuickWorkTextarea"
                         name="taskDescription"
                         defaultValue=""
-                        placeholder="Trumpai aprašykite atliktą darbą..."
+                        placeholder="Trumpai aprašykite atliktą veiklą..."
                         rows={4}
                         className="w-full p-3 text-body-lg text-left border-2 border-line rounded-card bg-surface-card text-ink-strong resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                         required
@@ -121,14 +121,14 @@ export default function QuickWorkDescribePrompt() {
 
     return (
         <section
-            aria-label="Neaprašytos greito darbo sesijos"
+            aria-label="Neaprašytos greitos veiklos sesijos"
             className="mb-4 rounded-card border border-line border-l-4 border-l-session-quickWork-accent bg-surface-card p-4 shadow-sm"
         >
             <div className="flex items-start gap-3">
                 <Zap className="h-5 w-5 shrink-0 text-session-quickWork-accent fill-current mt-0.5" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
                     <h2 className="text-body-lg font-bold text-ink-strong">
-                        Neaprašytos greito darbo sesijos ({items.length})
+                        Neaprašytos greitos veiklos sesijos ({items.length})
                     </h2>
                     <p className="text-caption text-ink-muted mt-0.5">
                         Šios sesijos buvo užbaigtos kitame įrenginyje. Pridėkite, ką nuveikėte, kad jos
