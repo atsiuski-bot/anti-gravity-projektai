@@ -823,7 +823,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
     );
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {/* TABS — Veiklos ataskaita / Pridavimas / Istorija. These are team/oversight surfaces,
                 so the switcher only appears in the manager team view. In a personal report (worker,
                 or a manager viewing their OWN data via viewRole="worker") there is just one view, so
