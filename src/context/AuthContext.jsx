@@ -209,7 +209,13 @@ export function AuthProvider({ children }) {
                 // Check periodically (e.g., every minute)
                 expirationCheckInterval = setInterval(checkExpiration, 60000);
 
-                // Subscribe to User Document changes (Role + Break State + Disabled Status)
+                // Subscribe to User Document changes (Role + Break State + Disabled Status).
+                // Detach any listener left over from a previous auth identity first, so a
+                // re-login never stacks a second listener on top of the old one.
+                if (unsubscribeSnapshot) {
+                    unsubscribeSnapshot();
+                    unsubscribeSnapshot = null;
+                }
                 const userRef = doc(db, 'users', user.uid);
 
                 // We use onSnapshot to get real-time updates for role and break status
@@ -295,6 +301,13 @@ export function AuthProvider({ children }) {
                         }
                     }
                 }, (error) => {
+                    // A permission-denied that arrives because the user just SIGNED OUT is expected
+                    // teardown noise, not a first-login race: the listener outlives the auth session
+                    // for a tick. Swallow it and bail — retrying processUserAfterLogin here against the
+                    // now-stale user is what used to leave the logout half-finished and hang the page.
+                    if (error.code === 'permission-denied' && !auth.currentUser) {
+                        return;
+                    }
                     logError(error, { source: 'onSnapshot:authUser' });
                     // On permission-denied, the user document may not exist yet (first login).
                     // Retry creating it so the snapshot can re-attach successfully.
@@ -310,6 +323,14 @@ export function AuthProvider({ children }) {
 
             } else {
                 if (expirationCheckInterval) clearInterval(expirationCheckInterval);
+                // Detach the user-document listener bound to the session that just ended. Leaving it
+                // attached makes it fire a permission-denied the moment auth clears, and the stale
+                // listener (still backed by the persistent cache) fights the cleared state — the race
+                // that hung the page on logout.
+                if (unsubscribeSnapshot) {
+                    unsubscribeSnapshot();
+                    unsubscribeSnapshot = null;
+                }
                 setCurrentUser(null);
                 setUserRole(null);
                 setBreakState(null);

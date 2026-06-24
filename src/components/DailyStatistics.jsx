@@ -1204,7 +1204,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     holds it on desktop is hidden on phones), centred and a notch larger than the
                     desktop caption so the date and its totals read as one merged block. */}
                 {isRange && (
-                    <div className="flex items-center justify-center gap-2 border-b border-line pb-2.5 mb-2.5 text-center">
+                    <div className="flex items-center justify-center gap-2 border-b border-line pb-2.5 mb-2.5 text-center min-h-touch">
                         <Calendar className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
                         <span className="text-body font-semibold text-ink-strong tabular-nums">
                             {rangeStart} – {rangeEnd}

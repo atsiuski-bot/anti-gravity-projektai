@@ -99,6 +99,11 @@ identity and its best glanceable signal from arm's length. We are **not** muting
   `surface` cards layered above the colored shell, so text contrast is judged against the
   card, not the saturated background. Any text placed *directly* on a colored shell must meet
   §7 contrast or be moved onto a chip/card.
+- **E) The shell is theme-reactive (ADR 0016).** The four hues are the identity, but the *tone*
+  follows the canvas: light mode keeps the pale tints (saturated red for quick-work); dark mode
+  swaps them for deep `*-900` tones of the same hue, so the loud state still reads as
+  red/blue/amber/green without glaring on the near-black canvas. On-shell text is white in dark
+  (all four shells are deep), pinned via `.wz-on-shell` keyed off `data-session-shell` + `data-theme`.
 
 ---
 
