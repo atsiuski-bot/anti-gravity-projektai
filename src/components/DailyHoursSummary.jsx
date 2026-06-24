@@ -181,11 +181,7 @@ export default function DailyHoursSummary() {
                 {Object.entries(dailyStats).map(([userId, userData]) => (
                     <li key={userId} className="p-4">
                         <div className="flex items-center gap-2">
-                            <div
-                                className="w-3 h-3 rounded-full flex-shrink-0"
-                                style={{ backgroundColor: userData.color }}
-                            />
-                            <UserChip userId={userId} name={userData.name} className="text-sm font-medium text-ink-strong truncate" />
+                            <UserChip userId={userId} name={userData.name} colorDot={userData.color} className="truncate" />
                         </div>
                         <dl className="mt-3 grid grid-cols-1 gap-1.5">
                             {dayNames.map((day) => {
@@ -242,11 +238,7 @@ export default function DailyHoursSummary() {
                             <tr key={userId} className="hover:bg-surface-sunken">
                                 <th scope="row" className="px-4 py-3 whitespace-nowrap sticky left-0 bg-surface-card text-left font-normal">
                                     <div className="flex items-center gap-2">
-                                        <div
-                                            className="w-3 h-3 rounded-full flex-shrink-0"
-                                            style={{ backgroundColor: userData.color }}
-                                        />
-                                        <UserChip userId={userId} name={userData.name} className="text-sm font-medium text-ink-strong truncate max-w-[120px]" />
+                                        <UserChip userId={userId} name={userData.name} colorDot={userData.color} className="truncate max-w-[120px]" />
                                     </div>
                                 </th>
                                 {dayNames.map((day, idx) => {

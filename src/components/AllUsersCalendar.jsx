@@ -305,7 +305,7 @@ export default function AllUsersCalendar() {
                                         const baseBar = "absolute top-1 h-6 p-0 rounded-full border border-line shadow-sm flex items-center justify-center hover:brightness-105 transition-all z-10";
                                         const pill = (
                                             <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-caption font-bold bg-surface-card text-ink border border-white/50 shadow-sm z-20 relative whitespace-nowrap leading-tight">
-                                                <UserChip userId={user.id} name={user.displayName} linkToProfile={false} />
+                                                <UserChip userId={user.id} name={user.displayName} linkToProfile={false} bare />
                                                 {status && (
                                                     <>
                                                         <status.Icon className="w-3.5 h-3.5" aria-hidden="true" />
@@ -387,7 +387,7 @@ export default function AllUsersCalendar() {
                                                 The name truncates with an ellipsis when it would
                                                 overflow the phone width; the hours never shrink. */}
                                             <div className="flex items-baseline gap-2 min-w-0 flex-1">
-                                                <UserChip userId={user.id} name={user.displayName} linkToProfile={false} className="text-body font-semibold text-ink-strong truncate min-w-0" />
+                                                <UserChip userId={user.id} name={user.displayName} linkToProfile={false} className="truncate min-w-0" />
                                                 <span className="text-caption text-ink-muted font-medium tabular-nums whitespace-nowrap flex-shrink-0">
                                                     {format(event.start, 'HH:mm')}–{format(event.end, 'HH:mm')}
                                                 </span>

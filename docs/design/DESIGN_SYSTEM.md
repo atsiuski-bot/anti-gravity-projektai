@@ -261,19 +261,28 @@ Each replaces a cluster of today's copy-pasted variants (see
 
 ### Task people — `AssigneeChip` · `UserChip` · `PersonSelect`
 
-A task always has two people: the **Vykdytojas** (assignee — who does the work) and the
-**Vadovas** (manager/auditor — who oversees and signs it off). They are **one visual language**
-across the whole app: a person reads the **same — avatar + formatted name at one calm size
-(`caption` weight)** — whether you are *looking at* them or *choosing* them. There are exactly
-three components; never render a bare assignee/manager name or hand-roll a name dropdown.
+Every person — assignee (**Vykdytojas**), manager (**Vadovas**), comment author, notification
+actor, roster row — reads as **one visual language**: an **avatar + formatted name in one calm
+pill**, at a size owned by the component, not by the call site. There is exactly **one display
+primitive** (`UserChip`) with one colour-dot variant (`AssigneeChip`) and one picker
+(`PersonSelect`); never render a bare name or hand-roll a name dropdown.
 
-- **Showing — `AssigneeChip`** ([src](../../src/components/task/AssigneeChip.jsx)) for the
-  assignee: a small **leading dot in the worker's identity colour** + avatar + name. The colour
-  belongs to the *doer* (the same colour the session cards and calendar use) and is paired with
-  the avatar/name, so colour is never the only signal.
-- **Showing — `UserChip`** ([src](../../src/components/UserChip.jsx)) for the manager, preceded
-  by the short literal label **`Vad.`**: avatar + name, **no colour dot** (the overseer carries
-  no worker colour). The same chip renders any other person (comment author, notification actor).
+- **Showing — `UserChip`** ([src](../../src/components/UserChip.jsx)) is THE person chip: a calm
+  pill (`bg-surface-sunken` + hairline border) holding avatar + name. The **`size` prop alone**
+  owns the proportions — avatar px · text size · weight · padding — so the same person can never
+  drift to a different size between two screens (the bug this standard exists to kill). Two sizes:
+  - `sm` (default) — 24px avatar + 14px name. The universal in-content chip: mentions, comments,
+    notifications, list rows, task-card people.
+  - `md` — 36px avatar + 16px name. Use only when the person **is** the subject of the row/section
+    (roster identity, live-session row); tall enough to be its own 44px tap target.
+
+  Profile **headers** are a separate, deliberately large treatment — they use `Avatar size="lg"`
+  directly, not a pill.
+- **Showing the assignee — `AssigneeChip`** ([src](../../src/components/task/AssigneeChip.jsx)) is
+  a thin wrapper over `UserChip`: the **same pill**, plus a small **leading dot in the worker's
+  identity colour** (the colour belongs to the *doer* — the same one the session cards and calendar
+  use). Colour is paired with the avatar/name, so it is never the only signal. The manager chip is
+  the plain `UserChip`, preceded by the short literal label **`Vad.`**.
 - **Choosing — `PersonSelect`** ([src](../../src/components/ui/PersonSelect.jsx)): the **one** way
   a person is picked. It wraps `Select` so the **avatar + name show on the trigger AND in every
   option row**, mirroring the chips above — picking someone looks like the someone you picked.
@@ -282,8 +291,15 @@ three components; never render a bare assignee/manager name or hand-roll a name 
 Binding rules:
 - Names **always** run through `formatDisplayName` ("Jonas Kazlauskas" → "Jonas K."), everywhere,
   so the picker and the cards agree. Avatars resolve from the live users map (fresh photo/name).
-- All three are **clickable → profile** when a uid is known, and **degrade to static text**
-  (still with the avatar) when only a legacy name is carried.
+- Call sites pass **layout classes only** (`truncate` / `max-w-*` / margin / `min-w-0`) via
+  `className` — **never** font size, weight or colour. Pick the look with `size`, not with classes.
+- `bare` drops the pill (avatar + name, typography inherited) for the **one** case where the chip
+  is nested inside a control that already draws the pill + owns the type scale (a multi-select
+  toggle, a dense calendar event label) — never to "make it smaller" elsewhere.
+- A pill sits on a calm surface; if it would land on `bg-surface-sunken` (e.g. an inset comment
+  card), give that container `bg-surface-card` so the chip keeps its contrast.
+- The chip is **clickable → profile** when a uid is known, and **degrades to static** (still the
+  avatar + name pill) when only a legacy name is carried.
 - On the **create/edit form** the assignee and the Vadovas sit **side by side on one row**, each a
   `PersonSelect`; a non-manager sees their own name read-only in the same box shape. Defaults:
   assignee = self; manager = the creator's default manager, or the creating manager themselves.
@@ -408,8 +424,9 @@ filters `isRead==false`). This is the right shape for the bell's approve / confi
 - [ ] Reused the canonical component (§8) instead of a new bespoke shell.
 - [ ] Single-choice controls use `Select` (§8), never a raw `<select>` or a hand-rolled menu;
   the field/category label is the panel heading, not the first option.
-- [ ] A task's people use the §8 "Task people" standard — `AssigneeChip` / `UserChip` to show,
-  `PersonSelect` to choose; never a bare assignee/manager name or a plain `Select` of names.
+- [ ] **Any** person uses the §8 "Task people" standard — `UserChip` (or `AssigneeChip`) to show,
+  `PersonSelect` to choose; never a bare name or a plain `Select` of names. The chip's size comes
+  from its `size` prop only — `className` carries layout (truncate/max-w/margin), never font/colour.
 - [ ] Motion (if any) uses a §12 utility, animates only `transform`/`opacity`, and is covered by
   the reduced-motion guard. No bounce/elastic, no animated layout properties, no new ambient loop
   where one already exists in that region.

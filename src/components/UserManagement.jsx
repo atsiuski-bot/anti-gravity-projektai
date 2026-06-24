@@ -116,13 +116,13 @@ function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId,
                                 type="button"
                                 aria-pressed={selected}
                                 onClick={() => onToggle(c.id)}
-                                className="inline-flex min-h-touch items-center gap-1 py-1 pl-1.5 pr-2.5 text-caption text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                className="inline-flex min-h-touch items-center gap-1.5 py-1 pl-2 pr-2.5 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                             >
                                 {selected && <Check className="h-3.5 w-3.5 shrink-0 text-brand" aria-hidden="true" />}
-                                {/* Standard person rendering: avatar + name (UserChip), at the small
-                                    size — non-interactive (linkToProfile=false) so it nests cleanly
-                                    inside this toggle button. */}
-                                <UserChip userId={c.id} name={cName} size="sm" linkToProfile={false} />
+                                {/* Standard person rendering: avatar + name (UserChip), rendered `bare`
+                                    (no own pill) + non-interactive (linkToProfile=false) so it nests
+                                    cleanly inside this toggle, which is itself the pill + tap target. */}
+                                <UserChip userId={c.id} name={cName} bare linkToProfile={false} />
                             </button>
                             {onSetPrimary && selected && (
                                 <button
@@ -923,7 +923,7 @@ export default function UserManagement() {
                                         name={user.displayName || 'Be vardo'}
                                         size="md"
                                         block
-                                        className="min-w-0 text-body font-semibold text-ink-strong"
+                                        className="min-w-0"
                                     />
                                     <DisabledPill user={user} />
                                     <NewUserBadge user={user} />

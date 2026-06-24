@@ -167,7 +167,7 @@ export default function MonthlyHours({ users }) {
                                                             <UserChip
                                                                 userId={user.userId}
                                                                 name={user.name}
-                                                                className="block truncate text-body font-medium text-ink-strong"
+                                                                className="truncate min-w-0"
                                                             />
                                                             <div className="mt-2 flex items-end justify-between gap-3">
                                                                 <span className="inline-flex items-center gap-1.5 font-mono text-h2 font-bold text-brand">
@@ -199,7 +199,6 @@ export default function MonthlyHours({ users }) {
                                                                         <UserChip
                                                                             userId={user.userId}
                                                                             name={user.name}
-                                                                            className="text-body font-medium text-ink-strong"
                                                                         />
                                                                     </td>
                                                                     <td className="px-4 py-2 text-right">

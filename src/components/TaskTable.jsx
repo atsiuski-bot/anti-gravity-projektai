@@ -559,7 +559,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             <div className="text-caption">
                                                 <div className="flex items-center gap-1.5">
                                                     <MessageCircle className="w-3.5 h-3.5 text-brand flex-shrink-0" aria-hidden="true" />
-                                                    <UserChip userId={last.userId} name={last.user} className="font-semibold text-brand" />
+                                                    <UserChip userId={last.userId} name={last.user} />
                                                     <span className="text-ink-muted">{new Date(last.createdAt).toLocaleDateString()}</span>
                                                 </div>
                                                 <div className="text-ink leading-snug break-words pl-4 line-clamp-2">{last.text}</div>

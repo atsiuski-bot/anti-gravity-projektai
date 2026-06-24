@@ -1979,10 +1979,7 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
             )}
 
             <div className="flex flex-wrap items-center gap-2 mb-2 text-caption text-ink-muted">
-                <div className="bg-surface-sunken px-1.5 py-0.5 rounded flex items-center gap-1">
-                    <User className="w-3 h-3" />
-                    <UserChip userId={task.assignedUserId} name={userName} className="font-medium" />
-                </div>
+                <UserChip userId={task.assignedUserId} name={userName} />
                 <div className="bg-surface-sunken px-1.5 py-0.5 rounded font-mono">
                     {/* Logged time is read-only here; corrections are made on the day timeline via
                         the per-session editor (start/end), not as a task-total delta. */}
@@ -2054,10 +2051,10 @@ function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, o
             </div>
 
             {task.comments && task.comments.length > 0 && (
-                <div className="mt-2 bg-surface-sunken rounded p-2 text-xs text-ink-muted">
+                <div className="mt-2 bg-surface-card border border-line rounded p-2 text-xs text-ink-muted">
                     {task.comments.slice(-2).map((c, i) => (
                         <div key={i} className="mb-1 last:mb-0">
-                            <span className="font-bold">{c.user}:</span> {c.text}
+                            <UserChip userId={c.userId} name={c.user} />: {c.text}
                         </div>
                     ))}
                     {task.comments.length > 2 && (
@@ -2205,7 +2202,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                             <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                                             {task.comments.map((comment, idx) => (
                                                                 <div key={idx} className="text-caption text-ink-muted mb-1">
-                                                                    <span className="font-medium">{comment.user}:</span> {comment.text}
+                                                                    <UserChip userId={comment.userId} name={comment.user} />: {comment.text}
                                                                 </div>
                                                             ))}
                                                         </div>

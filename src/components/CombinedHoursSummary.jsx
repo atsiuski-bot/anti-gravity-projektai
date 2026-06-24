@@ -244,11 +244,7 @@ export default function CombinedHoursSummary() {
                                     {/* User Info — sits directly above this worker's rows so the
                                         name and its Planuota/Dirbta figures read as one group. */}
                                     <div className="flex items-center gap-2 mb-1.5">
-                                        <div
-                                            className="w-3 h-3 rounded-full flex-shrink-0"
-                                            style={{ backgroundColor: user.color }}
-                                        />
-                                        <UserChip userId={user.id} name={user.name} className="text-sm font-semibold text-ink-strong truncate" />
+                                        <UserChip userId={user.id} name={user.name} colorDot={user.color} className="truncate" />
                                     </div>
 
                                     {/* Bars Area — indented under the name to bind them visually */}

@@ -868,7 +868,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                     {task.comments.map((comment, idx) => (
                                         <div key={idx} className="text-caption text-ink mb-1">
-                                            <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
+                                            <UserChip userId={comment.userId} name={comment.user} />: {comment.text}
                                         </div>
                                     ))}
                                 </div>
@@ -955,7 +955,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                                 <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
                                                 {task.comments.map((comment, idx) => (
                                                     <div key={idx} className="text-caption text-ink mb-1">
-                                                        <UserChip userId={comment.userId} name={comment.user} className="font-medium" />: {comment.text}
+                                                        <UserChip userId={comment.userId} name={comment.user} />: {comment.text}
                                                     </div>
                                                 ))}
                                             </div>

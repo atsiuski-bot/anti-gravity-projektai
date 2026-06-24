@@ -254,7 +254,7 @@ const ActiveSessionRow = React.memo(({ session }) => {
                     <UserChip
                         userId={session.userId}
                         name={session.userName}
-                        className="min-w-0 font-semibold text-sm"
+                        className="min-w-0"
                     />
                     {isStale && (
                         <span className="inline-flex items-center whitespace-nowrap rounded-full border border-feedback-warning-border bg-feedback-warning-soft px-1.5 py-0.5 text-caption font-semibold text-feedback-warning-text">

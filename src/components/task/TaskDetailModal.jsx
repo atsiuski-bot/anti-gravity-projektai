@@ -293,7 +293,7 @@ export default function TaskDetailModal({
                             {showManagerLine && managerName && !samePerson && (
                                 <span className="inline-flex items-center gap-1.5 text-caption text-ink-muted">
                                     Vad.
-                                    <UserChip userId={managerId} name={managerName} className="font-medium text-feedback-info-text" />
+                                    <UserChip userId={managerId} name={managerName} />
                                 </span>
                             )}
                         </div>
@@ -361,10 +361,10 @@ export default function TaskDetailModal({
                                     const isDeleting = deletingKey === ckey;
                                     const mayEdit = canManage || (c.userId && c.userId === currentUser?.uid);
                                     return (
-                                        <div key={ckey ?? idx} className="rounded-card bg-surface-sunken p-3">
+                                        <div key={ckey ?? idx} className="rounded-card border border-line bg-surface-card p-3">
                                             <div className="mb-1 flex items-start justify-between gap-2">
                                                 <div className="flex items-center gap-2">
-                                                    <UserChip userId={c.userId} name={c.user} className="text-caption font-semibold text-ink-strong" />
+                                                    <UserChip userId={c.userId} name={c.user} />
                                                     <span className="text-caption text-ink-muted">{new Date(c.createdAt).toLocaleDateString('lt-LT')}</span>
                                                 </div>
                                                 {mayEdit && !isEditing && !isDeleting && (
