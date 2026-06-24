@@ -960,20 +960,32 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     }
                 }
 
-                // Tell the worker about manager-side edits that concern them. Both are gated on
-                // "assignee is someone other than me" so a self-edit never notifies the author.
-                const assignee = formData.assignedUserId;
-                const actor = { actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email };
-                if (assignee && assignee !== currentUser.uid) {
-                    // The estimate was lifted on a task whose limit the worker had already hit →
-                    // their time-extension request was effectively granted.
-                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
-                        await notify({ recipientId: assignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                // Tell the worker(s) about a manager-side edit that concerns them — ONE notice per
+                // save, chosen by precedence so a single edit never fans out into several pings:
+                //   1. reassigned        → the NEW assignee gets "assigned", the OLD one "unassigned";
+                //   2. estimate lifted after the limit was hit → "time extended" (the specific story);
+                //   3. any other field   → "edited".
+                // All are gated on "the affected person isn't the editor" so a self-edit is silent,
+                // and the whole branch is skipped when handleEditAndApprove already sent the combined
+                // "approved + edited" notice (__suppressEditNotice), so approve-and-edit stays one ping.
+                const newAssignee = formData.assignedUserId;
+                const oldAssignee = task.assignedUserId;
+                const editorUid = currentUser.uid;
+                const actor = { actorUid: editorUid, actorName: currentUser.displayName || currentUser.email };
+                const reassigned = oldAssignee !== newAssignee && !reassignmentFailed;
+
+                if (reassigned) {
+                    if (newAssignee && newAssignee !== editorUid) {
+                        await notify({ recipientId: newAssignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
-                    // The task was (re)assigned to a new worker — but only notify if the reassignment
-                    // write actually landed (a failed assignTask must not announce a non-existent move).
-                    if (task.assignedUserId !== assignee && !reassignmentFailed) {
-                        await notify({ recipientId: assignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    if (oldAssignee && oldAssignee !== editorUid) {
+                        await notify({ recipientId: oldAssignee, type: 'task_unassigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    }
+                } else if (newAssignee && newAssignee !== editorUid) {
+                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
+                        await notify({ recipientId: newAssignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                    } else if (!task.__suppressEditNotice) {
+                        await notify({ recipientId: newAssignee, type: 'task_edited', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
                 }
             } else {

@@ -141,6 +141,9 @@ function copyForRequestNotification(n) {
                 : '';
             return { title: 'Naujas komentaras', body: snippet ? `${title}: ${snippet}` : title };
         }
+        case 'new_photo':
+            // Fired to the other party when a photo is added from the task sheet (uploader dropped client-side).
+            return { title: 'Nauja nuotrauka', body: title };
         // Manager → worker
         case 'task_assigned':
             return { title: 'Nauja užduotis', body: title };
@@ -151,12 +154,20 @@ function copyForRequestNotification(n) {
             // System → admin: a new sign-up awaits approval. Body = the pending user's name/email.
             return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'WORKZ' };
         case 'task_approved':
-            return { title: 'Užduotis patvirtinta', body: title };
+            // `edited` collapses approve+edit into one notice (mirror of the registry variant).
+            return { title: n.edited ? 'Užduotis patvirtinta ir pakeista' : 'Užduotis patvirtinta', body: title };
+        case 'task_edited':
+            return { title: 'Užduotis pakeista', body: title };
+        case 'task_unassigned':
+            return { title: 'Užduotis nebepriskirta jums', body: title };
+        case 'task_deleted':
+            return { title: 'Užduotis ištrinta', body: title };
         case 'task_confirmed':
             // COMPLETION-gate vocabulary is "priimta" (kept in lockstep with the toast + Reports tab).
             return { title: 'Užduotis užbaigta ir priimta', body: title };
         case 'task_reverted':
-            return { title: 'Užduotis grąžinta taisyti', body: title };
+            // `edited` collapses return+edit into one notice (mirror of the registry variant).
+            return { title: n.edited ? 'Užduotis grąžinta taisyti ir pakeista' : 'Užduotis grąžinta taisyti', body: title };
         case 'extension_granted':
             return { title: 'Laikas pratęstas', body: title };
         case 'extension_denied':
@@ -170,6 +181,9 @@ function copyForRequestNotification(n) {
             return { title: 'Pakoreguotas veiklos laikas', body: n.day || 'Veiklos laikas' };
         case 'session_deleted':
             return { title: 'Pašalintas veiklos laikas', body: n.day || 'Veiklos laikas' };
+        case 'session_auto_closed':
+            // System → worker: a forgotten secondary-session timer was auto-closed + time credited.
+            return { title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' };
         case 'session_correction_request':
             // Worker → manager: a logged-time error report. Body = "day: note" (note clamped) or day.
             return {
@@ -186,6 +200,12 @@ function copyForRequestNotification(n) {
                 title: 'Artėja terminas',
                 body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'WORKZ'),
             };
+        case 'achievement':
+            // System → worker: a newly-earned badge tier. Body = "Badge: Tier" (mirror of the registry).
+            return { title: 'Naujas ženkliukas', body: n.badgeName ? (n.tierName ? `${n.badgeName}: ${n.tierName}` : n.badgeName) : 'WORKZ' };
+        case 'task_overdue':
+            // System → manager: a task's deadline passed while still unfinished.
+            return { title: 'Praleistas terminas', body: title };
         default:
             return { title: 'WORKZ pranešimas', body: title };
     }
@@ -195,8 +215,11 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
     const n = event.data && event.data.data();
     if (!n || !n.recipientId) return;
     const { title, body } = copyForRequestNotification(n);
-    // Calendar decisions land the worker on their calendar; everything else on tasks.
-    const link = n.type === 'calendar_decision' ? '/?tab=calendar' : '/?tab=tasks';
+    // Deep-link MIRROR of the registry: calendar decisions → the calendar, a badge → the profile,
+    // everything else → tasks.
+    const link = n.type === 'calendar_decision' ? '/?tab=calendar'
+        : n.type === 'achievement' ? '/?tab=profile'
+        : '/?tab=tasks';
     try {
         await sendToUser(n.recipientId, { title, body }, {
             type: String(n.type || ''),
@@ -383,18 +406,29 @@ async function grantTier(uid, key, tier) {
     return reached;
 }
 
-// Background push for a newly-reached tier. The FOREGROUND in-app toast is a client listener on
-// the same subcollection (added with the profile phase); this is the closed-app case. Reuses the
-// existing FCM sender, which honours the recipient's notification toggle.
+// Announce a newly-reached tier through the UNIFIED notification spine: one request_notifications
+// doc gives the worker a bell row AND the FCM push (notifyOnRequestNotification renders it from the
+// registry mirror and deep-links to the profile). Routing it here — instead of the old direct
+// sendToUser push — means a badge now PERSISTS in the bell like every other notification, not just
+// a transient lockscreen ping. The FOREGROUND toast stays owned by AchievementCelebrator (a client
+// listener on the achievements subcollection); NotificationsContext suppresses its own toast for
+// type 'achievement' so the two don't double up. The deterministic-ish create is best-effort: a
+// re-fired grant can't reach here (grantTier returns 0 on a re-grant), so no dedupe key is needed.
 async function announceBadge(uid, key, tier) {
     const badge = BADGES[key];
     try {
-        await sendToUser(uid, { title: 'Naujas ženkliukas', body: `${badge.name}: ${TIER_NAMES[tier]}` }, {
+        await db.collection('request_notifications').add({
+            recipientId: uid,
             type: 'achievement',
+            category: 'info',
             badgeId: key,
-            tier: String(tier),
-            notifId: `${key}:${tier}`,
-            link: '/?tab=profile'
+            badgeName: badge.name,
+            tierName: TIER_NAMES[tier],
+            tier: Number(tier),
+            isRead: false,
+            createdAt: new Date().toISOString(),
+            // Provenance: system-authored (admin SDK bypasses the client provenance rule).
+            createdBy: 'system_achievement',
         });
     } catch (err) {
         logger.error('announceBadge failed', { uid, key, tier, err: err.message });
@@ -1206,6 +1240,25 @@ async function autoCloseForgottenSessions() {
             }
             await docSnap.ref.update(updates);
 
+            // Tell the worker their forgotten timer was auto-closed and time credited — so recovered
+            // paid time is never an unexplained entry. Only when real time was logged (a sub-minute
+            // orphan closes invisibly, mirroring the client recovery notice). One doc → bell + push.
+            if (durationMinutes > MIN_LOGGED_SECONDARY_MINUTES) {
+                try {
+                    await db.collection('request_notifications').add({
+                        recipientId: uid,
+                        type: 'session_auto_closed',
+                        category: 'info',
+                        day: date,
+                        isRead: false,
+                        createdAt: nowIso,
+                        createdBy: 'system_session_autoclose',
+                    });
+                } catch (err) {
+                    logger.warn('autoCloseForgottenSessions notify failed', { uid, err: err.message });
+                }
+            }
+
             closed += 1;
             if (samples.length < SAMPLE_LIMIT) samples.push({ uid, type: session.type, durationMinutes: Math.round(durationMinutes) });
             audits.push({ uid, type: session.type, startIso: session.startTime, durationMinutes: Math.round(durationMinutes) });
@@ -1707,6 +1760,70 @@ exports.escalateTaskPriorities = onSchedule(
         }
 
         logger.info('escalateTaskPriorities done', { todayStr, escalated, notified });
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Overdue-deadline oversight — tell the MANAGER when an unfinished task's deadline has passed.
+// ---------------------------------------------------------------------------
+//
+// Runs once a day, just after the priority escalation. A task is overdue when its deadline day is
+// strictly BEFORE today (Vilnius) and it is still unfinished (same not-done status set the
+// escalation scans). The recipient is the TASK's manager (managerId) — oversight, not the worker.
+//
+// Re-notify guard: the task carries `overdueNotifiedFor = <deadline day>`. We notify once per
+// deadline value, so a daily re-run does NOT re-ping; moving the deadline to a new (still-past) day
+// re-arms it exactly once. The single-field `status in` query needs no composite index.
+exports.notifyOverdueTasks = onSchedule(
+    { schedule: 'every day 04:45', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const todayStr = lithuanianDay(new Date());
+
+        let snap;
+        try {
+            snap = await db.collection('tasks')
+                .where('status', 'in', ['pending', 'in-progress', 'approved']).get();
+        } catch (err) {
+            logger.error('notifyOverdueTasks query failed', { err: err.message });
+            return;
+        }
+
+        let notified = 0;
+        for (const docSnap of snap.docs) {
+            const t = docSnap.data();
+            if (!t.deadline) continue;
+
+            const deadlineDate = new Date(t.deadline);
+            if (Number.isNaN(deadlineDate.getTime())) continue;
+            const deadlineStr = lithuanianDay(deadlineDate);
+            if (deadlineStr >= todayStr) continue;            // not past yet
+            if (t.overdueNotifiedFor === deadlineStr) continue; // already pinged for this deadline
+
+            const recipientId = t.managerId;
+            if (!recipientId) continue;                        // no manager to inform
+
+            const nowIso = new Date().toISOString();
+            try {
+                await db.collection('request_notifications').add({
+                    recipientId,
+                    type: 'task_overdue',
+                    category: 'info',
+                    taskId: docSnap.id,
+                    taskTitle: t.title || 'Veikla',
+                    isRead: false,
+                    createdAt: nowIso,
+                    createdBy: 'system_overdue',
+                });
+                // Latch on the deadline value so a daily re-run stays quiet (best-effort: a failed
+                // notify above leaves the latch unset, so the next run retries).
+                await docSnap.ref.update({ overdueNotifiedFor: deadlineStr });
+                notified += 1;
+            } catch (err) {
+                logger.warn('notifyOverdueTasks notify failed', { taskId: docSnap.id, err: err.message });
+            }
+        }
+
+        logger.info('notifyOverdueTasks done', { todayStr, notified });
     }
 );
 

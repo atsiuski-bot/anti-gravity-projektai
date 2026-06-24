@@ -536,6 +536,21 @@ export const deleteTask = async (task, userId, options = { keepWorkHours: false 
             { task, keepWorkHours: !!options.keepWorkHours, isManager },
             { actor, mode: MODES.COMMIT, reason: options.keepWorkHours ? 'deleted (kept hours)' : 'deleted (hard)' },
         );
+
+        // Tell the assignee their task was removed (so it doesn't just silently vanish from their
+        // list). Best-effort + self-dropped by notify(): a worker deleting their own task, or a task
+        // with no assignee, never pings. Fired after the delete commits, so a notify failure can't
+        // block the deletion.
+        if (task.assignedUserId) {
+            await notify({
+                recipientId: task.assignedUserId,
+                type: 'task_deleted',
+                taskId: task.id,
+                taskTitle: task.title || 'Užduotis',
+                actorUid: userId,
+                actorName: userData.displayName || userData.email,
+            });
+        }
     } catch (err) {
         console.error("Error deleting task:", err);
         throw err;
