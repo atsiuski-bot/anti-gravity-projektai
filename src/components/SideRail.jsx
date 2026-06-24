@@ -2,6 +2,7 @@ import { memo, useMemo, useState, useCallback } from 'react';
 import { Plus, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
+import { usePendingApprovalsCount } from '../hooks/usePendingApprovalsCount';
 import { getNavSections } from '../config/navTabs';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 import Button from './ui/Button';
@@ -50,6 +51,7 @@ const navItemBase =
 function SideRail() {
     const { currentUser, userRole } = useAuth();
     const { activeTab, setActiveTab } = useNavigation();
+    const pendingApprovals = usePendingApprovalsCount();
     const sections = useMemo(() => getNavSections(userRole), [userRole]);
     const RoleIcon = ROLE_GLYPHS[userRole];
     const [collapsed, setCollapsed] = useState(readStoredCollapsed);
@@ -135,15 +137,25 @@ function SideRail() {
                               )}
                         {section.items.map((tab) => {
                             const active = activeTab === tab.id;
+                            // New sign-ups awaiting approval surface a persistent count on the
+                            // Vartotojai destination (admin-only; 0 hides it). A label suffix keeps
+                            // the count out of the accessible name so it is never the sole signal.
+                            const badge = tab.id === 'users' ? pendingApprovals : 0;
+                            const badgeLabel = badge > 99 ? '99+' : String(badge);
                             return (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
                                     aria-current={active ? 'page' : undefined}
-                                    aria-label={collapsed ? tab.label : undefined}
+                                    aria-label={
+                                        collapsed
+                                            ? (badge > 0 ? `${tab.label}, ${badge} laukia patvirtinimo` : tab.label)
+                                            : (badge > 0 ? `${tab.label}, ${badge} laukia patvirtinimo` : undefined)
+                                    }
                                     title={collapsed ? tab.label : undefined}
                                     className={cn(
                                         navItemBase,
+                                        'relative',
                                         collapsed ? 'justify-center px-0' : 'gap-3 px-3',
                                         active
                                             ? 'bg-brand-soft text-brand-hover'
@@ -152,6 +164,21 @@ function SideRail() {
                                 >
                                     <tab.icon className="h-5 w-5 shrink-0" aria-hidden="true" />
                                     {!collapsed && <span className="truncate">{tab.label}</span>}
+                                    {badge > 0 && (collapsed ? (
+                                        <span
+                                            aria-hidden="true"
+                                            className="absolute right-1 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand px-1 text-caption font-bold leading-none text-white"
+                                        >
+                                            {badgeLabel}
+                                        </span>
+                                    ) : (
+                                        <span
+                                            aria-hidden="true"
+                                            className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand px-1.5 text-caption font-bold leading-none text-white"
+                                        >
+                                            {badgeLabel}
+                                        </span>
+                                    ))}
                                 </button>
                             );
                         })}
