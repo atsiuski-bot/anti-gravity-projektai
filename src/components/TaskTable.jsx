@@ -17,7 +17,7 @@ import TaskDetailModal from './task/TaskDetailModal';
 import TaskStatusIcon from './task/TaskStatusIcon';
 import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
-import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES } from '../utils/timeUtils';
+import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
 import { toggleTaskCompletion } from '../utils/taskCompletionActions';
 import { approveTask, unapproveTask, completeTask, reopenTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
@@ -690,6 +690,21 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             const totalMinutes = calculateCurrentTotalMinutes(task);
                             const hasStarted = task.status && task.status !== 'pending';
                             const showSpent = totalMinutes > 0 || hasStarted;
+                            // Time progress bar — same glance signal the mobile card carries: green +
+                            // full when finished, red + full when the planned time ran out before the
+                            // work was done, otherwise blue at the share of planned time already used.
+                            // Derived from raw math (not task.timeLimitReached) so a manual time cut
+                            // instantly un-reds the row.
+                            const estMinutes = parseTimeStringToMinutes(task.estimatedTime || '0');
+                            const isLimitExceeded = estMinutes > 0 && totalMinutes >= estMinutes;
+                            const isFinished = Boolean(task.completed);
+                            const progressPct = estMinutes > 0 ? Math.min(100, Math.round((totalMinutes / estMinutes) * 100)) : 0;
+                            const barFill = isFinished
+                                ? 'bg-feedback-success'
+                                : isLimitExceeded
+                                    ? 'bg-feedback-danger'
+                                    : 'bg-brand';
+                            const barPct = (isFinished || isLimitExceeded) ? 100 : progressPct;
                             const deadline = task.deadline ? formatDeadline(task.deadline) : null;
                             const links = (task.links || []).flatMap(l => l.split('\n')).filter(l => l.trim().length > 0);
                             const hasImage = (task.attachmentUrls && task.attachmentUrls.length > 0) || task.attachmentUrl;
@@ -824,17 +839,31 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </td>
                                     {/* Laikas — actual over planned in one cell (replaces the buried in-status
                                         time + the near-empty "Num." column). */}
-                                    <td className="px-1 py-3 align-top whitespace-nowrap">
+                                    <td className="px-1 py-3 align-top">
                                         {!showSpent && !task.estimatedTime ? (
                                             <span className="text-ink-muted">–</span>
                                         ) : (
                                             <div className="text-caption leading-tight">
                                                 {showSpent && (
-                                                    <div className="text-body font-bold text-brand">{formatMinutesToTimeString(totalMinutes)}</div>
+                                                    <div className="text-body font-bold text-brand whitespace-nowrap">{formatMinutesToTimeString(totalMinutes)}</div>
                                                 )}
                                                 {task.estimatedTime && (
-                                                    <div className="text-ink-muted">{showSpent ? `/ ${task.estimatedTime}` : task.estimatedTime}</div>
+                                                    <div className="text-ink-muted whitespace-nowrap">{showSpent ? `/ ${task.estimatedTime}` : task.estimatedTime}</div>
                                                 )}
+                                                {/* Same time bar as the mobile card — see derivation above. */}
+                                                <div
+                                                    className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunken"
+                                                    role="progressbar"
+                                                    aria-valuenow={barPct}
+                                                    aria-valuemin={0}
+                                                    aria-valuemax={100}
+                                                    aria-label="Sugaišto laiko dalis nuo suplanuoto"
+                                                >
+                                                    <div
+                                                        className={clsx("h-full rounded-full transition-all duration-base", barFill)}
+                                                        style={{ width: `${barPct}%` }}
+                                                    />
+                                                </div>
                                             </div>
                                         )}
                                     </td>
