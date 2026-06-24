@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Filter, X, Activity, ListChecks, Repeat, BadgeCheck } from 'lucide-react';
+import { ArrowUpDown, X, Activity, ListChecks, Repeat, BadgeCheck } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -13,6 +13,7 @@ import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
+import TagFilterPills from '../components/ui/TagFilterPills';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -89,6 +90,23 @@ export default function ManagerView() {
         () => sortWorkerTasks(tasks.filter((t) => t.status === 'unapproved' && !t.isDeleted)),
         [tasks]
     );
+
+    // Tags that ACTUALLY occur on the team's tasks — the source for the immediate pill filter
+    // (mobile). Never the static catalogue, so a tag with no tasks offers no dead filter; the
+    // pill row renders nothing when the team has no tagged task.
+    const presentTags = React.useMemo(() => {
+        const set = new Set();
+        for (const t of tasks) {
+            if (t.tag && !t.isDeleted) set.add(t.tag);
+        }
+        return [...set].sort((a, b) => a.localeCompare(b, 'lt'));
+    }, [tasks]);
+
+    // If the selected tag stops occurring, fall back to "Visi" so the list never empties behind an
+    // orphaned filter (the desktop header dropdown shares the same filterTag state).
+    React.useEffect(() => {
+        if (filterTag && !presentTags.includes(filterTag)) setFilterTag('');
+    }, [filterTag, presentTags, setFilterTag]);
 
     const handleMoveUp = React.useCallback((taskId) => {
         const currentList = [...sortedTasks];
@@ -387,58 +405,30 @@ export default function ManagerView() {
                     aria-labelledby="team-list-tab"
                     className={cn(teamTasksSubTab !== 'list' && 'hidden')}
                 >
-                {/* Filter & sort controls.
-                    Mobile (<md): the full toolbar below — search spans the width, the four
-                    classifiers form a 2x2 grid, sort below. Desktop (md+): sort and per-column
-                    filters live ON the table headers (TaskTable `gridControls`); collapsed search,
-                    the non-column "Daugiau rūšiavimo" launcher, the active-advanced-sort hint and a
-                    global clear sit on the tab row above (lifted next to the sub-tab switcher). */}
-                <div className="grid grid-cols-2 gap-2 mb-4 md:hidden">
+                {/* Filter controls.
+                    Mobile (<md): a clean stack — the tag pills (immediate, only the tags present on
+                    the team's tasks) sit ABOVE the search; the old per-classifier dropdowns
+                    (vykdytojas / rūšiavimas / prioritetas / žyma) are gone here. Desktop (md+):
+                    sort and per-column filters live ON the table headers (TaskTable `gridControls`),
+                    with collapsed search + the "Daugiau rūšiavimo" launcher + clear on the tab row
+                    above — the dense manager controls stay there (§9 dual density). A clear button
+                    still appears on mobile when any filter is active (incl. one set from the desktop
+                    headers) so a stale filter is never stranded with no way out. */}
+                <div className="mb-4 md:hidden">
+                    <TagFilterPills tags={presentTags} value={filterTag} onChange={setFilterTag} className="mb-3" />
                     <SearchBox
                         value={searchText}
                         onChange={setSearchText}
                         suggestions={searchSuggestions}
                         placeholder="Ieškoti užduočių…"
                         ariaLabel="Ieškoti užduočių"
-                        className="col-span-2"
-                    />
-                    <Select
-                        value={filterUser}
-                        onChange={setFilterUser}
-                        options={userOptions}
-                        label="Vykdytojas"
-                        ariaLabel="Filtruoti pagal vykdytoją"
-                        icon={Filter}
-                    />
-                    <Select
-                        value={sortBy}
-                        onChange={setSortBy}
-                        options={sortOptions}
-                        label="Rūšiavimas"
-                        ariaLabel="Rūšiuoti užduotis"
-                        icon={ArrowUpDown}
-                    />
-                    <Select
-                        value={filterPriority}
-                        onChange={setFilterPriority}
-                        options={priorityOptions}
-                        label="Prioritetas"
-                        ariaLabel="Filtruoti pagal prioritetą"
-                        icon={Filter}
-                    />
-                    <Select
-                        value={filterTag}
-                        onChange={setFilterTag}
-                        options={tagOptions}
-                        label="Žyma"
-                        ariaLabel="Filtruoti pagal žymę"
-                        icon={Filter}
+                        className="w-full"
                     />
                     {hasActiveFilters && (
                         <button
                             type="button"
                             onClick={clearFilters}
-                            className="col-span-2 inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="mt-2 inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                         >
                             <X className="w-4 h-4" aria-hidden="true" />
                             Išvalyti filtrus

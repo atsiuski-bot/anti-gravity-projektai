@@ -9,12 +9,11 @@ import TaskModal from '../components/TaskModal';
 import PendingApprovalDisclosure from '../components/PendingApprovalDisclosure';
 
 import DailyWorkProgress from '../components/DailyWorkProgress';
-import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, TASK_TAGS } from '../utils/taskUtils';
-import { getPriorityRank } from '../utils/priority';
+import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow } from '../utils/taskUtils';
 import { Spinner } from '../components/ui/Loading';
-import Select from '../components/ui/Select';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
+import TagFilterPills from '../components/ui/TagFilterPills';
 import {
     filterRankTasks,
     buildTaskSuggestions,
@@ -22,7 +21,7 @@ import {
     getTaskSuggestionSources,
 } from '../utils/taskSearch';
 import { logError } from '../utils/errorLog';
-import { Filter, AlertCircle, ClipboardList } from 'lucide-react';
+import { AlertCircle, ClipboardList } from 'lucide-react';
 import EmptyState from '../components/ui/EmptyState';
 import Button from '../components/ui/Button';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -163,8 +162,8 @@ export default function WorkerView() {
         setIsModalOpen(true);
     }, []);
 
-    // Sorting and filtering state
-    const [sortBy, setSortBy] = useState('none');
+    // Filtering state. Sorting is no longer user-driven here — the listener already orders the list
+    // by Day → Priority (sortWorkerTasks); the only control is the tag filter, shown as pills.
     const [filterTag, setFilterTag] = useState('');
     // Free-text search, debounced so the list doesn't re-filter on every keystroke.
     const [searchText, setSearchText] = useState('');
@@ -208,6 +207,23 @@ export default function WorkerView() {
         [pendingApprovalMine]
     );
 
+    // The tag filter offers ONLY the tags that actually occur on the worker's own (non-pending)
+    // tasks — never the full static catalogue. With none present the whole filter row is hidden
+    // (no empty "Visi" pill), so the worker is never shown a filter that can't do anything.
+    const presentTags = useMemo(() => {
+        const set = new Set();
+        for (const t of tasks) {
+            if (t.tag && !pendingApprovalIds.has(t.id)) set.add(t.tag);
+        }
+        return [...set].sort((a, b) => a.localeCompare(b, 'lt'));
+    }, [tasks, pendingApprovalIds]);
+
+    // If the selected tag stops occurring (task retagged / cleared), drop back to "Visi" so the
+    // list never silently empties behind a now-orphaned filter.
+    useEffect(() => {
+        if (filterTag && !presentTags.includes(filterTag)) setFilterTag('');
+    }, [filterTag, presentTags]);
+
     const sortedTasks = useMemo(() => {
         // Exclude the user's own not-yet-approved tasks — they live in the disclosure above.
         let result = tasks.filter((t) => !pendingApprovalIds.has(t.id));
@@ -217,65 +233,14 @@ export default function WorkerView() {
         }
 
         // Fuzzy free-text search (diacritic-insensitive, typo-tolerant, ranked by relevance).
-        // When a query is present the matches come back ordered by relevance; an explicit sort
-        // below overrides that, the default order keeps it.
+        // The listener already ordered the base list by Day → Priority; search re-ranks by
+        // relevance, otherwise that default order is kept (no user-driven sort here).
         if (debouncedSearch.trim()) {
             result = filterRankTasks(result, debouncedSearch, getTaskMatchFields);
         }
 
-        if (sortBy === 'status') {
-            result.sort((a, b) => {
-                const getStatusRank = (task) => {
-                    const status = task.status || 'pending';
-                    if (status === 'in-progress') return 1;
-                    if (status === 'approved') return 2; // gate cleared, ready to start — near the top
-                    if (status === 'pending') return 3;
-                    if (status === 'unapproved') return 4;
-                    if (status === 'completed') return 5;
-                    if (status === 'confirmed') return 6;
-                    return 7;
-                };
-                const rankA = getStatusRank(a);
-                const rankB = getStatusRank(b);
-                if (rankA !== rankB) return rankA - rankB;
-
-                // Within same status, sort by priority
-                const prioA = getPriorityRank(a.priority);
-                const prioB = getPriorityRank(b.priority);
-                return prioB - prioA;
-            });
-        } else if (sortBy === 'priority') {
-            result.sort((a, b) => {
-                const prioA = getPriorityRank(a.priority);
-                const prioB = getPriorityRank(b.priority);
-                return prioB - prioA;
-            });
-        }
-
         return result;
-    }, [tasks, sortBy, filterTag, debouncedSearch, pendingApprovalIds]);
-
-    // Desktop data-grid wiring (worker subset). The worker's table headers carry priority/status
-    // sort + the tag filter; there is no user/priority filter and no composite/manual sort here, so
-    // the only non-column mode is 'none' — reachable by toggling the active sort header off — and
-    // no "Daugiau rūšiavimo" launcher is needed.
-    const workerGridControls = {
-        sort: {
-            value: sortBy,
-            set: setSortBy,
-            columns: { priority: 'priority', status: 'status' },
-        },
-        filters: {
-            tag: {
-                value: filterTag,
-                set: setFilterTag,
-                options: [
-                    { value: '', label: 'Visi Tagai' },
-                    ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
-                ],
-            },
-        },
-    };
+    }, [tasks, filterTag, debouncedSearch, pendingApprovalIds]);
 
     return (
         <div className="pt-1">
@@ -291,48 +256,12 @@ export default function WorkerView() {
 
             {/* Tasks Tab */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4 sm:mb-6">
+                <div className="flex flex-row justify-between items-center gap-4 mb-4 sm:mb-6">
                     <h2 className="text-h2 font-bold text-ink-strong wz-on-shell">Mano užduotys</h2>
 
-                    {/* Mobile (<md): full toolbar — search + sort + tag filter (inline from sm).
-                        Desktop (md+): sort and the tag filter live on the table headers (TaskTable
-                        `gridControls`); only the collapsed search stays here. The `md:hidden` gate
-                        keeps this from doubling up with the desktop strip in the 640–767px band. */}
-                    <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center sm:gap-2 md:hidden">
-                        <SearchBox
-                            value={searchText}
-                            onChange={setSearchText}
-                            suggestions={searchSuggestions}
-                            placeholder="Ieškoti užduočių…"
-                            ariaLabel="Ieškoti užduočių"
-                            className="col-span-2 sm:col-auto"
-                        />
-                        <Select
-                            value={sortBy}
-                            onChange={setSortBy}
-                            options={[
-                                { value: 'none', label: 'Numatyta tvarka' },
-                                { value: 'status', label: 'Pagal būseną' },
-                                { value: 'priority', label: 'Pagal prioritetą' },
-                            ]}
-                            label="Rūšiavimas"
-                            ariaLabel="Rūšiuoti pagal"
-                            icon={Filter}
-                            className="sm:w-auto sm:min-w-[10rem]"
-                        />
-                        <Select
-                            value={filterTag}
-                            onChange={setFilterTag}
-                            options={[
-                                { value: '', label: 'Visi Tagai' },
-                                ...TASK_TAGS.map((tag) => ({ value: tag, label: tag })),
-                            ]}
-                            label="Žyma"
-                            ariaLabel="Filtruoti pagal žymę"
-                            icon={Filter}
-                            className="sm:w-auto sm:min-w-[9rem]"
-                        />
-                    </div>
+                    {/* Desktop (md+): collapsed search popover stays in the header. On mobile the search
+                        box lives lower in the tab flow (after the weekly goal) — see below — so the
+                        header stays compact on phones. Sorting was removed; tags are the pill row. */}
                     <div className="hidden md:flex md:items-center">
                         <SearchPopover
                             value={searchText}
@@ -344,7 +273,25 @@ export default function WorkerView() {
                     </div>
                 </div>
 
+                {/* Tag filter — shown immediately as pills (no dropdown), and ONLY the tags that occur
+                    on the worker's own tasks. Renders nothing when no task is tagged. */}
+                <TagFilterPills tags={presentTags} value={filterTag} onChange={setFilterTag} className="mb-4" />
+
                 <DailyWorkProgress currentUser={currentUser} tasks={sortedTasks} />
+
+                {/* Mobile search — placed in the tab flow right after the weekly goal (not in the
+                    header) so a phone shows goals first, then the search above the task list. Desktop
+                    keeps the collapsed popover in the header above. */}
+                <div className="mb-4 md:hidden">
+                    <SearchBox
+                        value={searchText}
+                        onChange={setSearchText}
+                        suggestions={searchSuggestions}
+                        placeholder="Ieškoti užduočių…"
+                        ariaLabel="Ieškoti užduočių"
+                        className="w-full"
+                    />
+                </div>
 
                 <PendingApprovalDisclosure
                     tasks={pendingApprovalMine}
@@ -392,7 +339,6 @@ export default function WorkerView() {
                                 onEdit={handleEditTask}
                                 role="worker"
                                 hideCheckboxes={true}
-                                gridControls={workerGridControls}
                             />
                         </div>
                     </>

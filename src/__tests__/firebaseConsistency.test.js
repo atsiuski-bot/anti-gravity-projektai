@@ -29,7 +29,7 @@ import { dirname, resolve, join } from 'node:path';
 import { PRIORITIES } from '../utils/priority.js';
 import { MAX_SESSION_MINUTES } from '../utils/timeUtils.js';
 import { recurrenceFiresOn } from '../utils/recurrence.js';
-import { NOTIFICATIONS, notificationCopy } from '../notifications/registry.js';
+import { NOTIFICATIONS, notificationCopy, notificationCategory } from '../notifications/registry.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..', '..'); // src/__tests__ -> repo root
@@ -318,17 +318,28 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     time_extension_request: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     session_correction_request: [{ day: '2026-06-20', commentText: '  klaida   trukmėje ' }, { day: '2026-06-20' }, {}],
     new_comment: [{ taskTitle: 'Užduotis', commentText: '  ilgas\n komentaras ' }, { taskTitle: 'Užduotis' }, {}],
+    new_photo: [{ taskTitle: 'Užduotis' }, {}],
     task_assigned: [{ taskTitle: 'Užduotis' }],
-    task_approved: [{ taskTitle: 'Užduotis' }],
+    // Both the plain approval and the approve+edit (edited:true) branch.
+    task_approved: [{ taskTitle: 'Užduotis' }, { taskTitle: 'Užduotis', edited: true }],
+    task_edited: [{ taskTitle: 'Užduotis' }, {}],
+    task_unassigned: [{ taskTitle: 'Užduotis' }, {}],
+    task_deleted: [{ taskTitle: 'Užduotis' }, {}],
     task_confirmed: [{ taskTitle: 'Užduotis' }],
-    task_reverted: [{ taskTitle: 'Užduotis' }],
+    task_reverted: [{ taskTitle: 'Užduotis' }, { taskTitle: 'Užduotis', edited: true }],
     extension_granted: [{ taskTitle: 'Užduotis' }],
     extension_denied: [{ taskTitle: 'Užduotis' }],
     calendar_decision: [{ decision: 'approved' }, { decision: 'declined' }],
     session_edited: [{ day: '2026-06-20' }, {}],
     session_deleted: [{ day: '2026-06-20' }, {}],
+    session_auto_closed: [{ day: '2026-06-20' }, {}],
     account_approval: [{ targetUserName: 'Jonas Jonaitis' }, { targetUserEmail: 'j@x.lt' }, {}],
     recurring_reassign: [{ taskTitle: 'Užduotis' }],
+    // Both label-present branches (Skubus/Aukštas) and the missing-field fallbacks.
+    task_priority_escalated: [{ taskTitle: 'Užduotis', priorityLabel: 'Skubus' }, { taskTitle: 'Užduotis', priorityLabel: 'Aukštas' }, { taskTitle: 'Užduotis' }, {}],
+    // Badge name + tier, name-only (no tier), and the empty fallback.
+    achievement: [{ badgeName: 'Ištvermė', tierName: 'Sidabras' }, { badgeName: 'Ištvermė' }, {}],
+    task_overdue: [{ taskTitle: 'Užduotis' }, {}],
   };
 
   it('the registry and the server switch cover the same set of types', () => {
@@ -359,6 +370,54 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
       }
     }
     expect(disagreements, `notification copy diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// 7b. NOTIFICATION CATEGORY LOCKSTEP — the service worker can't import the client registry, so each
+//     background push carries its category ('action' | 'info') in the data payload, built server-side
+//     from a hand-copied CATEGORY_BY_TYPE map. That map MIRRORS notificationCategory() in the registry
+//     and is exactly the kind of cross-boundary copy that silently drifts. Slice the object literal out
+//     of functions/index.js, parse it, and assert per-type equality + identical type coverage.
+// =============================================================================================
+
+describe('notification category lockstep (functions CATEGORY_BY_TYPE ↔ client registry)', () => {
+  // Slice the CATEGORY_BY_TYPE object literal out of functions/index.js and evaluate it. It is a flat
+  // map of string→string (no nested braces), so the first '};' after the marker closes it. A moved
+  // marker throws clearly.
+  const serverCategory = (() => {
+    const marker = 'const CATEGORY_BY_TYPE = {';
+    const start = FUNCTIONS_SRC.indexOf(marker);
+    if (start === -1) {
+      throw new Error('Could not find CATEGORY_BY_TYPE in functions/index.js — marker moved; update this test.');
+    }
+    const end = FUNCTIONS_SRC.indexOf('};', start);
+    if (end === -1) {
+      throw new Error('Could not find the end of CATEGORY_BY_TYPE in functions/index.js — update this test.');
+    }
+    const block = FUNCTIONS_SRC.slice(start, end + 2);
+    return new Function(`${block}\n;return CATEGORY_BY_TYPE;`)();
+  })();
+
+  it('the registry and the server category map cover the same set of types', () => {
+    const registryTypes = new Set(Object.keys(NOTIFICATIONS));
+    const serverKeys = new Set(Object.keys(serverCategory));
+    const onlyRegistry = [...registryTypes].filter((t) => !serverKeys.has(t));
+    const onlyServer = [...serverKeys].filter((t) => !registryTypes.has(t));
+    expect(onlyRegistry, `In the registry but missing from server CATEGORY_BY_TYPE: ${onlyRegistry.join(', ')}`).toEqual([]);
+    expect(onlyServer, `In server CATEGORY_BY_TYPE but not the registry: ${onlyServer.join(', ')}`).toEqual([]);
+  });
+
+  it('server category === registry category for every type', () => {
+    const disagreements = [];
+    for (const type of Object.keys(NOTIFICATIONS)) {
+      const server = serverCategory[type];
+      const client = notificationCategory(type);
+      if (server !== client) {
+        disagreements.push(`${type}: server=${server} client=${client}`);
+      }
+    }
+    expect(disagreements, `notification category diverged:\n${disagreements.join('\n')}`).toEqual([]);
   });
 });
 

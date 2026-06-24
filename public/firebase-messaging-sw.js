@@ -29,15 +29,31 @@ try {
     messaging.onBackgroundMessage((payload) => {
         const data = payload.data || {};
         const title = data.title || 'WORKZ';
+        // 'action' = a decision is owed (server mirrors registry category into data.category).
+        const isAction = data.category === 'action';
+        // ALWAYS show a notification for every push received here. A push that arrives without a
+        // visible notification breaks the browser's user-visible-push contract — Chrome shows a
+        // generic "site updated in background" and, on iOS, the subscription gets revoked after a
+        // few silent strikes. So there is no early-return branch: every background push renders.
         self.registration.showNotification(title, {
             body: data.body || '',
-            icon: '/pwa-192x192.png',
-            badge: '/pwa-192x192.png',
+            icon: '/pwa-192x192.png',   // Android notification artwork; iOS ignores it (uses the app icon).
+            badge: '/pwa-192x192.png',  // Android status-bar glyph only; no-op on iOS.
             // Per-EVENT tag (the source doc id) so two distinct alerts never silently collapse
             // onto one slot; renotify re-alerts when a tag is reused. Fall back to taskId, then
-            // a constant.
+            // a constant. (renotify + tag coalescing are Android-only; iOS ignores both.)
             tag: data.notifId || data.taskId || 'workz-notification',
             renotify: true,
+            // Keep an 'action' alert on screen until the user acts on it. Effective on DESKTOP
+            // (a manager at a computer); on Android the shade already persists it and iOS ignores
+            // requireInteraction — so this helps the desktop case and is harmless elsewhere. It is
+            // NOT a guarantee that a phone alert "sticks until acknowledged".
+            requireInteraction: isAction,
+            // SOUND: deliberately NOT setting `silent`. Left unset, the OS plays its default
+            // notification sound (Android channel sound / iOS system sound), subject to the user's
+            // own per-app + Focus/DND/ringer settings, which the web cannot override. There is no
+            // custom-sound option on web push. `vibrate` is intentionally omitted: it is a no-op on
+            // Android O+ (vibration is channel-governed) and on iOS.
             data: { link: data.link || '/' }
         });
     });

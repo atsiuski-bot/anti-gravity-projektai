@@ -96,8 +96,25 @@ async function sendToUser(uid, notification, data) {
             ...(data || {})
         },
         webpush: {
-            // Honor the per-message deep link (the SW notificationclick reads data.link too).
-            fcmOptions: { link: (data && data.link) || '/' }
+            // Delivery hints handed to the browser's push service (RFC 8030). These affect when/
+            // whether the push is DELIVERED and wakes the device — NOT how the notification looks.
+            headers: {
+                // 'high' so a backgrounded / low-battery phone still wakes promptly for a
+                // time-sensitive task/approval alert; omitting it defaults to 'normal'. Must be one
+                // of very-low|low|normal|high — we only ever send this single literal. NB: this is a
+                // prioritisation hint to the web push service, not an Android-native Doze guarantee.
+                Urgency: 'high',
+                // Keep an undelivered alert for 24h (seconds, as a string) so it still arrives when
+                // an offline worker reconnects, rather than being dropped on the floor.
+                TTL: '86400'
+            },
+            fcmOptions: {
+                // Honor the per-message deep link (the SW notificationclick reads data.link too).
+                link: (data && data.link) || '/',
+                // Group deliveries by notification type in the FCM / BigQuery reports (observability
+                // only, no delivery effect). The registry type ids are already label-charset safe.
+                analyticsLabel: String((data && data.type) || 'workz_notification')
+            }
         }
     });
 
@@ -123,6 +140,39 @@ async function sendToUser(uid, notification, data) {
 // imported across the deploy boundary, so this is hand-copied — and src/__tests__/firebaseConsistency.test.js
 // evaluates this function and fails the gate if its title/body output drifts from the registry. Change
 // a string here? Change it in the registry too (and vice versa).
+// MIRROR of the registry's per-type `category` ('action' = a decision is owed → floats to the top of
+// the bell and gets requireInteraction on a desktop push; 'info' = FYI). The service worker has no
+// access to the client registry, so the category travels in the push DATA payload; this map is the
+// server side of that mirror. src/__tests__/firebaseConsistency.test.js locks it against
+// notificationCategory() in the registry, exactly like the copy lockstep below. Kept OUTSIDE the
+// copyForRequestNotification slice the copy-lockstep test extracts, so it never disturbs that test.
+const CATEGORY_BY_TYPE = {
+    task_approval: 'action',
+    task_completion: 'action',
+    time_extension_request: 'action',
+    session_correction_request: 'action',
+    task_reverted: 'action',
+    account_approval: 'action',
+    recurring_reassign: 'action',
+    new_comment: 'info',
+    new_photo: 'info',
+    task_assigned: 'info',
+    task_approved: 'info',
+    task_edited: 'info',
+    task_unassigned: 'info',
+    task_deleted: 'info',
+    task_confirmed: 'info',
+    extension_granted: 'info',
+    extension_denied: 'info',
+    calendar_decision: 'info',
+    session_edited: 'info',
+    session_deleted: 'info',
+    session_auto_closed: 'info',
+    task_priority_escalated: 'info',
+    achievement: 'info',
+    task_overdue: 'info',
+};
+
 function copyForRequestNotification(n) {
     const title = n.taskTitle || 'WORKZ';
     switch (n.type) {
@@ -147,6 +197,9 @@ function copyForRequestNotification(n) {
                 : '';
             return { title: 'Naujas komentaras', body: snippet ? `${title}: ${snippet}` : title };
         }
+        case 'new_photo':
+            // Fired to the other party when a photo is added from the task sheet (uploader dropped client-side).
+            return { title: 'Nauja nuotrauka', body: title };
         // Manager → worker
         case 'task_assigned':
             return { title: 'Nauja užduotis', body: title };
@@ -157,12 +210,20 @@ function copyForRequestNotification(n) {
             // System → admin: a new sign-up awaits approval. Body = the pending user's name/email.
             return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'WORKZ' };
         case 'task_approved':
-            return { title: 'Užduotis patvirtinta', body: title };
+            // `edited` collapses approve+edit into one notice (mirror of the registry variant).
+            return { title: n.edited ? 'Užduotis patvirtinta ir pakeista' : 'Užduotis patvirtinta', body: title };
+        case 'task_edited':
+            return { title: 'Užduotis pakeista', body: title };
+        case 'task_unassigned':
+            return { title: 'Užduotis nebepriskirta jums', body: title };
+        case 'task_deleted':
+            return { title: 'Užduotis ištrinta', body: title };
         case 'task_confirmed':
             // COMPLETION-gate vocabulary is "priimta" (kept in lockstep with the toast + Reports tab).
             return { title: 'Užduotis užbaigta ir priimta', body: title };
         case 'task_reverted':
-            return { title: 'Užduotis grąžinta taisyti', body: title };
+            // `edited` collapses return+edit into one notice (mirror of the registry variant).
+            return { title: n.edited ? 'Užduotis grąžinta taisyti ir pakeista' : 'Užduotis grąžinta taisyti', body: title };
         case 'extension_granted':
             return { title: 'Laikas pratęstas', body: title };
         case 'extension_denied':
@@ -176,6 +237,9 @@ function copyForRequestNotification(n) {
             return { title: 'Pakoreguotas veiklos laikas', body: n.day || 'Veiklos laikas' };
         case 'session_deleted':
             return { title: 'Pašalintas veiklos laikas', body: n.day || 'Veiklos laikas' };
+        case 'session_auto_closed':
+            // System → worker: a forgotten secondary-session timer was auto-closed + time credited.
+            return { title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' };
         case 'session_correction_request':
             // Worker → manager: a logged-time error report. Body = "day: note" (note clamped) or day.
             return {
@@ -184,6 +248,20 @@ function copyForRequestNotification(n) {
                     ? `${n.day || 'Veiklos laikas'}: ${String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)}`
                     : (n.day || 'Veiklos laikas'),
             };
+        case 'task_priority_escalated':
+            // System → worker: a task's deadline closed in, so its priority was auto-raised. The new
+            // level's Lithuanian label is precomputed onto the doc (priorityLabel), so this MIRROR
+            // needs no priority map — keep identical to the registry entry.
+            return {
+                title: 'Artėja terminas',
+                body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'WORKZ'),
+            };
+        case 'achievement':
+            // System → worker: a newly-earned badge tier. Body = "Badge: Tier" (mirror of the registry).
+            return { title: 'Naujas ženkliukas', body: n.badgeName ? (n.tierName ? `${n.badgeName}: ${n.tierName}` : n.badgeName) : 'WORKZ' };
+        case 'task_overdue':
+            // System → manager: a task's deadline passed while still unfinished.
+            return { title: 'Praleistas terminas', body: title };
         default:
             return { title: 'WORKZ pranešimas', body: title };
     }
@@ -193,12 +271,18 @@ exports.notifyOnRequestNotification = onDocumentCreated('request_notifications/{
     const n = event.data && event.data.data();
     if (!n || !n.recipientId) return;
     const { title, body } = copyForRequestNotification(n);
-    // Calendar decisions land the worker on their calendar; everything else on tasks.
-    const link = n.type === 'calendar_decision' ? '/?tab=calendar' : '/?tab=tasks';
+    // Deep-link MIRROR of the registry: calendar decisions → the calendar, a badge → the profile,
+    // everything else → tasks.
+    const link = n.type === 'calendar_decision' ? '/?tab=calendar'
+        : n.type === 'achievement' ? '/?tab=profile'
+        : '/?tab=tasks';
     try {
         await sendToUser(n.recipientId, { title, body }, {
             type: String(n.type || ''),
             taskId: String(n.taskId || ''),
+            // Category rides along so the SW can render an 'action' push as requireInteraction
+            // (desktop) without importing the client registry. MIRROR — see CATEGORY_BY_TYPE.
+            category: CATEGORY_BY_TYPE[n.type] || 'info',
             // Per-event id → unique notification tag (so distinct alerts don't collapse).
             notifId: String(event.params.id),
             link
@@ -222,6 +306,8 @@ exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', as
         await Promise.all(recipients.map((uid) =>
             sendToUser(uid, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
                 type: 'calendar_request',
+                // A pending approval is a decision owed → 'action' (sticky on a desktop push).
+                category: 'action',
                 // Per-event id → unique tag, so multiple pending requests don't collapse onto one slot.
                 notifId: String(event.params.id),
                 link: '/?tab=team-calendar'
@@ -381,18 +467,30 @@ async function grantTier(uid, key, tier) {
     return reached;
 }
 
-// Background push for a newly-reached tier. The FOREGROUND in-app toast is a client listener on
-// the same subcollection (added with the profile phase); this is the closed-app case. Reuses the
-// existing FCM sender, which honours the recipient's notification toggle.
+// Announce a newly-reached tier through the UNIFIED notification spine: one request_notifications
+// doc gives the worker a bell row AND the FCM push (notifyOnRequestNotification renders it from the
+// registry mirror and deep-links to the profile). Routing it here — instead of the old direct
+// sendToUser push — means a badge now PERSISTS in the bell like every other notification, not just
+// a transient lockscreen ping. The FOREGROUND toast stays owned by AchievementCelebrator (a client
+// listener on the achievements subcollection); NotificationsContext suppresses its own toast for
+// type 'achievement' so the two don't double up. The deterministic-ish create is best-effort: a
+// re-fired grant can't reach here (grantTier returns 0 on a re-grant), so no dedupe key is needed.
 async function announceBadge(uid, key, tier) {
     const badge = BADGES[key];
     try {
-        await sendToUser(uid, { title: 'Naujas ženkliukas', body: `${badge.name}: ${TIER_NAMES[tier]}` }, {
+        await db.collection('request_notifications').add({
+            recipientId: uid,
             type: 'achievement',
+            // An earned-badge alert is FYI, not a decision owed → 'info' (not sticky).
+            category: 'info',
             badgeId: key,
-            tier: String(tier),
-            notifId: `${key}:${tier}`,
-            link: '/?tab=profile'
+            badgeName: badge.name,
+            tierName: TIER_NAMES[tier],
+            tier: Number(tier),
+            isRead: false,
+            createdAt: new Date().toISOString(),
+            // Provenance: system-authored (admin SDK bypasses the client provenance rule).
+            createdBy: 'system_achievement',
         });
     } catch (err) {
         logger.error('announceBadge failed', { uid, key, tier, err: err.message });
@@ -1204,6 +1302,25 @@ async function autoCloseForgottenSessions() {
             }
             await docSnap.ref.update(updates);
 
+            // Tell the worker their forgotten timer was auto-closed and time credited — so recovered
+            // paid time is never an unexplained entry. Only when real time was logged (a sub-minute
+            // orphan closes invisibly, mirroring the client recovery notice). One doc → bell + push.
+            if (durationMinutes > MIN_LOGGED_SECONDARY_MINUTES) {
+                try {
+                    await db.collection('request_notifications').add({
+                        recipientId: uid,
+                        type: 'session_auto_closed',
+                        category: 'info',
+                        day: date,
+                        isRead: false,
+                        createdAt: nowIso,
+                        createdBy: 'system_session_autoclose',
+                    });
+                } catch (err) {
+                    logger.warn('autoCloseForgottenSessions notify failed', { uid, err: err.message });
+                }
+            }
+
             closed += 1;
             if (samples.length < SAMPLE_LIMIT) samples.push({ uid, type: session.type, durationMinutes: Math.round(durationMinutes) });
             audits.push({ uid, type: session.type, startIso: session.startTime, durationMinutes: Math.round(durationMinutes) });
@@ -1597,6 +1714,182 @@ exports.runRecurringTasksNow = onCall(async (request) => {
 });
 
 // ---------------------------------------------------------------------------
+// Deadline priority escalation — scheduled (moved server-side from the client)
+// ---------------------------------------------------------------------------
+//
+// This WAS a browser-side once-per-day pass (src/utils/automationUtils.checkAndPromoteTasks) gated
+// to whole-team admins/managers — so on any day nobody with that role opened the app, NOTHING was
+// escalated, and even when it ran it NEVER told the worker. Moving it to a schedule makes it
+// deterministic AND lets it notify the assignee, which a same-origin client write could not do
+// reliably (the worker is rarely the one running the pass).
+//
+// Buckets (Vilnius calendar days, lexically comparable — MIRROR of the old client logic):
+//   • deadline today / tomorrow / overdue  → URGENT (Skubus)
+//   • deadline the day after tomorrow       → HIGH   (Aukštas)
+//   • 3+ days out                           → untouched
+// Only ever RAISES priority, and only past the canonical current value, so a task already at (or
+// above) the target is skipped. That guard is also the idempotency net: a Cloud Scheduler retry
+// re-scans, finds the task already escalated, and re-notifies nothing.
+
+// Add whole calendar days to a YYYY-MM-DD string — MIRROR of src/utils/timeUtils addDaysToDateString
+// (pure UTC calendar arithmetic, DST-independent). Day strings sort lexically, so the buckets above
+// are plain string comparisons against today±N.
+function addDaysToDayStr(dayStr, days) {
+    const [y, m, d] = dayStr.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+// User-facing Lithuanian labels for the only two priorities this job assigns — MIRROR of the
+// matching PRIORITY_CONFIG labels in src/utils/priority.js. Stamped onto the notification doc so the
+// in-app copy and the push MIRROR both read one field (no priority→label map needed on either side).
+const ESCALATION_LABELS = { URGENT: 'Skubus', HIGH: 'Aukštas' };
+
+exports.escalateTaskPriorities = onSchedule(
+    // 04:30 Vilnius — after the 03:00 work-day flip, before the 05:00 recurring generator and the
+    // managers' ~09:00 creation peak, so a freshly-urgent task is escalated before the day starts.
+    { schedule: 'every day 04:30', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const todayStr = lithuanianDay(new Date());
+        const dayAfterTomorrowStr = addDaysToDayStr(todayStr, 2); // today+2
+        const threeDaysStr = addDaysToDayStr(todayStr, 3);        // today+3
+
+        let snap;
+        try {
+            // Same status set as the old client pass: not-yet-finished work that still warrants a
+            // deadline-driven bump. The single-field `status in` query needs no composite index.
+            snap = await db.collection('tasks')
+                .where('status', 'in', ['pending', 'in-progress', 'approved']).get();
+        } catch (err) {
+            logger.error('escalateTaskPriorities query failed', { err: err.message });
+            return;
+        }
+
+        let escalated = 0;
+        let notified = 0;
+
+        for (const docSnap of snap.docs) {
+            const t = docSnap.data();
+            if (!t.deadline) continue;
+
+            const deadlineDate = new Date(t.deadline);
+            if (Number.isNaN(deadlineDate.getTime())) continue;
+            const deadlineStr = lithuanianDay(deadlineDate); // bucket to its Vilnius calendar day
+
+            // Compare against the CANONICAL priority (data carries mixed casing historically), so an
+            // already-urgent task is not re-written or re-notified on every run.
+            const current = normalizeRecurringPriority(t.priority);
+            let target = null;
+            if (deadlineStr < dayAfterTomorrowStr) {
+                if (current !== 'URGENT') target = 'URGENT';
+            } else if (deadlineStr < threeDaysStr) {
+                if (current !== 'URGENT' && current !== 'HIGH') target = 'HIGH';
+            }
+            if (!target) continue;
+
+            const nowIso = new Date().toISOString();
+            try {
+                await docSnap.ref.update({ priority: target, updatedAt: nowIso });
+                escalated += 1;
+            } catch (err) {
+                logger.warn('escalateTaskPriorities update failed', { taskId: docSnap.id, err: err.message });
+                continue; // don't notify about an escalation that did not actually land
+            }
+
+            // Tell the assignee their task got more urgent: one request_notifications doc drives the
+            // in-app toast + bell row AND the FCM push (via notifyOnRequestNotification). Best-effort —
+            // a notify failure never undoes the escalation, and the guard above keeps a retry quiet.
+            const uid = t.assignedUserId;
+            if (uid) {
+                try {
+                    await db.collection('request_notifications').add({
+                        recipientId: uid,
+                        type: 'task_priority_escalated',
+                        category: 'info',
+                        taskId: docSnap.id,
+                        taskTitle: t.title || 'Veikla',
+                        priorityLabel: ESCALATION_LABELS[target] || '',
+                        isRead: false,
+                        createdAt: nowIso,
+                        // Provenance: a system-authored notice (no human actor). The admin SDK write
+                        // bypasses the client provenance rule; this is for audit/readability.
+                        createdBy: 'system_priority_escalation',
+                    });
+                    notified += 1;
+                } catch (err) {
+                    logger.warn('escalateTaskPriorities notify failed', { taskId: docSnap.id, err: err.message });
+                }
+            }
+        }
+
+        logger.info('escalateTaskPriorities done', { todayStr, escalated, notified });
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Overdue-deadline oversight — tell the MANAGER when an unfinished task's deadline has passed.
+// ---------------------------------------------------------------------------
+//
+// Runs once a day, just after the priority escalation. A task is overdue when its deadline day is
+// strictly BEFORE today (Vilnius) and it is still unfinished (same not-done status set the
+// escalation scans). The recipient is the TASK's manager (managerId) — oversight, not the worker.
+//
+// Re-notify guard: the task carries `overdueNotifiedFor = <deadline day>`. We notify once per
+// deadline value, so a daily re-run does NOT re-ping; moving the deadline to a new (still-past) day
+// re-arms it exactly once. The single-field `status in` query needs no composite index.
+exports.notifyOverdueTasks = onSchedule(
+    { schedule: 'every day 04:45', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const todayStr = lithuanianDay(new Date());
+
+        let snap;
+        try {
+            snap = await db.collection('tasks')
+                .where('status', 'in', ['pending', 'in-progress', 'approved']).get();
+        } catch (err) {
+            logger.error('notifyOverdueTasks query failed', { err: err.message });
+            return;
+        }
+
+        let notified = 0;
+        for (const docSnap of snap.docs) {
+            const t = docSnap.data();
+            if (!t.deadline) continue;
+
+            const deadlineDate = new Date(t.deadline);
+            if (Number.isNaN(deadlineDate.getTime())) continue;
+            const deadlineStr = lithuanianDay(deadlineDate);
+            if (deadlineStr >= todayStr) continue;            // not past yet
+            if (t.overdueNotifiedFor === deadlineStr) continue; // already pinged for this deadline
+
+            const recipientId = t.managerId;
+            if (!recipientId) continue;                        // no manager to inform
+
+            const nowIso = new Date().toISOString();
+            try {
+                await db.collection('request_notifications').add({
+                    recipientId,
+                    type: 'task_overdue',
+                    category: 'info',
+                    taskId: docSnap.id,
+                    taskTitle: t.title || 'Veikla',
+                    isRead: false,
+                    createdAt: nowIso,
+                    createdBy: 'system_overdue',
+                });
+                // Latch on the deadline value so a daily re-run stays quiet (best-effort: a failed
+                // notify above leaves the latch unset, so the next run retries).
+                await docSnap.ref.update({ overdueNotifiedFor: deadlineStr });
+                notified += 1;
+            } catch (err) {
+                logger.warn('notifyOverdueTasks notify failed', { taskId: docSnap.id, err: err.message });
+            }
+        }
+
+        logger.info('notifyOverdueTasks done', { todayStr, notified });
+    }
+);
+
+// ---------------------------------------------------------------------------
 // AI task-draft parser — free-text → structured task (server-side, manager-only)
 // ---------------------------------------------------------------------------
 //
@@ -1647,11 +1940,11 @@ exports.parseTaskDraft = onCall(
     async (request) => {
         const callerUid = request.auth && request.auth.uid;
         if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
-        const callerSnap = await db.collection('users').doc(callerUid).get();
-        const role = callerSnap.exists ? callerSnap.data().role : '';
-        if (!['admin', 'Administratorius', 'manager', 'seniorManager'].includes(role)) {
-            throw new HttpsError('permission-denied', 'Managers only.');
-        }
+        // Any signed-in user may request a DRAFT. Workers self-create tasks too, and this callable
+        // never writes anything — the assignee is still resolved server-side from the caller-supplied
+        // (client-scoped) roster, so it cannot invent a user. The previous manager-only gate left the
+        // ✨ button visible to workers but ALWAYS failing for them ("AI nepavyko"); opening the
+        // callable makes the button honest for everyone who can see it.
         const apiKey = OPENROUTER_API_KEY.value();
         if (!apiKey) throw new HttpsError('failed-precondition', 'AI not configured.');
 

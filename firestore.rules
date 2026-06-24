@@ -94,6 +94,21 @@ service cloud.firestore {
              request.auth.uid == resource.data.get('managerId', '');
     }
 
+    // The WRITE-side mirror of the managerId branch in canReadOwnedTask: a manager/admin who is the
+    // task's DESIGNATED vadovas (managerId) or auditor (taskAuditor) may act on it (approve / accept /
+    // edit / delete) even when it sits OUTSIDE their team closure — e.g. ANOTHER manager created the
+    // task and named THIS manager its overseer. Without this, such a manager could SEE the task (READ
+    // grants managerId) yet have every WRITE silently denied — the exact "I'm the vadovas but can
+    // neither approve nor edit" trap (founder, 2026-06-24). Because the named manager IS the legitimate
+    // approver, this branch deliberately permits the approval-field flip that changesApprovalFields()
+    // blocks on the assignee branch. Gated to a manager role for defense in depth, so a stray worker
+    // uid sitting in managerId can never gain write. Reads resource.data, so UPDATE/DELETE only.
+    function isNamedTaskOverseer() {
+      return isManagerOrAdmin() &&
+             (request.auth.uid == resource.data.get('managerId', '') ||
+              request.auth.uid == resource.data.get('taskAuditor', ''));
+    }
+
     // ---- Per-document ownership helpers -------------------------------------
     // A worker "owns" a record when its owner field equals their uid. The owner
     // field per collection was audited from the client write sites: `userId` for
@@ -273,12 +288,14 @@ service cloud.firestore {
                       canSeeWholeTeam() ||
                       (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
                     );
-      // Update: whole-team viewers edit any; a scoped manager edits their team's tasks and may
-      // only reassign within their team; the assignee edits their own but may NOT flip the
-      // manager-only approval fields. taskFieldsOkForUpdate adds the priority/estimate shape guard
-      // (enforced only when this write changes those fields).
+      // Update: whole-team viewers edit any; the task's named vadovas/auditor edits THEIR task even
+      // out of team scope; a scoped manager edits their team's tasks and may only reassign within
+      // their team; the assignee edits their own but may NOT flip the manager-only approval fields.
+      // taskFieldsOkForUpdate adds the priority/estimate shape guard (enforced only when this write
+      // changes those fields).
       allow update: if isUserActive() && taskFieldsOkForUpdate() && (
                       canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
                          overseesUser(request.resource.data.assignedUserId))) ||
@@ -287,6 +304,7 @@ service cloud.firestore {
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam())
                     );
     }
@@ -385,6 +403,7 @@ service cloud.firestore {
                     );
       allow update: if isUserActive() && (
                       canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
                          overseesUser(request.resource.data.assignedUserId))) ||
@@ -393,6 +412,7 @@ service cloud.firestore {
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam())
                     );
     }
@@ -477,15 +497,43 @@ service cloud.firestore {
                     (resource.data.recipientId == request.auth.uid || isManagerOrAdmin());
     }
 
-    // ---- TASK TEMPLATES (shared team resource) ------------------------------
+    // ---- TASK TEMPLATES -----------------------------------------------------
+    // Two kinds, told apart by `scope`:
+    //   * 'team'     — the shared, curated library ("how we do recurring jobs"). Created by an
+    //                  ADMIN; edited/deleted by an admin OR the original creator (so a manager who
+    //                  built the team set, e.g. the piro/kostiumai templates, keeps maintaining it
+    //                  without being locked out). Legacy templates written before `scope` existed
+    //                  carry NO field and are read as 'team' via .get('scope','team').
+    //   * 'personal' — one user's private quick-start templates: created/edited/deleted by their
+    //                  owner only.
+    // READ stays team-wide, exactly as it always was. Personal-template privacy is a UI concern
+    // (the client only surfaces a user's own personal ones), NOT a hard boundary — this is a small
+    // trusted team, and a per-scope read rule would force a production backfill of the legacy docs
+    // (which have no `scope` field, so a `where('scope','==','team')` query would silently drop
+    // them) purely to keep them queryable. Not worth the migration risk for this threat model.
     match /task_templates/{templateId} {
-      // Templates are intentionally shared — any active user reads all of them.
-      allow read:   if isUserActive();
-      allow create: if isUserActive() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isUserActive() &&
-                    (resource.data.createdBy == request.auth.uid || isManagerOrAdmin());
-      allow delete: if isUserActive() &&
-                    (resource.data.createdBy == request.auth.uid || isManagerOrAdmin());
+      function tmplScope(data) { return data.get('scope', 'team'); }
+
+      allow read: if isUserActive();
+
+      // Create: anyone active may add a PERSONAL template (stamped with their own uid); only an
+      // admin may create a TEAM (shared) template.
+      allow create: if isUserActive()
+                    && request.resource.data.createdBy == request.auth.uid
+                    && ( tmplScope(request.resource.data) == 'personal'
+                         || (tmplScope(request.resource.data) == 'team' && isAdmin()) );
+
+      // Update/Delete: a personal template only by its owner; a team template by an admin OR its
+      // creator. Ownership and scope are immutable on a normal edit — only an admin may re-scope
+      // (promote a personal template to team / demote one) or this would be a self-promotion hole.
+      allow update: if isUserActive()
+                    && request.resource.data.createdBy == resource.data.createdBy
+                    && ( isAdmin() || tmplScope(request.resource.data) == tmplScope(resource.data) )
+                    && ( (tmplScope(resource.data) == 'personal' && resource.data.createdBy == request.auth.uid)
+                         || (tmplScope(resource.data) == 'team' && (isAdmin() || resource.data.createdBy == request.auth.uid)) );
+      allow delete: if isUserActive()
+                    && ( (tmplScope(resource.data) == 'personal' && resource.data.createdBy == request.auth.uid)
+                         || (tmplScope(resource.data) == 'team' && (isAdmin() || resource.data.createdBy == request.auth.uid)) );
     }
 
     // ---- USER SETTINGS (doc id == owner uid) --------------------------------
