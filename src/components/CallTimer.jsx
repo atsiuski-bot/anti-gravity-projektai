@@ -13,6 +13,7 @@ import { CALL_CONTACT_TYPES } from '../utils/callContacts';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import SessionToggleButton from './ui/SessionToggleButton';
 
 // Separate memoized modal component to prevent re-renders from timer updates
 const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting }) {
@@ -297,19 +298,13 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             <div className="flex flex-col items-center">
                 {/* Live time is surfaced by ActiveSessionReadout above the bar, so the column
                     itself stays as short as button + label (no reserved readout row). */}
-                <button
-                    onClick={handleToggleCall}
+                <SessionToggleButton
+                    session="call"
+                    variant="compact"
+                    active={isCalling}
                     disabled={isDisabled}
+                    onClick={handleToggleCall}
                     aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
-                    className={clsx(
-                        "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
-                        isDisabled
-                            ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
-                            : isCalling
-                                ? 'bg-session-call-accent text-white ring-2 ring-session-call-shell'
-                                : 'bg-surface-sunken text-ink hover:bg-line'
-                    )}
                     title={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
                 >
                     {isCalling ? (
@@ -317,7 +312,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
                     ) : (
                         <Phone className="w-5 h-5" aria-hidden="true" />
                     )}
-                </button>
+                </SessionToggleButton>
 
                 {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1).
                     Suppressed only in the collapsed side rail (`hideLabel`), where the icon SHAPE
