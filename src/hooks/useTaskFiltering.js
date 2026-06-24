@@ -7,29 +7,31 @@ import {
     getTaskSuggestionSources,
 } from '../utils/taskSearch';
 
-import { getLithuanianNow, getLithuanian3AMCutoff, getLithuanianDateString } from '../utils/timeUtils';
+import { getCurrentWorkDayCutoff } from '../utils/timeUtils';
 
 /**
- * scopeActiveTasks — the visible task set for "today's work day" after the structural filters
- * (user / priority / tag), but BEFORE free-text search and sort. Extracted so the list and the
- * search suggestions both read from the same scope (suggest only what is actually in view).
+ * scopeActiveTasks — the visible set for the SHARED TEAM list ("Sąrašas užduočių"), after the
+ * structural filters (user / priority / tag), but BEFORE free-text search and sort. Extracted so
+ * the list and the search suggestions both read from the same scope (suggest only what is in view).
+ *
+ * The two manager gates keep their items OUT of this common list by default:
+ *   - Creation gate — a worker's task awaiting approval ('unapproved') lives only in the dedicated
+ *     "Laukia patvirtinimo" sub-tab, never in the shared list, until a manager approves it.
+ *   - Completion gate — a finished task ('completed' = Laukia priėmimo, or 'confirmed' = Priimtas)
+ *     leaves the active list IMMEDIATELY; it is reviewed in the approvals / history surfaces.
+ * This is the deliberate contrast with the PERSONAL lists (scopePersonalDayWindow), which keep a
+ * day window so a person's own finished work lingers for the rest of the day.
+ *
+ * The BŪSENA dropdown (filterStatus) is an explicit manager override: when set, that status is the
+ * sole arbiter of what shows, so picking "Nepatvirtintas" / "Laukia priėmimo" / "Priimtas" can
+ * still surface those rows on demand (done statuses stay bound to the current work day so an
+ * explicit pick can't dump the whole archive).
  */
 export const scopeActiveTasks = (tasks, { filterUser, filterPriority, filterTag, filterStatus }) => {
+    const cutoff = getCurrentWorkDayCutoff();
+
     let activeTasks = tasks.filter(t => {
-        // Definition of "Today's Work Day" (Starts at 3:00 AM Europe/Vilnius)
-        const now = getLithuanianNow();
-        let cutoffDate = getLithuanianDateString(now);
-
-        // If it's before 3AM, the work day started at 3AM yesterday
-        if (now.getHours() < 3) {
-            const yesterday = new Date(now);
-            yesterday.setDate(now.getDate() - 1);
-            cutoffDate = getLithuanianDateString(yesterday);
-        }
-
-        const cutoff = getLithuanian3AMCutoff(cutoffDate);
-
-        // Deleted tasks: show if deleted today (with strikethrough), hide otherwise
+        // Deleted tasks: show if deleted within the current work day (with strikethrough), else hide.
         if (t.isDeleted || t.status === 'deleted') {
             const deletedAt = t.deletedAt || t.completedAt || t.updatedAt;
             if (!deletedAt) return false;
@@ -38,16 +40,23 @@ export const scopeActiveTasks = (tasks, { filterUser, filterPriority, filterTag,
 
         const isDone = t.completed || t.status === 'completed' || t.status === 'confirmed';
 
-        if (isDone) {
-            // If the task is done, it should only show if it was finished TODAY (after 3AM)
-            const finishedAt = t.completedAt || t.confirmedAt || t.updatedAt;
-            if (!finishedAt) return false;
-
-            const finishDate = new Date(finishedAt);
-            return finishDate >= cutoff;
+        // Explicit BŪSENA filter: the dropdown is the arbiter (the per-status narrowing below does
+        // the exact match). Done statuses stay bound to the current work day so selecting them can't
+        // flood the list with the whole archive.
+        if (filterStatus) {
+            if (isDone) {
+                const finishedAt = t.completedAt || t.confirmedAt || t.updatedAt;
+                if (!finishedAt) return false;
+                return new Date(finishedAt) >= cutoff;
+            }
+            return true;
         }
 
-        // Not done, so it's active
+        // Default team list — both gates hide their items:
+        if (t.status === 'unapproved') return false; // creation gate → "Laukia patvirtinimo" tab
+        if (isDone) return false;                     // completion gate → leaves the list at once
+
+        // Active (pending / in-progress / approved)
         return true;
     });
 

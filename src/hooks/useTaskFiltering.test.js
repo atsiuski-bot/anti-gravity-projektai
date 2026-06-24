@@ -6,13 +6,33 @@ import { scopeActiveTasks, compareTaskTag } from './useTaskFiltering';
 // behaviours added for the team list: the BŪSENA column FILTER (scopeActiveTasks' status pass)
 // and the ŽYMOS column SORT (compareTaskTag's primary ordering). Both are pure functions.
 //
-// All fixtures use ACTIVE (not done / not deleted) statuses, so they always clear the
-// "today's work day" date gate regardless of when the suite runs — keeping these tests about
-// the filter/sort axis, not the calendar.
+// The active fixtures (pending / in-progress / approved) always clear the "today's work day"
+// date gate regardless of when the suite runs. The two manager gates (hide 'unapproved' and
+// hide finished by default) are status-driven, not calendar-driven, so they are testable here;
+// the date window for finished rows is only asserted in the explicit-filter path with a
+// recent finishedAt.
 
 const task = (over = {}) => ({ id: 'x', status: 'pending', ...over });
 
-describe('scopeActiveTasks — BŪSENA column filter', () => {
+describe('scopeActiveTasks — shared team list default gates', () => {
+    const tasks = [
+        task({ id: 'p', status: 'pending' }),
+        task({ id: 'i', status: 'in-progress' }),
+        task({ id: 'u', status: 'unapproved' }),
+        task({ id: 'a', status: 'approved' }),
+        task({ id: 'c', status: 'completed', completedAt: new Date().toISOString() }),
+        task({ id: 'cf', status: 'confirmed', confirmedAt: new Date().toISOString() }),
+    ];
+
+    it('hides unapproved AND finished rows by default, keeping only active ones', () => {
+        // Creation gate (unapproved) → "Laukia patvirtinimo" tab; completion gate (completed/
+        // confirmed) → leaves the shared list at once. Only pending/in-progress/approved remain.
+        const out = scopeActiveTasks(tasks, { filterStatus: '' });
+        expect(out.map(t => t.id).sort()).toEqual(['a', 'i', 'p']);
+    });
+});
+
+describe('scopeActiveTasks — BŪSENA column filter (explicit override)', () => {
     const tasks = [
         task({ id: 'p', status: 'pending' }),
         task({ id: 'i', status: 'in-progress' }),
@@ -20,14 +40,19 @@ describe('scopeActiveTasks — BŪSENA column filter', () => {
         task({ id: 'a', status: 'approved' }),
     ];
 
-    it('returns every active task when no status filter is set', () => {
-        const out = scopeActiveTasks(tasks, { filterStatus: '' });
-        expect(out.map(t => t.id).sort()).toEqual(['a', 'i', 'p', 'u']);
-    });
-
-    it('keeps only rows whose STORED status matches the chosen filter', () => {
+    it('reveals unapproved rows when the manager explicitly filters for them', () => {
         expect(scopeActiveTasks(tasks, { filterStatus: 'unapproved' }).map(t => t.id)).toEqual(['u']);
         expect(scopeActiveTasks(tasks, { filterStatus: 'in-progress' }).map(t => t.id)).toEqual(['i']);
+    });
+
+    it('reveals a finished row finished within the work day when filtered for it', () => {
+        const recent = [task({ id: 'c', status: 'completed', completedAt: new Date().toISOString() })];
+        expect(scopeActiveTasks(recent, { filterStatus: 'completed' }).map(t => t.id)).toEqual(['c']);
+    });
+
+    it('still bounds a finished filter to the work day (an old finished row stays hidden)', () => {
+        const old = [task({ id: 'c', status: 'completed', completedAt: '2000-01-01T00:00:00.000Z' })];
+        expect(scopeActiveTasks(old, { filterStatus: 'completed' })).toEqual([]);
     });
 
     it('treats a missing status as "pending" (the lifecycle default)', () => {
