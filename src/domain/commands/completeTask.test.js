@@ -51,16 +51,20 @@ describe('completeTask — plan (manager auto-confirm rule)', () => {
     expect(p.payload.completedBy).toBe('w1');
   });
 
-  it("the task's OWN manager (by managerId) auto-confirms even without a manager role", () => {
-    const ownManager = humanActor({ uid: 'mgrOwn', role: 'worker' }); // role worker, but owns the task
+  it("a worker named as the task's managerId does NOT auto-confirm (confirm is a manager ROLE; firestore.rules denies a worker self-confirming)", () => {
+    // Regression for the permission block: the old uid===managerId arm wrote status:'confirmed',
+    // which changesApprovalFields() in firestore.rules DENIES for a worker — silently failing the
+    // whole finish. A worker now lands 'completed' and waits for a real manager's priėmimas.
+    const ownManager = humanActor({ uid: 'mgrOwn', role: 'worker' }); // role worker, even though they are the task's managerId
     const p = __buildCompletePlan({ task: { id: 't1', status: 'pending', completed: false, managerId: 'mgrOwn' } }, ownManager);
-    expect(p.payload.status).toBe('confirmed');
-    expect(p.payload.confirmedBy).toBe('mgrOwn');
+    expect(p.payload.status).toBe('completed');
+    expect(p.payload.confirmedBy).toBeNull();
+    expect(p.payload.confirmedAt).toBeNull();
   });
 
   it('a SELF-DIRECTED completion does NOT auto-confirm — it lands as completed for manager review', () => {
-    // Worker created the task for themselves with no distinct overseer (managerId === the assignee):
-    // the "own manager" arm must NOT fire, or the worker would silently sign off their own work.
+    // Worker created the task for themselves and is also its managerId — but role is worker, so it
+    // still lands 'completed'; self-direction does not factor in, the actor's role decides.
     const selfDirected = { id: 't1', status: 'in-progress', completed: false, assignedUserId: 'w1', createdBy: 'w1', managerId: 'w1' };
     const p = __buildCompletePlan({ task: selfDirected }, WORKER);
     expect(p.payload.status).toBe('completed');
@@ -76,13 +80,13 @@ describe('completeTask — plan (manager auto-confirm rule)', () => {
     expect(p.payload.confirmedBy).toBeNull();
   });
 
-  it('an own-manager of SOMEONE ELSE\'s task still auto-confirms (not self-directed)', () => {
-    // managerId === actor but the assignee is a different person → not self-directed → auto-confirm stays.
+  it("a worker who is the managerId of SOMEONE ELSE's task still does NOT auto-confirm (role, not ownership, grants confirm)", () => {
+    // managerId === actor but role is worker → no confirm authority under firestore.rules → 'completed'.
     const ownManager = humanActor({ uid: 'mgrOwn', role: 'worker' });
     const othersTask = { id: 't1', status: 'pending', completed: false, assignedUserId: 'someoneElse', createdBy: 'someoneElse', managerId: 'mgrOwn' };
     const p = __buildCompletePlan({ task: othersTask }, ownManager);
-    expect(p.payload.status).toBe('confirmed');
-    expect(p.payload.confirmedBy).toBe('mgrOwn');
+    expect(p.payload.status).toBe('completed');
+    expect(p.payload.confirmedBy).toBeNull();
   });
 
   it('a MANAGER ROLE completing their own self-directed task still auto-confirms (they are the review authority)', () => {

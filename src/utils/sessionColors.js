@@ -1,4 +1,4 @@
-import { Zap, Phone, Coffee, Briefcase } from 'lucide-react';
+import { Zap, Phone, Coffee, Hammer } from 'lucide-react';
 
 /**
  * SESSION_COLORS — the single source of truth for session-state presentation
@@ -8,18 +8,19 @@ import { Zap, Phone, Coffee, Briefcase } from 'lucide-react';
  * this map removes).
  *
  * Class names reference the design tokens in tailwind.config.js
- * (`session.<type>.{shell,surface,accent}`). The resolved colors are intentionally identical
- * to the previous hardcoded values, so adopting this map is behavior-neutral for the shell.
+ * (`session.<type>.{shell,surface,accent,soft}`), which are CSS-variable-backed (ADR 0016): the
+ * light palette is byte-identical to the original hardcoded values, while the dark theme swaps the
+ * pale light tints for deep same-hue tones so the loud shell harmonizes with the dark canvas.
  *
  *  - `shell`   full-screen background while the session is active
  *  - `surface` the running card layered above the shell (content rides on this, §4-D)
  *  - `accent`  timer / icon / accent text color
  *  - `accentBorder` the accent as a BORDER class — for a pill/chip outlined in the session
  *              accent (e.g. the floating ActiveSessionReadout), so it reads the one map too
- *  - `onShell` text color that is legible *directly* on the shell. Because the shells are
- *              theme-INVARIANT (a light tint, or saturated red), `onShell` is a FIXED color
- *              (never the themeable `ink` token, which would invert to near-white on the dark
- *              theme and vanish on a still-light shell).
+ *  - `onShell` text color that is legible *directly* on the shell. The shells are theme-REACTIVE
+ *              (a light tint in light mode, a deep tone in dark), so on-shell text is pinned via
+ *              the `.wz-on-shell` CSS rule keyed off `data-session-shell` + `data-theme` — never
+ *              the themeable `ink` token, which would invert and vanish on a still-light shell.
  *  - `label`   the required persistent Lithuanian label (§4-A, color is never the sole signal)
  *  - `Icon`    the lucide glyph for the state
  */
@@ -62,7 +63,7 @@ export const SESSION_COLORS = {
     task: {
         type: 'task',
         label: 'Vyksta darbas',
-        Icon: Briefcase,
+        Icon: Hammer,
         shell: 'bg-session-task-shell',
         surface: 'bg-session-task-surface',
         accent: 'text-session-task-accent',

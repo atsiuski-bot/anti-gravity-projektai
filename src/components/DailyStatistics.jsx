@@ -1110,10 +1110,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
               <>
             {/* Header Controls — kept to a single compact row on every viewport (no column
                 stacking on mobile) so the date stepper + filters take minimal vertical space.
-                In range mode the toolbar's only mobile content is the static date span, which is
-                merged into the summary card below on phones — so hide the whole toolbar on mobile
-                (md+ keeps it, where the totals also live inline). Day mode keeps the stepper here. */}
-            <div className={`bg-surface-card p-2 rounded-card shadow-sm border border-line flex-row flex-wrap gap-2 items-center justify-between ${summaryHandledAbove ? 'hidden' : isRange ? 'hidden md:flex' : 'flex'}`}>
+                On phones the toolbar's only content (the date stepper in day mode, the static span
+                in range mode) is merged into the summary card below so the whole day/period summary
+                reads as one block — so hide the whole toolbar on mobile in both modes (md+ keeps it,
+                where the totals also live inline). */}
+            <div className={`bg-surface-card p-2 rounded-card shadow-sm border border-line flex-row flex-wrap gap-2 items-center justify-between ${summaryHandledAbove ? 'hidden' : 'hidden md:flex'}`}>
 
                 {/* Left group — date control plus, on desktop, the day's totals inline, so on
                     md+ the whole summary collapses into this single toolbar row. */}
@@ -1122,9 +1123,15 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 {/* Day mode: a day stepper. Range mode: a static span label — the period is
                     chosen by the picker in the parent (Reports), so there is nothing to step. */}
                 {isRange ? (
-                    <div className="flex items-center gap-1.5 bg-surface-sunken px-3 py-2 rounded-control border border-line font-medium text-caption text-ink-strong whitespace-nowrap">
-                        <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" aria-hidden="true" />
-                        {rangeStart} – {rangeEnd}
+                    // Same sunken `p-1` shell + `min-h-touch` inner row as the day stepper below, so
+                    // the date control is the exact same height in both modes — the toolbar card no
+                    // longer changes height when toggling day ↔ period (only the chevrons are absent,
+                    // since a fixed span has nothing to step).
+                    <div className="flex items-center bg-surface-sunken p-1 rounded-control border border-line">
+                        <div className="flex items-center gap-1.5 px-3 min-h-touch font-medium text-caption text-ink-strong whitespace-nowrap">
+                            <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" aria-hidden="true" />
+                            {rangeStart} – {rangeEnd}
+                        </div>
                     </div>
                 ) : (
                     <div className="flex items-center gap-1 bg-surface-sunken p-1 rounded-control border border-line">
@@ -1197,11 +1204,33 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     holds it on desktop is hidden on phones), centred and a notch larger than the
                     desktop caption so the date and its totals read as one merged block. */}
                 {isRange && (
-                    <div className="flex items-center justify-center gap-2 border-b border-line pb-2.5 mb-2.5 text-center">
+                    <div className="flex items-center justify-center gap-2 border-b border-line pb-2.5 mb-2.5 text-center min-h-touch">
                         <Calendar className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
                         <span className="text-body font-semibold text-ink-strong tabular-nums">
                             {rangeStart} – {rangeEnd}
                         </span>
+                    </div>
+                )}
+                {/* Day mode: the date stepper lives in this same card on mobile (the toolbar that
+                    holds it on desktop is hidden on phones), centred as the card's header so the
+                    day, its start/end and its totals read as one merged block — matching the
+                    single-box range view above. */}
+                {!isRange && (
+                    <div className="flex items-center justify-center gap-1 border-b border-line pb-2.5 mb-2.5">
+                        <IconButton
+                            icon={ChevronLeft}
+                            label="Ankstesnė diena"
+                            onClick={() => handleDateChange(-1)}
+                        />
+                        <span className="flex items-center gap-1.5 px-1.5 text-body font-semibold text-ink-strong tabular-nums">
+                            <Calendar className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
+                            {selectedDate}
+                        </span>
+                        <IconButton
+                            icon={ChevronRight}
+                            label="Kita diena"
+                            onClick={() => handleDateChange(1)}
+                        />
                     </div>
                 )}
                 {selectedUserId !== 'all' && !isRange && (

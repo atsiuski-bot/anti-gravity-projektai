@@ -32,11 +32,6 @@ import { TASK_TAGS } from '../utils/taskUtils';
 import { PeriodPicker } from './reports/PeriodPicker';
 import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 
-// Skirtumas (worked − planned) is meaningful only when the plan plausibly covers the worked span;
-// a token plan against a full month produces a fake "+164:00 surplus". A worker counts as "planned"
-// only when their plan is at least this fraction of worked time. Shared by the CSV Skirtumas gate
-// and the on-screen coverage indicator so the two surfaces never disagree on who has a usable plan.
-const PLAN_COVERAGE_FLOOR = 0.25;
 
 export default function Reports({ users, canExport = false, viewRole }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
@@ -54,7 +49,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
         const today = getLithuanianDateString();
         return { start: `${today.slice(0, 7)}-01`, end: today };
     });
-    const [workData, setWorkData] = useState([]); // Array of { userId, name, totalMinutes, days: { date: minutes } }
+    const [, setWorkData] = useState([]); // populated by fetchWorkHours; read only in CSV export path
     // Test/founder accounts are excluded from the work report by default so payroll totals and
     // the leaderboard aren't skewed by non-production data; a manager can opt to show them.
     // Reports always exclude test (isTest) users — there is no manager toggle.
@@ -907,7 +902,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
             {/* --- WORK REPORT TAB (merged daily view + detailed range summary) --- */}
             {activeTab === 'report' && (
-                <div className="space-y-4">
+                <div className="space-y-2">
                     {/* Period selector + CSV export share one row: the collapsible period card
                         flexes to fill; the export button sits beside it (icon-only on mobile,
                         icon+label on desktop) and appears only for a multi-day range (day mode
@@ -967,24 +962,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     {/* Plan-coverage indicator: how many of the listed workers have ANY plan
                         (calendar or expected-hours baseline) for the span. Surfaces silently-missing
                         plans so a manager sees that Skirtumas can't be trusted for the remainder. */}
-                    {reportPeriod !== 'day' && isManagerRole(userRole) && workData.length > 0 && (() => {
-                        const testIds = new Set((users || []).filter((u) => u.isTest).map((u) => u.id));
-                        const rows = showTestUsers ? workData : workData.filter((u) => !testIds.has(u.userId));
-                        if (rows.length === 0) return null;
-                        // Count only workers whose plan actually covers the span — the same predicate
-                        // the CSV's Skirtumas gate uses — so the indicator and the export agree on
-                        // who has a usable plan (a thin real plan that the CSV blanks is NOT counted).
-                        const withPlan = rows.filter((u) =>
-                            u.plannedMinutes > 0 &&
-                            (u.totalMinutes <= 0 || u.plannedMinutes >= PLAN_COVERAGE_FLOOR * u.totalMinutes)
-                        ).length;
-                        return (
-                            <p className="mb-3 px-1 text-caption text-ink-muted">
-                                Planą turi {withPlan} iš {rows.length} vykdytojų
-                                {withPlan < rows.length ? ' — likusiems „Skirtumas" neskaičiuojamas.' : '.'}
-                            </p>
-                        );
-                    })()}
 
                     {/* On-screen team summary — manager-only, multi-day ranges only. Reuses the same
                         aggregated report the download produces (buildReport): the team rollup with

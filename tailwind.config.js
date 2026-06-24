@@ -7,9 +7,10 @@
 // CSS-variable-backed in the `rgb(var(--x) / <alpha-value>)` channel form so a single
 // `data-theme` attribute on <html> swaps the whole palette while Tailwind opacity utilities
 // (e.g. `bg-surface-card/50`) keep working. The light + dark channel values live in
-// `src/index.css`. The signature SESSION colors and the achievement TIER medallions stay
-// LITERAL hex — they are theme-INVARIANT by design (the loud whole-screen session color is the
-// product's identity, §4; tier medallions are self-contained). `feedback.scrim` is the one
+// `src/index.css`. The signature SESSION colors are ALSO variable-backed (ADR 0016): the loud
+// whole-screen identity is preserved, but dark mode swaps the pale light tints for deep same-hue
+// tones instead of letting them glare on the dark canvas. The achievement TIER medallions stay
+// LITERAL hex — they are self-contained and theme-invariant by design. `feedback.scrim` is the one
 // modal backdrop opacity and is likewise constant.
 const withAlpha = (v) => `rgb(var(${v}) / <alpha-value>)`;
 
@@ -42,16 +43,40 @@ export default {
                 // `border` (no color class) to a literal gray-200, which would stay light in dark
                 // mode. Routing it through --line keeps light identical and fixes any uncolored
                 // border in dark. Explicit border-line / border-feedback-* still work (from colors).
-                // Session colors (closed set, §4) — theme-INVARIANT literal hex. The loud
-                // full-screen shell is the product's identity and must not dim with the canvas.
-                // `soft` is the soft tint (the *-200 shade) for a session-tinted BORDER or RING on
-                // a secondary control (e.g. the quick-work / break desktop buttons), so those stop
-                // reaching for raw border-red-200 / border-amber-200 outside the token system.
+                // Session colors (closed set, §4) — the loud full-screen state identity. NOW
+                // theme-REACTIVE (ADR 0016): the light palette is byte-identical to the old literal
+                // hex, but each token is CSS-variable-backed so the dark theme can swap the pale
+                // light tints (which glared on the dark canvas) for deep, same-hue tones that still
+                // read as red/blue/amber/green. `accent` keeps ONE fill-safe value in both themes
+                // (white text rides on it) and lightens only as FOREGROUND text via a `[data-theme=
+                // "dark"] .text-session-*-accent` override in index.css — the same fill-vs-foreground
+                // decoupling used for `feedback`/`brand`. `soft` is the session-tinted BORDER/RING
+                // tint for secondary controls. Channel values live in src/index.css.
                 session: {
-                    quickWork: { shell: '#EF4444', surface: '#FEF2F2', accent: '#B91C1C', soft: '#FECACA' },
-                    call: { shell: '#DBEAFE', surface: '#EFF6FF', accent: '#2563EB', soft: '#BFDBFE' },
-                    break: { shell: '#FEF3C7', surface: '#FFFBEB', accent: '#B45309', soft: '#FDE68A' },
-                    task: { shell: '#BBF7D0', surface: '#DCFCE7', accent: '#15803D', soft: '#BBF7D0' },
+                    quickWork: {
+                        shell: withAlpha('--session-quickwork-shell'),
+                        surface: withAlpha('--session-quickwork-surface'),
+                        accent: withAlpha('--session-quickwork-accent'),
+                        soft: withAlpha('--session-quickwork-soft'),
+                    },
+                    call: {
+                        shell: withAlpha('--session-call-shell'),
+                        surface: withAlpha('--session-call-surface'),
+                        accent: withAlpha('--session-call-accent'),
+                        soft: withAlpha('--session-call-soft'),
+                    },
+                    break: {
+                        shell: withAlpha('--session-break-shell'),
+                        surface: withAlpha('--session-break-surface'),
+                        accent: withAlpha('--session-break-accent'),
+                        soft: withAlpha('--session-break-soft'),
+                    },
+                    task: {
+                        shell: withAlpha('--session-task-shell'),
+                        surface: withAlpha('--session-task-surface'),
+                        accent: withAlpha('--session-task-accent'),
+                        soft: withAlpha('--session-task-soft'),
+                    },
                 },
                 // Achievement tiers (closed set) — calm surface + AA-passing accent text + a
                 // metallic ring. Self-contained medallions; theme-invariant literal hex (a light

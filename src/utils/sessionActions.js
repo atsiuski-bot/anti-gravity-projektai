@@ -302,7 +302,10 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
         const doLogging = async () => {
             try {
                 const logPromises = [];
-                if (durationMinutes > MIN_LOGGED_SESSION_MINUTES) {
+                // A call always reaches end-of-session through the deliberate classify/defer modal,
+                // so it is logged regardless of duration (a real but brief call must not vanish);
+                // break/quickWork/task still discard sub-minute mis-taps that have no such gate.
+                if (durationMinutes > MIN_LOGGED_SESSION_MINUTES || session.type === 'call') {
                     logPromises.push(
                         addDoc(collection(db, 'sessions'), {
                             userId,
@@ -496,7 +499,9 @@ const endLegacySession = async (userId, type, userData) => {
 };
 
 const handleLegacyLogging = async (userId, userData, session, now, durationMinutes) => {
-    if (durationMinutes <= MIN_LOGGED_SESSION_MINUTES) return; // Ignore accidental sub-minute taps
+    // Ignore accidental sub-minute taps — EXCEPT calls, which always pass through the deliberate
+    // end-of-call modal (classify or "Vėliau aprašysiu") and so must be logged at any length.
+    if (durationMinutes <= MIN_LOGGED_SESSION_MINUTES && session.type !== 'call') return;
     const sessionDate = getLithuanianDateString(now);
 
     if (session.type === 'break') {

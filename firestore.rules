@@ -212,11 +212,21 @@ service cloud.firestore {
       // Membership is admin-only: only an admin may change a worker's team (teamManagerIds) or a
       // manager's scope (scopedManager). Otherwise a worker could hide themselves from / expose
       // themselves to a manager, or a scoped manager could lift their own restriction. (ADR 0005)
+      // Both the role pin and the isDisabled pin read EVERY operand through .get(field, default).
+      // A bare dot access (request.resource.data.isDisabled) on a field the document does NOT carry
+      // raises a rules EVALUATION ERROR that denies the whole write — the exact trap isUserActive()
+      // documents above. Legacy user docs predate the isDisabled convention, so on a merge update the
+      // incoming doc inherits that absence; the previous left-operand dot access therefore denied a
+      // worker's own workStatus/activeSession write (every timer action), bricking start/pause/finish
+      // for those accounts. Managers/admins were spared only because isManagerOrAdmin() short-circuits
+      // the conjunct before the dot access. .get() on both sides defaults a missing field to a safe
+      // value so the equality (unchanged on these self-writes) passes for legacy and current docs alike.
       allow update: if isAuthenticated()
                     && (request.auth.uid == userId || isManagerOrAdmin())
-                    && (isAdmin() || request.resource.data.role == resource.data.role)
+                    && (isAdmin() ||
+                        request.resource.data.get('role', '') == resource.data.get('role', ''))
                     && (isManagerOrAdmin() ||
-                        request.resource.data.isDisabled == resource.data.get('isDisabled', false))
+                        request.resource.data.get('isDisabled', false) == resource.data.get('isDisabled', false))
                     && (isAdmin() ||
                         request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []))
                     && (isAdmin() ||
