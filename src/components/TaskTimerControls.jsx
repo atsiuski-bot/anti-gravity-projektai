@@ -8,6 +8,7 @@ import { isManagerRole } from '../utils/formatters';
 import { isSelfDirectedTask } from '../utils/selfDirectedTask';
 import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
+import { notify } from '../utils/notify';
 import { reopenTask, humanActor, MODES } from '../domain';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
@@ -428,7 +429,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         recipientId = userData?.defaultManager || null;
                     }
                     if (recipientId && recipientId !== currentUser.uid) {
-                        await addDoc(collection(db, 'request_notifications'), {
+                        // Worker-authored (userId = caller); notify() stamps provenance + registry category.
+                        await notify({
                             recipientId,
                             type: 'task_completion',
                             taskId: task.id,
@@ -438,8 +440,6 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                             userName: currentUser.displayName || currentUser.email || 'Vykdytojas',
                             userId: currentUser.uid,
                             completedAt: now.toISOString(),
-                            isRead: false,
-                            createdAt: new Date().toISOString()
                         });
                     }
                 } catch (notifErr) {

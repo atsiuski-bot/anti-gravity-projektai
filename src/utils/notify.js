@@ -1,5 +1,6 @@
 import { addDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
+import { NOTIFICATIONS, notificationCategory } from '../notifications/registry';
 
 /**
  * Single funnel for in-app notifications — the `request_notifications` collection, which is the
@@ -8,45 +9,25 @@ import { db } from '../firebase';
  *   - stamp the invariants firestore.rules requires on create — a non-empty string `recipientId`,
  *     an unread flag, and provenance (the caller's uid as `createdBy`), so a notification can
  *     never be forged "from" someone else;
- *   - tag each notification with a `category` ('action' = needs a decision, 'info' = FYI) from one
- *     type→category map, so the hybrid bell can never disagree with the sender; and
+ *   - tag each notification with a `category` ('action' = needs a decision, 'info' = FYI) from the
+ *     ONE registry ({@link NOTIFICATIONS}), so the hybrid bell, the toast and the push can never
+ *     disagree with the sender; and
  *   - clamp the only free-form field (`commentText`) before it can reach a lockscreen.
  *
  * A notification is never delivered to its own actor (`recipientId === actorUid` is dropped).
  *
- * NOTE: the five legacy write-sites (task_approval, task_completion ×2, time_extension_request,
- * new_comment) still write inline; the bell derives their category from `type` via {@link categoryOf}
- * so they need no change. New notification kinds should route through {@link notify} here.
+ * The type's category, copy, sound and external-push intent all live in src/notifications/registry.js
+ * — every write site (and the manager-facing decision sites) routes through {@link notify} here, so
+ * there is no longer any inline write that can drift from those invariants.
  */
 
-// One source of truth for how the bell weights each type. 'action' floats to the top tier and
-// stays until the underlying work is resolved; 'info' is a read/unread row.
-export const NOTIFICATION_CATEGORY = {
-    // ── Worker → manager (existing) ──────────────────────────────────────────
-    task_approval: 'action',            // worker submitted a task → the assigned manager approves
-    task_completion: 'action',          // worker finished → the assigned manager confirms / reverts
-    time_extension_request: 'action',   // worker hit the estimate → the assigned manager decides
-    new_comment: 'info',                // someone commented on a task
-    // ── Manager → worker (new, two-way) ──────────────────────────────────────
-    task_assigned: 'info',              // a manager assigned a new task to the worker
-    task_approved: 'info',              // the worker's submitted task was approved (may start)
-    task_confirmed: 'info',             // the worker's finished task was confirmed (closed)
-    task_reverted: 'action',            // the manager sent it back — the worker reopens & fixes
-    extension_granted: 'info',          // the manager extended the estimate
-    extension_denied: 'info',           // the manager declined to extend
-    calendar_decision: 'info',          // the manager approved/declined a calendar request
-    session_edited: 'info',             // an admin corrected the worker's logged (paid) time
-    session_deleted: 'info',            // an admin removed one of the worker's logged sessions
-    // ── Worker → manager (new, two-way) ──────────────────────────────────────
-    session_correction_request: 'action', // worker flagged a logged-time error → manager resolves it
-    // ── System → admin ───────────────────────────────────────────────────────
-    account_approval: 'action',         // a new sign-up is pending — an admin approves/blocks it
-    // ── System → manager ─────────────────────────────────────────────────────
-    recurring_reassign: 'action',       // a recurring job's usual assignee is away — reassign it
-};
+// Re-exported from the registry so existing importers keep working; the registry is the source.
+export const NOTIFICATION_CATEGORY = Object.fromEntries(
+    Object.entries(NOTIFICATIONS).map(([type, entry]) => [type, entry.category]),
+);
 
 /** The bell tier for a notification type. Unknown/legacy types fall back to 'info'. */
-export const categoryOf = (type) => NOTIFICATION_CATEGORY[type] || 'info';
+export const categoryOf = (type) => notificationCategory(type);
 
 /**
  * Write one notification. `actorUid`/`actorName` identify the signed-in user causing it (stamped

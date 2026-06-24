@@ -6,6 +6,7 @@ import { logError } from './errorLog';
 import { isManagerRole } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
 import { buildCallTitle } from './callContacts';
+import { notify } from './notify';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
@@ -635,8 +636,10 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         // later if the worker describes it. Provenance is the worker's own uid (userId), which
         // firestore.rules requires for a request_notifications create.
         if (routedManagerId && routedManagerId !== userId && !autoStopped) {
+            // Worker-authored (userId = caller); notify() stamps provenance + the registry category and
+            // swallows its own write errors, so the completion log is never blocked by a notify failure.
             logPromises.push(
-                addDoc(collection(db, 'request_notifications'), {
+                notify({
                     recipientId: routedManagerId,
                     type: 'task_completion',
                     taskId: taskRef.id,
@@ -646,9 +649,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                     userName: userData.displayName || 'Vykdytojas',
                     userId,
                     completedAt: now.toISOString(),
-                    isRead: false,
-                    createdAt: new Date().toISOString()
-                }).catch(e => logError(e, { source: 'writeFail:endSession.quickWorkNotify' }))
+                })
             );
         }
 
