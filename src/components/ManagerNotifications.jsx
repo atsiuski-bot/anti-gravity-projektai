@@ -3,11 +3,13 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, formatDistanceToNow } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus, Ban, UserPlus, Hand, Hourglass } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Bell, Plus, Ban, UserPlus, Hand, Hourglass } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
+import { notificationCopy } from '../notifications/registry';
+import { cn } from '../utils/cn';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
 import { deleteTask, extendTaskTime } from '../utils/taskActions';
@@ -20,6 +22,30 @@ import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import EmptyState from './ui/EmptyState';
 import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyphs';
+
+// History view caps how many read notifications it renders at once. A recipient's read backlog grows
+// without bound (notifications are never deleted), so the list is sorted newest-first and sliced —
+// the cap is surfaced (not silent) when it bites, so "older ones exist" is never hidden.
+const HISTORY_CAP = 100;
+
+// Glyph for a read/past notification in the history list. Mirrors the active feed's per-type icons so
+// a notification looks the same once archived; unknown/legacy types degrade to a neutral bell.
+const HISTORY_ICONS = {
+    task_approval: CheckCircle2, task_completion: CheckCircle2, task_confirmed: CheckCircle2,
+    task_assigned: ListTodo, task_approved: CheckCircle2,
+    task_edited: Edit, task_unassigned: Edit, task_deleted: Trash2,
+    task_reverted: RotateCcw,
+    time_extension_request: Clock, extension_granted: Clock, extension_denied: Clock,
+    task_priority_escalated: Clock,
+    new_comment: MessageCircle, new_photo: MessageCircle,
+    calendar_decision: AlertCircle,
+    session_edited: Edit, session_deleted: Trash2, session_auto_closed: Clock,
+    session_correction_request: AlertCircle,
+    account_approval: UserPlus, recurring_reassign: AlertCircle,
+    task_needs_manager: Hand, task_waiting: Hourglass,
+    achievement: CheckCircle2, task_overdue: AlertCircle,
+};
+const historyIcon = (type) => HISTORY_ICONS[type] || Bell;
 
 /**
  * NotificationFeed — the two-way feed rendered inside the notification bell's panel.
@@ -92,9 +118,11 @@ export default function ManagerNotifications({ onClose }) {
     const { setActiveTab } = useNavigation();
     const isManager = isManagerRole(userRole);
     const runUndoable = useUndoableAction();
+    const [view, setView] = useState('active'); // 'active' (live feed) | 'history' (read/past notices)
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
+    const [historyNotifications, setHistoryNotifications] = useState([]); // read request_notifications, lazy-loaded
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
     const [bulkConfirming, setBulkConfirming] = useState(false); // batch "approve all completions" in flight
@@ -185,6 +213,30 @@ export default function ManagerNotifications({ onClose }) {
 
         return () => unsubscribe();
     }, [currentUser, isManager]);
+
+    // 4. History — read (already-dismissed) request_notifications for this recipient. Subscribed
+    // LAZILY (only while the Istorija tab is open) so it adds no always-on listener cost; the read
+    // rule already lets a recipient read ALL their own notifications, and this two-equality query
+    // (recipientId + isRead) mirrors the active feed's shape, so it needs no rule or index change.
+    // Newest-first ordering + the HISTORY_CAP slice happen in render (avoids an orderBy composite
+    // index). This is the answer to "read notices vanish forever" — they now live on here.
+    useEffect(() => {
+        if (!currentUser || view !== 'history') { setHistoryNotifications([]); return undefined; }
+
+        const q = query(
+            collection(db, 'request_notifications'),
+            where('recipientId', '==', currentUser.uid),
+            where('isRead', '==', true)
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setHistoryNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, (error) => {
+            console.error("ManagerNotifications: History Listener Error:", error);
+        });
+
+        return () => unsubscribe();
+    }, [currentUser, view]);
 
     const handleDismissCalendar = async (notificationId) => {
         try {
@@ -586,18 +638,99 @@ export default function ManagerNotifications({ onClose }) {
         return (urgencyRank(a) - urgencyRank(b)) || (getTimestamp(b) - getTimestamp(a));
     });
 
-    if (sortedNotifications.length === 0) {
-        return (
-            <EmptyState
-                icon={BellOff}
-                title="Pranešimų nėra"
-                description="Čia matysite užduočių tvirtinimus, komentarus ir kalendoriaus naujienas."
-            />
-        );
-    }
+    const activeCount = sortedNotifications.length;
+    // History is sorted newest-first and capped in render (no orderBy → no composite index).
+    const sortedHistory = [...historyNotifications]
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+        .slice(0, HISTORY_CAP);
 
     return (
         <div className="space-y-3">
+            {/* Two views. ACTIVE = the live feed (action items float to the top). ISTORIJA = read /
+                already-acted-on notices, so a notification that was dismissed (manually or by acting
+                on it) can still be reviewed instead of disappearing forever. The tabs always render,
+                so history is reachable even when the active feed is empty. */}
+            <div role="tablist" aria-label="Pranešimų rodinys">
+                <div className="flex w-full overflow-hidden rounded-control border border-line bg-surface-sunken">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={view === 'active'}
+                        onClick={() => setView('active')}
+                        className={cn(
+                            'flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 min-h-touch text-body font-semibold leading-tight transition-colors',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                            view === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                        )}
+                    >
+                        Aktyvūs
+                        {activeCount > 0 && (
+                            <span className={cn(
+                                'inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-caption font-bold leading-none',
+                                view === 'active' ? 'bg-white/25 text-white' : 'bg-brand text-white'
+                            )}>
+                                {activeCount}
+                            </span>
+                        )}
+                    </button>
+                    <div className="w-px shrink-0 bg-line" aria-hidden="true" />
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={view === 'history'}
+                        onClick={() => setView('history')}
+                        className={cn(
+                            'flex-1 inline-flex items-center justify-center px-3 py-2.5 min-h-touch text-body font-semibold leading-tight transition-colors',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                            view === 'history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                        )}
+                    >
+                        Istorija
+                    </button>
+                </div>
+            </div>
+
+            {view === 'history' ? (
+                sortedHistory.length === 0 ? (
+                    <EmptyState
+                        icon={Bell}
+                        title="Istorijoje tuščia"
+                        description="Perskaityti ir užbaigti pranešimai bus matomi čia."
+                    />
+                ) : (
+                    <div className="space-y-2">
+                        {sortedHistory.map((n) => {
+                            const { title, body } = notificationCopy(n);
+                            const Icon = historyIcon(n.type);
+                            const when = n.createdAt
+                                ? formatDistanceToNow(parseISO(n.createdAt), { addSuffix: true, locale: lt })
+                                : '';
+                            return (
+                                <div key={n.id} className="flex items-start gap-3 rounded-card border border-line bg-surface-card p-3">
+                                    <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-body font-medium text-ink">{title}</p>
+                                        {body && <p className="mt-0.5 text-caption text-ink-muted line-clamp-2">{body}</p>}
+                                    </div>
+                                    {when && <span className="shrink-0 text-caption text-ink-muted whitespace-nowrap">{when}</span>}
+                                </div>
+                            );
+                        })}
+                        {historyNotifications.length > HISTORY_CAP && (
+                            <p className="pt-1 text-center text-caption text-ink-muted">
+                                Rodomi naujausi {HISTORY_CAP} pranešimai.
+                            </p>
+                        )}
+                    </div>
+                )
+            ) : sortedNotifications.length === 0 ? (
+                <EmptyState
+                    icon={BellOff}
+                    title="Pranešimų nėra"
+                    description="Čia matysite užduočių tvirtinimus, komentarus ir kalendoriaus naujienas."
+                />
+            ) : (
+              <>
             {hasInfoToClear && (
                 <div className="flex justify-end">
                     <Button variant="ghost" size="sm" loading={markingAll} onClick={handleMarkAllRead}>
@@ -1304,6 +1437,8 @@ export default function ManagerNotifications({ onClose }) {
 
             return null;
             })}
+              </>
+            )}
             <DeleteConfirmationModal
                 isOpen={!!deleteModalData}
                 onClose={() => setDeleteModalData(null)}
