@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor, BarChart3, Briefcase, Home } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor, BarChart3, Briefcase, Home, Zap, Plus, X } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
@@ -13,10 +13,12 @@ import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
 import { normalizeWorkLocation } from '../utils/workLocation';
+import { normalizeUserTemplates, MAX_USER_TEMPLATES, MAX_TEMPLATE_LABEL } from '../utils/quickWorkTemplates';
 import { BADGE_ICONS, BADGE_CATALOG, tierKey } from '../utils/badgeCatalog';
 import { formatStatValue } from '../utils/workerStats';
 import { rangeForPreset } from '../utils/statsPeriods';
 import BadgeDetailModal from '../components/BadgeDetailModal';
+import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import IconButton from '../components/ui/IconButton';
 import StatusPill from '../components/ui/StatusPill';
@@ -156,6 +158,14 @@ export default function ProfilePage() {
     const [showInstall, setShowInstall] = useState(false);
     const [selectedBadge, setSelectedBadge] = useState(null);
 
+    // Personal quick-work templates (users/{uid}.quickWorkTemplates) — the worker's own one-tap
+    // categories appended to the built-ins in the finish modal. Mirrored locally for instant
+    // add/remove; the real-time user-doc listener re-seeds it (incl. cross-device edits).
+    const [quickTemplates, setQuickTemplates] = useState(() => normalizeUserTemplates(userData?.quickWorkTemplates));
+    const [newTemplate, setNewTemplate] = useState('');
+    const [savingTemplates, setSavingTemplates] = useState(false);
+    const [templatesError, setTemplatesError] = useState('');
+
     // The owner's profile shows the FULL ladder: every catalog badge merged with the tier the
     // user has actually earned (0 = not yet). Sorted earned-first, highest tier down, then the
     // not-yet-earned ones last — so the shelf reads brightest at the top. Unlike a peer's
@@ -256,6 +266,49 @@ export default function ProfilePage() {
         } finally {
             if (mountedRef.current) setSavingWorkLoc(false);
         }
+    };
+
+    // Re-seed the local template list whenever the stored value changes (our own confirmed write,
+    // or an edit made on another device). Compared by value so a no-op snapshot doesn't churn state.
+    const storedTemplatesKey = JSON.stringify(normalizeUserTemplates(userData?.quickWorkTemplates));
+    useEffect(() => {
+        setQuickTemplates(JSON.parse(storedTemplatesKey));
+    }, [storedTemplatesKey]);
+
+    // Persist a new template list to the user doc. Optimistic: update the visible list first, then
+    // write; on failure revert and show a calm note. Stays within MAX_USER_TEMPLATES (the input is
+    // also disabled at the cap), and de-dupes/sanitises through the shared normaliser.
+    const persistTemplates = async (next) => {
+        const prev = quickTemplates;
+        setTemplatesError('');
+        setQuickTemplates(next);
+        setSavingTemplates(true);
+        try {
+            await updateDoc(doc(db, 'users', currentUser.uid), { quickWorkTemplates: next });
+        } catch (err) {
+            logError(err, { source: 'profile:quickWorkTemplates' });
+            if (mountedRef.current) {
+                setQuickTemplates(prev);
+                setTemplatesError('Nepavyko išsaugoti šablono. Bandykite dar kartą.');
+            }
+        } finally {
+            if (mountedRef.current) setSavingTemplates(false);
+        }
+    };
+
+    const handleAddTemplate = () => {
+        const next = normalizeUserTemplates([...quickTemplates, newTemplate]);
+        // Nothing new (blank, duplicate, or at the cap) — just clear the field.
+        if (next.length === quickTemplates.length) {
+            setNewTemplate('');
+            return;
+        }
+        setNewTemplate('');
+        persistTemplates(next);
+    };
+
+    const handleRemoveTemplate = (label) => {
+        persistTemplates(quickTemplates.filter((t) => t !== label));
     };
 
     const toggleNotifications = async () => {
@@ -404,6 +457,69 @@ export default function ProfilePage() {
                         title="Rodikliai dar renkasi"
                         description="Padirbėkite kelias suplanuotas pamainas — netrukus čia matysite savo punktualumą ir kokybę."
                     />
+                )}
+            </Card>
+
+            {/* Personal quick-work templates — the worker's own one-tap categories that appear in
+                the "Greitos veiklos pabaiga" modal, on top of the built-in ones (Tvarkos,
+                Administracija, Auto darbai, Pagalba). Picking one there becomes the session title. */}
+            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Greitos veiklos šablonai</h2>
+            <Card className="mb-4 p-4">
+                <p className="mb-3 flex items-start gap-2 text-caption text-ink-muted">
+                    <Zap className="mt-0.5 h-4 w-4 shrink-0 text-session-quickWork-accent" aria-hidden="true" />
+                    Pridėkite savo dažniausius greitus darbus — jie atsiras pasirinkimui užbaigiant greitą veiklą.
+                </p>
+
+                {quickTemplates.length > 0 ? (
+                    <ul className="mb-3 flex flex-wrap gap-2">
+                        {quickTemplates.map((label) => (
+                            <li key={label}>
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-sunken py-1 pl-3 pr-1 text-body text-ink">
+                                    {label}
+                                    <button
+                                        type="button"
+                                        onClick={() => handleRemoveTemplate(label)}
+                                        disabled={savingTemplates}
+                                        aria-label={`Pašalinti šabloną „${label}“`}
+                                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-feedback-danger-soft hover:text-feedback-danger-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                    >
+                                        <X className="h-4 w-4" aria-hidden="true" />
+                                    </button>
+                                </span>
+                            </li>
+                        ))}
+                    </ul>
+                ) : (
+                    <p className="mb-3 text-caption text-ink-muted">Dar nėra savų šablonų.</p>
+                )}
+
+                {quickTemplates.length < MAX_USER_TEMPLATES ? (
+                    <form
+                        onSubmit={(e) => { e.preventDefault(); handleAddTemplate(); }}
+                        className="flex items-center gap-2"
+                    >
+                        <input
+                            type="text"
+                            value={newTemplate}
+                            onChange={(e) => setNewTemplate(e.target.value)}
+                            maxLength={MAX_TEMPLATE_LABEL}
+                            placeholder="pvz. Sandėlio tvarkymas"
+                            aria-label="Naujas greito darbo šablonas"
+                            className="min-h-touch flex-1 rounded-control border-2 border-line bg-surface-card px-3 text-body text-ink-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            style={{ fontSize: '16px' }}
+                        />
+                        <Button type="submit" variant="secondary" icon={Plus} disabled={!newTemplate.trim() || savingTemplates}>
+                            Pridėti
+                        </Button>
+                    </form>
+                ) : (
+                    <p className="text-caption text-ink-muted">Pasiektas didžiausias šablonų skaičius ({MAX_USER_TEMPLATES}).</p>
+                )}
+
+                {templatesError && (
+                    <p role="alert" className="mt-3 text-caption font-medium text-feedback-danger">
+                        {templatesError}
+                    </p>
                 )}
             </Card>
 

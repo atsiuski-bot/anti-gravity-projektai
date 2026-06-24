@@ -586,6 +586,14 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
         const autoStopped = !session.customTitle;
         const title = session.customTitle || AUTO_STOPPED_QUICK_WORK_TITLE;
+        // Optional free-text comment that accompanies a TEMPLATE-titled quick work (e.g. title
+        // "Tvarkos", comment "rakinau garažą"). It rides into the task description alongside the
+        // recorded time, mirroring how a call folds its notes into the description. Free-write
+        // entries carry no comment (their text already IS the title).
+        const comment = (session.customComment || '').trim();
+        const quickWorkDescription = session.customTitle
+            ? (comment ? `${comment}\n${timeString}` : timeString)
+            : `${timeString} (Automatiškai sukurtas)`;
         const isManager = isManagerRole(userData.role);
 
         // Route the finished quick work to one accountable manager for confirmation. The live,
@@ -615,7 +623,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         const logPromises = [
             setDoc(taskRef, {
                 title: title,
-                description: session.customTitle ? timeString : `${timeString} (Automatiškai sukurtas)`,
+                description: quickWorkDescription,
                 status: isManager ? "confirmed" : "completed",
                 priority: DEFAULT_PRIORITY,
                 assignedUserId: userId,
