@@ -13,6 +13,7 @@ import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow } from
 import { Spinner } from '../components/ui/Loading';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
+import TagFilterPills from '../components/ui/TagFilterPills';
 import {
     filterRankTasks,
     buildTaskSuggestions,
@@ -40,26 +41,6 @@ import { useNavigation } from '../context/NavigationContext';
 const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
 const AllUsersCalendar = React.lazy(() => import('../components/AllUsersCalendar'));
 const Reports = React.lazy(() => import('../components/Reports'));
-
-// One tag-filter pill. Shown immediately (no dropdown) as a toggle: the active one is brand-filled,
-// the rest are bordered chips. 44px min target (worker / touch, DESIGN_SYSTEM §9) with a visible
-// focus ring; `aria-pressed` carries the on/off state for assistive tech.
-function TagFilterPill({ active, onClick, children }) {
-    return (
-        <button
-            type="button"
-            onClick={onClick}
-            aria-pressed={active}
-            className={`inline-flex min-h-touch items-center rounded-full px-4 text-body font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${
-                active
-                    ? 'bg-brand text-white'
-                    : 'border border-line bg-surface-card text-ink hover:bg-surface-sunken'
-            }`}
-        >
-            {children}
-        </button>
-    );
-}
 
 export default function WorkerView() {
     const { currentUser, userRole } = useAuth();
@@ -293,19 +274,8 @@ export default function WorkerView() {
                 </div>
 
                 {/* Tag filter — shown immediately as pills (no dropdown), and ONLY the tags that occur
-                    on the worker's own tasks. Hidden entirely when no task is tagged. */}
-                {presentTags.length > 0 && (
-                    <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Filtruoti pagal žymą">
-                        <TagFilterPill active={filterTag === ''} onClick={() => setFilterTag('')}>
-                            Visi
-                        </TagFilterPill>
-                        {presentTags.map((tag) => (
-                            <TagFilterPill key={tag} active={filterTag === tag} onClick={() => setFilterTag(tag)}>
-                                {tag}
-                            </TagFilterPill>
-                        ))}
-                    </div>
-                )}
+                    on the worker's own tasks. Renders nothing when no task is tagged. */}
+                <TagFilterPills tags={presentTags} value={filterTag} onChange={setFilterTag} className="mb-4" />
 
                 <DailyWorkProgress currentUser={currentUser} tasks={sortedTasks} />
 
