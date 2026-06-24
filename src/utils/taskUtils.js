@@ -1,5 +1,35 @@
+import { getCurrentWorkDayCutoff } from './timeUtils';
+
 // Task tags configuration
 export const TASK_TAGS = ['Auto', 'Renginiams', 'Piro'];
+
+/**
+ * PERSONAL-list day window. Keeps every still-active task, but drops a finished
+ * (completed/confirmed) task once it rolls past the current work day's 03:00 Vilnius cutoff — so
+ * a person's OWN finished work stays visible for the rest of the day, then clears to history.
+ * Shared by the worker's "Mano užduotys" and the manager's "Mano darbai" so the two personal
+ * surfaces behave identically.
+ *
+ * Note the deliberate contrast with the shared TEAM list (scopeActiveTasks), which instead hides
+ * finished AND unapproved items IMMEDIATELY: a worker's pending-approval task and any completed
+ * work leave the common list at once and are reviewed in the approvals / history surfaces. A
+ * personal list keeps the day window because it is the person's own running tally of today.
+ *
+ * @param {Array}  tasks  - Task docs to scope.
+ * @param {Date}  [cutoff=getCurrentWorkDayCutoff()] - Work-day start (injectable for tests).
+ * @returns {Array} Tasks visible in a personal list right now.
+ */
+export const scopePersonalDayWindow = (tasks, cutoff = getCurrentWorkDayCutoff()) => {
+    if (!tasks) return [];
+    return tasks.filter(task => {
+        if (task.completed || task.status === 'completed' || task.status === 'confirmed') {
+            const finishedAt = task.completedAt || task.confirmedAt || task.updatedAt;
+            if (!finishedAt) return false;
+            return new Date(finishedAt) >= cutoff;
+        }
+        return true;
+    });
+};
 
 // Return only non-completed tasks AND non-system tasks (Call/QuickWork)
 export const filterTasksByVisibility = (tasks) => {

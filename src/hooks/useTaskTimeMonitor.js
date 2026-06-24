@@ -2,21 +2,23 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, parseTimeStringToMinutes } from '../utils/timeUtils';
-import { pauseTask } from '../utils/taskActions';
-import { notify } from '../utils/notify';
+import { pauseTask, requestTimeExtension, completeTaskAtLimit } from '../utils/taskActions';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
 
 /**
  * Hook that monitors the active running task for time limit thresholds.
- * - At 80% of estimatedTime: shows warning popup + plays warning sound
- * - At 100%: auto-pauses task, plays alarm, starts repeating sound, sends manager notification
- * 
+ * - At 70% of estimatedTime: shows warning popup + plays warning sound (FYI, task keeps running)
+ * - At 100%: auto-pauses task (time STOPS), plays a repeating alarm, and shows the time-limit
+ *   popup. The popup gives the worker two explicit choices — request more time from the manager
+ *   (optionally with a note/photos) or finish the task (→ manager acceptance). The hook no longer
+ *   auto-fires the extension request: that is now a deliberate worker action (see requestExtension).
+ *
  * @param {Array} tasks - Array of task objects to monitor
- * @returns {Object} state for popups
+ * @returns {Object} state for popups + the limit-popup action handlers
  */
 export function useTaskTimeMonitor(tasks) {
-    const { currentUser } = useAuth();
+    const { currentUser, userRole, userData } = useAuth();
 
     // Popup state
     const [warningPopup, setWarningPopup] = useState(null);  // { task, remaining }
@@ -129,7 +131,8 @@ export function useTaskTimeMonitor(tasks) {
                         console.warn('Failed to mark time limit reached:', e);
                     }
 
-                    // 3. Show popup
+                    // 3. Show popup — the worker decides from here (request more time OR finish).
+                    //    The extension request is no longer auto-sent; it is a choice in the popup.
                     const actualTime = Math.round(currentMinutes);
                     setLimitPopup({
                         task,
@@ -139,23 +142,6 @@ export function useTaskTimeMonitor(tasks) {
 
                     // 4. Start repeating alarm
                     SoundManager.startTimeLimitRepeat();
-
-                    // 5. Send notification to manager
-                    const managerId = task.managerId || task.taskAuditor;
-                    if (managerId) {
-                        // Worker-authored (userId = caller), so notify() stamps the rule-required
-                        // provenance and the registry category; it swallows its own write errors.
-                        await notify({
-                            recipientId: managerId,
-                            type: 'time_extension_request',
-                            taskId: taskId,
-                            taskTitle: task.title || 'Užduotis',
-                            estimatedTime: task.estimatedTime,
-                            actualMinutes: actualTime,
-                            userName: currentUser?.displayName || currentUser?.email || 'Vykdytojas',
-                            userId: currentUser?.uid,
-                        });
-                    }
                 } else {
                     limitReachedRef.current.add(taskId); // Already reached, just track
                 }
@@ -173,20 +159,43 @@ export function useTaskTimeMonitor(tasks) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTask?.id, activeTask?.estimatedTime, currentUser?.uid]);
 
-    // Dismiss handlers
+    // Dismiss handler (warning popup only — the limit popup is forced and closes via its actions).
     const dismissWarning = useCallback(() => {
         setWarningPopup(null);
     }, []);
 
-    const dismissLimit = useCallback(() => {
+    // Worker chose "request more time" in the limit popup. Sends the manager an extension request
+    // carrying an optional note + photos, then silences the alarm and closes the popup. The task
+    // stays paused; the manager granting re-arms the monitor (extendTaskTime clears the latch).
+    const requestExtension = useCallback(async ({ commentText, attachmentUrls } = {}) => {
+        if (!limitPopup?.task) return;
+        await requestTimeExtension({
+            task: limitPopup.task,
+            currentUser,
+            estimatedTime: limitPopup.estimatedTime,
+            actualMinutes: limitPopup.actualMinutes,
+            commentText,
+            attachmentUrls
+        });
         SoundManager.stopTimeLimitRepeat();
         setLimitPopup(null);
-    }, []);
+    }, [limitPopup, currentUser]);
+
+    // Worker chose "finish work" in the limit popup. The timer is already paused, so this only
+    // writes the completion fields (→ manager acceptance for a worker) and closes the popup.
+    const finishFromLimit = useCallback(async () => {
+        if (!limitPopup?.task) return;
+        const result = await completeTaskAtLimit(limitPopup.task, { currentUser, userData, userRole });
+        SoundManager.stopTimeLimitRepeat();
+        setLimitPopup(null);
+        return result;
+    }, [limitPopup, currentUser, userData, userRole]);
 
     return {
         warningPopup,
         limitPopup,
         dismissWarning,
-        dismissLimit
+        requestExtension,
+        finishFromLimit
     };
 }

@@ -214,7 +214,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
     );
 }
 
-export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, onToggle, onAdd, onDelete }) {
+export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, canToggle = canEdit, canManageItems = canEdit, onToggle, onAdd, onDelete }) {
     const [newItem, setNewItem] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     // Removing a checklist item writes through to Firestore, so it is gated behind a confirm.
@@ -267,8 +267,8 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                             <li key={item.id} className="flex items-stretch gap-2">
                                 <button
                                     type="button"
-                                    onClick={() => canEdit && onToggle?.(item.id)}
-                                    disabled={!canEdit}
+                                    onClick={() => canToggle && onToggle?.(item.id)}
+                                    disabled={!canToggle}
                                     aria-pressed={!!item.done}
                                     className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-surface-sunken disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                 >
@@ -287,7 +287,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                                         )}
                                     </span>
                                 </button>
-                                {canEdit && (
+                                {canManageItems && (
                                     <IconButton
                                         icon={Trash2}
                                         label="Ištrinti punktą"
@@ -302,7 +302,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, on
                     )}
                 </ul>
 
-                {canEdit && (
+                {canManageItems && (
                     <form onSubmit={handleAdd} onKeyDown={preventEnterSubmit} className="mt-auto flex gap-2 border-t border-line pt-4">
                         <input
                             type="text"

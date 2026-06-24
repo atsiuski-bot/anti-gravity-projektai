@@ -9,6 +9,7 @@ import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MOD
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, relativeDeadline } from '../utils/timeUtils';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { isManagerRole } from '../utils/formatters';
+import { canEditTask } from '../utils/taskPermissions';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
@@ -160,6 +161,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const displayColor = task.assignedWorkerColor;
     const isManager = isManagerRole(role) || isManagerRole(userRole);
     const isAssignedToMe = currentUser?.uid === task.assignedUserId;
+    // A worker may fully edit (open the create/edit form) only their own, still-unapproved task;
+    // once a manager approves it — or a manager created it — the task is locked and the worker
+    // keeps only comment / checklist-tick / photo / timer actions. Managers always edit.
+    const canEdit = canEditTask({ task, currentUser, role, userRole });
 
     const taskStatus = task.status || 'pending';
 
@@ -304,7 +309,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         key: 'confirm', label: 'Priimti', icon: CheckCircle2, variant: 'success',
         onClick: (e) => { e.stopPropagation(); performConfirm(); },
     });
-    if (onEdit) actions.push({
+    if (onEdit && canEdit) actions.push({
         key: 'edit', label: 'Redaguoti', icon: Edit, variant: 'primary',
         onClick: (e) => { e.stopPropagation(); onEdit(task); },
     });
@@ -575,7 +580,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 canManage={isManager}
                 canDelete={isManager}
                 showManagerLine
-                onEdit={onEdit ? (t) => { setShowDetail(false); onEdit(t); } : undefined}
+                onEdit={onEdit && canEdit ? (t) => { setShowDetail(false); onEdit(t); } : undefined}
                 onDelete={() => { setShowDetail(false); handleDeleteTask(); }}
                 onRevert={() => { setShowDetail(false); setRevertError(''); setConfirmRevert(true); }}
                 onApprove={() => { setShowDetail(false); performApprove(); }}
@@ -588,7 +593,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 isOpen={activeModal === 'checklist'}
                 onClose={() => setActiveModal(null)}
                 checklist={task.checklist}
-                canEdit={(isManager || isAssignedToMe) && !task.isDeleted}
+                canToggle={(isManager || isAssignedToMe) && !task.isDeleted}
+                canManageItems={canEdit && !task.isDeleted}
                 onToggle={handleToggleChecklist}
                 onAdd={handleAddChecklist}
                 onDelete={handleDeleteChecklist}

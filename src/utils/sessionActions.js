@@ -504,8 +504,18 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
     if (durationMinutes <= MIN_LOGGED_SESSION_MINUTES && session.type !== 'call') return;
     const sessionDate = getLithuanianDateString(now);
 
+    // DETERMINISTIC record id, keyed on (kind + owner + this session's start instant). Two
+    // INDEPENDENT closers can finalize the SAME abandoned session: this client path (on the
+    // worker's next open, via orphan-recovery) AND the daily server net (autoCloseForgottenSessions,
+    // for a worker who never reopens). With random addDoc ids they would each write a separate row
+    // for one physical session → the time credited TWICE. Pinning the doc id to the session start
+    // makes the second writer land on the same id (setDoc here / create() server-side), so exactly
+    // one row survives. The id prefixes are a VERBATIM MIRROR of functions/index.js
+    // writeSecondaryCloseRecords — locked by firebaseConsistency.test.js so they cannot drift.
+    const startMs = new Date(session.startTime).getTime();
+
     if (session.type === 'break') {
-        await addDoc(collection(db, 'break_sessions'), {
+        await setDoc(doc(db, 'break_sessions', `sess_break_${userId}_${startMs}`), {
             userId: userId,
             userName: userData.displayName || 'Nežinomas',
             startTime: session.startTime,
@@ -525,9 +535,9 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         const callTitle = buildCallTitle(contactType);
         const callNotes = (session.callNotes || '').trim();
         const callDescription = callNotes ? `${callNotes}\n${timeString}` : timeString;
-        // Log task + work session in PARALLEL
+        // Log task + work session in PARALLEL (deterministic ids — see the dedup note above).
         const callPromises = [
-            addDoc(collection(db, 'tasks'), {
+            setDoc(doc(db, 'tasks', `sess_call_task_${userId}_${startMs}`), {
                 title: callTitle,
                 description: callDescription,
                 contactType,
@@ -545,7 +555,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 manualMinutes: durationMinutes,
                 isSystemTask: true
             }),
-            addDoc(collection(db, 'work_sessions'), {
+            setDoc(doc(db, 'work_sessions', `sess_call_ws_${userId}_${startMs}`), {
                 taskId: "call_" + now.getTime(),
                 taskTitle: callTitle,
                 contactType,
@@ -595,8 +605,11 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         // rename must reach BOTH records — the task (shown in history once archived) and the
         // session (shown in today's timeline). See addQuickWorkDescription. (Without a stored
         // link the two are unjoined: their IDs differ and the session's taskId is synthetic.)
-        const taskRef = doc(collection(db, 'tasks'));
-        const sessionRef = doc(collection(db, 'work_sessions'));
+        // Deterministic ids (see the dedup note above): pinned to this session's start so the
+        // server net cannot write a duplicate pair for the same abandoned quick-work. The task↔
+        // session cross-link below still works — sessionRef.id is now that deterministic id.
+        const taskRef = doc(db, 'tasks', `sess_qw_task_${userId}_${startMs}`);
+        const sessionRef = doc(db, 'work_sessions', `sess_qw_ws_${userId}_${startMs}`);
 
         // Log task + work session in PARALLEL
         const logPromises = [
