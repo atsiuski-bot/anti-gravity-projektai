@@ -185,27 +185,27 @@ export default function AllUsersCalendar() {
                 "Šiandien" reset is pinned to the left edge, vertically aligned with the day name
                 (no longer a separate top row). Proportions are tuned down (smaller title/date,
                 tighter padding) so the header no longer dominates the card. */}
-            <div className="relative p-3 sm:p-4 border-b border-line">
+            <div className="relative py-1.5 px-3 sm:px-4 border-b border-line">
                 <Button
                     variant="secondary"
                     onClick={() => setCurrentDate(new Date())}
-                    className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 px-3 py-1.5 text-caption sm:text-body"
+                    className="absolute left-3 sm:left-4 top-1/2 -translate-y-1/2 px-2.5 py-1 text-caption"
                 >
                     Šiandien
                 </Button>
 
                 {/* Date Navigation */}
-                <div className="flex items-center justify-center gap-3 sm:gap-6">
+                <div className="flex items-center justify-center gap-2 sm:gap-4">
                     <IconButton
                         icon={ChevronLeft}
                         label="Ankstesnė diena"
                         onClick={() => setCurrentDate(addDays(currentDate, -1))}
                     />
                     <div className="text-center min-w-0">
-                        <h2 className="text-h3 sm:text-h2 font-bold text-ink-strong capitalize leading-tight">
+                        <h2 className="text-body sm:text-h3 font-bold text-ink-strong capitalize leading-tight">
                             {WEEKDAYS[getDay(currentDate)]}
                         </h2>
-                        <p className="text-caption sm:text-body text-ink-muted capitalize">
+                        <p className="text-caption text-ink-muted capitalize">
                             {format(currentDate, 'MMMM d', { locale: lt })}d.
                         </p>
                     </div>
@@ -236,7 +236,7 @@ export default function AllUsersCalendar() {
                     {/* Time Scale Header — hour labels only, aligned to the body grid lines below.
                         First/last labels are edge-anchored so 7:00 / 22:00 never clip at the card
                         edges; the rest are centered on their grid line. */}
-                    <div className="relative h-8 border-b border-line bg-surface-card sticky top-0 z-20">
+                    <div className="relative h-6 border-b border-line bg-surface-card sticky top-0 z-20">
                         {hours.map((hour, i) => {
                             const left = (i / TOTAL_HOURS) * 100;
                             const shiftX = i === 0 ? '0' : i === TOTAL_HOURS ? '-100%' : '-50%';
