@@ -32,7 +32,7 @@ vi.mock('./timeUtils', async (importActual) => ({
     getLithuanianNow: vi.fn(),
 }));
 
-import { updateDoc, addDoc, getDoc } from 'firebase/firestore';
+import { updateDoc, addDoc, setDoc, getDoc } from 'firebase/firestore';
 import { logError } from './errorLog';
 import { pauseTask, resumeTask } from './taskActions';
 import { getLithuanianNow, MAX_SESSION_MINUTES } from './timeUtils';
@@ -46,6 +46,10 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
 const userUpdate = (id) => updateDoc.mock.calls.find(([ref]) => ref?._path === `users/${id}`)?.[1];
 const addsTo = (col) => addDoc.mock.calls.filter(([c]) => c?._col === col).map((x) => x[1]);
+// Final secondary-session records (break/call/quick-work) are now written with setDoc under a
+// DETERMINISTIC id (sess_<kind>_<uid>_<startMs>) so the client and the server net dedup on one id
+// instead of each minting a random-id duplicate. So inspect setDoc, keyed on the ref's collection.
+const setsTo = (col) => setDoc.mock.calls.filter(([ref]) => ref?._col === col).map((x) => x[1]);
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -172,7 +176,7 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
         expect(u['breakState.isTakingBreak']).toBe(false);
         expect(u['breakState.dailyAccumulatedMinutes']).toBe(75); // 15 + 60
 
-        const breaks = addsTo('break_sessions');
+        const breaks = setsTo('break_sessions');
         expect(breaks).toHaveLength(1);
         expect(breaks[0].durationMinutes).toBe(60);
         expect(breaks[0].date).toBe('2026-06-23');
@@ -188,7 +192,7 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
         await flush();
 
         expect(userUpdate('u1')['breakState.dailyAccumulatedMinutes']).toBe(MAX_SESSION_MINUTES); // 960, not 4320
-        expect(addsTo('break_sessions')[0].durationMinutes).toBe(MAX_SESSION_MINUTES);
+        expect(setsTo('break_sessions')[0].durationMinutes).toBe(MAX_SESSION_MINUTES);
     });
 
     it('credits nothing for a backward device clock (negative elapsed -> 0, no log)', async () => {
@@ -201,7 +205,7 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
         await flush();
 
         expect(userUpdate('u1')['breakState.dailyAccumulatedMinutes']).toBe(40); // + 0
-        expect(addsTo('break_sessions')).toHaveLength(0); // sub-minute -> nothing persisted
+        expect(setsTo('break_sessions')).toHaveLength(0); // sub-minute -> nothing persisted
     });
 
     it('swallows a failed critical write but records it durably (no rethrow)', async () => {

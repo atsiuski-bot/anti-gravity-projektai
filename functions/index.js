@@ -1002,6 +1002,221 @@ async function autoStopForgottenTimers() {
     return { scanned: snap.size, stopped, samples };
 }
 
+// ---------------------------------------------------------------------------
+// Abandoned SECONDARY-session safety net (break / call / quick-work)
+// ---------------------------------------------------------------------------
+//
+// The client now RESUMES a reopened same-day secondary session instead of finalizing it on every
+// reload (useOrphanedSessionRecovery), so a field worker who pockets the phone keeps their timer.
+// The cost: a worker who NEVER reopens the app would leave a forgotten break/call/quick-work hanging
+// in users/{uid}.activeSession forever — autoStopForgottenTimers above only reconciles TASK timers.
+// This is the logging counterpart: it closes a secondary session that is genuinely abandoned (same
+// abandonment test the client uses — crossed a Vilnius day OR elapsed past the 16h ceiling), CREDITS
+// the clamped elapsed as a real record (never discarded — data continuity is the whole point), and
+// clears the live flags. Deterministic record ids + create() make a re-fired scan idempotent. A
+// still-running same-day session is left untouched (the worker may resume it on their next open).
+//
+// Field shapes MIRROR src/utils/sessionActions.js handleLegacyLogging — keep the two in lockstep.
+const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greitas darbas (Automatiškai išsaugotas)'; // mirror sessionActions.js
+const DEFAULT_TASK_PRIORITY = 'MEDIUM';            // mirror src/utils/priority.js DEFAULT_PRIORITY
+const MIN_LOGGED_SECONDARY_MINUTES = 1;            // mirror src/utils/timeUtils.js MIN_LOGGED_SESSION_MINUTES
+const SECONDARY_MANAGER_ROLES = ['manager', 'admin', 'seniorManager', 'Administratorius']; // mirror isManagerRole (+ legacy)
+
+// Mirror of the client clampSessionMinutes: a non-finite/negative delta collapses to 0; an
+// implausibly large one is capped at the 16h ceiling (MAX_RUNNING_TIMER_MINUTES).
+function clampSecondaryMinutes(min) {
+    if (!Number.isFinite(min) || min < 0) return 0;
+    return Math.min(min, MAX_RUNNING_TIMER_MINUTES);
+}
+
+// Vilnius "HH:MM" for the record description, matching the client's now.toLocaleTimeString('lt-LT').
+function vilniusHHMM(d) {
+    return new Intl.DateTimeFormat('lt-LT', {
+        timeZone: 'Europe/Vilnius', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(d);
+}
+
+// Admin-SDK mirror of the client getSecondarySession: resolve a live break/call/quick-work session
+// from either the canonical activeSession or the legacy per-type flags. Tasks are NOT secondary.
+function resolveSecondarySession(u) {
+    const as = u.activeSession;
+    if (as && (as.type === 'break' || as.type === 'call' || as.type === 'quickWork') && as.startTime) {
+        return { type: as.type, startTime: as.startTime, customTitle: as.customTitle || null };
+    }
+    if (u.breakState && u.breakState.isTakingBreak && u.breakState.lastStartedAt) return { type: 'break', startTime: u.breakState.lastStartedAt };
+    if (u.callState && u.callState.isCalling && u.callState.lastStartedAt) return { type: 'call', startTime: u.callState.lastStartedAt };
+    if (u.quickWorkState && u.quickWorkState.isQuickWorking && u.quickWorkState.lastStartedAt) return { type: 'quickWork', startTime: u.quickWorkState.lastStartedAt };
+    return null;
+}
+
+// Mirror of the client isAbandonedSession (src/hooks/useOrphanedSessionRecovery.js): abandoned when
+// it crossed a Vilnius calendar day OR elapsed beyond the 16h single-session ceiling. A corrupt
+// start is also treated as abandoned so a ghost with a broken timestamp cannot live forever (it
+// credits 0 via the clamp). Otherwise the session is a legitimate same-day run — leave it alone.
+function secondarySessionAbandoned(startIso, now) {
+    const startMs = new Date(startIso).getTime();
+    if (Number.isNaN(startMs)) return true;
+    if (lithuanianDay(new Date(startMs)) !== lithuanianDay(now)) return true;
+    if ((now.getTime() - startMs) / 60000 > MAX_RUNNING_TIMER_MINUTES) return true;
+    return false;
+}
+
+// create() the doc only if absent — a re-fired scan recomputes the SAME deterministic id and hits
+// ALREADY_EXISTS, which is the expected dedup path, not an error.
+async function createIfAbsent(ref, data) {
+    try {
+        await ref.create(data);
+    } catch (err) {
+        if (err && (err.code === 6 || err.code === 'already-exists')) return;
+        throw err;
+    }
+}
+
+// Write the credited record(s) for one closed secondary session, mirroring handleLegacyLogging.
+// The doc ids are pinned to (kind + uid + session start), a VERBATIM MIRROR of the client
+// sessionActions.js handleLegacyLogging ids (sess_break_ / sess_call_task_ / sess_call_ws_ /
+// sess_qw_task_ / sess_qw_ws_) — locked by firebaseConsistency.test.js. This is what makes the two
+// independent closers idempotent against EACH OTHER: if the worker reopens the app at ~scan time,
+// the client and this net both resolve the same session, but both write the SAME id, so only one
+// row survives (create() here / setDoc on the client) — no double-credit.
+async function writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, now, userData }) {
+    const startTime = session.startTime;
+    const timeString = vilniusHHMM(now);
+
+    if (session.type === 'break') {
+        await createIfAbsent(db.collection('break_sessions').doc(`sess_break_${uid}_${startMs}`), {
+            userId: uid, userName, startTime, endTime: nowIso, durationMinutes, date,
+            createdAt: nowIso, completedAt: nowIso, isBreak: true,
+        });
+        return;
+    }
+
+    if (session.type === 'call') {
+        // An abandoned call carries no contactType (it is chosen only at the stop screen), so the
+        // title is the plain "Skambutis", exactly as buildCallTitle(null) yields on the client.
+        const callTitle = 'Skambutis';
+        await createIfAbsent(db.collection('tasks').doc(`sess_call_task_${uid}_${startMs}`), {
+            title: callTitle, description: timeString, contactType: null,
+            status: 'confirmed', priority: DEFAULT_TASK_PRIORITY,
+            assignedUserId: uid, assignedUserName: userName,
+            createdBy: uid, creatorName: userName,
+            createdAt: nowIso, completedAt: nowIso, completed: true,
+            confirmedBy: uid, confirmedAt: nowIso,
+            manualMinutes: durationMinutes, isSystemTask: true,
+        });
+        await createIfAbsent(db.collection('work_sessions').doc(`sess_call_ws_${uid}_${startMs}`), {
+            taskId: `call_${startMs}`, taskTitle: callTitle, contactType: null,
+            userId: uid, userName, startTime, endTime: nowIso, durationMinutes, date,
+            createdAt: nowIso, isSystemTask: true,
+        });
+        return;
+    }
+
+    if (session.type === 'quickWork') {
+        // The worker was absent (never reopened to name it), so this is the auto-stopped, unnamed
+        // path: placeholder title + autoStopped:true, routed to the worker's primary manager for
+        // confirmation (managers/admins self-confirm). No completion notification (it would be noise
+        // for an unnamed entry) — it can be described retroactively via the "describe later" banner.
+        const title = session.customTitle || AUTO_STOPPED_QUICK_WORK_TITLE;
+        const autoStopped = !session.customTitle;
+        const isManager = SECONDARY_MANAGER_ROLES.includes(userData.role || 'worker');
+        const routedManagerId = isManager ? null : (userData.defaultManager || null);
+        const wsId = `sess_qw_ws_${uid}_${startMs}`;
+        await createIfAbsent(db.collection('tasks').doc(`sess_qw_task_${uid}_${startMs}`), {
+            title,
+            description: session.customTitle ? timeString : `${timeString} (Automatiškai sukurtas)`,
+            status: isManager ? 'confirmed' : 'completed', priority: DEFAULT_TASK_PRIORITY,
+            assignedUserId: uid, assignedUserName: userName,
+            createdBy: uid, creatorName: userName,
+            createdAt: nowIso, completedAt: nowIso, completed: true,
+            confirmedBy: isManager ? uid : null, confirmedAt: isManager ? nowIso : null,
+            taskAuditor: routedManagerId, managerId: routedManagerId,
+            manualMinutes: durationMinutes, isQuickWork: true, autoStopped, workSessionId: wsId,
+        });
+        await createIfAbsent(db.collection('work_sessions').doc(wsId), {
+            taskId: `quick_${startMs}`, taskTitle: title,
+            userId: uid, userName, startTime, endTime: nowIso, durationMinutes, date,
+            createdAt: nowIso, isQuickWork: true,
+        });
+    }
+}
+
+// Scan every user for a genuinely-abandoned secondary session and close it, crediting the clamped
+// time. Read-then-write per user; deterministic ids keep a retry idempotent. The user base is small
+// (one company), so a full users scan once a day is cheap.
+async function autoCloseForgottenSessions() {
+    let snap;
+    try {
+        snap = await db.collection('users').get();
+    } catch (err) {
+        logger.warn('autoCloseForgottenSessions query failed', { err: err.message });
+        return { scanned: 0, closed: 0, samples: [] };
+    }
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const nowMs = now.getTime();
+    const date = lithuanianDay(now);
+    let closed = 0;
+    const samples = [];
+    const audits = [];
+
+    for (const docSnap of snap.docs) {
+        const u = docSnap.data() || {};
+        const session = resolveSecondarySession(u);
+        if (!session) continue;
+        if (!secondarySessionAbandoned(session.startTime, now)) continue; // legitimate same-day run
+
+        const uid = docSnap.id;
+        const startMs = new Date(session.startTime).getTime();
+        const durationMinutes = clampSecondaryMinutes((nowMs - startMs) / 60000);
+        const userName = u.displayName || 'Nežinomas';
+
+        try {
+            // (1) Credit the clamped time as a record (sub-minute taps are discarded, as on the client).
+            if (durationMinutes > MIN_LOGGED_SECONDARY_MINUTES) {
+                await writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, now, userData: u });
+            }
+            // (2) Clear the live flags so the session no longer hangs (and the client won't re-close it).
+            // We deliberately do NOT touch breakState.dailyAccumulatedMinutes: it is a display-only
+            // counter (no report reads it) that useTimerState resets to 0 on a new day anyway, and an
+            // abandoned break is almost always cross-day, so adding to "today's" total would be both
+            // pointless (wiped on the worker's next open) and mis-attributed. The durable, report-read
+            // truth is the break_sessions row written above.
+            const updates = { activeSession: null };
+            if (session.type === 'break') {
+                updates['breakState.isTakingBreak'] = false;
+            } else if (session.type === 'call') {
+                updates['callState.isCalling'] = false;
+            } else if (session.type === 'quickWork') {
+                updates['quickWorkState.isQuickWorking'] = false;
+            }
+            await docSnap.ref.update(updates);
+
+            closed += 1;
+            if (samples.length < SAMPLE_LIMIT) samples.push({ uid, type: session.type, durationMinutes: Math.round(durationMinutes) });
+            audits.push({ uid, type: session.type, startIso: session.startTime, durationMinutes: Math.round(durationMinutes) });
+        } catch (err) {
+            logger.warn('autoCloseForgottenSessions close failed', { uid, type: session.type, err: err.message });
+        }
+    }
+
+    // Audit each close under the SYSTEM actor (ADR 0015), keyed on (uid + start) so a retry dedups.
+    for (const a of audits) {
+        await appendSystemDecision(db, {
+            idempotencyKey: `autoclose_${a.uid}_${a.startIso}`,
+            command: 'integrity.autoCloseSession',
+            source: 'dailyIntegrityScan',
+            targetType: 'user',
+            targetId: a.uid,
+            reason: `Auto-closed an abandoned ${a.type} session (${a.durationMinutes} min, clamped ≤16h); credited as a logged record`,
+            before: { activeSessionType: a.type, startTime: a.startIso },
+            after: { activeSession: null, loggedMinutes: a.durationMinutes },
+        });
+    }
+
+    return { scanned: snap.size, closed, samples };
+}
+
 // Surface (do NOT mutate) non-terminal tasks sitting unfinished beyond STALE_TASK_DAYS — the
 // backlog the data found (91 tasks >14d, oldest 'pending' 159d). Report-only: a manager decides to
 // finish, reassign, or drop them. createdAt is an ISO string, so the cutoff compares lexically.
@@ -1060,10 +1275,13 @@ exports.dailyIntegrityScan = onSchedule(
 
         // (3) Task timer integrity — stop forgotten running timers, and surface the stale backlog.
         const autoStoppedTimers = await autoStopForgottenTimers();
+        // (3b) Secondary-session integrity — close abandoned break/call/quick-work sessions the
+        //      client resume logic deliberately leaves running until the worker reopens.
+        const autoClosedSessions = await autoCloseForgottenSessions();
         const staleBacklog = await scanStaleTasks();
 
         const critical = drops.length > 0;
-        const warning = totalAnomalies > 0 || autoStoppedTimers.stopped > 0;
+        const warning = totalAnomalies > 0 || autoStoppedTimers.stopped > 0 || autoClosedSessions.closed > 0;
         const report = {
             day,
             ranAt: nowIso,
@@ -1073,6 +1291,7 @@ exports.dailyIntegrityScan = onSchedule(
             anomalies: anomalyReport,
             totalAnomalies,
             autoStoppedTimers,
+            autoClosedSessions,
             staleBacklog
         };
 
@@ -1091,6 +1310,7 @@ exports.dailyIntegrityScan = onSchedule(
             logger.info('INTEGRITY: clean', { counts });
         }
         if (autoStoppedTimers.stopped > 0) logger.warn('INTEGRITY: auto-stopped forgotten timers', autoStoppedTimers);
+        if (autoClosedSessions.closed > 0) logger.warn('INTEGRITY: auto-closed abandoned secondary sessions', autoClosedSessions);
         if (staleBacklog.count > 0) logger.info('INTEGRITY: stale backlog surfaced', { count: staleBacklog.count });
     }
 );
