@@ -151,6 +151,8 @@ const CATEGORY_BY_TYPE = {
     task_completion: 'action',
     time_extension_request: 'action',
     session_correction_request: 'action',
+    task_needs_manager: 'action',
+    task_waiting: 'info',
     task_reverted: 'action',
     account_approval: 'action',
     recurring_reassign: 'action',
