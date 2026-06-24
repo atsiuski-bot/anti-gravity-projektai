@@ -793,7 +793,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
     );
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {/* TABS — Veiklos ataskaita / Pridavimas / Istorija. These are team/oversight surfaces,
                 so the switcher only appears in the manager team view. In a personal report (worker,
                 or a manager viewing their OWN data via viewRole="worker") there is just one view, so
@@ -1264,9 +1264,9 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
             aria-label="Komandos laikotarpio suvestinė"
         >
             <div className="mb-3 flex items-center gap-2">
+                <span className="font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
                 <Users className="h-5 w-5 text-brand" aria-hidden="true" />
                 <h3 className="text-body font-bold text-ink-strong">Komandos suvestinė</h3>
-                <span className="ml-auto font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
             </div>
 
             {/* Time triplet — the period's worked / break / total hours to the minute, from the same

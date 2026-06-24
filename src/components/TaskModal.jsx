@@ -4,8 +4,9 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate, EyeOff, Eye } from 'lucide-react';
+import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate, Tag, EyeOff, Eye } from 'lucide-react';
 import { formatDisplayName, isManagerRole, isAdminRole } from '../utils/formatters';
+import { TASK_TAGS } from '../utils/taskUtils';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate, hideTemplateForUser, unhideTemplateForUser } from '../utils/taskActions';
 import { parseTaskText } from '../utils/aiActions';
@@ -18,6 +19,7 @@ import { buildChecklistItem, reconcileChecklist } from '../utils/checklistAction
 import { parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
+import { resolveInitialTaskStatus } from '../utils/taskStatus';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
 import useTaskSuggestions from '../hooks/useTaskSuggestions';
 import { useAssigneeAffinity } from '../hooks/useAssigneeAffinity';
@@ -182,6 +184,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         comments: [],
         completed: false,
         deadline: '',
+        tag: '',
         attachmentUrl: '',
         attachmentUrls: [], // New field for multiple attachments
         checklist: []
@@ -421,6 +424,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 comments: task.comments || [],
                 completed: task.completed || false,
                 deadline: task.deadline || '',
+                tag: task.tag || '',
                 attachmentUrl: task.attachmentUrl || '', // Keep for legacy
                 attachmentUrls: existingUrls,
                 checklist: task.checklist || []
@@ -442,6 +446,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 comments: [],
                 completed: false,
                 deadline: d.deadline || '',
+                tag: '',
                 attachmentUrl: '',
                 attachmentUrls: [],
                 checklist: []
@@ -474,6 +479,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     comments: [],
                     completed: false,
                     deadline: '',
+                    tag: '',
                     attachmentUrl: '',
                     attachmentUrls: [],
                     checklist: []
@@ -1055,44 +1061,55 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     }
                 }
 
-                // Tell the worker about manager-side edits that concern them. Both are gated on
-                // "assignee is someone other than me" so a self-edit never notifies the author.
-                const assignee = formData.assignedUserId;
-                const actor = { actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email };
-                if (assignee && assignee !== currentUser.uid) {
-                    // The estimate was lifted on a task whose limit the worker had already hit →
-                    // their time-extension request was effectively granted.
-                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
-                        await notify({ recipientId: assignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                // Tell the worker(s) about a manager-side edit that concerns them — ONE notice per
+                // save, chosen by precedence so a single edit never fans out into several pings:
+                //   1. reassigned        → the NEW assignee gets "assigned", the OLD one "unassigned";
+                //   2. estimate lifted after the limit was hit → "time extended" (the specific story);
+                //   3. any other field   → "edited".
+                // All are gated on "the affected person isn't the editor" so a self-edit is silent,
+                // and the whole branch is skipped when handleEditAndApprove already sent the combined
+                // "approved + edited" notice (__suppressEditNotice), so approve-and-edit stays one ping.
+                const newAssignee = formData.assignedUserId;
+                const oldAssignee = task.assignedUserId;
+                const editorUid = currentUser.uid;
+                const actor = { actorUid: editorUid, actorName: currentUser.displayName || currentUser.email };
+                const reassigned = oldAssignee !== newAssignee && !reassignmentFailed;
+
+                if (reassigned) {
+                    if (newAssignee && newAssignee !== editorUid) {
+                        await notify({ recipientId: newAssignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
-                    // The task was (re)assigned to a new worker — but only notify if the reassignment
-                    // write actually landed (a failed assignTask must not announce a non-existent move).
-                    if (task.assignedUserId !== assignee && !reassignmentFailed) {
-                        await notify({ recipientId: assignee, type: 'task_assigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    if (oldAssignee && oldAssignee !== editorUid) {
+                        await notify({ recipientId: oldAssignee, type: 'task_unassigned', taskId: task.id, taskTitle: formData.title, ...actor });
+                    }
+                } else if (newAssignee && newAssignee !== editorUid) {
+                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
+                        await notify({ recipientId: newAssignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
+                    } else if (!task.__suppressEditNotice) {
+                        await notify({ recipientId: newAssignee, type: 'task_edited', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
                 }
             } else {
-                // Determine if user is a manager/admin based on Context OR Prop
+                // Initial status — decided purely by WHO creates and FOR WHOM (resolveInitialTaskStatus,
+                // unit-locked): non-manager -> 'unapproved'; manager-for-others -> 'pending'; manager
+                // self-assigning -> 'approved'. Role comes from Context OR the surface prop.
                 const isManagerOrAdmin = isManagerRole(userRole) || isManagerRole(role);
-                // const isSelfAssigned = formData.assignedUserId === currentUser.uid; // Unused
-                // const isOtherManagerAssigned = formData.managerId && formData.managerId !== currentUser.uid; // Unused
+                const isSelfAssigned = formData.assignedUserId === currentUser.uid;
+                const initialStatus = resolveInitialTaskStatus({ isManagerOrAdmin, isSelfAssigned });
 
-
-
-                // Determine initial status:
-                // - If manager/admin creates: pending (no approval needed)
-                let initialStatus = 'pending';
-                if (!isManagerOrAdmin) {
-                    initialStatus = 'unapproved';
-
-                }
+                // For a manager's own (auto-approved) task, stamp the full approval shape so the stored
+                // doc matches what approveTask would have written. Starting the timer overwrites status to
+                // 'in-progress', so the green "Patvirtintas" only shows in the not-yet-started window.
+                const approvalStamp = initialStatus === 'approved'
+                    ? { isApproved: true, approvedBy: currentUser.uid, approvedAt: new Date().toISOString() }
+                    : {};
 
                 // Create through the audited createTask command (ADR 0015, increment 3): it
                 // canonicalizes, stamps provenance from the actor, writes the tasks doc, and records
                 // one decision_log entry — replacing the inline addDoc so creation has a single,
                 // audited path. The caller still owns the role-derived status + auditor.
                 const createResult = await createTask(
-                    { fields: { ...taskData, status: initialStatus, taskAuditor: activeAuditorId } },
+                    { fields: { ...taskData, status: initialStatus, ...approvalStamp, taskAuditor: activeAuditorId } },
                     {
                         actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }),
                         mode: MODES.COMMIT,
@@ -1533,27 +1550,49 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                 </div>
                             </div>
 
-                            {/* Deadline — optional; the placeholder carries the label. The text→date type
-                                swap keeps that placeholder readable until the field is focused, and a tap
-                                immediately pops the native calendar (showPicker) instead of needing a second
-                                tap on the tiny date glyph. */}
-                            <div>
-                                <input
-                                    type={formData.deadline ? "date" : "text"}
-                                    value={formData.deadline}
-                                    onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-                                    onFocus={(e) => { e.target.type = 'date'; }}
-                                    onClick={(e) => {
-                                        e.target.type = 'date';
-                                        // showPicker needs a user gesture (this click) and isn't in every
-                                        // browser; ignore if unsupported/blocked — the field still works.
-                                        try { e.target.showPicker?.(); } catch { /* no-op */ }
-                                    }}
-                                    onBlur={(e) => { if (!e.target.value) e.target.type = 'text'; }}
-                                    aria-label="Atlikti iki"
-                                    placeholder="Atlikti iki… (neprivalomas įrašas)"
+                            {/* Deadline + tag — one row (deadline left, tag right). */}
+                            <div className="grid grid-cols-2 gap-3">
+                                {/* Deadline — optional. The field is ALWAYS a native date control, so a single
+                                    click opens the calendar (showPicker) with no intermediate text-edit step.
+                                    An overlay carries the Lithuanian label while empty; the native empty value
+                                    (yyyy-mm-dd) is hidden by rendering the input text transparent until a date
+                                    is chosen. (Replaces the old text→date type swap that needed a second tap.) */}
+                                <div className="relative min-w-0">
+                                    <input
+                                        type="date"
+                                        value={formData.deadline}
+                                        onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                                        onClick={(e) => {
+                                            // showPicker needs a user gesture (this click) and isn't in every
+                                            // browser; ignore if unsupported/blocked — the field still works.
+                                            try { e.currentTarget.showPicker?.(); } catch { /* no-op */ }
+                                        }}
+                                        aria-label="Atlikti iki"
+                                        disabled={fieldsLocked}
+                                        className={`w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base ${formData.deadline ? '' : 'text-transparent'}`}
+                                    />
+                                    {!formData.deadline && (
+                                        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base text-ink-muted">
+                                            Atlikti iki…
+                                        </span>
+                                    )}
+                                </div>
+                                {/* Žyma — optional single tag from the canonical list. Opens a list panel
+                                    (Select sheet) just like the other pickers; "Be žymos" clears it. */}
+                                <Select
+                                    value={formData.tag}
+                                    onChange={(val) => setFormData({ ...formData, tag: val })}
+                                    options={[
+                                        { value: '', label: 'Be žymos' },
+                                        ...TASK_TAGS.map((t) => ({ value: t, label: t })),
+                                    ]}
+                                    label="Žyma"
+                                    placeholder="Žyma"
+                                    ariaLabel="Žyma"
+                                    icon={Tag}
+                                    alwaysSheet
                                     disabled={fieldsLocked}
-                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
+                                    className="min-w-0"
                                 />
                             </div>
 

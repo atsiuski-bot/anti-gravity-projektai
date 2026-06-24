@@ -3,11 +3,13 @@ import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
-import { format, parseISO } from 'date-fns';
+import { format, parseISO, formatDistanceToNow } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus, Ban, UserPlus } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Bell, Plus, Ban, UserPlus, Hand, Hourglass } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
+import { notificationCopy } from '../notifications/registry';
+import { cn } from '../utils/cn';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
 import TaskActionRow from './task/TaskActionRow';
@@ -21,6 +23,30 @@ import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import EmptyState from './ui/EmptyState';
 import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyphs';
+
+// History view caps how many read notifications it renders at once. A recipient's read backlog grows
+// without bound (notifications are never deleted), so the list is sorted newest-first and sliced —
+// the cap is surfaced (not silent) when it bites, so "older ones exist" is never hidden.
+const HISTORY_CAP = 100;
+
+// Glyph for a read/past notification in the history list. Mirrors the active feed's per-type icons so
+// a notification looks the same once archived; unknown/legacy types degrade to a neutral bell.
+const HISTORY_ICONS = {
+    task_approval: CheckCircle2, task_completion: CheckCircle2, task_confirmed: CheckCircle2,
+    task_assigned: ListTodo, task_approved: CheckCircle2,
+    task_edited: Edit, task_unassigned: Edit, task_deleted: Trash2,
+    task_reverted: RotateCcw,
+    time_extension_request: Clock, extension_granted: Clock, extension_denied: Clock,
+    task_priority_escalated: Clock,
+    new_comment: MessageCircle, new_photo: MessageCircle,
+    calendar_decision: AlertCircle,
+    session_edited: Edit, session_deleted: Trash2, session_auto_closed: Clock,
+    session_correction_request: AlertCircle,
+    account_approval: UserPlus, recurring_reassign: AlertCircle,
+    task_needs_manager: Hand, task_waiting: Hourglass,
+    achievement: CheckCircle2, task_overdue: AlertCircle,
+};
+const historyIcon = (type) => HISTORY_ICONS[type] || Bell;
 
 /**
  * NotificationFeed — the two-way feed rendered inside the notification bell's panel.
@@ -42,10 +68,10 @@ import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyp
  * task list uses, so a manager sees (and acts on) a reported task identically in both places.
  *
  * The notification carries only taskId/taskTitle, so this wrapper subscribes to the live task doc
- * and feeds it to TaskCard. TaskCard already exposes the manager sign-off buttons for a finished
- * task (Priimti / Grąžinti / Redaguoti / Trinti); the optional post-action hooks below are
- * what keep the two-way feed honest — after the card's own write succeeds they dismiss this
- * notification and notify the worker.
+ * and feeds it to TaskCard in `signoffOnly` mode, so the completion card offers exactly the two
+ * decisions a finished task needs — Priimti / Grąžinti (Grąžinti reopens the editor). The optional
+ * post-action hooks below are what keep the two-way feed honest — after the card's own write
+ * succeeds they dismiss this notification and notify the worker.
  */
 function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDeleted }) {
     const [task, setTask] = useState(null);
@@ -82,6 +108,7 @@ function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDelet
                 onConfirmed={onConfirmed}
                 onReverted={onReverted}
                 onDeleted={onDeleted}
+                signoffOnly
             />
         </div>
     );
@@ -92,11 +119,14 @@ export default function ManagerNotifications({ onClose }) {
     const { setActiveTab } = useNavigation();
     const isManager = isManagerRole(userRole);
     const runUndoable = useUndoableAction();
+    const [view, setView] = useState('active'); // 'active' (live feed) | 'history' (read/past notices)
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
+    const [historyNotifications, setHistoryNotifications] = useState([]); // read request_notifications, lazy-loaded
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
+    const [actionNotice, setActionNotice] = useState(null); // neutral Lithuanian notice (e.g. an orphaned request was cleared) — not an error
     const [bulkConfirming, setBulkConfirming] = useState(false); // batch "approve all completions" in flight
     const [bulkApprovingCal, setBulkApprovingCal] = useState(false); // batch "approve all calendar requests" in flight
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
@@ -186,6 +216,30 @@ export default function ManagerNotifications({ onClose }) {
         return () => unsubscribe();
     }, [currentUser, isManager]);
 
+    // 4. History — read (already-dismissed) request_notifications for this recipient. Subscribed
+    // LAZILY (only while the Istorija tab is open) so it adds no always-on listener cost; the read
+    // rule already lets a recipient read ALL their own notifications, and this two-equality query
+    // (recipientId + isRead) mirrors the active feed's shape, so it needs no rule or index change.
+    // Newest-first ordering + the HISTORY_CAP slice happen in render (avoids an orderBy composite
+    // index). This is the answer to "read notices vanish forever" — they now live on here.
+    useEffect(() => {
+        if (!currentUser || view !== 'history') { setHistoryNotifications([]); return undefined; }
+
+        const q = query(
+            collection(db, 'request_notifications'),
+            where('recipientId', '==', currentUser.uid),
+            where('isRead', '==', true)
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setHistoryNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        }, (error) => {
+            console.error("ManagerNotifications: History Listener Error:", error);
+        });
+
+        return () => unsubscribe();
+    }, [currentUser, view]);
+
     const handleDismissCalendar = async (notificationId) => {
         try {
             const notifRef = doc(db, 'calendar_notifications', notificationId);
@@ -207,9 +261,17 @@ export default function ManagerNotifications({ onClose }) {
         }
     };
 
+    // Reset BOTH feedback banners before any action. Kept as one helper so the neutral notice
+    // (e.g. "task already deleted") can never linger across an unrelated action — every handler
+    // that used to clear only the error now clears both through this single call.
+    const clearActionFeedback = () => {
+        setActionError(null);
+        setActionNotice(null);
+    };
+
     const handleApproveCalendarRequest = async (request) => {
         try {
-            setActionError(null);
+            clearActionFeedback();
             const { type, requestedEvent, userId, userName } = request;
             const now = new Date().toISOString();
             
@@ -256,7 +318,7 @@ export default function ManagerNotifications({ onClose }) {
 
     const handleDeclineCalendarRequest = async (request) => {
         try {
-            setActionError(null);
+            clearActionFeedback();
             await updateDoc(doc(db, 'calendar_requests', request.id), {
                 status: 'declined',
                 declinedAt: new Date().toISOString(),
@@ -284,7 +346,7 @@ export default function ManagerNotifications({ onClose }) {
     const handleApproveAllCalendarRequests = async () => {
         if (!calBatchEligible) return;
         setBulkApprovingCal(true);
-        setActionError(null);
+        clearActionFeedback();
         try {
             for (const request of bulkApprovableCalRequests) {
                 await handleApproveCalendarRequest(request);
@@ -299,13 +361,15 @@ export default function ManagerNotifications({ onClose }) {
 
 
     // Notify the worker who submitted a task that it was approved (they may start). The submitter
-    // is the notification's author (createdBy); a manager self-submitting gets no echo.
-    const notifyTaskApproved = async (notif) => {
+    // is the notification's author (createdBy); a manager self-submitting gets no echo. `edited`
+    // collapses the approve+edit path into a single "patvirtinta ir pakeista" notice (see registry).
+    const notifyTaskApproved = async (notif, { edited = false } = {}) => {
         await notify({
             recipientId: notif.createdBy,
             type: 'task_approved',
             taskId: notif.taskId,
             taskTitle: notif.taskTitle,
+            ...(edited ? { edited: true } : {}),
             actorUid: currentUser.uid,
             actorName: currentUser.displayName || currentUser.email,
         });
@@ -316,19 +380,34 @@ export default function ManagerNotifications({ onClose }) {
     // start"). That ping is DEFERRED for the undo window and cancelled on undo, so an undo leaves
     // nothing for the worker to see; the approval state itself commits now (other managers see it
     // live). Undo restores the exact prior status + re-surfaces the manager's approval request.
-    const handleApproveTask = (notif) => {
+    const handleApproveTask = async (notif) => {
         const taskId = notif?.taskId;
         if (!taskId) return undefined;
-        setActionError(null);
+        clearActionFeedback();
+        // An approval request can outlive its task: the worker who submitted it may hard-delete the
+        // task before the manager acts, leaving this notification dangling. Acting on the orphan used
+        // to updateDoc a missing doc and surface "Nepavyko patvirtinti — bandykite dar kartą", which
+        // reads as a permission denial. Detect the gone task, clear the stale request, and say so.
+        // The read sits OUTSIDE runUndoable, so it owns its own error surface: a transient read
+        // failure must still show the friendly error (runUndoable only guards the write below).
+        let prior; // snapshotted here, restored in undo
+        try {
+            const snap = await getDoc(doc(db, 'tasks', taskId));
+            if (!snap.exists()) {
+                await handleDismissTask(notif.id);
+                setActionNotice('Ši užduotis jau ištrinta — pasenęs prašymas pašalintas.');
+                return undefined;
+            }
+            const d = snap.data();
+            prior = { status: d.status ?? null, isApproved: !!d.isApproved };
+        } catch (err) {
+            console.error('Error reading task before approve:', err);
+            setActionError('Nepavyko patvirtinti užduoties. Bandykite dar kartą.');
+            return undefined;
+        }
         const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
-        let prior = { status: null, isApproved: false }; // snapshotted in run, restored in undo
         return runUndoable({
             run: async () => {
-                const snap = await getDoc(doc(db, 'tasks', taskId));
-                if (snap.exists()) {
-                    const d = snap.data();
-                    prior = { status: d.status ?? null, isApproved: !!d.isApproved };
-                }
                 // Audited approveTask command — ADR 0015, increment 5 (prior state feeds its audit before/after).
                 await approveTask(
                     { task: { id: taskId, title: notif.taskTitle, status: prior.status, isApproved: prior.isApproved } },
@@ -354,24 +433,36 @@ export default function ManagerNotifications({ onClose }) {
         const taskId = notif?.taskId;
         if (!taskId) return;
         try {
-            setActionError(null);
-            // 1. Approve the task (audited approveTask command — ADR 0015, increment 5)
+            clearActionFeedback();
+            // 0. The task may have been hard-deleted out from under this request (see handleApproveTask).
+            // Read it once: if it's gone, clear the orphan and stop; otherwise reuse this snapshot to
+            // open the editor below (no second fetch).
             const taskRef = doc(db, 'tasks', taskId);
+            const taskSnap = await getDoc(taskRef);
+            if (!taskSnap.exists()) {
+                await handleDismissTask(notif.id);
+                setActionNotice('Ši užduotis jau ištrinta — pasenęs prašymas pašalintas.');
+                return;
+            }
+
+            // 1. Approve the task (audited approveTask command — ADR 0015, increment 5)
             await approveTask(
                 { task: { id: taskId, title: notif.taskTitle } },
                 { actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email }), mode: MODES.COMMIT, reason: 'approved (edit) from notification' },
             );
 
-            // 2. Dismiss notification + tell the worker
+            // 2. Dismiss notification + tell the worker in ONE notice: "patvirtinta ir pakeista".
+            // Sending the combined notice now (rather than a plain "approved" here and a separate
+            // "edited" when the editor saves) is what keeps approve-and-edit to a single ping; the
+            // __suppressEditNotice flag below stops TaskModal's save from adding a second one.
             await handleDismissTask(notif.id);
-            await notifyTaskApproved(notif);
+            await notifyTaskApproved(notif, { edited: true });
 
-            // 3. Open the task for editing in whichever view hosts the modal, and close the bell.
-            const taskSnap = await getDoc(taskRef);
-            if (taskSnap.exists()) {
-                onClose?.();
-                window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
-            }
+            // 3. Open the task for editing in whichever view hosts the modal, and close the bell. The
+            // transient __suppressEditNotice marker rides the in-memory task only (TaskModal builds
+            // its Firestore write from the form, never by spreading this object), so it never persists.
+            onClose?.();
+            window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data(), __suppressEditNotice: true } } }));
         } catch (err) {
             console.error("Error in edit and approve:", err);
             setActionError("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
@@ -386,7 +477,7 @@ export default function ManagerNotifications({ onClose }) {
         if (!deleteModalData) return;
         const { taskId, notificationId } = deleteModalData;
         try {
-            setActionError(null);
+            clearActionFeedback();
             // Fetch the full task data first so we can archive it properly
             const taskRef = doc(db, 'tasks', taskId);
             const taskSnap = await getDoc(taskRef);
@@ -419,7 +510,7 @@ export default function ManagerNotifications({ onClose }) {
         const taskId = notif?.taskId;
         if (!taskId || grantingExt) return;
         setGrantingExt(notif.id);
-        setActionError(null);
+        clearActionFeedback();
         try {
             await extendTaskTime(taskId, additionalTimeString, currentUser.uid);
             await notify({
@@ -477,7 +568,7 @@ export default function ManagerNotifications({ onClose }) {
     const handleConfirmAllCompletions = () => {
         const completions = taskNotifications.filter(n => n.type === 'task_completion');
         if (completions.length === 0) return undefined;
-        setActionError(null);
+        clearActionFeedback();
         setBulkConfirming(true);
         return runUndoable({
             run: async () => { for (const n of completions) await confirmCompletionWrite(n); },
@@ -500,8 +591,11 @@ export default function ManagerNotifications({ onClose }) {
 
     const handleCardReverted = async (notif) => {
         await handleDismissTask(notif.id);
-        // Tell the worker their task came back for rework (action item in their bell).
-        await notify({ recipientId: notif.userId, type: 'task_reverted', taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+        // Tell the worker their task came back for rework in ONE notice: "grąžinta taisyti ir
+        // pakeista". The completion card's Grąžinti ALWAYS reopens the editor (see TaskCard
+        // performRevert), and the reopened task carries __suppressEditNotice so the manager's save
+        // adds no second ping — this is the single combined notice the worker sees.
+        await notify({ recipientId: notif.userId, type: 'task_reverted', edited: true, taskId: notif.taskId, taskTitle: notif.taskTitle, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
     };
 
     // --- Account approval (system → admin) ---
@@ -515,7 +609,7 @@ export default function ManagerNotifications({ onClose }) {
         const targetUid = notif?.targetUserId;
         if (!targetUid || decidingAccount) return;
         setDecidingAccount(notif.id);
-        setActionError(null);
+        clearActionFeedback();
         try {
             await updateDoc(doc(db, 'users', targetUid), approve
                 ? { isDisabled: false, status: 'active' }
@@ -576,18 +670,99 @@ export default function ManagerNotifications({ onClose }) {
         return (urgencyRank(a) - urgencyRank(b)) || (getTimestamp(b) - getTimestamp(a));
     });
 
-    if (sortedNotifications.length === 0) {
-        return (
-            <EmptyState
-                icon={BellOff}
-                title="Pranešimų nėra"
-                description="Čia matysite užduočių tvirtinimus, komentarus ir kalendoriaus naujienas."
-            />
-        );
-    }
+    const activeCount = sortedNotifications.length;
+    // History is sorted newest-first and capped in render (no orderBy → no composite index).
+    const sortedHistory = [...historyNotifications]
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+        .slice(0, HISTORY_CAP);
 
     return (
         <div className="space-y-3">
+            {/* Two views. ACTIVE = the live feed (action items float to the top). ISTORIJA = read /
+                already-acted-on notices, so a notification that was dismissed (manually or by acting
+                on it) can still be reviewed instead of disappearing forever. The tabs always render,
+                so history is reachable even when the active feed is empty. */}
+            <div role="tablist" aria-label="Pranešimų rodinys">
+                <div className="flex w-full overflow-hidden rounded-control border border-line bg-surface-sunken">
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={view === 'active'}
+                        onClick={() => setView('active')}
+                        className={cn(
+                            'flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 min-h-touch text-body font-semibold leading-tight transition-colors',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                            view === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                        )}
+                    >
+                        Aktyvūs
+                        {activeCount > 0 && (
+                            <span className={cn(
+                                'inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-caption font-bold leading-none',
+                                view === 'active' ? 'bg-white/25 text-white' : 'bg-brand text-white'
+                            )}>
+                                {activeCount}
+                            </span>
+                        )}
+                    </button>
+                    <div className="w-px shrink-0 bg-line" aria-hidden="true" />
+                    <button
+                        type="button"
+                        role="tab"
+                        aria-selected={view === 'history'}
+                        onClick={() => setView('history')}
+                        className={cn(
+                            'flex-1 inline-flex items-center justify-center px-3 py-2.5 min-h-touch text-body font-semibold leading-tight transition-colors',
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                            view === 'history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                        )}
+                    >
+                        Istorija
+                    </button>
+                </div>
+            </div>
+
+            {view === 'history' ? (
+                sortedHistory.length === 0 ? (
+                    <EmptyState
+                        icon={Bell}
+                        title="Istorijoje tuščia"
+                        description="Perskaityti ir užbaigti pranešimai bus matomi čia."
+                    />
+                ) : (
+                    <div className="space-y-2">
+                        {sortedHistory.map((n) => {
+                            const { title, body } = notificationCopy(n);
+                            const Icon = historyIcon(n.type);
+                            const when = n.createdAt
+                                ? formatDistanceToNow(parseISO(n.createdAt), { addSuffix: true, locale: lt })
+                                : '';
+                            return (
+                                <div key={n.id} className="flex items-start gap-3 rounded-card border border-line bg-surface-card p-3">
+                                    <Icon className="mt-0.5 h-4 w-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />
+                                    <div className="min-w-0 flex-1">
+                                        <p className="text-body font-medium text-ink">{title}</p>
+                                        {body && <p className="mt-0.5 text-caption text-ink-muted line-clamp-2">{body}</p>}
+                                    </div>
+                                    {when && <span className="shrink-0 text-caption text-ink-muted whitespace-nowrap">{when}</span>}
+                                </div>
+                            );
+                        })}
+                        {historyNotifications.length > HISTORY_CAP && (
+                            <p className="pt-1 text-center text-caption text-ink-muted">
+                                Rodomi naujausi {HISTORY_CAP} pranešimai.
+                            </p>
+                        )}
+                    </div>
+                )
+            ) : sortedNotifications.length === 0 ? (
+                <EmptyState
+                    icon={BellOff}
+                    title="Pranešimų nėra"
+                    description="Čia matysite užduočių tvirtinimus, komentarus ir kalendoriaus naujienas."
+                />
+            ) : (
+              <>
             {hasInfoToClear && (
                 <div className="flex justify-end">
                     <Button variant="ghost" size="sm" loading={markingAll} onClick={handleMarkAllRead}>
@@ -603,6 +778,19 @@ export default function ManagerNotifications({ onClose }) {
                     className="rounded-control border border-feedback-danger/30 bg-feedback-danger/10 px-4 py-3 text-body text-feedback-danger"
                 >
                     {actionError}
+                </div>
+            )}
+
+            {/* Neutral notice — e.g. an orphaned approval request was cleared because its task no
+                longer exists. Distinct from the danger banner so a benign self-heal never reads as a
+                failure (which is what the misleading "couldn't approve" error did before). */}
+            {actionNotice && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    className="rounded-control border border-line bg-surface-sunken px-4 py-3 text-body text-ink-muted"
+                >
+                    {actionNotice}
                 </div>
             )}
 
@@ -765,6 +953,43 @@ export default function ManagerNotifications({ onClose }) {
                                 <Icon className={`mt-0.5 h-5 w-5 flex-shrink-0 ${tone}`} aria-hidden="true" />
                                 <p className="min-w-0 flex-1 text-body text-ink">{text}</p>
                                 <IconButton icon={X} label="Pažymėti skaitytu" variant="ghost" onClick={() => handleDismissTask(notif.id)} className="-mr-1 -mt-1" />
+                            </div>
+                        );
+                    }
+
+                    // Worker → manager: the vykdytojas raised an attention flag on a task. Two flags
+                    // share this card: "Reikia vadovo" (red, action — a decision/attention is owed)
+                    // and "Laukiama" (blue, FYI — the worker is blocked). The card names WHO raised it
+                    // and which task; the flag itself stays on the task until the worker (or a manager)
+                    // clears it from the task's detail sheet, so this is a benign read/dismiss notice.
+                    if (notif.type === 'task_needs_manager' || notif.type === 'task_waiting') {
+                        const isNeedsManager = notif.type === 'task_needs_manager';
+                        const FlagIcon = isNeedsManager ? Hand : Hourglass;
+                        const flagLabel = isNeedsManager ? 'Reikia vadovo' : 'Laukiama';
+                        const wrapClass = isNeedsManager
+                            ? 'border-feedback-danger-border bg-feedback-danger-soft'
+                            : 'border-feedback-info-border bg-feedback-info-soft';
+                        const textClass = isNeedsManager ? 'text-feedback-danger-text' : 'text-feedback-info-text';
+                        const iconClass = isNeedsManager ? 'text-feedback-danger' : 'text-feedback-info';
+                        return (
+                            <div key={notif.id} className={`rounded-card border p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl ${wrapClass}`}>
+                                <div className="flex items-start gap-3">
+                                    <FlagIcon className={`mt-0.5 h-5 w-5 flex-shrink-0 ${iconClass}`} aria-hidden="true" />
+                                    <div className={`min-w-0 flex-1 text-sm ${textClass}`}>
+                                        <p className="leading-relaxed">
+                                            {(notif.createdBy || notif.createdByName)
+                                                ? <UserChip userId={notif.createdBy} name={notif.createdByName} />
+                                                : <span className="font-semibold">Vykdytojas</span>}{' '}
+                                            pažymėjo „{flagLabel}“:
+                                        </p>
+                                        <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
+                                    </div>
+                                </div>
+                                <div className="mt-3 flex items-center justify-end">
+                                    <Button variant="secondary" size="md" onClick={() => handleDismissTask(notif.id)}>
+                                        Supratau
+                                    </Button>
+                                </div>
                             </div>
                         );
                     }
@@ -1157,6 +1382,8 @@ export default function ManagerNotifications({ onClose }) {
 
             return null;
             })}
+              </>
+            )}
             <DeleteConfirmationModal
                 isOpen={!!deleteModalData}
                 onClose={() => setDeleteModalData(null)}

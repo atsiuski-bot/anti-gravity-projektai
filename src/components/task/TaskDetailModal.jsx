@@ -16,6 +16,7 @@ import IconButton from '../ui/IconButton';
 import TaskActionRow from './TaskActionRow';
 import PriorityBadge from './PriorityBadge';
 import TaskStatusPill from './TaskStatusPill';
+import TaskFlagToggles from './TaskFlagToggles';
 import DeletedBadge from './DeletedBadge';
 import AssigneeChip from './AssigneeChip';
 import TimeChangedWarning from './TimeChangedWarning';
@@ -26,6 +27,7 @@ import { formatMinutesToTimeString, calculateCurrentTotalMinutes, relativeDeadli
 import { getChecklistProgress } from '../../utils/checklistActions';
 import { addComment, updateComment, deleteComment, getCommentKey } from '../../utils/commentActions';
 import { uploadAttachments, MAX_ATTACHMENTS } from '../../utils/attachmentUpload';
+import { notifyMany } from '../../utils/notify';
 import { logError } from '../../utils/errorLog';
 import { preventEnterSubmit } from '../../utils/formUtils';
 
@@ -90,7 +92,7 @@ export default function TaskDetailModal({
     onOpenTimeAdjustments,
 }) {
     const titleId = useId();
-    const { currentUser } = useAuth();
+    const { currentUser, userData } = useAuth();
 
     const [newComment, setNewComment] = useState('');
     const [submitting, setSubmitting] = useState(false);
@@ -205,6 +207,15 @@ export default function TaskDetailModal({
                 attachmentUrls: [...imageUrls, ...urls],
                 updatedAt: new Date().toISOString(),
             });
+            // Tell the OTHER party a photo landed (manager ↔ worker), exactly like a new comment —
+            // notifyMany de-dupes and drops the uploader, so it never echoes back to its author.
+            await notifyMany([task.managerId, task.assignedUserId], {
+                type: 'new_photo',
+                taskId: task.id,
+                taskTitle: task.title || 'Užduotis',
+                actorUid: currentUser.uid,
+                actorName: currentUser.displayName || currentUser.email,
+            });
         } catch (err) {
             logError(err, { source: 'TaskDetailModal.onPickPhotos' });
             setError('Nepavyko įkelti nuotraukos. Bandykite vėliau.');
@@ -318,6 +329,24 @@ export default function TaskDetailModal({
                                     <UserChip userId={managerId} name={managerName} />
                                 </span>
                             )}
+                        </div>
+                    )}
+
+                    {/* Worker attention flags — the vykdytojas (or a manager) raises/clears
+                        "Reikia vadovo" / "Laukiama" here. Raising one tints the card everywhere and
+                        pings the task's manager with who raised it. */}
+                    {(isAssignee || canManage) && !isDeleted && (
+                        <div>
+                            <div className="mb-2 text-caption font-medium uppercase tracking-wide text-ink-muted">
+                                Vykdytojo žymos
+                            </div>
+                            <TaskFlagToggles
+                                task={task}
+                                currentUser={currentUser}
+                                defaultManagerId={userData?.defaultManager || null}
+                                collectionName={collectionName}
+                                onError={() => setError('Nepavyko pakeisti žymos. Bandykite dar kartą.')}
+                            />
                         </div>
                     )}
 

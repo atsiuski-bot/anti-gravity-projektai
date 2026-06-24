@@ -94,6 +94,21 @@ service cloud.firestore {
              request.auth.uid == resource.data.get('managerId', '');
     }
 
+    // The WRITE-side mirror of the managerId branch in canReadOwnedTask: a manager/admin who is the
+    // task's DESIGNATED vadovas (managerId) or auditor (taskAuditor) may act on it (approve / accept /
+    // edit / delete) even when it sits OUTSIDE their team closure — e.g. ANOTHER manager created the
+    // task and named THIS manager its overseer. Without this, such a manager could SEE the task (READ
+    // grants managerId) yet have every WRITE silently denied — the exact "I'm the vadovas but can
+    // neither approve nor edit" trap (founder, 2026-06-24). Because the named manager IS the legitimate
+    // approver, this branch deliberately permits the approval-field flip that changesApprovalFields()
+    // blocks on the assignee branch. Gated to a manager role for defense in depth, so a stray worker
+    // uid sitting in managerId can never gain write. Reads resource.data, so UPDATE/DELETE only.
+    function isNamedTaskOverseer() {
+      return isManagerOrAdmin() &&
+             (request.auth.uid == resource.data.get('managerId', '') ||
+              request.auth.uid == resource.data.get('taskAuditor', ''));
+    }
+
     // ---- Per-document ownership helpers -------------------------------------
     // A worker "owns" a record when its owner field equals their uid. The owner
     // field per collection was audited from the client write sites: `userId` for
@@ -273,12 +288,14 @@ service cloud.firestore {
                       canSeeWholeTeam() ||
                       (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
                     );
-      // Update: whole-team viewers edit any; a scoped manager edits their team's tasks and may
-      // only reassign within their team; the assignee edits their own but may NOT flip the
-      // manager-only approval fields. taskFieldsOkForUpdate adds the priority/estimate shape guard
-      // (enforced only when this write changes those fields).
+      // Update: whole-team viewers edit any; the task's named vadovas/auditor edits THEIR task even
+      // out of team scope; a scoped manager edits their team's tasks and may only reassign within
+      // their team; the assignee edits their own but may NOT flip the manager-only approval fields.
+      // taskFieldsOkForUpdate adds the priority/estimate shape guard (enforced only when this write
+      // changes those fields).
       allow update: if isUserActive() && taskFieldsOkForUpdate() && (
                       canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
                          overseesUser(request.resource.data.assignedUserId))) ||
@@ -287,6 +304,7 @@ service cloud.firestore {
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam())
                     );
     }
@@ -385,6 +403,7 @@ service cloud.firestore {
                     );
       allow update: if isUserActive() && (
                       canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
                          overseesUser(request.resource.data.assignedUserId))) ||
@@ -393,6 +412,7 @@ service cloud.firestore {
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
+                      isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam())
                     );
     }

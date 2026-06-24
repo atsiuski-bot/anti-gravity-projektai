@@ -5,6 +5,8 @@ import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import { deleteTask, revertTask } from '../utils/taskActions';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, relativeDeadline } from '../utils/timeUtils';
 import { getChecklistProgress } from '../utils/checklistActions';
@@ -20,9 +22,11 @@ import AssigneeChip from './task/AssigneeChip';
 import UserChip from './UserChip';
 import TaskDetailModal from './task/TaskDetailModal';
 import TaskStatusIcon from './task/TaskStatusIcon';
+import TaskFlagBadges from './task/TaskFlagBadges';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
 import { STATUS_STYLES } from '../utils/taskConstants';
+import { getTaskFlagTint } from '../utils/taskFlags';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 
@@ -51,7 +55,7 @@ const DEADLINE_TONE = {
  * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the edit
  * button opens the create/edit form directly, bypassing the preview.
  */
-const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown, onConfirmed, onReverted, onDeleted, surface = 'active', actions: actionsProp = null, detailOverrides = null }) => {
+const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null }) => {
     const { currentUser, userRole } = useAuth();
     const runUndoable = useUndoableAction();
     const [activeModal, setActiveModal] = useState(null); // 'checklist' | 'timeAdjustments'
@@ -73,6 +77,23 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
             // Optional post-action hook: the notification feed dismisses its card and tells the
             // worker their task came back for rework. Undefined (a no-op) in the plain task list.
             await onReverted?.(task);
+            // On the completion-sign-off card (bell), "Grąžinti" reopens the task in the editor so the
+            // manager can fix it right away (the only two actions there are Priimti / Grąžinti). RE-FETCH
+            // first: revertTask just changed status/completed on the doc, but our `task` prop is the
+            // pre-revert snapshot — opening the editor with it would let the save write the stale
+            // 'completed' status back and silently UNDO the revert. The fresh doc reflects the reverted
+            // state; __suppressEditNotice stops the save from adding a second ping (onReverted already
+            // sent the combined "grąžinta taisyti ir pakeista"). Mirrors handleEditAndApprove's re-fetch.
+            if (signoffOnly) {
+                let fresh = task;
+                try {
+                    const snap = await getDoc(doc(db, task.isArchived ? 'archived_tasks' : 'tasks', task.id));
+                    if (snap.exists()) fresh = { id: snap.id, ...snap.data() };
+                } catch (e) {
+                    logError(e, { source: 'TaskCard.performRevert.refetch' });
+                }
+                onEdit?.({ ...fresh, __suppressEditNotice: true });
+            }
         } catch (err) {
             console.error('Error reverting task:', err);
             setRevertError('Nepavyko grąžinti užduoties. Bandykite dar kartą.');
@@ -124,6 +145,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const canEdit = canEditTask({ task, currentUser, role, userRole });
 
     const taskStatus = task.status || 'pending';
+
+    // Worker-set attention tint ("Reikia vadovo" red / "Laukiama" blue). Sits BELOW the live/limit
+    // states in the cascade below (a running or over-limit card keeps its own colour), but ABOVE the
+    // plain status fallback — so an otherwise-calm card glows the moment the worker raises a flag.
+    const flagTint = getTaskFlagTint(task);
 
     // Strict UI logic: activeSession is the PRIMARY source of truth, workStatus is the fallback.
     const isRunning = useIsTaskRunning(task);
@@ -266,11 +292,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         key: 'confirm', label: 'Priimti', icon: CheckCircle2, variant: 'success',
         onClick: (e) => { e.stopPropagation(); performConfirm(); },
     });
-    if (onEdit && canEdit) actions.push({
+    // The completion-sign-off card (bell) shows ONLY Priimti / Grąžinti — Redaguoti is reached via
+    // Grąžinti (which reopens the editor) and Trinti is intentionally not offered there.
+    if (!signoffOnly && onEdit && canEdit) actions.push({
         key: 'edit', label: 'Redaguoti', icon: Edit, variant: 'primary',
         onClick: (e) => { e.stopPropagation(); onEdit(task); },
     });
-    if (isManager) actions.push({
+    if (!signoffOnly && isManager) actions.push({
         key: 'delete', label: 'Ištrinti', icon: Trash2, variant: 'danger',
         onClick: (e) => { e.stopPropagation(); handleDeleteTask(); },
     });
@@ -304,7 +332,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                     isRunning ? "bg-session-task-surface border-session-task-shell"
                         : task.inspectionStatus === 'inspecting' ? "bg-feedback-info-soft border-feedback-info-border"
                         : isLimitExceeded ? "bg-feedback-danger-soft border-feedback-danger-border"
-                        : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
+                        : flagTint
+                            ? flagTint
+                            : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
                     task.completed && "opacity-75",
                     justCompleted && "wz-flash-success"
                 )}
@@ -346,6 +376,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                             </button>
                         </div>
+
+                        {/* Worker-raised attention flags ("Reikia vadovo" / "Laukiama") — icon + label
+                            pills, shown only while a flag is raised. The whole card is tinted to match. */}
+                        <TaskFlagBadges task={task} className="mb-2" />
 
                         {/* Priority first, directly under the title — with any deadline / tag on the
                             same line. */}
@@ -590,5 +624,8 @@ export default React.memo(TaskCard, (prevProps, nextProps) => {
     if (prev.estimatedTime !== next.estimatedTime) return false;
     if (prev.title !== next.title) return false;
     if (prev.priority !== next.priority) return false;
+    // Attention flags drive both the badges and the whole-card tint, so a flip must re-render.
+    if (!!prev.needsManager !== !!next.needsManager) return false;
+    if (!!prev.waiting !== !!next.waiting) return false;
     return true;
 });

@@ -520,6 +520,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const shownTodayTasks = view === 'approval' ? approvalTodayTasks.filter(matchesApprovalPhase) : todayTasks;
     const shownEarlierTasks = view === 'approval' ? approvalEarlierTasks.filter(matchesApprovalPhase) : earlierTasks;
 
+    // Worker (full) view: 'laukia priėmimo' sections must show only 'completed' tasks.
+    const isFullView = view === 'full';
+    const displayTodayPending = isFullView ? shownTodayTasks.filter(t => t.status === 'completed') : shownTodayTasks;
+    const displayEarlierPending = isFullView ? shownEarlierTasks.filter(t => t.status === 'completed') : shownEarlierTasks;
+
     // Test/founder accounts are kept out of the report unless the manager opted in (showTestUsers),
     // resolved against each user's isTest flag — applied to every session/timeline source below.
     const testUserIds = useMemo(() => new Set((users || []).filter(u => u.isTest).map(u => u.id)), [users]);
@@ -1574,13 +1579,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 by default, the history archive collapsed). */}
             {view !== 'hours' && (
               <>
-            {shownTodayTasks.length > 0 && (
+            {displayTodayPending.length > 0 && (
                 <TaskListTable
-                    tasks={shownTodayTasks}
+                    tasks={displayTodayPending}
                     title={
                         view === 'approval'
                             ? (approvalPhase === 'accepted' ? 'Šiandien priimtos užduotys' : 'Užbaigta šiandien, laukia priėmimo')
-                            : (isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}`)
+                            : (isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}, laukia priėmimo`)
                     }
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
@@ -1597,13 +1602,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 />
             )}
 
-            {shownEarlierTasks.length > 0 && (
+            {displayEarlierPending.length > 0 && (
                 <TaskListTable
-                    tasks={shownEarlierTasks}
+                    tasks={displayEarlierPending}
                     title={
                         view === 'approval' && approvalPhase === 'accepted'
                             ? 'Priimta anksčiau'
-                            : 'Užduotys atliktos anksčiau, laukia priėmimo'
+                            : 'Atliktos užduotys, laukiančios priėmimo'
                     }
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
@@ -1615,9 +1620,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     expandedTasks={expandedTasks}
                     toggleExpand={toggleExpand}
                     setActiveModal={setActiveModal}
-                    highlight={true}
-                    collapsible={view === 'approval'}
-                    defaultOpen
                 />
             )}
 
@@ -2013,34 +2015,34 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
 
     return (
         <div className={clsx("rounded-card shadow-sm border border-line overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-surface-card")}>
-            <div className={clsx(
-                "px-4 border-b border-line",
-                highlight ? "bg-brand text-white py-6" : "py-3 bg-surface-sunken text-ink",
-                viewMode === 'mobile' && "rounded-control mb-2 border"
-            )}>
-                {collapsible ? (
-                    <button
-                        type="button"
-                        onClick={() => setOpen((o) => !o)}
-                        aria-expanded={open}
-                        className={clsx(
-                            "w-full min-h-touch flex items-center justify-between gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2",
-                            // The highlighted (bg-brand) header needs a white focus ring — an indigo
-                            // ring-brand on the indigo fill is invisible (WCAG 2.4.7 Focus Visible).
-                            highlight ? "focus-visible:ring-white" : "focus-visible:ring-brand"
-                        )}
-                    >
+            {title && (
+                <div className={clsx(
+                    "px-4 border-b border-line",
+                    highlight ? "bg-brand text-white py-6" : "py-3 bg-surface-sunken text-ink",
+                    viewMode === 'mobile' && "rounded-control mb-2 border"
+                )}>
+                    {collapsible ? (
+                        <button
+                            type="button"
+                            onClick={() => setOpen((o) => !o)}
+                            aria-expanded={open}
+                            className={clsx(
+                                "w-full min-h-touch flex items-center justify-between gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2",
+                                highlight ? "focus-visible:ring-white" : "focus-visible:ring-brand"
+                            )}
+                        >
+                            <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
+                            {open
+                                ? <ChevronUp className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />
+                                : <ChevronDown className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />}
+                        </button>
+                    ) : (
                         <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
-                        {open
-                            ? <ChevronUp className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />
-                            : <ChevronDown className={clsx("w-5 h-5 shrink-0", highlight ? "text-white" : "text-ink-muted")} aria-hidden="true" />}
-                    </button>
-                ) : (
-                    <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>
-                )}
-            </div>
+                    )}
+                </div>
+            )}
 
-            {(!collapsible || open) && (viewMode === 'mobile' ? (
+            {(!collapsible || !title || open) && (viewMode === 'mobile' ? (
                 <ul className="space-y-3">
                     {tasks.map((task) => {
                         // The SAME shared TaskCard the active lists use (report surface: timer hidden,
