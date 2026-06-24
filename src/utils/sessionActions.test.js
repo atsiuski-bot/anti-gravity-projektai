@@ -259,3 +259,71 @@ describe('endSession — orphan recovery path (useOrphanedSessionRecovery)', () 
         expect(pauseTask).not.toHaveBeenCalled();
     });
 });
+
+describe('endSession — recovery return contract (drives the RecoveryNotice banner)', () => {
+    // useOrphanedSessionRecovery reads {creditedMinutes, wasCapped} off the resolved value to
+    // stamp (or suppress) the one-time "timer recovered" banner. These lock that shape so a
+    // future refactor cannot silently make recovery go dark again.
+
+    it('returns {wasCapped:false} with the exact credit for a clean, in-bounds session', async () => {
+        const userData = {
+            activeSession: { type: 'break', startTime: '2026-06-23T11:00:00.000Z' }, // 60 min, in-bounds
+            breakState: { dailyAccumulatedMinutes: 0 },
+        };
+
+        const result = await endSession('u1', userData, {}, true);
+
+        expect(result).toMatchObject({ type: 'break', wasCapped: false });
+        expect(result.creditedMinutes).toBe(60);
+        expect(result.rawMinutes).toBeCloseTo(60, 5); // unclamped == clamped for an in-bounds run
+    });
+
+    it('returns {wasCapped:true, creditedMinutes:~960} for a >16h orphan (the 16h ceiling fired)', async () => {
+        const userData = {
+            activeSession: { type: 'quickWork', startTime: '2026-06-20T12:00:00.000Z' }, // 72h orphan
+            quickWorkState: {},
+        };
+
+        const result = await endSession('u1', userData, {}, true);
+
+        expect(result.wasCapped).toBe(true);
+        expect(result.creditedMinutes).toBe(MAX_SESSION_MINUTES); // 960, the clamped credit
+        expect(result.rawMinutes).toBeGreaterThan(MAX_SESSION_MINUTES); // raw 72h dwarfs the cap
+        expect(result.type).toBe('quickWork');
+    });
+
+    it('returns the SAME shape for a legacy-flag-only orphan (no activeSession) — the fixed gap', async () => {
+        // The exact orphan the gap missed: held ONLY in breakState.isTakingBreak with NO
+        // activeSession. endSession must route through endLegacySession AND propagate its
+        // {creditedMinutes, rawMinutes, wasCapped} so the banner can show for these too —
+        // previously this path returned undefined and recovery was silent.
+        const userData = {
+            breakState: { isTakingBreak: true, lastStartedAt: '2026-06-20T12:00:00.000Z', dailyAccumulatedMinutes: 0 }, // 72h
+        };
+
+        const result = await endSession('u1', userData, {}, true);
+        await flush();
+
+        // Shape is present and reports the clamp firing.
+        expect(result).toMatchObject({ type: 'break', wasCapped: true });
+        expect(result.creditedMinutes).toBe(MAX_SESSION_MINUTES); // 960, not the multi-day gap
+        expect(result.rawMinutes).toBeGreaterThan(MAX_SESSION_MINUTES);
+        // And the legacy flag was actually cleared + the clamped credit folded into the daily total.
+        const u = userUpdate('u1');
+        expect(u['breakState.isTakingBreak']).toBe(false);
+        expect(u['breakState.dailyAccumulatedMinutes']).toBe(MAX_SESSION_MINUTES);
+    });
+
+    it('returns {wasCapped:false} with the exact credit for a clean legacy-flag-only call', async () => {
+        const userData = {
+            callState: { isCalling: true, lastStartedAt: '2026-06-23T11:30:00.000Z' }, // 30 min, in-bounds
+        };
+
+        const result = await endSession('u1', userData, {}, true);
+        await flush();
+
+        expect(result).toMatchObject({ type: 'call', wasCapped: false });
+        expect(result.creditedMinutes).toBe(30);
+        expect(result.rawMinutes).toBeCloseTo(30, 5);
+    });
+});

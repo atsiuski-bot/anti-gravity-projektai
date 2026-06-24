@@ -2,7 +2,8 @@ import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { useFrequentQuickWork } from '../hooks/useFrequentQuickWork';
-import { Zap, Square, Check, ShieldAlert } from 'lucide-react';
+import { useSpeechDictation } from '../hooks/useSpeechDictation';
+import { Zap, Square, Check, ShieldAlert, Mic, Clock } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import clsx from 'clsx';
@@ -11,27 +12,37 @@ import { useUsers } from '../context/UsersContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
 import Button from './ui/Button';
+import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '', frequentChips = [] }) => {
+const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '', frequentChips = [] }) => {
     const textareaRef = useRef(null);
     // Which manager confirms this work. Primary pre-selected so the common case is one tap;
     // the worker can switch before saving. Initialized once — by the time the prompt opens the
     // roster and the worker's team are already loaded.
     const [selectedManagerId, setSelectedManagerId] = useState(defaultManagerId || managers[0]?.id || '');
     const totalDisplay = formatMinutesToTimeString(currentSessionMinutes);
+    const { supported: dictationSupported, isListening, toggle: toggleDictation } = useSpeechDictation(textareaRef);
+
+    // The manager who will confirm this work, whether it's named now or deferred. Mirrors the
+    // type-now resolution so the routing (and the single-manager default) survives a defer.
+    const resolvedAuditorId = managers.length
+        ? (selectedManagerId || defaultManagerId || managers[0]?.id || null)
+        : null;
 
     const handleSubmit = (e) => {
         e.preventDefault();
         const titleFromTextarea = textareaRef.current?.value || '';
         if (titleFromTextarea.trim()) {
-            const auditorId = managers.length
-                ? (selectedManagerId || defaultManagerId || managers[0]?.id || null)
-                : null;
-            onSubmit(titleFromTextarea, auditorId);
+            onSubmit(titleFromTextarea, resolvedAuditorId);
         }
     };
+
+    // "Vėliau aprašysiu": log the quick work now with no title. It still routes to the same
+    // manager, so the deferred row lands in their queue and surfaces in the worker's
+    // "describe later" banner for naming.
+    const handleDefer = () => onDefer(resolvedAuditorId);
 
     return (
         <Modal
@@ -80,23 +91,47 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                         </div>
                     )}
 
-                    <textarea
-                        ref={textareaRef}
-                        id="quickWorkTextarea"
-                        name="taskDescription"
-                        placeholder="Trumpai aprašykite atliktą darbą..."
-                        rows={4}
-                        className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
-                        style={{
-                            width: '100%',
-                            padding: '12px',
-                            fontSize: '16px',
-                            resize: 'none',
-                            direction: 'ltr',
-                            textAlign: 'left'
-                        }}
-                        required
-                    />
+                    <div className="relative">
+                        <textarea
+                            ref={textareaRef}
+                            id="quickWorkTextarea"
+                            name="taskDescription"
+                            placeholder="Trumpai aprašykite atliktą darbą..."
+                            rows={4}
+                            className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
+                            style={{
+                                width: '100%',
+                                // Reserve room at the bottom-right so dictated text never slides under the mic.
+                                padding: dictationSupported ? '12px 12px 52px 12px' : '12px',
+                                fontSize: '16px',
+                                resize: 'none',
+                                direction: 'ltr',
+                                textAlign: 'left'
+                            }}
+                            required
+                        />
+                        {/* Voice dictation — feature-detected; hidden where the Web Speech API is
+                            absent. Listening state is signalled by color AND a label change AND the
+                            filled/outline mic glyph, so color is never the sole cue (§5). */}
+                        {dictationSupported && (
+                            <IconButton
+                                icon={Mic}
+                                label={isListening ? 'Stabdyti diktavimą' : 'Diktuoti balsu'}
+                                variant={isListening ? 'danger-solid' : 'default'}
+                                aria-pressed={isListening}
+                                onClick={toggleDictation}
+                                className={clsx(
+                                    'absolute bottom-2 right-2',
+                                    isListening && 'wz-pulse-soft'
+                                )}
+                            />
+                        )}
+                    </div>
+                    {isListening && (
+                        <p className="mt-2 text-caption text-feedback-danger" role="status">
+                            Klausomasi… kalbėkite, tekstas atsiras laukelyje.
+                        </p>
+                    )}
                 </div>
 
                 {/* Who confirms this work. Several managers → pills (single-select radio group,
@@ -139,12 +174,20 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, currentSessionM
                     </p>
                 )}
 
-                <div className="mt-6 flex gap-3 justify-end">
-                    <Button type="button" variant="secondary" onClick={onClose}>
-                        Atšaukti
-                    </Button>
-                    <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
-                        {isSubmitting ? 'Saugoma...' : 'Išsaugoti darbą'}
+                <div className="mt-6 flex flex-col gap-2">
+                    <div className="flex gap-3 justify-end">
+                        <Button type="button" variant="secondary" onClick={onClose}>
+                            Atšaukti
+                        </Button>
+                        <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
+                            {isSubmitting ? 'Saugoma...' : 'Išsaugoti darbą'}
+                        </Button>
+                    </div>
+                    {/* Defer naming: log the work now without a description. The "describe later"
+                        banner surfaces it for naming. Subordinate (ghost) so the type-now primary
+                        stays dominant (§8). */}
+                    <Button type="button" variant="ghost" icon={Clock} onClick={handleDefer} disabled={isSubmitting} className="self-end">
+                        Vėliau aprašysiu
                     </Button>
                 </div>
             </form>
@@ -247,9 +290,13 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         setShowTitleModal(true);
     };
 
-    const handleCompleteQuickWork = useCallback(async (taskTitle, auditorManagerId) => {
-        if (!taskTitle || !taskTitle.trim()) return;
-
+    // Shared end-of-quick-work flow. `taskTitle` carries the worker's description on the
+    // type-now path; the defer path passes undefined so endSession logs the session WITHOUT a
+    // customTitle — which makes handleLegacyLogging stamp it autoStopped:true + the placeholder
+    // title, the exact record the "describe later" banner (QuickWorkDescribePrompt) surfaces for
+    // retroactive naming. The confirming manager (auditorManagerId) is carried either way so the
+    // single-manager default and routing survive a defer.
+    const finishQuickWork = useCallback(async (taskTitle, auditorManagerId) => {
         setIsSubmitting(true);
         setError('');
         try {
@@ -269,9 +316,12 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                 } : userData?.workStatus
             });
 
-            // End session with custom title + the chosen confirming manager (null if the worker
-            // has no managers; endSession then leaves the auditor unset, today's behavior).
-            await endSession(currentUser.uid, null, { customTitle: taskTitle, auditorManagerId: auditorManagerId || null });
+            // End session with the chosen confirming manager (null if the worker has no managers;
+            // endSession then leaves the auditor unset, today's behavior). A title is included
+            // only on the type-now path — omitting it triggers the autoStopped log path.
+            const overrides = { auditorManagerId: auditorManagerId || null };
+            if (taskTitle) overrides.customTitle = taskTitle;
+            await endSession(currentUser.uid, null, overrides);
             setShowTitleModal(false);
         } catch (err) {
             console.error("Error completing quick work:", err);
@@ -282,11 +332,20 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         }
     }, [currentUser, userData, setOptimisticUserData]);
 
+    const handleCompleteQuickWork = useCallback((taskTitle, auditorManagerId) => {
+        if (!taskTitle || !taskTitle.trim()) return;
+        return finishQuickWork(taskTitle.trim(), auditorManagerId);
+    }, [finishQuickWork]);
+
+    // "Vėliau aprašysiu": log the quick work now with no title (deferred naming).
+    const handleDeferQuickWork = useCallback((auditorManagerId) => finishQuickWork(undefined, auditorManagerId), [finishQuickWork]);
+
     // Render modal if showing
     const renderModal = showTitleModal && (
         <QuickWorkModalComponent
             onSubmit={handleCompleteQuickWork}
             onClose={() => setShowTitleModal(false)}
+            onDefer={handleDeferQuickWork}
             currentSessionMinutes={currentSessionMinutes}
             isSubmitting={isSubmitting}
             managers={managers}

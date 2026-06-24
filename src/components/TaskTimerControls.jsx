@@ -1,16 +1,26 @@
 import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, Clock } from 'lucide-react';
-import { doc, updateDoc, collection, addDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, getDoc, waitForPendingWrites } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
 import { isManagerRole } from '../utils/formatters';
+import { isSelfDirectedTask } from '../utils/selfDirectedTask';
 import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
+import { reopenTask, humanActor, MODES } from '../domain';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
+import {
+    COMMIT_CONFIRM_TIMEOUT_MS,
+    FINISH_UNDO_WINDOW_MS,
+    classifyCommit,
+    commitNeedsRevert,
+    checklistFinishWarning,
+    canUndoOwnFinish,
+} from './taskTimerSafety';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
 
@@ -80,6 +90,62 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     // And restrict managers from controlling tasks in the Team View (where role === 'manager')
     if (!isAssignedToMe || isManagerRole(role)) return null;
 
+    /**
+     * Confirm that an OPTIMISTIC timer write actually reached the server (or was safely queued
+     * offline), instead of trusting navigator.onLine. `attempt` performs the optimistic flip and
+     * issues the write; we then classify what really happened and act on it:
+     *   - offline  → brief "saved on phone, will sync" success toast,
+     *   - online + drained → silent (the optimistic UI was already right),
+     *   - failed / unconfirmed → revert the optimistic state and surface the inline alert.
+     *
+     * @param {() => Promise<void>} attempt          fires the optimistic flip + the awaited write
+     * @param {string} offlineMessage                success copy shown when the write is offline-queued
+     * @param {string} failureMessage                alert copy shown when the write fails / can't be confirmed
+     */
+    const runConfirmedTimerWrite = async (attempt, offlineMessage, failureMessage) => {
+        // Snapshot connectivity at issue time; an offline write is queued, not failed.
+        const wasOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        let errored = false;
+        try {
+            await attempt();
+        } catch (err) {
+            errored = true;
+            // Durable + console trail; the durable session-lifecycle logs already fire inside
+            // taskActions, this captures the UI-layer view of the same failure.
+            console.error('Timer write failed:', err);
+        }
+
+        let drained = false;
+        if (!errored && !wasOffline) {
+            // Online: prove the queued write actually flushed to the server within the budget.
+            // waitForPendingWrites resolves once ALL pending writes drain; race it against a
+            // timeout so a dead link cannot leave us falsely "confirmed".
+            try {
+                await Promise.race([
+                    waitForPendingWrites(db).then(() => { drained = true; }),
+                    new Promise((resolve) => setTimeout(resolve, COMMIT_CONFIRM_TIMEOUT_MS)),
+                ]);
+            } catch {
+                // waitForPendingWrites only rejects if the client is terminated; treat as unconfirmed.
+            }
+        }
+
+        const outcome = classifyCommit({ errored, wasOffline, drained });
+
+        if (commitNeedsRevert(outcome)) {
+            // Roll the optimistic profile back to the real (server) state and warn — no longer
+            // silently swallowed when we merely think we are online.
+            setOptimisticUserData(null);
+            setActionError(failureMessage);
+            return false;
+        }
+
+        if (outcome === 'offline-queued') {
+            showToast(offlineMessage, { tone: 'success', duration: 4000 });
+        }
+        return true;
+    };
+
     const handleStart = async (e) => {
         e.stopPropagation();
         if (isSecondarySessionActive) return;
@@ -87,34 +153,31 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         actionInFlightRef.current = true;
         setActionError('');
         try {
-            if (currentUser) {
-                // Check if Quick Work is running - if so, prompt to stop it first
-                if (userData?.quickWorkState?.isQuickWorking) {
-                    window.dispatchEvent(new CustomEvent('stop-quick-work'));
-                    return;
-                }
-
-                // Optimistic UI Update: Instantly assume task started and clear other sessions
-                setOptimisticUserData({
-                    ...userData,
-                    activeSession: { type: 'task', startTime: new Date().toISOString(), taskId: task.id },
-                    workStatus: { isWorking: true, status: 'running', activeTaskId: task.id },
-                    breakState: { ...userData?.breakState, isTakingBreak: false },
-                    callState: { ...userData?.callState, isCalling: false },
-                    quickWorkState: { ...userData?.quickWorkState, isQuickWorking: false }
-                });
-
-                // Start task directly — startTask handles pausing other tasks
-                // and updating the activeSession. No need to stop break/call separately.
-                await startTask(task, currentUser.uid);
+            if (!currentUser) return;
+            // Check if Quick Work is running - if so, prompt to stop it first
+            if (userData?.quickWorkState?.isQuickWorking) {
+                window.dispatchEvent(new CustomEvent('stop-quick-work'));
+                return;
             }
-        } catch (err) {
-            console.error("Error starting timer:", err);
-            setOptimisticUserData(null); // Revert on error
-            // Only surface if we think it's a critical failure and we are online
-            if (navigator.onLine) {
-                setActionError('Nepavyko pradėti laikmačio. Bandykite dar kartą.');
-            }
+
+            await runConfirmedTimerWrite(
+                async () => {
+                    // Optimistic UI Update: Instantly assume task started and clear other sessions
+                    setOptimisticUserData({
+                        ...userData,
+                        activeSession: { type: 'task', startTime: new Date().toISOString(), taskId: task.id },
+                        workStatus: { isWorking: true, status: 'running', activeTaskId: task.id },
+                        breakState: { ...userData?.breakState, isTakingBreak: false },
+                        callState: { ...userData?.callState, isCalling: false },
+                        quickWorkState: { ...userData?.quickWorkState, isQuickWorking: false }
+                    });
+                    // Start task directly — startTask handles pausing other tasks
+                    // and updating the activeSession. No need to stop break/call separately.
+                    await startTask(task, currentUser.uid);
+                },
+                'Pradėta. Išsaugota telefone — sinchronizuosime, kai bus ryšys.',
+                'Nepavyko pradėti laikmačio. Bandykite dar kartą.'
+            );
         } finally {
             actionInFlightRef.current = false;
         }
@@ -126,22 +189,20 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
         setActionError('');
-
         try {
-            // Optimistic UI: instantly show paused state
-            setOptimisticUserData({
-                ...userData,
-                activeSession: null,
-                workStatus: { isWorking: false, status: 'paused', activeTaskId: task.id }
-            });
-
-            await pauseTask(task);
-        } catch (err) {
-            console.error("Error pausing timer:", err);
-            setOptimisticUserData(null);
-            if (navigator.onLine) {
-                setActionError('Nepavyko sustabdyti laikmačio. Bandykite dar kartą.');
-            }
+            await runConfirmedTimerWrite(
+                async () => {
+                    // Optimistic UI: instantly show paused state
+                    setOptimisticUserData({
+                        ...userData,
+                        activeSession: null,
+                        workStatus: { isWorking: false, status: 'paused', activeTaskId: task.id }
+                    });
+                    await pauseTask(task);
+                },
+                'Sustabdyta. Išsaugota telefone — sinchronizuosime, kai bus ryšys.',
+                'Nepavyko sustabdyti laikmačio. Bandykite dar kartą.'
+            );
         } finally {
             actionInFlightRef.current = false;
         }
@@ -154,32 +215,30 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         actionInFlightRef.current = true;
         setActionError('');
         try {
-            if (currentUser) {
-                // Check if Quick Work is running
-                if (userData?.quickWorkState?.isQuickWorking) {
-                    window.dispatchEvent(new CustomEvent('stop-quick-work'));
-                    return;
-                }
-
-                // Optimistic UI Update: Instantly assume task resumed and clear other sessions
-                setOptimisticUserData({
-                    ...userData,
-                    activeSession: { type: 'task', startTime: new Date().toISOString(), taskId: task.id },
-                    workStatus: { isWorking: true, status: 'running', activeTaskId: task.id },
-                    breakState: { ...userData?.breakState, isTakingBreak: false },
-                    callState: { ...userData?.callState, isCalling: false }
-                });
-
-                // Resume task directly — resumeTask handles pausing other tasks
-                // and updating the activeSession. No need to stop break/call separately.
-                await resumeTask(task, currentUser.uid);
+            if (!currentUser) return;
+            // Check if Quick Work is running
+            if (userData?.quickWorkState?.isQuickWorking) {
+                window.dispatchEvent(new CustomEvent('stop-quick-work'));
+                return;
             }
-        } catch (err) {
-            console.error("Error resuming timer:", err);
-            setOptimisticUserData(null); // Revert
-            if (navigator.onLine) {
-                setActionError('Nepavyko atnaujinti laikmačio. Bandykite dar kartą.');
-            }
+
+            await runConfirmedTimerWrite(
+                async () => {
+                    // Optimistic UI Update: Instantly assume task resumed and clear other sessions
+                    setOptimisticUserData({
+                        ...userData,
+                        activeSession: { type: 'task', startTime: new Date().toISOString(), taskId: task.id },
+                        workStatus: { isWorking: true, status: 'running', activeTaskId: task.id },
+                        breakState: { ...userData?.breakState, isTakingBreak: false },
+                        callState: { ...userData?.callState, isCalling: false }
+                    });
+                    // Resume task directly — resumeTask handles pausing other tasks
+                    // and updating the activeSession. No need to stop break/call separately.
+                    await resumeTask(task, currentUser.uid);
+                },
+                'Tęsiama. Išsaugota telefone — sinchronizuosime, kai bus ryšys.',
+                'Nepavyko atnaujinti laikmačio. Bandykite dar kartą.'
+            );
         } finally {
             actionInFlightRef.current = false;
         }
@@ -192,10 +251,58 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         setConfirmFinish(true);
     };
 
+    /**
+     * Undo a just-finished task within the grace window: re-arm it to 'paused', clear every
+     * completion field (via the audited reopenTask command — one decision_log entry), and VOID the
+     * segment this finish logged so the time is not double-counted. We snapshot exactly what the
+     * finish wrote — the segment minutes and the work_sessions doc reference — and reverse only that:
+     *   - the task's timerMinutes are rolled back to their pre-finish value,
+     *   - the logged work_sessions row is soft-deleted (isDeleted:true), which every aggregator drops.
+     * No new collection is introduced. Worker-own-task only.
+     */
+    const undoFinish = async ({ preFinishTimerMinutes, sessionDocRef }) => {
+        if (!canUndoOwnFinish(task, currentUser?.uid)) return;
+        try {
+            // Reopen with the segment removed: reopenTask re-arms timerStatus to 'paused' when
+            // minutes remain (else null). We pass a task carrying the rolled-back minutes so the
+            // re-armed task does NOT include the voided segment.
+            await reopenTask(
+                { task: { ...task, timerMinutes: preFinishTimerMinutes, manualMinutes: task.manualMinutes || 0 } },
+                { actor: humanActor(currentUser), mode: MODES.COMMIT, reason: 'undo finish within grace window' }
+            );
+
+            // Persist the rolled-back minutes on the task (reopenTask resets lifecycle fields but
+            // does not touch timer minutes), and void the logged segment so totals stay honest.
+            const writes = [
+                updateDoc(doc(db, 'tasks', task.id), {
+                    timerMinutes: preFinishTimerMinutes,
+                    timerStartedAt: null,
+                    actualTime: formatMinutesToTimeString(preFinishTimerMinutes + (task.manualMinutes || 0)),
+                    updatedAt: new Date().toISOString()
+                })
+            ];
+            if (sessionDocRef) {
+                writes.push(
+                    updateDoc(sessionDocRef, { isDeleted: true, deletedAt: new Date().toISOString() })
+                        .catch(voidErr => logError(voidErr, { source: 'writeFail:undoFinish.voidSession' }))
+                );
+            }
+            await Promise.all(writes);
+
+            showToast('Užbaigimas atšauktas. Užduotis vėl aktyvi.', { tone: 'info', duration: 5000 });
+        } catch (err) {
+            console.error('Error undoing finish:', err);
+            logError(err, { source: 'undoFinish' });
+            showToast('Nepavyko atšaukti užbaigimo. Bandykite dar kartą.', { tone: 'warning', duration: 6000 });
+        }
+    };
+
     const performFinish = async () => {
         setFinishing(true);
         try {
             let finalTimerMinutes = task.timerMinutes || 0;
+            // The task's pre-finish credited minutes — the rollback target if the worker undoes.
+            const preFinishTimerMinutes = task.timerMinutes || 0;
             let currentManualMinutes = task.manualMinutes || 0;
             const start = task.timerStartedAt ? new Date(task.timerStartedAt) : null;
             const now = getLithuanianNow();
@@ -206,8 +313,14 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 finalTimerMinutes += clampSessionMinutes((now - start) / (1000 * 60));
             }
 
-            // 2. Prepare task data for completion
-            const isManagerOrAdmin = isManagerRole(userRole) || currentUser?.uid === task.managerId;
+            // 2. Prepare task data for completion.
+            // Mirror completeTask's auto-confirm rule (keep the two finish paths consistent): a
+            // manager/admin role auto-confirms, and so does the task's OWN manager — EXCEPT for a
+            // self-directed task (managerId === the assignee), where "own manager" would make the
+            // worker silently sign off their own work. Such a task lands as 'completed' so it reaches
+            // the team board's review affordance instead of auto-confirming.
+            const isOwnManager = currentUser?.uid === task.managerId && !isSelfDirectedTask(task);
+            const isManagerOrAdmin = isManagerRole(userRole) || isOwnManager;
             const totalMinutes = finalTimerMinutes + currentManualMinutes;
             const formattedTime = formatMinutesToTimeString(totalMinutes);
 
@@ -231,6 +344,9 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 updatedAt: now.toISOString()
             };
 
+            // Holds the work_sessions doc this finish logs, so an undo can void exactly that row.
+            let sessionDocRef = null;
+
             // 3. Run task update + user status update in PARALLEL, work session log fire-and-forget
             if (isRunning && start) {
                 const elapsedMinutes = clampSessionMinutes((now - start) / (1000 * 60));
@@ -239,6 +355,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     // Attribute to the end date (now), consistent with the other
                     // work_sessions writers - start-based mis-bucketed midnight-spanning work.
                     const sessionDate = getLithuanianDateString(now);
+                    // Capture the ref so an undo can soft-delete this exact segment.
                     addDoc(collection(db, 'work_sessions'), {
                         taskId: task.id,
                         taskTitle: task.title || 'Nežinoma užduotis',
@@ -249,7 +366,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         durationMinutes: elapsedMinutes,
                         date: sessionDate,
                         createdAt: new Date().toISOString()
-                    }).catch(logErr => logError(logErr, { source: 'writeFail:finishTask.workSession' }));
+                    }).then(ref => { sessionDocRef = ref; })
+                      .catch(logErr => logError(logErr, { source: 'writeFail:finishTask.workSession' }));
                 }
             }
 
@@ -264,7 +382,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 let shouldClearUserSession = false;
 
                 if (wasRunning || wasActiveSession || wasWorkStatusActive) {
-                    // Fetch real-time user doc to prevent race condition 
+                    // Fetch real-time user doc to prevent race condition
                     // where user actively started another task before finish completed
                     try {
                         const userSnap = await getDoc(doc(db, 'users', currentUser.uid));
@@ -338,7 +456,15 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             // reserved for the worker's OWN accomplishment; a manager closing someone else's
             // task gets a plain confirmation, no celebration.
             if (task.assignedUserId === currentUser.uid) {
-                showToast('Užduotis užbaigta.', { title: 'Puikus darbas!', tone: 'success' });
+                // Offer a grace-window UNDO: the finish is deliberate (it passed the confirm dialog),
+                // but a fat-finger / wrong-task tap deserves a quiet way back. Tapping "Atšaukti"
+                // re-arms the task to paused, clears completion, and voids this finish's segment.
+                showToast('Užduotis užbaigta. Galite atšaukti.', {
+                    title: 'Puikus darbas!',
+                    tone: 'success',
+                    duration: FINISH_UNDO_WINDOW_MS,
+                    onClick: () => undoFinish({ preFinishTimerMinutes, sessionDocRef })
+                });
                 try { SoundManager.playQuickTaskSound(); } catch { /* audio is best-effort */ }
                 // Show the earnings popup (gross/net) for the worker's OWN completed task, but only
                 // when a pay rate is set — otherwise there is nothing to compute. WorkerView listens
@@ -377,6 +503,12 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     // If estimated time is > 0 and we've reached it, the limit is exceeded.
     // This perfectly encapsulates normal limits, time extensions, and time deductions.
     const isLimitExceeded = estMinutes > 0 && currentTotalMinutes >= estMinutes;
+
+    // Soft, non-blocking nudge for finishing with unticked checklist items. Composed UNDER the
+    // existing irreversibility warning so finishing stays the deliberate, guarded action.
+    const checklistWarning = checklistFinishWarning(task.checklist);
+    const finishWarning = finishError
+        || [checklistWarning, 'Šio veiksmo nebus galima atšaukti.'].filter(Boolean).join(' ');
 
     return (
         <>
@@ -443,7 +575,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     open
                     title="Užbaigti užduotį?"
                     message="Užduotis bus pažymėta kaip užbaigta ir bus užfiksuotas sugaištas laikas."
-                    warning={finishError || 'Šio veiksmo nebus galima atšaukti.'}
+                    warning={finishWarning}
                     confirmLabel="Užbaigti"
                     cancelLabel="Atšaukti"
                     variant="danger"

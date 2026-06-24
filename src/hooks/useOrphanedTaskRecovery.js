@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { pauseTask } from '../utils/taskActions';
+import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 
 // Captured once when this module is first evaluated — i.e. when the app/tab boots.
@@ -41,9 +42,26 @@ export function useOrphanedTaskRecovery(tasks) {
 
             handledRef.current.add(task.id);
 
-            pauseTask(task).catch((e) =>
-                logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id })
-            );
+            pauseTask(task)
+                .then((result) => {
+                    // Stamp a one-time notice so the worker learns their forgotten task timer was
+                    // auto-paused and how much was credited — recovery was previously silent, so a
+                    // capped/recovered run later read as "unexplained hours". Only surface it when
+                    // real time was credited; a sub-minute orphan pauses invisibly. Keyed to the
+                    // task OWNER (assignedUserId), the same uid the banner reads on next open.
+                    if (result && result.creditedMinutes > 0 && task.assignedUserId) {
+                        addRecoveryNotice(task.assignedUserId, {
+                            kind: 'task',
+                            taskId: task.id,
+                            taskTitle: task.title || '',
+                            minutes: result.creditedMinutes,
+                            wasCapped: !!result.wasCapped,
+                        });
+                    }
+                })
+                .catch((e) =>
+                    logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id })
+                );
         });
     }, [tasks]);
 }

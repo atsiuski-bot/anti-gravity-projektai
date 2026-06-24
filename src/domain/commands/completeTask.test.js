@@ -58,6 +58,41 @@ describe('completeTask — plan (manager auto-confirm rule)', () => {
     expect(p.payload.confirmedBy).toBe('mgrOwn');
   });
 
+  it('a SELF-DIRECTED completion does NOT auto-confirm — it lands as completed for manager review', () => {
+    // Worker created the task for themselves with no distinct overseer (managerId === the assignee):
+    // the "own manager" arm must NOT fire, or the worker would silently sign off their own work.
+    const selfDirected = { id: 't1', status: 'in-progress', completed: false, assignedUserId: 'w1', createdBy: 'w1', managerId: 'w1' };
+    const p = __buildCompletePlan({ task: selfDirected }, WORKER);
+    expect(p.payload.status).toBe('completed');
+    expect(p.payload.confirmedBy).toBeNull();
+    expect(p.payload.confirmedAt).toBeNull();
+    expect(p.payload.completedBy).toBe('w1');
+  });
+
+  it('a self-directed completion with NO managerId also lands as completed', () => {
+    const selfDirected = { id: 't1', status: 'in-progress', completed: false, assignedUserId: 'w1', createdBy: 'w1' };
+    const p = __buildCompletePlan({ task: selfDirected }, WORKER);
+    expect(p.payload.status).toBe('completed');
+    expect(p.payload.confirmedBy).toBeNull();
+  });
+
+  it('an own-manager of SOMEONE ELSE\'s task still auto-confirms (not self-directed)', () => {
+    // managerId === actor but the assignee is a different person → not self-directed → auto-confirm stays.
+    const ownManager = humanActor({ uid: 'mgrOwn', role: 'worker' });
+    const othersTask = { id: 't1', status: 'pending', completed: false, assignedUserId: 'someoneElse', createdBy: 'someoneElse', managerId: 'mgrOwn' };
+    const p = __buildCompletePlan({ task: othersTask }, ownManager);
+    expect(p.payload.status).toBe('confirmed');
+    expect(p.payload.confirmedBy).toBe('mgrOwn');
+  });
+
+  it('a MANAGER ROLE completing their own self-directed task still auto-confirms (they are the review authority)', () => {
+    // Role-based auto-confirm is independent of self-direction: a manager needs no self-review.
+    const selfDirectedByManager = { id: 't1', status: 'in-progress', completed: false, assignedUserId: 'mgr1', createdBy: 'mgr1', managerId: 'mgr1' };
+    const p = __buildCompletePlan({ task: selfDirectedByManager }, MANAGER);
+    expect(p.payload.status).toBe('confirmed');
+    expect(p.payload.confirmedBy).toBe('mgr1');
+  });
+
   it('rejects a missing task', () => {
     expect(() => __buildCompletePlan({}, MANAGER)).toThrow();
   });

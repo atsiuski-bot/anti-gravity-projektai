@@ -12,6 +12,7 @@ import { useMediaQuery } from '../hooks/useMediaQuery';
 import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
 import { cn } from '../utils/cn';
 import QuickWorkDescribePrompt from './QuickWorkDescribePrompt';
+import RecoveryNotice from './RecoveryNotice';
 import OnboardingWelcome from './OnboardingWelcome';
 
 export default function Layout({ children }) {
@@ -133,6 +134,10 @@ export default function Layout({ children }) {
                             {/* Retroactive description for quick-work sessions ended on another
                                 device — a calm prompt that never collides with the shell above. */}
                             <QuickWorkDescribePrompt />
+                            {/* One-time "timer recovered (and maybe capped at 16h)" notice after a
+                                crash/reload auto-closed a forgotten timer — same calm placement,
+                                never the red shell. */}
+                            <RecoveryNotice />
                             <OnboardingWelcome />
                             {children}
                         </div>

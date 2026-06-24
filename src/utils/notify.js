@@ -35,9 +35,14 @@ export const NOTIFICATION_CATEGORY = {
     extension_granted: 'info',          // the manager extended the estimate
     extension_denied: 'info',           // the manager declined to extend
     calendar_decision: 'info',          // the manager approved/declined a calendar request
+    session_edited: 'info',             // an admin corrected the worker's logged (paid) time
+    session_deleted: 'info',            // an admin removed one of the worker's logged sessions
+    // ── Worker → manager (new, two-way) ──────────────────────────────────────
+    session_correction_request: 'action', // worker flagged a logged-time error → manager resolves it
+    // ── System → admin ───────────────────────────────────────────────────────
+    account_approval: 'action',         // a new sign-up is pending — an admin approves/blocks it
     // ── System → manager ─────────────────────────────────────────────────────
     recurring_reassign: 'action',       // a recurring job's usual assignee is away — reassign it
-    session_correction_request: 'action', // worker flagged a logged time row as wrong → manager corrects it
 };
 
 /** The bell tier for a notification type. Unknown/legacy types fall back to 'info'. */

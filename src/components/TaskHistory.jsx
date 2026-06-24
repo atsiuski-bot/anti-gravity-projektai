@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, getDocs, updateDoc } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, getDocs } from 'firebase/firestore';
 import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { confirmTask, humanActor, MODES } from '../domain';
 import { getPriorityLabel } from '../utils/priority';
 import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
@@ -299,7 +300,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     description: task.description || '',
                     priority: getPriorityLabel(task.priority),
                     tag: task.tag || '',
-                    status: task.status === 'confirmed' ? 'Patvirtinta' : (task.isDeleted || task.status === 'deleted' ? 'Ištrinta' : 'Atlikta'),
+                    status: task.status === 'confirmed' ? 'Priimta' : (task.isDeleted || task.status === 'deleted' ? 'Ištrinta' : 'Atlikta'),
                     assignedWorker: task.assignedUserName || '',
                     manager: task.managerName || '',
                     creator: task.creatorName || '',
@@ -448,11 +449,10 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
     const handleConfirm = async (task) => {
         try {
-            await updateDoc(doc(db, 'archived_tasks', task.id), {
-                status: 'confirmed',
-                timerStatus: 'stopped',
-                confirmedAt: new Date().toISOString()
-            });
+            // Audited confirm of an already-archived task (ADR 0015) — adds the confirmedBy the old
+            // inline write omitted.
+            const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+            await confirmTask({ task, collection: 'archived_tasks' }, { actor, mode: MODES.COMMIT, reason: 'confirmed from history (archived)' });
         } catch (error) {
             console.error("Error confirming task:", error);
         }
@@ -523,7 +523,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             {task.status !== 'confirmed' && isManagerOrAdmin && (
                 <IconButton
                     icon={UserCheck}
-                    label="Patvirtinti"
+                    label="Priimti"
                     onClick={() => handleConfirm(task)}
                     className="text-feedback-success hover:bg-feedback-success/10"
                 />

@@ -5,7 +5,7 @@ import { StatusConfirmedGlyph } from '../icons/statusGlyphs';
 /**
  * TaskStatusPill — the ONLY way any surface renders a task's lifecycle/confirmation status.
  * Wraps the canonical <StatusPill> and drives its tone/label/glyph from deriveTaskStatus, so a
- * "Vyksta" / "Pristabdyta" / "Nepatvirtinta" / "Patvirtinta" pill is byte-identical whether it
+ * "Vyksta" / "Pristabdyta" / "Laukia priėmimo" / "Priimtas" pill is byte-identical whether it
  * appears on a worker card, a manager table row, or the task form header.
  *
  * The status glyph (ADR 0010) is always present now — the shape carries the state on every

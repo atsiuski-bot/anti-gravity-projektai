@@ -270,6 +270,72 @@ export const getLithuanianWeekId = (date = new Date()) => {
 };
 
 /**
+ * Buckets a stored deadline to its Vilnius calendar day and describes it RELATIVE to today,
+ * so a card can say "Šiandien" / "Rytoj" / "Vėluoja 2 d." instead of a bare date the reader
+ * has to mentally diff against today. Returns { label, tone } where `tone` is a feedback key
+ * the caller maps to a colour — but the label is always self-describing, so colour is never
+ * the sole signal (WCAG 1.4.1). Both the card's deadline span and TaskDetailModal's deadline
+ * fact read this one helper, so the two surfaces can never disagree.
+ *
+ * Day bucketing is done on the Vilnius calendar-day STRINGS (getLithuanianDateString +
+ * addDaysToDateString), then compared by their natural YYYY-MM-DD order — DST-independent,
+ * and identical on every device regardless of its clock's timezone. The offset (today minus
+ * deadline) is a whole-day count derived from those calendar days, never a wall-clock delta.
+ *
+ * Tones: today → 'warning' (due now), overdue → 'danger' (past), tomorrow/future → 'neutral'
+ * (no urgency colour). A future deadline still gets the same zero-padded "MM.DD d." text the
+ * modal used before, so nothing regresses for dates beyond tomorrow.
+ *
+ * @param {string} deadlineStr - The stored deadline (YYYY-MM-DD or any Date-parseable string).
+ * @param {Date}   [now=new Date()] - Reference instant (injectable for tests).
+ * @returns {{ label: string, tone: 'neutral'|'warning'|'danger' }|null} null when there is no deadline.
+ */
+export const relativeDeadline = (deadlineStr, now = new Date()) => {
+    if (!deadlineStr) return null;
+
+    const parsed = new Date(deadlineStr);
+    if (Number.isNaN(parsed.getTime())) {
+        // Unparseable: show it verbatim rather than dropping the user's value.
+        return { label: String(deadlineStr), tone: 'neutral' };
+    }
+
+    const deadlineDay = getLithuanianDateString(parsed); // YYYY-MM-DD, Vilnius
+    const todayDay = getLithuanianDateString(now);
+
+    // Whole-day offset via calendar-string stepping: count days from today until we reach (or
+    // pass) the deadline day. Bounded to a small window — beyond it the absolute date is shown
+    // anyway, so there is no need to keep stepping. Negative => overdue, positive => upcoming.
+    let offset = 0;
+    if (deadlineDay > todayDay) {
+        // Upcoming: step forward from today until we hit the deadline day (cap at 2 — we only
+        // special-case "tomorrow").
+        let cursor = todayDay;
+        while (cursor < deadlineDay && offset < 2) {
+            cursor = addDaysToDateString(cursor, 1);
+            offset += 1;
+        }
+    } else if (deadlineDay < todayDay) {
+        // Overdue: step backward from today until we reach the deadline day (cap the count we
+        // surface at 99 — "Vėluoja 99+ d." would be the practical ceiling, but the absolute
+        // date below still tells the exact day).
+        let cursor = todayDay;
+        while (cursor > deadlineDay && offset > -100) {
+            cursor = addDaysToDateString(cursor, -1);
+            offset -= 1;
+        }
+    }
+
+    if (offset === 0) return { label: 'Šiandien', tone: 'warning' };
+    if (offset === 1) return { label: 'Rytoj', tone: 'neutral' };
+    if (offset < 0) return { label: `Vėluoja ${-offset} d.`, tone: 'danger' };
+
+    // 2+ days out — no urgency colour; show the absolute day (zero-padded "MM.DD d.").
+    const month = deadlineDay.slice(5, 7);
+    const day = deadlineDay.slice(8, 10);
+    return { label: `${month}.${day} d.`, tone: 'neutral' };
+};
+
+/**
  * Returns the weekday in Lithuanian (e.g. "Pirmadienis") according to Lithuania's time.
  */
 export const getLithuanianWeekday = (date = new Date()) => {

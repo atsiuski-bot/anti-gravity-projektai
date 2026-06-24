@@ -4,13 +4,14 @@
  * manager table row, reports, daily statistics, the task form) renders status through this so
  * a task can never look different from one screen to the next.
  *
- * Two axes are deliberately kept separate:
- *  - lifecycle: pending -> in-progress (running / paused) -> completed -> confirmed
- *  - approval gate: unapproved -> approved (a task that must be approved before work starts)
- *
- * The manager-confirmation axis is what the founder asked to surface everywhere:
- *  - completed  -> "Nepatvirtinta" (work finished, manager has not confirmed)
- *  - confirmed  -> "Patvirtinta"   (manager confirmed the finished work)
+ * Two axes are deliberately kept separate, and so is their VOCABULARY (the overlap was the
+ * confusion the founder flagged):
+ *  - creation/approval gate: unapproved -> approved (a task that must be approved before work
+ *    starts) — the "patvirtinimas" family ("Nepatvirtintas" / "Patvirtintas")
+ *  - completion/acceptance axis: pending -> in-progress (running / paused) -> completed ->
+ *    confirmed — the "priėmimas" family for the manager's sign-off:
+ *      - completed  -> "Laukia priėmimo" (work finished, manager has not accepted it yet)
+ *      - confirmed  -> "Priimtas"        (manager accepted the finished work)
  *
  * The `Icon` is the custom status glyph for the state (ADR 0010 §"Status circle"), keyed off
  * the canonical status key — so the SHAPE carries the state on every surface, not just the
