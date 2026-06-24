@@ -84,11 +84,68 @@ export const SoundManager = {
                 try { oscillator.disconnect(); gainNode.disconnect(); } catch { /* already gone */ }
             };
 
-            // Trigger System Notification
-            this.triggerNotification();
+            // NOTE: playBeep is now SOUND ONLY. The OS "7 min block" notification it used to fire as a
+            // side effect is owned by playSevenMinuteBlock() — so callers that only want the alarm tone
+            // (e.g. the notification feed) no longer raise a mislabelled "Praėjo 7 min." notification.
 
         } catch (error) {
             console.error("Error playing sound:", error);
+        }
+    },
+
+    // Sound + the OS "7-minute block" notification, fired together on each 7-min mark. Kept separate
+    // from playBeep so the periodic timer is the ONLY thing that announces the block.
+    playSevenMinuteBlock() {
+        this.playBeep();
+        this.triggerNotification();
+    },
+
+    // A short, gentle foreground cue for a NEW bell notification — the audible half of the toast.
+    // 'alert' (a decision arrived) rises two notes; 'info' (FYI) is a single soft ding. Best-effort:
+    // gated by canPlaySound (needs a prior user interaction) and never throws.
+    playNotificationCue(kind = 'info') {
+        try {
+            if (!this.canPlaySound()) return;
+
+            this.init();
+            if (!this.audioContext) return;
+
+            if (this.audioContext.state === 'suspended') {
+                this.audioContext.resume().catch(() => {});
+            }
+
+            const ctx = this.audioContext;
+            const now = ctx.currentTime;
+            const oscillator = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(ctx.destination);
+            oscillator.type = 'sine';
+
+            if (kind === 'alert') {
+                // Two-note rising chime — softer than the timer alarm, but it asks for attention.
+                oscillator.frequency.setValueAtTime(660, now);          // E5
+                oscillator.frequency.setValueAtTime(880, now + 0.14);   // A5
+                gainNode.gain.setValueAtTime(0.0001, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.22, now + 0.02);
+                gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.42);
+                oscillator.start(now);
+                oscillator.stop(now + 0.45);
+            } else {
+                // Single soft ding — an unobtrusive FYI.
+                oscillator.frequency.setValueAtTime(880, now);          // A5
+                gainNode.gain.setValueAtTime(0.0001, now);
+                gainNode.gain.exponentialRampToValueAtTime(0.16, now + 0.02);
+                gainNode.gain.exponentialRampToValueAtTime(0.0001, now + 0.3);
+                oscillator.start(now);
+                oscillator.stop(now + 0.32);
+            }
+
+            oscillator.onended = () => {
+                try { oscillator.disconnect(); gainNode.disconnect(); } catch { /* already gone */ }
+            };
+        } catch (error) {
+            console.error("Error playing notification cue:", error);
         }
     },
 
@@ -351,13 +408,15 @@ export const SoundManager = {
         this.stopPeriodicBeep(); // Ensure no duplicates
 
         // IMPORTANT: Play sound immediately to UNLOCK the AudioContext while we have a user gesture.
-        // Without this, the browser may block future sounds when the tab is in background.
+        // Without this, the browser may block future sounds when the tab is in background. Sound only
+        // (playBeep) — this is an unlock, not a 7-min mark, so it must NOT raise the block notification.
         if (playImmediately) {
             this.playBeep();
         }
 
+        // Each real 7-min mark: the alarm tone AND the "Praėjo 7 min." OS notification, together.
         this.intervalId = setInterval(() => {
-            this.playBeep();
+            this.playSevenMinuteBlock();
         }, intervalMs);
     },
 

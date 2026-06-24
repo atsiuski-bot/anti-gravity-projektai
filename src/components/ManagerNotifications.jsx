@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
@@ -16,7 +16,6 @@ import { useUndoableAction } from '../hooks/useUndoableAction';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
-import { SoundManager } from '../utils/soundUtils';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import EmptyState from './ui/EmptyState';
@@ -101,7 +100,6 @@ export default function ManagerNotifications({ onClose }) {
     const [bulkApprovingCal, setBulkApprovingCal] = useState(false); // batch "approve all calendar requests" in flight
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
     const [grantingExt, setGrantingExt] = useState(null); // notif.id of an in-flight one-tap time grant
-    const prevTaskNotifCountRef = useRef(0); // Track count for sound effect
 
 
     // 1. Calendar Notifications (manager-only — workers don't monitor the team calendar)
@@ -151,13 +149,9 @@ export default function ManagerNotifications({ onClose }) {
                 ...doc.data()
             }));
 
-            // Play sound if a new time_extension_request appeared
-            const timeExtNotifs = notifs.filter(n => n.type === 'time_extension_request');
-            if (timeExtNotifs.length > prevTaskNotifCountRef.current) {
-                try { SoundManager.playBeep(); } catch (e) { /* ignore */ }
-            }
-            prevTaskNotifCountRef.current = timeExtNotifs.length;
-
+            // The audible cue for a new notification now lives on the always-on foreground plane
+            // (NotificationsContext → SoundManager.playNotificationCue), so it fires for every type and
+            // regardless of whether this panel is open — no per-panel playBeep needed here.
             setTaskNotifications(notifs);
         }, (error) => {
             console.error("ManagerNotifications: Task Notifications Listener Error:", error);

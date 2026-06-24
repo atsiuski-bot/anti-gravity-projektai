@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useLayoutEffect, Fragment } from 'react';
 import { db, storage } from '../firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate } from 'lucide-react';
@@ -1009,23 +1009,18 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 // Create notification if task needs approval
                 // Use activeAuditorId here to ensure the notification goes to the CORRECT person (Default Manager)
                 if (initialStatus === 'unapproved' && activeAuditorId) {
-                    try {
-                        await addDoc(collection(db, 'request_notifications'), {
-                            recipientId: activeAuditorId,
-                            type: 'task_approval',
-                            taskId: docRef.id,
-                            taskTitle: taskData.title,
-                            estimatedTime: taskData.estimatedTime || null,
-                            description: taskData.description || null,
-                            isRead: false,
-                            createdAt: new Date().toISOString(),
-                            createdBy: currentUser.uid,
-                            createdByName: currentUser.displayName || currentUser.email
-                        });
-
-                    } catch (notifError) {
-                        console.error('Error creating notification:', notifError);
-                    }
+                    // Creator-authored (actorUid → createdBy); notify() stamps provenance + the registry
+                    // category and swallows its own write errors.
+                    await notify({
+                        recipientId: activeAuditorId,
+                        type: 'task_approval',
+                        taskId: docRef.id,
+                        taskTitle: taskData.title,
+                        estimatedTime: taskData.estimatedTime || null,
+                        description: taskData.description || null,
+                        actorUid: currentUser.uid,
+                        actorName: currentUser.displayName || currentUser.email,
+                    });
                 }
 
                 // A manager created a task FOR a worker → tell that worker it landed in their list.
