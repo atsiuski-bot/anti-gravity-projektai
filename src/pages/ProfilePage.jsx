@@ -511,7 +511,7 @@ export default function ProfilePage() {
                     <div className="min-w-0 flex-1">
                         <p className="text-body font-medium text-ink-strong">Pranešimai</p>
                         <p className="text-caption text-ink-muted">
-                            Apie aktyvias darbo sesijas telefono ekrane
+                            Apie aktyvias veiklos sesijas telefono ekrane
                         </p>
                     </div>
                     <button

@@ -343,7 +343,7 @@ export default function WorkerView() {
                         <EmptyState
                             icon={ClipboardList}
                             title="Kol kas užduočių nėra"
-                            description="Kai vadovas priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą darbą ar skambutį mygtukais apačioje."
+                            description="Kai vadovas priskirs užduotį, ji atsiras čia. Tuo tarpu galite pažymėti greitą veiklą ar skambutį mygtukais apačioje."
                             action={
                                 <Button
                                     variant="primary"

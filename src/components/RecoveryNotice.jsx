@@ -121,7 +121,7 @@ function labelFor(n) {
         case 'call':
             return 'Skambutis — užfiksuota';
         case 'quickWork':
-            return 'Greitas darbas — užfiksuota';
+            return 'Greita veikla — užfiksuota';
         default:
             return 'Sesija — užfiksuota';
     }

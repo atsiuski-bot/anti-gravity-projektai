@@ -6,11 +6,12 @@ import { logError } from './errorLog';
 import { isManagerRole } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
 import { buildCallTitle } from './callContacts';
+import { notify } from './notify';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
 // Shared by the auto-log path and the retroactive-description fallback so the two never drift.
-export const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greitas darbas (Automatiškai išsaugotas)';
+export const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greita veikla (Automatiškai išsaugota)';
 
 /**
  * Starts a new session for the user.
@@ -77,7 +78,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                     if (partialDuration > MIN_LOGGED_SESSION_MINUTES) {
                         // Log the partial segment and capture doc ID for later renaming
                         const partialType = userData.activeSession.type;
-                        const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greitas darbas');
+                        const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greita veikla');
                         try {
                             const partialDocRef = await addDoc(collection(db, 'work_sessions'), {
                                 taskId: `${partialType}_partial_${interruptNow.getTime()}`,
@@ -503,8 +504,18 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
     if (durationMinutes <= MIN_LOGGED_SESSION_MINUTES && session.type !== 'call') return;
     const sessionDate = getLithuanianDateString(now);
 
+    // DETERMINISTIC record id, keyed on (kind + owner + this session's start instant). Two
+    // INDEPENDENT closers can finalize the SAME abandoned session: this client path (on the
+    // worker's next open, via orphan-recovery) AND the daily server net (autoCloseForgottenSessions,
+    // for a worker who never reopens). With random addDoc ids they would each write a separate row
+    // for one physical session → the time credited TWICE. Pinning the doc id to the session start
+    // makes the second writer land on the same id (setDoc here / create() server-side), so exactly
+    // one row survives. The id prefixes are a VERBATIM MIRROR of functions/index.js
+    // writeSecondaryCloseRecords — locked by firebaseConsistency.test.js so they cannot drift.
+    const startMs = new Date(session.startTime).getTime();
+
     if (session.type === 'break') {
-        await addDoc(collection(db, 'break_sessions'), {
+        await setDoc(doc(db, 'break_sessions', `sess_break_${userId}_${startMs}`), {
             userId: userId,
             userName: userData.displayName || 'Nežinomas',
             startTime: session.startTime,
@@ -524,9 +535,9 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         const callTitle = buildCallTitle(contactType);
         const callNotes = (session.callNotes || '').trim();
         const callDescription = callNotes ? `${callNotes}\n${timeString}` : timeString;
-        // Log task + work session in PARALLEL
+        // Log task + work session in PARALLEL (deterministic ids — see the dedup note above).
         const callPromises = [
-            addDoc(collection(db, 'tasks'), {
+            setDoc(doc(db, 'tasks', `sess_call_task_${userId}_${startMs}`), {
                 title: callTitle,
                 description: callDescription,
                 contactType,
@@ -544,7 +555,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 manualMinutes: durationMinutes,
                 isSystemTask: true
             }),
-            addDoc(collection(db, 'work_sessions'), {
+            setDoc(doc(db, 'work_sessions', `sess_call_ws_${userId}_${startMs}`), {
                 taskId: "call_" + now.getTime(),
                 taskTitle: callTitle,
                 contactType,
@@ -594,8 +605,11 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         // rename must reach BOTH records — the task (shown in history once archived) and the
         // session (shown in today's timeline). See addQuickWorkDescription. (Without a stored
         // link the two are unjoined: their IDs differ and the session's taskId is synthetic.)
-        const taskRef = doc(collection(db, 'tasks'));
-        const sessionRef = doc(collection(db, 'work_sessions'));
+        // Deterministic ids (see the dedup note above): pinned to this session's start so the
+        // server net cannot write a duplicate pair for the same abandoned quick-work. The task↔
+        // session cross-link below still works — sessionRef.id is now that deterministic id.
+        const taskRef = doc(db, 'tasks', `sess_qw_task_${userId}_${startMs}`);
+        const sessionRef = doc(db, 'work_sessions', `sess_qw_ws_${userId}_${startMs}`);
 
         // Log task + work session in PARALLEL
         const logPromises = [
@@ -640,8 +654,10 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         // later if the worker describes it. Provenance is the worker's own uid (userId), which
         // firestore.rules requires for a request_notifications create.
         if (routedManagerId && routedManagerId !== userId && !autoStopped) {
+            // Worker-authored (userId = caller); notify() stamps provenance + the registry category and
+            // swallows its own write errors, so the completion log is never blocked by a notify failure.
             logPromises.push(
-                addDoc(collection(db, 'request_notifications'), {
+                notify({
                     recipientId: routedManagerId,
                     type: 'task_completion',
                     taskId: taskRef.id,
@@ -651,9 +667,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                     userName: userData.displayName || 'Vykdytojas',
                     userId,
                     completedAt: now.toISOString(),
-                    isRead: false,
-                    createdAt: new Date().toISOString()
-                }).catch(e => logError(e, { source: 'writeFail:endSession.quickWorkNotify' }))
+                })
             );
         }
 

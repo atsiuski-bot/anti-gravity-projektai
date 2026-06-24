@@ -58,7 +58,7 @@ describe('createTask — plan', () => {
   it('never persists assignedUserName (read-derived) and defaults a blank title', () => {
     const p = __buildCreatePlan({ fields: { assignedUserName: 'Ghost', assignedUserId: 'w2' } }, HUMAN);
     expect('assignedUserName' in p.payload).toBe(false);
-    expect(p.payload.title).toBe('Darbas'); // blank -> default
+    expect(p.payload.title).toBe('Veikla'); // blank -> default
   });
 
   it('preserves a caller-provided status and auditor', () => {

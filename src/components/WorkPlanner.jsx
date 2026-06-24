@@ -180,7 +180,7 @@ const CustomToolbar = (toolbar) => {
                     icon={Copy}
                     fullWidth
                     onClick={toolbar.onCopyLastWeek}
-                    title="Nukopijuoti praėjusios savaitės darbotvarkę į šią savaitę"
+                    title="Nukopijuoti praėjusios savaitės veiklų grafiką į šią savaitę"
                 >
                     Kopijuoti praeitą savaitę
                 </Button>
@@ -247,7 +247,7 @@ export default function WorkPlanner() {
                 const data = doc.data();
                 return {
                     id: doc.id,
-                    title: data.title || 'Darbas',
+                    title: data.title || 'Veikla',
                     start: new Date(data.start),
                     end: new Date(data.end),
                     userId: data.userId,
@@ -259,7 +259,7 @@ export default function WorkPlanner() {
             setEvents(hoursData);
         }, (err) => {
             console.error("Error fetching work hours:", err);
-            setError("Nepavyko užkrauti darbo valandų.");
+            setError("Nepavyko užkrauti veiklos valandų.");
         });
 
         return () => unsubscribe();
@@ -1187,7 +1187,7 @@ export default function WorkPlanner() {
                     >
                         <div className="flex-1 min-h-0 overflow-y-auto p-6">
                             <h3 id="edit-event-title" className="text-h2 text-ink-strong mb-4">
-                                {editingEvent.id ? 'Redaguoti laiką' : 'Pridėti darbo laiką'}
+                                {editingEvent.id ? 'Redaguoti laiką' : 'Pridėti veiklos laiką'}
                             </h3>
 
                             <form onSubmit={handleUpdateEvent} onKeyDown={preventEnterSubmit}>
@@ -1367,7 +1367,7 @@ export default function WorkPlanner() {
                             id="reasonValue"
                             value={reasonValue}
                             onChange={(e) => setReasonValue(e.target.value)}
-                            placeholder="Pvz.: Keičiamas darbo laikas dėl vizito pas gydytoją..."
+                            placeholder="Pvz.: Keičiamas veiklos laikas dėl vizito pas gydytoją..."
                             className="w-full h-32 px-4 py-3 border border-line rounded-input focus:ring-2 focus:ring-brand outline-none resize-none text-body-lg transition-all"
                             autoFocus
                         />
@@ -1418,7 +1418,7 @@ export default function WorkPlanner() {
                 isOpen={showDeleteModal}
                 onClose={() => setShowDeleteModal(false)}
                 onConfirm={confirmDelete}
-                taskTitle={editingEvent?.title || 'Darbo laiko įrašą'}
+                taskTitle={editingEvent?.title || 'Veiklos laiko įrašą'}
                 isTask={false}
                 level="top"
             />

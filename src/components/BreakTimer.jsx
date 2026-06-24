@@ -105,8 +105,8 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                     active={isTakingBreak}
                     disabled={isDisabled}
                     onClick={handleToggleBreak}
-                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
-                    title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    title={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                 >
                     {isTakingBreak ? (
                         <Play className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -149,13 +149,13 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                     active={isTakingBreak}
                     disabled={isDisabled}
                     onClick={handleToggleBreak}
-                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                     title={isDisabled ? getInterruptionReason(activeSessionType) : ""}
                 >
                     {isTakingBreak ? (
                         <>
                             <Play className="w-4 h-4 fill-current" aria-hidden="true" />
-                            Tęsti darbą
+                            Tęsti veiklą
                         </>
                     ) : (
                         <>

@@ -101,7 +101,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
             console.error('Failed to send time-extension request:', e);
             setError(
                 e?.message === 'no-manager'
-                    ? 'Šiai užduočiai nepriskirtas vadovas, todėl pratęsimo prašyti negalima. Užbaikite darbą.'
+                    ? 'Šiai užduočiai nepriskirtas vadovas, todėl pratęsimo prašyti negalima. Užbaikite užduotį.'
                     : 'Nepavyko išsiųsti užklausos. Bandykite dar kartą.'
             );
             setSubmitting(false);
@@ -155,14 +155,14 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
 
                 <div className="flex items-center gap-2 rounded-control bg-feedback-danger/10 px-3 py-2 text-body font-semibold text-feedback-danger">
                     <PauseCircle className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
-                    Darbas automatiškai sustabdytas.
+                    Veikla automatiškai sustabdyta.
                 </div>
 
                 {mode === 'choice' ? (
                     <p className="text-body text-ink-muted">
                         {hasManager
-                            ? 'Pasirinkite: prašyti vadovo pratęsti laiką ar užbaigti darbą.'
-                            : 'Šiai užduočiai nepriskirtas vadovas — galite užbaigti darbą.'}
+                            ? 'Pasirinkite: prašyti vadovo pratęsti laiką ar užbaigti užduotį.'
+                            : 'Šiai užduočiai nepriskirtas vadovas — galite užbaigti užduotį.'}
                     </p>
                 ) : (
                     <div className="space-y-3">
@@ -251,7 +251,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                         disabled={busy}
                         onClick={handleFinish}
                     >
-                        Pabaigti darbą
+                        Užbaigti užduotį
                     </Button>
                     <div className="flex justify-center pt-1">
                         <button
