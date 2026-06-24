@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, getDocs } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, Filter, Trash2, MessageCircle, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, Trash2, MessageCircle, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { confirmTask, humanActor, MODES } from '../domain';
 import { getPriorityLabel } from '../utils/priority';
@@ -67,14 +67,11 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     const [filterTag, setFilterTag] = useState('all');
     const [sortBy, setSortBy] = useState('date'); // 'date' | 'status'
 
-    // Two nested accordions: the whole history panel collapses (closed by default — it is an
-    // archive, secondary to the live daily report above it), and inside it the filter controls
-    // collapse independently (also closed by default so the panel opens compact).
     const [historyOpen, setHistoryOpen] = useState(false);
-    const [filtersOpen, setFiltersOpen] = useState(false);
     // Date range lives behind a single field; tapping it opens the from/to pickers in a popover.
     const [dateRangeOpen, setDateRangeOpen] = useState(false);
     const dateRangeRef = useRef(null);
+    const defaultDates = useRef({ from: '', to: '' });
 
     useEffect(() => {
         if (!dateRangeOpen) return undefined;
@@ -108,8 +105,11 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         const startOfCurrentWeek = startOfWeek(now, { weekStartsOn: 1 });
         const start = subWeeks(startOfCurrentWeek, 1); // Current week + 1 previous
 
-        setDateFrom(getLithuanianDateString(start));
-        setDateTo(getLithuanianDateString(now));
+        const fromStr = getLithuanianDateString(start);
+        const toStr = getLithuanianDateString(now);
+        defaultDates.current = { from: fromStr, to: toStr };
+        setDateFrom(fromStr);
+        setDateTo(toStr);
     }, []);
 
     // Fetch tasks based on filters
@@ -502,6 +502,11 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         setFilterTag('all');
     };
 
+    const hasNonDefaultFilters =
+        dateFrom !== defaultDates.current.from ||
+        dateTo !== defaultDates.current.to ||
+        filterUser !== 'all' ||
+        filterTag !== 'all';
 
     // Comments IconButton with an always-visible count badge. The count is bumped to the 12px
     // floor (§5); the badge stays inside the 44px IconButton target.
@@ -634,42 +639,32 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             {historyOpen && (
             <>
 
-            {/* Filters — a nested accordion inside the history panel. Collapsed by default so
-                the panel stays compact; the chevron reveals the date/user/tag/sort controls. */}
-            <div className="bg-surface-sunken rounded-card border border-line">
-              <button
-                type="button"
-                onClick={() => setFiltersOpen((o) => !o)}
-                aria-expanded={filtersOpen}
-                className="w-full min-h-touch flex items-center justify-between gap-3 px-4 py-3 text-left rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-              >
-                <span className="flex items-center gap-2 text-caption uppercase font-bold tracking-wide text-ink-muted">
-                    <Filter className="w-4 h-4" aria-hidden="true" />
-                    Filtravimas
-                </span>
-                {filtersOpen
-                    ? <ChevronUp className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
-                    : <ChevronDown className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />}
-              </button>
+            {/* Filters — shown directly without an accordion wrapper. */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
 
-              {filtersOpen && (
-              <div className="border-t border-line p-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-
-                {/* Date range — a single field; tapping it opens the from/to pickers in a popover,
-                    so the two date inputs no longer eat a whole row each. */}
+                {/* Date range with inline reset button */}
                 <div className="relative flex flex-col gap-1 min-w-[200px]" ref={dateRangeRef}>
                     <label className={FILTER_LABEL_CLASS}>Laikotarpis</label>
-                    <button
-                        type="button"
-                        onClick={() => setDateRangeOpen((o) => !o)}
-                        aria-expanded={dateRangeOpen}
-                        aria-label="Pasirinkti laikotarpį"
-                        className={clsx(SELECT_CLASS, 'flex items-center gap-2 text-left')}
-                    >
-                        <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" aria-hidden="true" />
-                        <span className="truncate">{dateFrom} – {dateTo}</span>
-                        <ChevronDown className="w-3.5 h-3.5 text-ink-muted shrink-0 ml-auto" aria-hidden="true" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => setDateRangeOpen((o) => !o)}
+                            aria-expanded={dateRangeOpen}
+                            aria-label="Pasirinkti laikotarpį"
+                            className={clsx(SELECT_CLASS, 'flex items-center gap-2 text-left')}
+                        >
+                            <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" aria-hidden="true" />
+                            <span className="truncate">{dateFrom} – {dateTo}</span>
+                            <ChevronDown className="w-3.5 h-3.5 text-ink-muted shrink-0 ml-auto" aria-hidden="true" />
+                        </button>
+                        {hasNonDefaultFilters && (
+                            <IconButton
+                                icon={RotateCcw}
+                                label="Išvalyti filtrus"
+                                onClick={resetFilters}
+                            />
+                        )}
+                    </div>
                     {dateRangeOpen && (
                         <div
                             role="dialog"
@@ -772,16 +767,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 </div>
                 )}
 
-                {/* Reset Button */}
-                <div className="sm:ml-auto">
-                    <IconButton
-                        icon={RotateCcw}
-                        label="Išvalyti filtrus"
-                        onClick={resetFilters}
-                    />
-                </div>
-              </div>
-              )}
             </div>
 
             {/* Mobile / touch: one card per task — never a horizontally-scrolling table (§9).
