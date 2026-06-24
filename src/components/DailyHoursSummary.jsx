@@ -275,7 +275,7 @@ export default function DailyHoursSummary() {
 
             {Object.keys(dailyStats).length === 0 && (
                 <div className="p-8 text-center text-ink-muted">
-                    Nėra vartotojų su darbo valandomis
+                    Nėra vartotojų su veiklos valandomis
                 </div>
             )}
         </div>

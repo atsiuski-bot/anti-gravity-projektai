@@ -123,7 +123,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
                 case 'quickWork':
                     displayProps = {
                         type: 'quickWork',
-                        label: 'Greitas darbas',
+                        label: 'Greita veikla',
                         colorClass: `${getSessionColors('quickWork').surface} ${getSessionColors('quickWork').accent}`,
                         startTime: user.activeSession.startTime
                     };
@@ -236,8 +236,8 @@ export default function ActiveWorkSessions({ embedded = false }) {
         <ConfirmDialog
             open
             title="Užbaigti sesiją?"
-            message={`Priverstinai užbaigti ${endTarget.displayName || endTarget.email} sesiją. Vykdoma užduotis bus pristabdyta ir užfiksuotas darbo laikas; pertraukos / skambučio likutis bus tik išvalytas. Paskyra NEBUS užblokuota.`}
-            warning="Naudokite tik kai sesija įstrigo (telefonas išsijungė ar programa užsidarė), o darbuotojas pats jos užbaigti nebegali."
+            message={`Priverstinai užbaigti ${endTarget.displayName || endTarget.email} sesiją. Vykdoma užduotis bus pristabdyta ir užfiksuotas veiklos laikas; pertraukos / skambučio likutis bus tik išvalytas. Paskyra NEBUS užblokuota.`}
+            warning="Naudokite tik kai sesija įstrigo (telefonas išsijungė ar programa užsidarė), o vykdytojas pats jos užbaigti nebegali."
             confirmLabel="Užbaigti sesiją"
             cancelLabel="Atšaukti"
             loading={ending}
@@ -272,7 +272,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
         </>
     );
 
-    // Embedded in the "Aktyvūs darbai" sub-tab: the tab itself is the frame, so there is no
+    // Embedded in the "Aktyvios veiklos" sub-tab: the tab itself is the frame, so there is no
     // collapse chrome. An empty roster shows an explicit empty state instead of returning null —
     // a blank tab reads as broken (this is the bug where the panel "disappeared" when nobody
     // was working).
@@ -291,7 +291,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
                     <EmptyState
                         icon={Activity}
                         title="Nėra aktyvios veiklos"
-                        description="Kai komandos nariai pradės darbą, pertrauką ar skambutį, jie pasirodys čia."
+                        description="Kai komandos nariai pradės veiklą, pertrauką ar skambutį, jie pasirodys čia."
                     />
                 )}
                 {endDialog}

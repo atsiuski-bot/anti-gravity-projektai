@@ -460,7 +460,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 // but a fat-finger / wrong-task tap deserves a quiet way back. Tapping "Atšaukti"
                 // re-arms the task to paused, clears completion, and voids this finish's segment.
                 showToast('Užduotis užbaigta. Galite atšaukti.', {
-                    title: 'Puikus darbas!',
+                    title: 'Puiki veikla!',
                     tone: 'success',
                     duration: FINISH_UNDO_WINDOW_MS,
                     onClick: () => undoFinish({ preFinishTimerMinutes, sessionDocRef })

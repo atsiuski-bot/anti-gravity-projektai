@@ -102,7 +102,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                 <button
                     onClick={handleToggleBreak}
                     disabled={isDisabled}
-                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                     className={clsx(
                         "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -112,7 +112,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                                 ? 'bg-session-break-accent text-white ring-2 ring-session-break-shell'
                                 : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
-                    title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    title={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                 >
                     {isTakingBreak ? (
                         <Play className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -152,7 +152,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                 <button
                     onClick={handleToggleBreak}
                     disabled={isDisabled}
-                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                     className={clsx(
                         "inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2.5 rounded-control text-body font-medium transition-colors shadow-sm",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -166,7 +166,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                     {isTakingBreak ? (
                         <>
                             <Play className="w-4 h-4 fill-current" aria-hidden="true" />
-                            Tęsti darbą
+                            Tęsti veiklą
                         </>
                     ) : (
                         <>

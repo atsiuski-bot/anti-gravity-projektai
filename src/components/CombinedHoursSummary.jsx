@@ -220,7 +220,7 @@ export default function CombinedHoursSummary() {
             <button
                 onClick={() => setIsCollapsed(!isCollapsed)}
                 aria-expanded={!isCollapsed}
-                aria-label="Komandos savaitės darbai"
+                aria-label="Komandos savaitės veiklos"
                 className="w-full flex items-center justify-between p-4 min-h-touch bg-surface-sunken hover:bg-surface-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
             >
                 <div className="flex items-center gap-2">

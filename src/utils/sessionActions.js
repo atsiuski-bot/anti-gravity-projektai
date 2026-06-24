@@ -10,7 +10,7 @@ import { buildCallTitle } from './callContacts';
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
 // Shared by the auto-log path and the retroactive-description fallback so the two never drift.
-export const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greitas darbas (Automatiškai išsaugotas)';
+export const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greita veikla (Automatiškai išsaugota)';
 
 /**
  * Starts a new session for the user.
@@ -77,7 +77,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                     if (partialDuration > MIN_LOGGED_SESSION_MINUTES) {
                         // Log the partial segment and capture doc ID for later renaming
                         const partialType = userData.activeSession.type;
-                        const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greitas darbas');
+                        const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greita veikla');
                         try {
                             const partialDocRef = await addDoc(collection(db, 'work_sessions'), {
                                 taskId: `${partialType}_partial_${interruptNow.getTime()}`,

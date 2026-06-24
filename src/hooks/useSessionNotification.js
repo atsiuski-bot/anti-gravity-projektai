@@ -36,8 +36,8 @@ export function useSessionNotification({ isQuickWorking, isCalling, isTakingBrea
 
         if (isQuickWorking) {
             currentState = 'quickWork';
-            title = 'Skubus darbas aktyvus';
-            body = '⚡ Greitasis darbas vykdomas';
+            title = 'Skubi veikla aktyvi';
+            body = '⚡ Greitoji veikla vykdoma';
         } else if (isCalling) {
             currentState = 'call';
             title = 'Skambutis aktyvus';
@@ -48,8 +48,8 @@ export function useSessionNotification({ isQuickWorking, isCalling, isTakingBrea
             body = '☕ Dabar pertraukos metu';
         } else if (isRunning) {
             currentState = 'working';
-            title = 'Darbas vykdomas';
-            body = '💼 Darbo sesija aktyvi';
+            title = 'Veikla vykdoma';
+            body = '💼 Veiklos sesija aktyvi';
         }
 
         if (currentState !== previousStateRef.current) {

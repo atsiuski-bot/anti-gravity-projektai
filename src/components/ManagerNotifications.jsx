@@ -652,7 +652,7 @@ export default function ManagerNotifications({ onClose }) {
                                 <AlertCircle className="w-5 h-5 text-feedback-info mt-0.5 flex-shrink-0" />
                                 <div>
                                     <h4 className="font-medium text-feedback-info-text">
-                                        <UserChip userId={notif.userId} name={notif.userName} /> atnaujino darbo kalendorių
+                                        <UserChip userId={notif.userId} name={notif.userName} /> atnaujino veiklos kalendorių
                                     </h4>
                                     <div className="mt-2 text-sm text-feedback-info-text space-y-1">
                                         {notif.changes && notif.changes.map((change, index) => {
@@ -699,9 +699,9 @@ export default function ManagerNotifications({ onClose }) {
                         oldTimeRange = `${format(oldStart, 'HH:mm')} - ${format(oldEnd, 'HH:mm')}`;
                     }
                     
-                    const actionText = notif.type === 'delete' ? 'nori atšaukti (ištrinti) darbo laiką' :
-                                       notif.type === 'add' ? 'nori pridėti darbo laiką' :
-                                       'nori pakeisti darbo laiką';
+                    const actionText = notif.type === 'delete' ? 'nori atšaukti (ištrinti) veiklos laiką' :
+                                       notif.type === 'add' ? 'nori pridėti veiklos laiką' :
+                                       'nori pakeisti veiklos laiką';
 
                     return (
                         <div key={notif.id} className="bg-feedback-info-soft border border-feedback-info-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
@@ -781,14 +781,14 @@ export default function ManagerNotifications({ onClose }) {
 
                     // System → manager ACTION: a recurring job's usual assignee is away — reassign.
                     if (notif.type === 'recurring_reassign') {
-                        const task = notif.taskTitle ? `„${notif.taskTitle}“` : 'pasikartojantis darbas';
+                        const task = notif.taskTitle ? `„${notif.taskTitle}“` : 'pasikartojanti veikla';
                         return (
                             <div key={notif.id} className="rounded-card border border-feedback-warning-border bg-feedback-warning-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                                 <div className="flex items-start gap-3">
                                     <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
                                     <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
                                         <p className="font-medium leading-relaxed">
-                                            Pasikartojantis darbas {task}: įprastas vykdytojas šiandien nepasiekiamas (atostogos / nebuvimas). Priskirkite kitą vykdytoją.
+                                            Pasikartojanti veikla {task}: įprastas vykdytojas šiandien nepasiekiamas (atostogos / nebuvimas). Priskirkite kitą vykdytoją.
                                         </p>
                                     </div>
                                 </div>
@@ -866,8 +866,8 @@ export default function ManagerNotifications({ onClose }) {
                         const who = formatDisplayName(notif.createdByName) || 'Administratorius';
                         const Icon = isDelete ? Trash2 : Edit;
                         const headline = isDelete
-                            ? `${who} pašalino Jūsų įrašytą darbo laiką`
-                            : `${who} pakoregavo Jūsų įrašytą darbo laiką`;
+                            ? `${who} pašalino Jūsų įrašytą veiklos laiką`
+                            : `${who} pakoregavo Jūsų įrašytą veiklos laiką`;
                         return (
                             <div key={notif.id} className="rounded-card border border-feedback-info-border bg-feedback-info-soft p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl relative">
                                 <IconButton
@@ -992,9 +992,9 @@ export default function ManagerNotifications({ onClose }) {
                                     <div className="flex items-start gap-3">
                                         <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
                                         <div className="min-w-0 text-sm text-feedback-warning-text">
-                                            <p><UserChip userId={notif.userId} name={notif.userName} /> pranešė apie klaidą darbo laike:</p>
+                                            <p><UserChip userId={notif.userId} name={notif.userName} /> pranešė apie klaidą veiklos laike:</p>
                                             {notif.commentText && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
-                                            <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio darbuotojo dieną.</p>
+                                            <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio vykdytojo dieną.</p>
                                         </div>
                                     </div>
                                     <div className="mt-1 flex flex-wrap items-center justify-end gap-2">

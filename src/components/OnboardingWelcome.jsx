@@ -29,15 +29,15 @@ const WELCOME_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const STEPS = [
     {
         title: 'Jūsų užduotys',
-        body: 'Skiltyje „Darbai" matysite jums priskirtas užduotis. Darbą pradėkite paspaudę „Pradėti".',
+        body: 'Skiltyje „Veiklos" matysite jums priskirtas užduotis. Veiklą pradėkite paspaudę „Pradėti".',
     },
     {
         title: 'Pertraukos ir skambučiai',
-        body: 'Pertrauką, skambutį ar greitą darbą pažymėkite mygtukais apačioje — laikas skaičiuojamas automatiškai.',
+        body: 'Pertrauką, skambutį ar greitą veiklą pažymėkite mygtukais apačioje — laikas skaičiuojamas automatiškai.',
     },
     {
-        title: 'Profilis ir darbo laikas',
-        body: 'Profilyje nustatykite nuotrauką bei spalvą, o kalendoriuje suplanuokite savo darbo laiką.',
+        title: 'Profilis ir veiklos laikas',
+        body: 'Profilyje nustatykite nuotrauką bei spalvą, o kalendoriuje suplanuokite savo veiklos laiką.',
     },
 ];
 
@@ -103,7 +103,7 @@ export default function OnboardingWelcome() {
         >
             <div className="space-y-6">
                 <p className="text-body text-ink-muted">
-                    Čia matysite savo užduotis, žymėsite darbo laiką ir planuosite darbus.
+                    Čia matysite savo užduotis, žymėsite veiklos laiką ir planuosite veiklas.
                     Keli dalykai, kad būtų lengviau pradėti.
                 </p>
 

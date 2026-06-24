@@ -80,7 +80,7 @@ export default function AllUsersCalendar() {
     const { currentUser, userRole, userData } = useAuth();
 
     // Drill-down access is per-worker: clicking a shift opens that worker's day report — the same
-    // "Darbo valandos" table the team report shows — but only for a viewer who may actually see
+    // "Veiklos valandos" table the team report shows — but only for a viewer who may actually see
     // that worker. Admins and whole-team managers may drill anyone; a scoped manager / senior may
     // drill only the workers in their own subtree (overseerIds closure). Plain workers, and a
     // manager looking at someone outside their scope, get a static bar (no colleague drill-down).
@@ -113,7 +113,7 @@ export default function AllUsersCalendar() {
                 const user = usersMap[data.userId];
                 return {
                     id: doc.id,
-                    title: data.title || 'Darbas',
+                    title: data.title || 'Veikla',
                     start: new Date(data.start),
                     end: new Date(data.end),
                     userId: data.userId,
@@ -128,7 +128,7 @@ export default function AllUsersCalendar() {
             setError('');
         }, (err) => {
             console.error("Error fetching work hours:", err);
-            setError("Nepavyko užkrauti darbo valandų. Patikrinkite ryšį ir bandykite dar kartą.");
+            setError("Nepavyko užkrauti veiklos valandų. Patikrinkite ryšį ir bandykite dar kartą.");
         });
 
         return () => unsubscribe();
@@ -349,7 +349,7 @@ export default function AllUsersCalendar() {
                             {/* Empty state if no users found */}
                             {usersWithEvents.length === 0 && (
                                 <div className="text-center text-ink-muted py-10 w-full text-body">
-                                    Šią dieną suplanuotų darbų nėra.
+                                    Šią dieną suplanuotų veiklų nėra.
                                 </div>
                             )}
                         </div>
@@ -365,8 +365,8 @@ export default function AllUsersCalendar() {
                 {usersWithEvents.length === 0 ? (
                     <EmptyState
                         icon={CalendarOff}
-                        title="Nėra suplanuotų darbų"
-                        description="Šią dieną suplanuotų darbų nėra."
+                        title="Nėra suplanuotų veiklų"
+                        description="Šią dieną suplanuotų veiklų nėra."
                     />
                 ) : (
                     usersWithEvents.map((user) => (

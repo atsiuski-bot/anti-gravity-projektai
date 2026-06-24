@@ -53,13 +53,13 @@ function copyFor(n) {
         case 'extension_denied': return { title: 'Laikas nepratęstas', body: task };
         case 'calendar_decision': return {
             title: n.decision === 'approved' ? 'Kalendoriaus pakeitimas patvirtintas' : 'Kalendoriaus pakeitimas atmestas',
-            body: 'Darbo kalendorius',
+            body: 'Veiklos kalendorius',
         };
         // Admin → worker: their logged (paid) time was corrected / removed.
-        case 'session_edited': return { title: 'Pakoreguotas darbo laikas', body: n.day || 'Darbo laikas' };
-        case 'session_deleted': return { title: 'Pašalintas darbo laikas', body: n.day || 'Darbo laikas' };
+        case 'session_edited': return { title: 'Pakoreguotas veiklos laikas', body: n.day || 'Veiklos laikas' };
+        case 'session_deleted': return { title: 'Pašalintas veiklos laikas', body: n.day || 'Veiklos laikas' };
         // Worker → manager: a logged-time error report.
-        case 'session_correction_request': return { title: 'Pranešimas apie darbo laiko klaidą', body: n.commentText ? `${n.day || 'Darbo laikas'}: ${n.commentText}` : (n.day || 'Darbo laikas') };
+        case 'session_correction_request': return { title: 'Pranešimas apie veiklos laiko klaidą', body: n.commentText ? `${n.day || 'Veiklos laikas'}: ${n.commentText}` : (n.day || 'Veiklos laikas') };
         // System → admin: a new sign-up awaits approval.
         case 'account_approval': return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'WORKZ' };
         default: return { title: 'Naujas pranešimas', body: task };

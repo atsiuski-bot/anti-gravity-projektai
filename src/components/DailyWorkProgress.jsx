@@ -196,7 +196,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
     // The progress bars measure WORKED time against the planned goal, so they must NOT
     // include breaks: planned hours never contain breaks, so folding break minutes into the
     // numerator would overstate progress toward the goal. Breaks are shown as a separate,
-    // clearly-labelled figure below (mirroring the Darbas/Pertraukos split in Reports).
+    // clearly-labelled figure below (mirroring the Veikla/Pertraukos split in Reports).
     // Current session counts towards both Day and Week.
     const totalDayWorked = dayWorked + currentSessionHours;
     const totalWeekWorked = weekWorked + currentSessionHours;
@@ -205,7 +205,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
     // static "X / Y" readout into feedback the worker reacts to (DESIGN_SYSTEM: calm canvas,
     // motivating signal). `live` marks an in-progress session so the copy nods to it.
     const motivation = (percent, remainingLabel, live) => {
-        if (percent >= 100) return 'Tikslas pasiektas! Puikus darbas 🎉';
+        if (percent >= 100) return 'Tikslas pasiektas! Puiki veikla 🎉';
         if (percent >= 75) return `Beveik! Liko tik ${remainingLabel}`;
         if (percent >= 40) return `Geras tempas — liko ${remainingLabel}`;
         if (percent > 0) return live ? 'Gera pradžia, tęsk!' : `Pirmi žingsniai — liko ${remainingLabel}`;
@@ -260,7 +260,7 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
                         </div>
                         <div className="mt-0.5 flex items-center justify-between gap-2 text-caption">
                             <span className="text-ink-muted">
-                                {hasPlan ? motivation(percent, formatTime(remaining), live) : 'Nesuplanuota darbo laiko'}
+                                {hasPlan ? motivation(percent, formatTime(remaining), live) : 'Nesuplanuota veiklos laiko'}
                             </span>
                             {hasPlan && (
                                 <span className="shrink-0 font-medium tabular-nums text-ink-muted">

@@ -188,7 +188,7 @@ function SideRail() {
 
             {/* Fixed footer: session work-controls, pinned to the bottom. The active-session
                 readout and the account/avatar entry both moved to the top bar (AppHeader); the
-                "Darbo valdikliai" heading stays dropped — the icons + labels are self-explanatory.
+                "Veiklos valdikliai" heading stays dropped — the icons + labels are self-explanatory.
                 Collapsed: the three timers stack vertically as bare icon buttons. */}
             <div className={cn('shrink-0 pb-2.5', collapsed ? 'px-2' : 'px-2.5')}>
                 <div className="flex flex-col gap-1.5 border-t border-line pt-2">

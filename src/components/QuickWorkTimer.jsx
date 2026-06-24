@@ -48,14 +48,14 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
         <Modal
             open
             onClose={onClose}
-            title="Greito darbo pabaiga"
+            title="Greitos veiklos pabaiga"
             size="md"
             initialFocusRef={textareaRef}
         >
             <form onSubmit={handleSubmit} className="flex flex-col">
                 <p className="text-body text-ink-muted mb-4 flex items-center gap-2">
                     <Zap className="w-5 h-5 text-session-quickWork-accent fill-current shrink-0" aria-hidden="true" />
-                    Įveskite atlikto darbo aprašymą
+                    Įveskite atliktos veiklos aprašymą
                 </p>
 
                 <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-session-quickWork-soft flex items-center justify-between">
@@ -72,7 +72,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                         history (shown only to the repetitive cohort — see useFrequentQuickWork). A tap
                         pre-fills the title; it never auto-submits, so the worker stays in control. */}
                     {frequentChips.length > 0 && (
-                        <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Dažni darbai">
+                        <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Dažnos veiklos">
                             {frequentChips.map((chip) => (
                                 <button
                                     key={chip}
@@ -96,7 +96,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                             ref={textareaRef}
                             id="quickWorkTextarea"
                             name="taskDescription"
-                            placeholder="Trumpai aprašykite atliktą darbą..."
+                            placeholder="Trumpai aprašykite atliktą veiklą..."
                             rows={4}
                             className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
                             style={{
@@ -180,7 +180,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                             Atšaukti
                         </Button>
                         <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
-                            {isSubmitting ? 'Saugoma...' : 'Išsaugoti darbą'}
+                            {isSubmitting ? 'Saugoma...' : 'Išsaugoti veiklą'}
                         </Button>
                     </div>
                     {/* Defer naming: log the work now without a description. The "describe later"
@@ -267,7 +267,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         } catch (err) {
             console.error("Error starting quick work:", err);
             setOptimisticUserData(null); // Revert on error
-            setError("Nepavyko pradėti greito darbo. Bandykite dar kartą.");
+            setError("Nepavyko pradėti greitos veiklos. Bandykite dar kartą.");
         }
     };
 
@@ -326,7 +326,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         } catch (err) {
             console.error("Error completing quick work:", err);
             setOptimisticUserData(null); // Revert on error
-            setError("Nepavyko išsaugoti greito darbo. Bandykite dar kartą.");
+            setError("Nepavyko išsaugoti greitos veiklos. Bandykite dar kartą.");
         } finally {
             setIsSubmitting(false);
         }
@@ -363,7 +363,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                 <button
                     onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                     disabled={isDisabled}
-                    aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
+                    aria-label={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greita veikla")}
                     className={clsx(
                         "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
                         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -373,7 +373,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                                 ? 'bg-session-quickWork-shell text-white ring-2 ring-session-quickWork-soft shadow-lg shadow-session-quickWork-shell/20'
                                 : 'bg-surface-sunken text-ink hover:bg-line'
                     )}
-                    title={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greitas darbas")}
+                    title={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greita veikla")}
                 >
                     {isQuickWorking ? (
                         <Square className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -386,7 +386,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                     Suppressed only in the collapsed side rail (`hideLabel`), where the icon SHAPE
                     differs by state and the button keeps its aria-label + title tooltip. */}
                 {!hideLabel && (
-                    <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Greitas</span>
+                    <span className="mt-1 text-caption font-medium text-ink-muted leading-none">Greita</span>
                 )}
 
                 {error && (
@@ -407,7 +407,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             <button
                 onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                 disabled={isDisabled}
-                aria-label={isQuickWorking ? "Baigti greitą darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti greitą darbą")}
+                aria-label={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti greitą veiklą")}
                 className={clsx(
                     "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition-all shadow-sm active:scale-95 border min-w-[140px]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -427,7 +427,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                         )}
                     </div>
                     <div className="flex flex-col items-start leading-tight">
-                        <span className="text-caption font-bold uppercase tracking-wider text-ink-muted">Greitas</span>
+                        <span className="text-caption font-bold uppercase tracking-wider text-ink-muted">Greita</span>
                         {isQuickWorking && <span className="text-caption font-semibold text-session-quickWork-accent">Vyksta...</span>}
                     </div>
                 </div>

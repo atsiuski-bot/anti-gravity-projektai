@@ -307,7 +307,7 @@ export const SoundManager = {
             if (Notification.permission === 'granted') {
                 try {
                     showLocalNotification('🛑 Laikas baigėsi!', {
-                        body: 'Užduoties planuojamas laikas baigėsi. Darbas sustabdytas.',
+                        body: 'Užduoties planuojamas laikas baigėsi. Veikla sustabdyta.',
                         tag: 'time-limit-reached',
                         renotify: true,
                         requireInteraction: true

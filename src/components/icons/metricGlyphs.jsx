@@ -3,7 +3,7 @@
  * horizontal time-bar — modulated on a single axis (fill state), so a time figure is read by
  * shape, not by a borrowed icon:
  *   Planned = hollow/dashed bar (intended, not yet real)
- *   Worked  = solid-filled bar (real time spent) — replaces Clock on "Darbas"
+ *   Worked  = solid-filled bar (real time spent) — replaces Clock on "Veikla"
  *   Total   = two thin bars merging into one thick bar — replaces Zap on "Viso"
  *
  * This removes two verified collisions in the daily report: Clock labelled both the day-span

@@ -6,7 +6,7 @@ import { useAuth } from '../context/AuthContext';
 const SESSION_TYPE_LABELS = {
     break: 'pertrauka',
     call: 'skambutis',
-    quickWork: 'greitas darbas',
+    quickWork: 'greita veikla',
     task: 'užduotis',
 };
 
