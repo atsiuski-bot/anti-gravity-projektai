@@ -273,6 +273,18 @@
   }
 }
 
+/* Horizontally scrollable strips (e.g. the team-tasks sub-tab switcher on a narrow
+   phone) keep their swipe affordance but hide the native scrollbar, which on a short
+   pill-height strip would otherwise overlap the tab labels and look broken. The strip
+   stays fully keyboard/touch scrollable — only the visual scrollbar is suppressed. */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge/IE */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* WebKit/Blink */
+}
+
 /* Calendar: we never use all-day events, but react-big-calendar always renders an
    empty all-day row under the day headers in week/day views — there is no prop to
    disable it. Hiding it removes the dead gap between the day names and the time grid. */
