@@ -312,6 +312,8 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
   // type can't be added without giving it copy coverage.
   const SAMPLES = {
     task_approval: [{ taskTitle: 'Sutvarkyti sandėlį' }],
+    task_needs_manager: [{ taskTitle: 'Sutvarkyti sandėlį' }, {}],
+    task_waiting: [{ taskTitle: 'Sutvarkyti sandėlį' }, {}],
     task_completion: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     time_extension_request: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     session_correction_request: [{ day: '2026-06-20', commentText: '  klaida   trukmėje ' }, { day: '2026-06-20' }, {}],

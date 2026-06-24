@@ -19,9 +19,11 @@ import AssigneeChip from './task/AssigneeChip';
 import UserChip from './UserChip';
 import TaskDetailModal from './task/TaskDetailModal';
 import TaskStatusIcon from './task/TaskStatusIcon';
+import TaskFlagBadges from './task/TaskFlagBadges';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
 import { STATUS_STYLES } from '../utils/taskConstants';
+import { getTaskFlagTint } from '../utils/taskFlags';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 
@@ -167,6 +169,11 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     const canEdit = canEditTask({ task, currentUser, role, userRole });
 
     const taskStatus = task.status || 'pending';
+
+    // Worker-set attention tint ("Reikia vadovo" red / "Laukiama" blue). Sits BELOW the live/limit
+    // states in the cascade below (a running or over-limit card keeps its own colour), but ABOVE the
+    // plain status fallback — so an otherwise-calm card glows the moment the worker raises a flag.
+    const flagTint = getTaskFlagTint(task);
 
     // Strict UI logic: activeSession is the PRIMARY source of truth, workStatus is the fallback.
     const isRunning = useIsTaskRunning(task);
@@ -331,7 +338,9 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                     isRunning ? "bg-session-task-surface border-session-task-shell"
                         : task.inspectionStatus === 'inspecting' ? "bg-feedback-info-soft border-feedback-info-border"
                         : isLimitExceeded ? "bg-feedback-danger-soft border-feedback-danger-border"
-                        : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
+                        : flagTint
+                            ? flagTint
+                            : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
                     task.completed && "opacity-75",
                     justCompleted && "wz-flash-success"
                 )}
@@ -373,6 +382,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                             </button>
                         </div>
+
+                        {/* Worker-raised attention flags ("Reikia vadovo" / "Laukiama") — icon + label
+                            pills, shown only while a flag is raised. The whole card is tinted to match. */}
+                        <TaskFlagBadges task={task} className="mb-2" />
 
                         {/* Priority first, directly under the title — with any deadline / tag on the
                             same line. */}
@@ -653,5 +666,8 @@ export default React.memo(TaskCard, (prevProps, nextProps) => {
     if (prev.estimatedTime !== next.estimatedTime) return false;
     if (prev.title !== next.title) return false;
     if (prev.priority !== next.priority) return false;
+    // Attention flags drive both the badges and the whole-card tint, so a flip must re-render.
+    if (!!prev.needsManager !== !!next.needsManager) return false;
+    if (!!prev.waiting !== !!next.waiting) return false;
     return true;
 });

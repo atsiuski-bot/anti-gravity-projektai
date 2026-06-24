@@ -133,6 +133,12 @@ function copyForRequestNotification(n) {
             return { title: 'Užduotis atlikta', body: title };
         case 'task_approval':
             return { title: 'Nauja užduotis tvirtinimui', body: title };
+        case 'task_needs_manager':
+            // Worker → manager: the vykdytojas raised the "Reikia vadovo" flag on a task.
+            return { title: 'Reikia vadovo', body: title };
+        case 'task_waiting':
+            // Worker → manager: the vykdytojas raised the "Laukiama" flag on a task.
+            return { title: 'Pažymėta „Laukiama“', body: title };
         case 'new_comment': {
             // User-authored text crosses the app boundary onto the lockscreen — collapse
             // whitespace and clamp length so it can't be weaponised into a huge/multiline body.

@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus, Ban, UserPlus } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Plus, Ban, UserPlus, Hand, Hourglass } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import UserChip from './UserChip';
@@ -769,6 +769,43 @@ export default function ManagerNotifications({ onClose }) {
                                 <Icon className={`mt-0.5 h-5 w-5 flex-shrink-0 ${tone}`} aria-hidden="true" />
                                 <p className="min-w-0 flex-1 text-body text-ink">{text}</p>
                                 <IconButton icon={X} label="Pažymėti skaitytu" variant="ghost" onClick={() => handleDismissTask(notif.id)} className="-mr-1 -mt-1" />
+                            </div>
+                        );
+                    }
+
+                    // Worker → manager: the vykdytojas raised an attention flag on a task. Two flags
+                    // share this card: "Reikia vadovo" (red, action — a decision/attention is owed)
+                    // and "Laukiama" (blue, FYI — the worker is blocked). The card names WHO raised it
+                    // and which task; the flag itself stays on the task until the worker (or a manager)
+                    // clears it from the task's detail sheet, so this is a benign read/dismiss notice.
+                    if (notif.type === 'task_needs_manager' || notif.type === 'task_waiting') {
+                        const isNeedsManager = notif.type === 'task_needs_manager';
+                        const FlagIcon = isNeedsManager ? Hand : Hourglass;
+                        const flagLabel = isNeedsManager ? 'Reikia vadovo' : 'Laukiama';
+                        const wrapClass = isNeedsManager
+                            ? 'border-feedback-danger-border bg-feedback-danger-soft'
+                            : 'border-feedback-info-border bg-feedback-info-soft';
+                        const textClass = isNeedsManager ? 'text-feedback-danger-text' : 'text-feedback-info-text';
+                        const iconClass = isNeedsManager ? 'text-feedback-danger' : 'text-feedback-info';
+                        return (
+                            <div key={notif.id} className={`rounded-card border p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl ${wrapClass}`}>
+                                <div className="flex items-start gap-3">
+                                    <FlagIcon className={`mt-0.5 h-5 w-5 flex-shrink-0 ${iconClass}`} aria-hidden="true" />
+                                    <div className={`min-w-0 flex-1 text-sm ${textClass}`}>
+                                        <p className="leading-relaxed">
+                                            {(notif.createdBy || notif.createdByName)
+                                                ? <UserChip userId={notif.createdBy} name={notif.createdByName} />
+                                                : <span className="font-semibold">Vykdytojas</span>}{' '}
+                                            pažymėjo „{flagLabel}“:
+                                        </p>
+                                        <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
+                                    </div>
+                                </div>
+                                <div className="mt-3 flex items-center justify-end">
+                                    <Button variant="secondary" size="md" onClick={() => handleDismissTask(notif.id)}>
+                                        Supratau
+                                    </Button>
+                                </div>
                             </div>
                         );
                     }

@@ -15,6 +15,7 @@ import CompletedMarker from './task/CompletedMarker';
 import AssigneeChip from './task/AssigneeChip';
 import TaskDetailModal from './task/TaskDetailModal';
 import TaskStatusIcon from './task/TaskStatusIcon';
+import TaskFlagBadges from './task/TaskFlagBadges';
 import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES, parseTimeStringToMinutes } from '../utils/timeUtils';
@@ -24,6 +25,7 @@ import { approveTask, unapproveTask, completeTask, reopenTask, confirmTask, unco
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { isManagerRole } from '../utils/formatters';
 import { canEditTask } from '../utils/taskPermissions';
+import { getTaskFlagRowBg } from '../utils/taskFlags';
 import { addComment, updateComment, deleteComment } from '../utils/commentActions';
 import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklistProgress } from '../utils/checklistActions';
 import { logError } from '../utils/errorLog';
@@ -322,6 +324,11 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
     const getStatusStyle = (task) => {
         if (isTaskRunning(task)) return 'bg-session-task-surface border-session-task-shell';
 
+        // Worker-raised attention tint ("Reikia vadovo" red / "Laukiama" blue) — sits above the
+        // plain status styling so a flagged row stands out at a glance (the badges name the flag).
+        const flagBg = getTaskFlagRowBg(task);
+        if (flagBg) return flagBg;
+
         const status = task.status || 'pending';
         if (status === 'confirmed') return 'bg-surface-base';
         if (status === 'completed') return 'bg-surface-sunken';
@@ -473,6 +480,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} ring showColor={false} className="max-w-[160px]" />
                                 )}
                                 <TaskStatusPill task={task} isRunning={isTaskRunning(task)} />
+                                <TaskFlagBadges task={task} />
                                 {task.tag && (
                                     <span className="px-1.5 py-0.5 inline-flex text-caption leading-4 font-semibold rounded-md bg-feedback-info-soft text-feedback-info-text border border-feedback-info-border">
                                         {task.tag}
@@ -786,6 +794,9 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 {task.isDeleted && <DeletedBadge inline className="ml-2" />}
                                             </span>
                                         </button>
+                                        {/* Worker attention flags — shown only while raised; the whole row is
+                                            tinted to match (getStatusStyle). */}
+                                        <TaskFlagBadges task={task} size="sm" className="mt-1" />
                                         {/* One muted line: the indicators lead, the manager closes it — so a
                                             deadline / urgent / comment glyph rides IN FRONT of "Vadovas" instead
                                             of dropping onto its own extra row and making the task taller. */}

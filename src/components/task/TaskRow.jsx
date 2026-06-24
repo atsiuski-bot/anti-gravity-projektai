@@ -5,6 +5,7 @@ import PriorityBadge from './PriorityBadge';
 import DeletedBadge from './DeletedBadge';
 import TaskStatusPill from './TaskStatusPill';
 import TaskAnomalyBadge from './TaskAnomalyBadge';
+import TaskFlagBadges from './TaskFlagBadges';
 
 /**
  * TaskRow — the one dense desktop "report row" shared by the manager report tables
@@ -85,6 +86,10 @@ export default function TaskRow({
                 {/* Read-only runaway-timer flag: surfaces a 3x+ over-estimate (or an unbounded
                     abandoned timer) so a manager can correct it. Manager-only by where TaskRow lives. */}
                 <TaskAnomalyBadge task={task} className="flex" />
+                {/* Worker-raised attention flags — render only on still-active tasks (the helper drops
+                    them once a task is finished/accepted), so a manager scanning reports sees a live
+                    "Reikia vadovo" / "Laukiama" but never a stale one. */}
+                <TaskFlagBadges task={task} size="sm" className="mt-1 flex" />
             </td>
             <td className="px-1 py-2 text-center align-top">
                 <IconButton label="Peržiūrėti komentarus" onClick={() => onOpenComments?.(task)}>

@@ -76,6 +76,25 @@ export const NOTIFICATIONS = {
         }),
     },
 
+    // ── Worker → manager (an attention flag was raised on a task) ────────────────────────────────
+    // The vykdytojas tagged a task. needsManager is an action (a decision/attention is owed → floats
+    // up + alert cue); waiting is an FYI (the worker is blocked). The actor rides as createdBy, so
+    // the feed shows WHO raised it.
+    task_needs_manager: {
+        category: 'action',
+        sound: 'alert',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Reikia vadovo', body: n.taskTitle || 'WORKZ' }),
+    },
+    task_waiting: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Pažymėta „Laukiama“', body: n.taskTitle || 'WORKZ' }),
+    },
+
     // ── Both → manager (FYI) ─────────────────────────────────────────────────────────────────────
     new_comment: {
         category: 'info',

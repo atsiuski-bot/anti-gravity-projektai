@@ -15,6 +15,7 @@ import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
 import PriorityBadge from './PriorityBadge';
 import TaskStatusPill from './TaskStatusPill';
+import TaskFlagToggles from './TaskFlagToggles';
 import DeletedBadge from './DeletedBadge';
 import AssigneeChip from './AssigneeChip';
 import TimeChangedWarning from './TimeChangedWarning';
@@ -88,7 +89,7 @@ export default function TaskDetailModal({
     onOpenTimeAdjustments,
 }) {
     const titleId = useId();
-    const { currentUser } = useAuth();
+    const { currentUser, userData } = useAuth();
 
     const [newComment, setNewComment] = useState('');
     const [submitting, setSubmitting] = useState(false);
@@ -303,6 +304,24 @@ export default function TaskDetailModal({
                                     <UserChip userId={managerId} name={managerName} />
                                 </span>
                             )}
+                        </div>
+                    )}
+
+                    {/* Worker attention flags — the vykdytojas (or a manager) raises/clears
+                        "Reikia vadovo" / "Laukiama" here. Raising one tints the card everywhere and
+                        pings the task's manager with who raised it. */}
+                    {(isAssignee || canManage) && !isDeleted && (
+                        <div>
+                            <div className="mb-2 text-caption font-medium uppercase tracking-wide text-ink-muted">
+                                Vykdytojo žymos
+                            </div>
+                            <TaskFlagToggles
+                                task={task}
+                                currentUser={currentUser}
+                                defaultManagerId={userData?.defaultManager || null}
+                                collectionName={collectionName}
+                                onError={() => setError('Nepavyko pakeisti žymos. Bandykite dar kartą.')}
+                            />
                         </div>
                     )}
 
