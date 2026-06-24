@@ -4,8 +4,7 @@ import { doc, updateDoc, collection, addDoc, getDoc, waitForPendingWrites } from
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
-import { isManagerRole } from '../utils/formatters';
-import { isSelfDirectedTask } from '../utils/selfDirectedTask';
+import { isManagerRole, resolveCompletionStatus } from '../utils/formatters';
 import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
 import { reopenTask, humanActor, MODES } from '../domain';
@@ -314,13 +313,14 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             }
 
             // 2. Prepare task data for completion.
-            // Mirror completeTask's auto-confirm rule (keep the two finish paths consistent): a
-            // manager/admin role auto-confirms, and so does the task's OWN manager — EXCEPT for a
-            // self-directed task (managerId === the assignee), where "own manager" would make the
-            // worker silently sign off their own work. Such a task lands as 'completed' so it reaches
-            // the team board's review affordance instead of auto-confirming.
-            const isOwnManager = currentUser?.uid === task.managerId && !isSelfDirectedTask(task);
-            const isManagerOrAdmin = isManagerRole(userRole) || isOwnManager;
+            // Auto-confirm follows the actor's manager ROLE only — the same shared rule the audited
+            // completeTask command uses (resolveCompletionStatus), so the two finish doors never
+            // drift. A worker — even one named as the task's managerId — cannot self-confirm under
+            // firestore.rules (changesApprovalFields), so their finish lands 'completed' and waits for
+            // a real manager's priėmimas; writing 'confirmed' here only produced a silent
+            // permission-denied that failed the whole finish.
+            const finishStatus = resolveCompletionStatus(userRole);
+            const isConfirmed = finishStatus === 'confirmed';
             const totalMinutes = finalTimerMinutes + currentManualMinutes;
             const formattedTime = formatMinutesToTimeString(totalMinutes);
 
@@ -336,11 +336,11 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 timerMinutes: finalTimerMinutes,
                 manualMinutes: currentManualMinutes,
                 actualTime: formattedTime,
-                status: isManagerOrAdmin ? 'confirmed' : 'completed',
+                status: finishStatus,
                 completed: true,
                 completedAt: now.toISOString(),
-                confirmedBy: isManagerOrAdmin ? currentUser.uid : null,
-                confirmedAt: isManagerOrAdmin ? now.toISOString() : null,
+                confirmedBy: isConfirmed ? currentUser.uid : null,
+                confirmedAt: isConfirmed ? now.toISOString() : null,
                 updatedAt: now.toISOString()
             };
 
@@ -419,8 +419,9 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
 
             await Promise.all(promises);
 
-            // Send task_completion notification to manager (workers only)
-            if (!isManagerOrAdmin) {
+            // Send task_completion notification to manager (only when the task lands 'completed' and
+            // still needs a real manager's priėmimas — a role-manager's own finish auto-confirms).
+            if (!isConfirmed) {
                 try {
                     // Determine recipient: task manager, fallback to user's defaultManager
                     let recipientId = task.managerId || null;

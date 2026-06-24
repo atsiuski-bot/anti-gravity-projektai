@@ -110,6 +110,23 @@ export const isManagerRole = (role) =>
     role === 'manager' || role === 'admin' || role === 'seniorManager';
 
 /**
+ * Resolves a finished task's lifecycle status from the COMPLETING actor's ROLE — the single source
+ * BOTH completion doors read (the timer's "Užbaigti" in TaskTimerControls and the audited
+ * completeTask command), so they can never drift. Confirm authority is a manager ROLE, never a
+ * per-task ownership claim: `firestore.rules` DENIES a worker self-confirming an existing task
+ * (`changesApprovalFields`), so a non-manager writing `status:'confirmed'` only produced a silent
+ * permission-denied that failed the whole finish. Therefore only a manager-shaped role auto-confirms
+ * ('confirmed'); everyone else — INCLUDING a worker who happens to be a task's named `managerId` —
+ * lands 'completed', awaiting a real manager's priėmimas. Self-direction no longer factors in; role
+ * alone decides.
+ *
+ * @param {string} role - the completing actor's role
+ * @returns {'confirmed'|'completed'}
+ */
+export const resolveCompletionStatus = (role) =>
+    isManagerRole(role) ? 'confirmed' : 'completed';
+
+/**
  * Resolves the user ID from a record that may use different field names
  * due to legacy schema variations.
  * 
