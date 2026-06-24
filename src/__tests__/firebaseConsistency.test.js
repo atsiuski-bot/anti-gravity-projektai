@@ -326,6 +326,8 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     session_deleted: [{ day: '2026-06-20' }, {}],
     account_approval: [{ targetUserName: 'Jonas Jonaitis' }, { targetUserEmail: 'j@x.lt' }, {}],
     recurring_reassign: [{ taskTitle: 'Užduotis' }],
+    // Both label-present branches (Skubus/Aukštas) and the missing-field fallbacks.
+    task_priority_escalated: [{ taskTitle: 'Užduotis', priorityLabel: 'Skubus' }, { taskTitle: 'Užduotis', priorityLabel: 'Aukštas' }, { taskTitle: 'Užduotis' }, {}],
   };
 
   it('the registry and the server switch cover the same set of types', () => {

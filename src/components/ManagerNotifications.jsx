@@ -743,7 +743,7 @@ export default function ManagerNotifications({ onClose }) {
                 } else if (notif.source === 'task') {
 
                     // Worker-facing INFORMATIONAL notices (manager decisions) — compact read/unread rows.
-                    if (['task_assigned', 'task_approved', 'task_confirmed', 'extension_granted', 'extension_denied', 'calendar_decision'].includes(notif.type)) {
+                    if (['task_assigned', 'task_approved', 'task_confirmed', 'extension_granted', 'extension_denied', 'calendar_decision', 'task_priority_escalated'].includes(notif.type)) {
                         const who = formatDisplayName(notif.createdByName) || 'Vadovas';
                         const task = notif.taskTitle ? `„${notif.taskTitle}“` : '';
                         let Icon = AlertCircle;
@@ -755,6 +755,14 @@ export default function ManagerNotifications({ onClose }) {
                             case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis priimta: ${task}`; break;
                             case 'extension_granted': Icon = TimeGrantedGlyph; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
                             case 'extension_denied': Icon = TimeDeniedGlyph; tone = 'text-feedback-danger'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
+                            case 'task_priority_escalated': {
+                                // System notice: a deadline closed in, so the task's priority was auto-raised.
+                                Icon = Clock;
+                                tone = notif.priorityLabel === 'Skubus' ? 'text-feedback-danger' : 'text-brand';
+                                const lvl = notif.priorityLabel ? `„${notif.priorityLabel}“` : 'aukštesnį';
+                                text = `Artėja terminas — ${task ? `${task} ` : ''}prioritetas pakeltas į ${lvl}.`;
+                                break;
+                            }
                             case 'calendar_decision': {
                                 const approved = notif.decision === 'approved';
                                 Icon = approved ? CheckCircle2 : XCircle;
