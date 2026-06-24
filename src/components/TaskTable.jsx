@@ -602,7 +602,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                 {canManage && task.status === 'completed' && task.status !== 'confirmed' && (
                                     isSelfDirectedTask(task) ? (
                                         // Self-directed work: same confirm path, distinct tone. The amber
-                                        // "review" framing (Eye icon + "savarankišką darbą" copy) reads as
+                                        // "review" framing (Eye icon + "savarankišką veiklą" copy) reads as
                                         // "self-directed, give it a glance" rather than a normal hand-off, so
                                         // the manager still vets work that would otherwise have closed silently.
                                         <Button
@@ -612,7 +612,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                             className="border-feedback-warning-border bg-feedback-warning-soft text-feedback-warning-text hover:bg-feedback-warning-soft hover:brightness-95"
                                             onClick={() => handleConfirmTask(task.id)}
                                         >
-                                            Peržiūrėti savarankišką darbą
+                                            Peržiūrėti savarankišką veiklą
                                         </Button>
                                     ) : (
                                         <Button variant="primary" size="md" icon={CheckCircle2} onClick={() => handleConfirmTask(task.id)}>
@@ -669,7 +669,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             )}
                             <th className="px-2 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider">Užduotis</th>
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.user)}>
-                                {gc ? <HeaderCell label="Darb." sortMode={sortCols.user} sort={gc.sort} filter={filters.user} filterLabel="Filtruoti pagal vykdytoją" /> : 'Darb.'}
+                                {gc ? <HeaderCell label="Vykd." sortMode={sortCols.user} sort={gc.sort} filter={filters.user} filterLabel="Filtruoti pagal vykdytoją" /> : 'Vykd.'}
                             </th>
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.priority)}>
                                 {gc ? <HeaderCell label="Prior." sortMode={sortCols.priority} sort={gc.sort} filter={filters.priority} filterLabel="Filtruoti pagal prioritetą" /> : 'Prior.'}
@@ -896,7 +896,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                     isSelfDirectedTask(task) ? (
                                                         <IconButton
                                                             icon={Eye}
-                                                            label="Peržiūrėti savarankišką darbą"
+                                                            label="Peržiūrėti savarankišką veiklą"
                                                             variant="default"
                                                             className="border border-feedback-warning-border bg-feedback-warning-soft text-feedback-warning-text hover:bg-feedback-warning-soft hover:brightness-95"
                                                             onClick={() => handleConfirmTask(task.id)}

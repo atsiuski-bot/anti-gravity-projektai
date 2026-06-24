@@ -4,9 +4,9 @@ import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiv
 import { useTimerState } from '../hooks/useTimerState';
 import { Coffee, Play, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
-import clsx from 'clsx';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import SessionToggleButton from './ui/SessionToggleButton';
 
 export default function BreakTimer({ currentUser: _propUser, compact = false, hideLabel = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
@@ -99,27 +99,21 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             <div className="flex flex-col items-center">
                 {/* Live time is surfaced by ActiveSessionReadout above the bar, so the column
                     itself stays as short as button + label (no reserved readout row). */}
-                <button
-                    onClick={handleToggleBreak}
+                <SessionToggleButton
+                    session="break"
+                    variant="compact"
+                    active={isTakingBreak}
                     disabled={isDisabled}
-                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
-                    className={clsx(
-                        "inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
-                        isDisabled
-                            ? "opacity-50 cursor-not-allowed bg-surface-sunken text-ink-muted"
-                            : isTakingBreak
-                                ? 'bg-session-break-accent text-white ring-2 ring-session-break-shell'
-                                : 'bg-surface-sunken text-ink hover:bg-line'
-                    )}
-                    title={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    onClick={handleToggleBreak}
+                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    title={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                 >
                     {isTakingBreak ? (
                         <Play className="w-5 h-5 fill-current" aria-hidden="true" />
                     ) : (
                         <Coffee className="w-5 h-5" aria-hidden="true" />
                     )}
-                </button>
+                </SessionToggleButton>
 
                 {/* Always-visible text label so color/icon is never the sole signal (WCAG 1.4.1).
                     Suppressed only in the collapsed side rail (`hideLabel`), where the icon SHAPE
@@ -149,24 +143,19 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             )}
 
             <div className="flex flex-col items-stretch">
-                <button
-                    onClick={handleToggleBreak}
+                <SessionToggleButton
+                    session="break"
+                    variant="labeled"
+                    active={isTakingBreak}
                     disabled={isDisabled}
-                    aria-label={isTakingBreak ? "Tęsti darbą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
-                    className={clsx(
-                        "inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2.5 rounded-control text-body font-medium transition-colors shadow-sm",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
-                        isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border border-line" :
-                            isTakingBreak
-                                ? 'bg-session-break-surface text-session-break-accent hover:bg-session-break-shell border border-session-break-soft'
-                                : 'bg-surface-card text-ink hover:bg-surface-sunken border border-line'
-                    )}
+                    onClick={handleToggleBreak}
+                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
                     title={isDisabled ? getInterruptionReason(activeSessionType) : ""}
                 >
                     {isTakingBreak ? (
                         <>
                             <Play className="w-4 h-4 fill-current" aria-hidden="true" />
-                            Tęsti darbą
+                            Tęsti veiklą
                         </>
                     ) : (
                         <>
@@ -174,7 +163,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                             Pertrauka
                         </>
                     )}
-                </button>
+                </SessionToggleButton>
 
                 {error && (
                     <div className="mt-2 flex items-start gap-2 rounded-control border-l-4 border-feedback-danger bg-feedback-danger/10 p-2" role="alert">

@@ -24,7 +24,7 @@ export function getNavSections(userRole) {
                 id: 'mine',
                 label: 'Mano',
                 items: [
-                    { id: 'my-tasks', label: 'Darbai', icon: TasksGlyph },
+                    { id: 'my-tasks', label: 'Veiklos', icon: TasksGlyph },
                     { id: 'my-calendar', label: 'Kalendorius', icon: CalendarGlyph },
                     { id: 'my-reports', label: 'Ataskaitos', icon: ReportsGlyph },
                 ],
@@ -33,7 +33,7 @@ export function getNavSections(userRole) {
                 id: 'team',
                 label: 'Komanda',
                 items: [
-                    { id: 'tasks', label: 'Kom. darbai', icon: TasksTeamGlyph },
+                    { id: 'tasks', label: 'Kom. veiklos', icon: TasksTeamGlyph },
                     { id: 'team-calendar', label: 'Kom. kalendorius', icon: CalendarTeamGlyph },
                     { id: 'reports', label: 'Kom. ataskaitos', icon: ReportsTeamGlyph },
                 ],
@@ -56,7 +56,7 @@ export function getNavSections(userRole) {
             id: 'main',
             label: null,
             items: [
-                { id: 'tasks', label: 'Darbai', icon: TasksGlyph },
+                { id: 'tasks', label: 'Veiklos', icon: TasksGlyph },
                 { id: 'calendar', label: 'Kalendorius', icon: CalendarGlyph },
                 { id: 'reports', label: 'Ataskaitos', icon: ReportsGlyph },
                 { id: 'team-calendar', label: 'Kom. kalendorius', icon: CalendarTeamGlyph },

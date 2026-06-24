@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useLayoutEffect, Fragment } from 'react';
 import { db, storage } from '../firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate } from 'lucide-react';
@@ -1009,23 +1009,18 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 // Create notification if task needs approval
                 // Use activeAuditorId here to ensure the notification goes to the CORRECT person (Default Manager)
                 if (initialStatus === 'unapproved' && activeAuditorId) {
-                    try {
-                        await addDoc(collection(db, 'request_notifications'), {
-                            recipientId: activeAuditorId,
-                            type: 'task_approval',
-                            taskId: docRef.id,
-                            taskTitle: taskData.title,
-                            estimatedTime: taskData.estimatedTime || null,
-                            description: taskData.description || null,
-                            isRead: false,
-                            createdAt: new Date().toISOString(),
-                            createdBy: currentUser.uid,
-                            createdByName: currentUser.displayName || currentUser.email
-                        });
-
-                    } catch (notifError) {
-                        console.error('Error creating notification:', notifError);
-                    }
+                    // Creator-authored (actorUid → createdBy); notify() stamps provenance + the registry
+                    // category and swallows its own write errors.
+                    await notify({
+                        recipientId: activeAuditorId,
+                        type: 'task_approval',
+                        taskId: docRef.id,
+                        taskTitle: taskData.title,
+                        estimatedTime: taskData.estimatedTime || null,
+                        description: taskData.description || null,
+                        actorUid: currentUser.uid,
+                        actorName: currentUser.displayName || currentUser.email,
+                    });
                 }
 
                 // A manager created a task FOR a worker → tell that worker it landed in their list.
@@ -1221,7 +1216,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 <div className="flex justify-between items-center gap-2 px-4 py-2.5 border-b border-line flex-shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
                         <h2 id="task-modal-title" className="text-lg font-bold text-ink-strong truncate min-w-0">
-                            {isSavingTemplate ? (editingTemplateId ? 'Redaguoti šabloną' : 'Išsaugoti šabloną') : (editTemplate ? 'Redaguoti šabloną' : (task ? 'Redaguoti užduotį' : 'Naujas darbas'))}
+                            {isSavingTemplate ? (editingTemplateId ? 'Redaguoti šabloną' : 'Išsaugoti šabloną') : (editTemplate ? 'Redaguoti šabloną' : (task ? 'Redaguoti užduotį' : 'Nauja veikla'))}
                         </h2>
                         {/* Template-edit badge — makes it unmistakable that saving updates the TEMPLATE,
                             not a one-off task. */}
@@ -1273,10 +1268,10 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                 <div className="rounded-control bg-brand/10 border border-brand/30 p-3">
                                     <p className="flex items-center gap-2 text-body font-medium text-ink-strong">
                                         <Check className="h-4 w-4 text-feedback-success" aria-hidden="true" />
-                                        Darbas sukurtas
+                                        Veikla sukurta
                                     </p>
                                     <p className="mt-1 text-sm text-ink-muted">
-                                        Panašų darbą kūrėte jau {templateSuggestion.total} kartą. Išsaugoti kaip šabloną, kad kitą kartą būtų greičiau? (Galite ir praleisti.)
+                                        Panašią veiklą kūrėte jau {templateSuggestion.total} kartą. Išsaugoti kaip šabloną, kad kitą kartą būtų greičiau? (Galite ir praleisti.)
                                     </p>
                                 </div>
                             )}
@@ -1353,7 +1348,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             loading={aiBusy}
                                             disabled={fieldsLocked}
                                             onClick={handleAiParse}
-                                            title="AI: paversti tekstą darbu"
+                                            title="AI: paversti tekstą veikla"
                                             className="shrink-0"
                                         >
                                             AI
@@ -1750,7 +1745,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     </label>
                                     {createAsTemplate && (
                                         <p className="mt-1 pl-8 text-caption text-ink-muted">
-                                            Bus sukurtas šablonas su užpildytais laukais (darbas nebus sukurtas).
+                                            Bus sukurtas šablonas su užpildytais laukais (veikla nebus sukurta).
                                         </p>
                                     )}
                                 </div>
@@ -1806,12 +1801,12 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                             onClick={() => { setIsPickingTemplate(false); handleSaveTemplateClick(); }}
                         >
                             <Plus className="h-4 w-4" aria-hidden="true" />
-                            Išsaugoti dabartinį darbą kaip šabloną
+                            Išsaugoti dabartinę veiklą kaip šabloną
                         </Button>
 
                         {groupedTemplates.length === 0 ? (
                             <p className="py-6 text-center text-body text-ink-muted">
-                                Šablonų dar nėra. Išsaugokite dabartinį darbą kaip šabloną, kad kitą kartą būtų greičiau.
+                                Šablonų dar nėra. Išsaugokite dabartinę veiklą kaip šabloną, kad kitą kartą būtų greičiau.
                             </p>
                         ) : (
                             <div className="space-y-4">

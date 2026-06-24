@@ -33,7 +33,7 @@ const buildPlan = (input, actor) => {
 
   const payload = {
     ...fields,
-    title: (fields.title || '').trim() || 'Darbas',
+    title: (fields.title || '').trim() || 'Veikla',
     priority: normalizePriority(fields.priority),
     estimatedTime,
     estimatedTimeMinutes: parseTimeStringToMinutes(estimatedTime),

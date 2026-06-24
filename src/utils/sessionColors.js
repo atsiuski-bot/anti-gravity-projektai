@@ -1,4 +1,4 @@
-import { Zap, Phone, Coffee, Briefcase } from 'lucide-react';
+import { Zap, Phone, Coffee, Hammer } from 'lucide-react';
 
 /**
  * SESSION_COLORS — the single source of truth for session-state presentation
@@ -29,7 +29,7 @@ export const SESSION_TYPES = ['quickWork', 'call', 'break', 'task'];
 export const SESSION_COLORS = {
     quickWork: {
         type: 'quickWork',
-        label: 'Greitas darbas',
+        label: 'Greita veikla',
         Icon: Zap,
         shell: 'bg-session-quickWork-shell',
         surface: 'bg-session-quickWork-surface',
@@ -62,8 +62,8 @@ export const SESSION_COLORS = {
     },
     task: {
         type: 'task',
-        label: 'Vyksta darbas',
-        Icon: Briefcase,
+        label: 'Vyksta veikla',
+        Icon: Hammer,
         shell: 'bg-session-task-shell',
         surface: 'bg-session-task-surface',
         accent: 'text-session-task-accent',

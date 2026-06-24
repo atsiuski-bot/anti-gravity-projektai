@@ -145,7 +145,7 @@ ATASKAITOS PABAIGA
                                 <h2 className="text-body font-semibold text-ink mb-2">Klaidos pranešimas:</h2>
                                 <div className="bg-feedback-danger-soft border border-feedback-danger-border p-4 rounded-card">
                                     <p className="text-body text-feedback-danger-text break-words">
-                                        Programoje įvyko netikėta klaida ir ji negali tęsti darbo. Tikslią techninę informaciją rasite žemiau, ją galite nukopijuoti ir nusiųsti administratoriui.
+                                        Programoje įvyko netikėta klaida ir ji negali tęsti veiklos. Tikslią techninę informaciją rasite žemiau, ją galite nukopijuoti ir nusiųsti administratoriui.
                                     </p>
                                 </div>
                             </div>

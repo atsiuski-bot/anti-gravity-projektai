@@ -219,7 +219,7 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
             } catch (err) {
                 if (cancelled) return;
                 logError(err, { source: 'BulkReassignModal.load', workerId: worker.id });
-                setLoadError('Nepavyko užkrauti darbuotojo užduočių. Bandykite dar kartą.');
+                setLoadError('Nepavyko užkrauti vykdytojo užduočių. Bandykite dar kartą.');
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -306,7 +306,7 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
         <Modal
             open
             onClose={submitting ? undefined : onClose}
-            title={`Perskirti darbus — ${workerName}`}
+            title={`Perskirti veiklas — ${workerName}`}
             size="lg"
             dismissible={!submitting}
             closeOnBackdrop={false}
@@ -343,17 +343,17 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
             ) : eligible.length === 0 ? (
                 <EmptyState
                     icon={ClipboardList}
-                    title="Nėra perskirstytinų darbų"
+                    title="Nėra perskirstytinų veiklų"
                     description={
                         windowEnd
-                            ? 'Visi atviri darbai turi terminą po darbuotojo grįžimo arba neturi termino — juos darbuotojas spės atlikti pats.'
-                            : 'Darbuotojas neturi pažymėto nebuvimo laikotarpio, todėl perskirstytinų darbų nustatyti negalima.'
+                            ? 'Visos atviros veiklos turi terminą po vykdytojo grįžimo arba neturi termino — jas vykdytojas spės atlikti pats.'
+                            : 'Vykdytojas neturi pažymėto nebuvimo laikotarpio, todėl perskirstytinų veiklų nustatyti negalima.'
                     }
                 />
             ) : (
                 <div className="space-y-4">
                     <p className="text-body text-ink-muted">
-                        {`Šie atviri darbai turi terminą, kurio darbuotojas nespės įvykdyti iki grįžimo${windowEnd ? ` (nebuvimas iki ${windowEnd})` : ''}. Pasirinkite, ką perskirti, ir kam.`}
+                        {`Šios atviros veiklos turi terminą, kurio vykdytojas nespės įvykdyti iki grįžimo${windowEnd ? ` (nebuvimas iki ${windowEnd})` : ''}. Pasirinkite, ką perskirti, ir kam.`}
                     </p>
 
                     <div>
@@ -373,7 +373,7 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
 
                     <div>
                         <div className="mb-2 flex items-center justify-between">
-                            <span className="text-caption font-medium text-ink-muted">{`Darbai (${eligible.length})`}</span>
+                            <span className="text-caption font-medium text-ink-muted">{`Veiklos (${eligible.length})`}</span>
                             <button
                                 type="button"
                                 onClick={toggleAll}
@@ -396,7 +396,7 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
 
                     {ineligibleCount > 0 && (
                         <p className="text-caption text-ink-muted">
-                            {`Dar ${ineligibleCount} atvir(as/i) darb(as/ai) liko nepasiūlyti — be termino arba su terminu po grįžimo.`}
+                            {`Dar ${ineligibleCount} atvir(a/os) veikl(a/os) liko nepasiūlytos — be termino arba su terminu po grįžimo.`}
                         </p>
                     )}
                 </div>
@@ -422,7 +422,7 @@ export default function UserProfileModal({ userId, onClose }) {
     const { currentUser, userData, userRole } = useAuth();
     const { achievements } = useAchievements(userId);
     const [tab, setTab] = useState('achievements');
-    // Bulk "Perskirti darbus" flow — opens a self-contained modal that loads this worker's open
+    // Bulk "Perskirti veiklas" flow — opens a self-contained modal that loads this worker's open
     // tasks + absence window and reassigns the unfinishable ones onto someone present.
     const [reassignOpen, setReassignOpen] = useState(false);
 
@@ -563,7 +563,7 @@ export default function UserProfileModal({ userId, onClose }) {
             {canReassign && tab === 'achievements' && (
                 <div className="mt-4 flex justify-center">
                     <Button variant="secondary" icon={UserCog} onClick={() => setReassignOpen(true)}>
-                        Perskirti darbus
+                        Perskirti veiklas
                     </Button>
                 </div>
             )}
@@ -571,7 +571,7 @@ export default function UserProfileModal({ userId, onClose }) {
             {showStats ? (
                 <div className="mt-5 space-y-4">
                     {/* Period selector in its own row, separate from the report's hour totals —
-                        same chip ladder + custom range as the team "Darbo ataskaita" tab. */}
+                        same chip ladder + custom range as the team "Veiklos ataskaita" tab. */}
                     <PeriodPicker
                         presets={PERIOD_PRESETS}
                         activeId={statsPeriod}

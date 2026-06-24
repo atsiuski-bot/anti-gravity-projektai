@@ -20,6 +20,17 @@ import EmptyState from './ui/EmptyState';
 import { isScopedOverseer, scopeRoster, isOverseenBy, canSeeWholeTeam } from '../utils/teamScope';
 import { endSessionForUser } from '../utils/sessionAdmin';
 
+// When the panel flags a live session as "galimai pasenusi" (probably a dead-phone ghost) and
+// offers the manager a force-end. A break legitimately lasts minutes, never hours, so a multi-hour
+// one is almost certainly forgotten — and force-ending it (endSessionForUser only CLEARS the flag,
+// no record) loses no real work, because a break is non-work. So break flags at a far lower bar.
+// Call, quick-work, and task are real WORK that a force-end would DISCARD, so they keep the
+// conservative 16h ceiling — a manager must not be nudged to throw away a genuinely long run
+// (the server net closes a forgotten call/quick-work by CREDITING it, not discarding it).
+const BREAK_STALE_MINUTES = 4 * 60;
+const staleThresholdMs = (type) =>
+    (type === 'break' ? BREAK_STALE_MINUTES : MAX_SESSION_MINUTES) * 60 * 1000;
+
 export default function ActiveWorkSessions({ embedded = false }) {
     const { users: allUsers, loading: usersLoading } = useUsers();
     const { currentUser, userData } = useAuth();
@@ -123,7 +134,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
                 case 'quickWork':
                     displayProps = {
                         type: 'quickWork',
-                        label: 'Greitas darbas',
+                        label: 'Greita veikla',
                         colorClass: `${getSessionColors('quickWork').surface} ${getSessionColors('quickWork').accent}`,
                         startTime: user.activeSession.startTime
                     };
@@ -236,8 +247,8 @@ export default function ActiveWorkSessions({ embedded = false }) {
         <ConfirmDialog
             open
             title="Užbaigti sesiją?"
-            message={`Priverstinai užbaigti ${endTarget.displayName || endTarget.email} sesiją. Vykdoma užduotis bus pristabdyta ir užfiksuotas darbo laikas; pertraukos / skambučio likutis bus tik išvalytas. Paskyra NEBUS užblokuota.`}
-            warning="Naudokite tik kai sesija įstrigo (telefonas išsijungė ar programa užsidarė), o darbuotojas pats jos užbaigti nebegali."
+            message={`Priverstinai užbaigti ${endTarget.displayName || endTarget.email} sesiją. Vykdoma užduotis bus pristabdyta ir užfiksuotas veiklos laikas; pertraukos / skambučio likutis bus tik išvalytas. Paskyra NEBUS užblokuota.`}
+            warning="Naudokite tik kai sesija įstrigo (telefonas išsijungė ar programa užsidarė), o vykdytojas pats jos užbaigti nebegali."
             confirmLabel="Užbaigti sesiją"
             cancelLabel="Atšaukti"
             loading={ending}
@@ -272,7 +283,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
         </>
     );
 
-    // Embedded in the "Aktyvūs darbai" sub-tab: the tab itself is the frame, so there is no
+    // Embedded in the "Aktyvios veiklos" sub-tab: the tab itself is the frame, so there is no
     // collapse chrome. An empty roster shows an explicit empty state instead of returning null —
     // a blank tab reads as broken (this is the bug where the panel "disappeared" when nobody
     // was working).
@@ -291,7 +302,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
                     <EmptyState
                         icon={Activity}
                         title="Nėra aktyvios veiklos"
-                        description="Kai komandos nariai pradės darbą, pertrauką ar skambutį, jie pasirodys čia."
+                        description="Kai komandos nariai pradės veiklą, pertrauką ar skambutį, jie pasirodys čia."
                     />
                 )}
                 {endDialog}
@@ -330,10 +341,11 @@ export default function ActiveWorkSessions({ embedded = false }) {
 // Helper Component for Active Session Row to manage own timer
 const ActiveSessionRow = React.memo(({ session, canEnd = false, onEnd }) => {
     const [durationStr, setDurationStr] = useState('');
-    // A session whose wall-clock start is more than a full max-session ago is almost
-    // certainly stale (the worker's app was killed / phone died without ever ending it),
-    // not a genuinely live session. We flag it so the manager can tell a 9h "break" caused
-    // by a dead phone apart from a real one — the panel otherwise shows them identically.
+    // A session whose wall-clock start is older than its type's plausibility window is almost
+    // certainly stale (the worker's app was killed / phone died without ever ending it), not a
+    // genuinely live session. We flag it so the manager can tell a 9h "break" caused by a dead
+    // phone apart from a real one — the panel otherwise shows them identically. The window is
+    // short for break and the full 16h ceiling for call/quick-work/task (see staleThresholdMs).
     const [isStale, setIsStale] = useState(false);
     // Live share of planned time for a task row (drives the progress bar). Re-evaluated on the
     // same timer as the elapsed counter so the bar grows with the work.
@@ -355,7 +367,7 @@ const ActiveSessionRow = React.memo(({ session, canEnd = false, onEnd }) => {
         const updateStale = () => {
             if (!session.startTime) { setIsStale(false); return; }
             const ageMs = Date.now() - new Date(session.startTime).getTime();
-            setIsStale(Number.isFinite(ageMs) && ageMs > MAX_SESSION_MINUTES * 60 * 1000);
+            setIsStale(Number.isFinite(ageMs) && ageMs > staleThresholdMs(session.type));
         };
 
         const updateTime = () => {

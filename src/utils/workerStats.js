@@ -273,7 +273,7 @@ export function computeWorkerStats(raw, window, opts = {}) {
         // G1 — Apimtis ir laikas
         totalHours: totalWorkMin > 0 ? totalWorkMin / 60 : (activeDays ? 0 : null),
         // Exact minutes (work + break) kept alongside the rounded `totalHours` so the on-screen
-        // team summary can render the Darbas/Pertraukos/Viso triplet to the minute, matching the
+        // team summary can render the Veikla/Pertraukos/Viso triplet to the minute, matching the
         // timeline's own totals. Inert to the export (not a STAT_GROUPS metric key).
         totalWorkMinutes: totalWorkMin,
         totalBreakMinutes: totalBreakMin,
@@ -391,14 +391,14 @@ export const STAT_GROUPS = [
             { key: 'weekConsistency', label: 'Dienų per savaitę (vid.)', kind: 'rate', goodWhen: 'neutral' },
             { key: 'avgPerDay', label: 'Vid. per dieną', kind: 'hours', goodWhen: 'up' },
             { key: 'normCoverage', label: 'Normos padengimas', kind: 'pct', goodWhen: 'up', hint: 'Vid. savaitės valandos prieš nustatytą savaitės normą.' },
-            { key: 'productivePct', label: 'Produktyvus laikas', kind: 'pct', goodWhen: 'up', hint: 'Darbo laikas iš viso prie darbo + pertraukų laiko.' },
+            { key: 'productivePct', label: 'Produktyvus laikas', kind: 'pct', goodWhen: 'up', hint: 'Veiklos laikas iš viso prie veiklos + pertraukų laiko.' },
         ],
     },
     {
         key: 'rhythm',
         title: 'Dienos ritmas',
         metrics: [
-            { key: 'avgDayLength', label: 'Vid. darbo dienos ilgis', kind: 'hours', goodWhen: 'neutral', hint: 'Nuo pirmo starto iki paskutinės pabaigos, atėmus pertraukas.' },
+            { key: 'avgDayLength', label: 'Vid. veiklos dienos ilgis', kind: 'hours', goodWhen: 'neutral', hint: 'Nuo pirmo starto iki paskutinės pabaigos, atėmus pertraukas.' },
             { key: 'avgStart', label: 'Vid. starto valanda', kind: 'clock', goodWhen: 'neutral' },
             { key: 'avgEnd', label: 'Vid. pabaigos valanda', kind: 'clock', goodWhen: 'neutral' },
             { key: 'avgSpan', label: 'Dienos tįsumas', kind: 'hours', goodWhen: 'neutral', hint: 'Nuo pirmo starto iki paskutinės pabaigos, įskaitant tarpus.' },
@@ -420,7 +420,7 @@ export const STAT_GROUPS = [
         key: 'discipline',
         title: 'Punktualumas ir disciplina',
         metrics: [
-            { key: 'onTimePct', label: 'Punktualus startas', kind: 'pct', goodWhen: 'up', hint: `Dienos, kai darbas pradėtas ≤ ${ON_TIME_GRACE_MIN} min. po planuotos pamainos pradžios.` },
+            { key: 'onTimePct', label: 'Punktualus startas', kind: 'pct', goodWhen: 'up', hint: `Dienos, kai veikla pradėta ≤ ${ON_TIME_GRACE_MIN} min. po planuotos pamainos pradžios.` },
             { key: 'avgLatenessMin', label: 'Vid. vėlavimas', kind: 'minutes', goodWhen: 'down' },
             { key: 'planCoveragePct', label: 'Plano padengimas', kind: 'pct', goodWhen: 'up', hint: 'Faktinės valandos prieš planuotas pamainų valandas.' },
             { key: 'plannedVsWorkedDaysPct', label: 'Suplanuotos dienos atidirbtos', kind: 'pct', goodWhen: 'up' },
@@ -445,7 +445,7 @@ export const STAT_GROUPS = [
         title: 'Pertraukos ir sudėtis',
         metrics: [
             { key: 'avgBreakPerDay', label: 'Vid. pertraukų per dieną', kind: 'minutes', goodWhen: 'neutral' },
-            { key: 'breakSharePct', label: 'Pertraukų dalis', kind: 'pct', goodWhen: 'down', hint: 'Pertraukų laikas iš viso prie darbo + pertraukų laiko.' },
+            { key: 'breakSharePct', label: 'Pertraukų dalis', kind: 'pct', goodWhen: 'down', hint: 'Pertraukų laikas iš viso prie veiklos + pertraukų laiko.' },
             { key: 'avgBreakCount', label: 'Vid. pertraukų skaičius', kind: 'rate', goodWhen: 'neutral' },
             { key: 'timeSplit', label: 'Laiko pasiskirstymas', kind: 'split', goodWhen: 'neutral' },
             { key: 'highPriorityPct', label: 'Skubių / aukštų dalis', kind: 'pct', goodWhen: 'neutral', hint: 'Užbaigtos aukšto ir skubaus prioriteto užduotys.' },

@@ -67,7 +67,7 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
         <Modal
             open={open}
             onClose={onClose}
-            title="Uždarbis už šį darbą"
+            title="Uždarbis už šią veiklą"
             size="sm"
             footer={<Button variant="primary" fullWidth onClick={onClose}>Gerai</Button>}
         >
@@ -79,7 +79,7 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
                 <div className="space-y-4">
                     <div className="flex items-center justify-center gap-2 text-ink-muted">
                         <Wallet className="h-5 w-5" aria-hidden="true" />
-                        <span className="text-body">{task?.title || 'Darbas'} · {formatHours(taskHours)}</span>
+                        <span className="text-body">{task?.title || 'Veikla'} · {formatHours(taskHours)}</span>
                     </div>
 
                     <div className="rounded-card border border-line bg-surface-sunken/40 p-4 text-center">

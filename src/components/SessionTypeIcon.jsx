@@ -1,4 +1,4 @@
-import { Briefcase } from 'lucide-react';
+import { Hammer } from 'lucide-react';
 import { getSessionColors } from '../utils/sessionColors';
 import { cn } from '../utils/cn';
 
@@ -11,7 +11,7 @@ export default function SessionTypeIcon({ type, className }) {
     const session = getSessionColors(type);
 
     if (!session) {
-        return <Briefcase className={cn('text-session-task-accent', className)} aria-hidden="true" />;
+        return <Hammer className={cn('text-session-task-accent', className)} aria-hidden="true" />;
     }
 
     const Icon = session.Icon;
