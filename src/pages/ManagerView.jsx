@@ -36,6 +36,7 @@ import { cn } from '../utils/cn';
 const AllUsersCalendar = React.lazy(() => import('../components/AllUsersCalendar'));
 const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
 const Reports = React.lazy(() => import('../components/Reports'));
+const CalendarChangeHistory = React.lazy(() => import('../components/CalendarChangeHistory'));
 const AuditDashboard = React.lazy(() => import('../components/AuditDashboard'));
 
 export default function ManagerView() {
@@ -46,6 +47,9 @@ export default function ManagerView() {
     const [viewMode, setViewMode] = useState('desktop');
     // Komandos darbai splits into two sub-tabs: live activity first, the task list second.
     const [teamTasksSubTab, setTeamTasksSubTab] = useState('active');
+    // Komandos kalendorius splits into two sub-tabs: the live calendar, then the calendar-change
+    // history (moved out of Kom. ataskaitos to sit beside the calendar it describes).
+    const [teamCalendarSubTab, setTeamCalendarSubTab] = useState('calendar');
 
     // Use custom hooks
     const { tasks, ownTasks, users, allUsers, manualTaskOrder, saveManualOrder, error } = useManagerData(currentUser);
@@ -556,14 +560,64 @@ export default function ManagerView() {
 
             {activeTab === 'team-calendar' && (
                 <div className="space-y-6">
-                    {/* Komandos darbai (Savaitės): the weekly planned-vs-worked summary moved here
-                        from Kom. darbai — it belongs beside the team calendar it summarises. */}
-                    <CombinedHoursSummary />
-                    <ErrorBoundary boundaryName="manager:team-calendar">
-                        <React.Suspense fallback={<Spinner />}>
-                            <AllUsersCalendar />
-                        </React.Suspense>
-                    </ErrorBoundary>
+                    {/* Two sub-tabs, same segmented control as the Kom. ataskaitos switcher:
+                        Kalendorius (the live calendar) and Kalendoriaus istorija (the calendar-change
+                        log, moved here from Kom. ataskaitos to sit beside the calendar it describes). */}
+                    <div role="tablist" aria-label="Komandos kalendoriaus rodinys">
+                        <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={teamCalendarSubTab === 'calendar'}
+                                onClick={() => setTeamCalendarSubTab('calendar')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamCalendarSubTab === 'calendar' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                Kalendorius
+                            </button>
+                            <div className="w-px bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={teamCalendarSubTab === 'history'}
+                                onClick={() => setTeamCalendarSubTab('history')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamCalendarSubTab === 'history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                Kalendoriaus istorija
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Conditional MOUNT (not display:none): react-big-calendar measures its grid
+                        geometry at mount, so it must mount into a laid-out container — switching away
+                        and back remounts it correctly, and the history listener only runs on its tab. */}
+                    {teamCalendarSubTab === 'calendar' && (
+                        <>
+                            {/* Komandos darbai (Savaitės): the weekly planned-vs-worked summary moved
+                                here from Kom. darbai — it belongs beside the calendar it summarises. */}
+                            <CombinedHoursSummary />
+                            <ErrorBoundary boundaryName="manager:team-calendar">
+                                <React.Suspense fallback={<Spinner />}>
+                                    <AllUsersCalendar />
+                                </React.Suspense>
+                            </ErrorBoundary>
+                        </>
+                    )}
+
+                    {teamCalendarSubTab === 'history' && (
+                        <ErrorBoundary boundaryName="manager:team-calendar-history">
+                            <React.Suspense fallback={<Spinner />}>
+                                <CalendarChangeHistory users={reportRoster} />
+                            </React.Suspense>
+                        </ErrorBoundary>
+                    )}
                 </div>
             )}
 

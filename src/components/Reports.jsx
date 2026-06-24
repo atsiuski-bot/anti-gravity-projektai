@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, getDocs, orderBy, doc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, calculateCurrentTotalMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, scopeRoster } from '../utils/teamScope';
-import { absenceLabel } from '../utils/absence';
 import { cn } from '../utils/cn';
 import { addComment } from '../utils/commentActions';
 import { gatherReportData } from '../utils/reportData';
@@ -83,17 +82,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         endDate: getLithuanianDateString(),
     });
 
-    // --- CALENDAR HISTORY STATE ---
-    // Same from/to range model as the work report (defaults to the current month so far), driven
-    // by the identical collapsible period picker. `historyPeriod` tracks the active preset for the
-    // collapsed label; `historyPeriodOpen` toggles the picker panel.
-    const [historyRange, setHistoryRange] = useState(() => {
-        const today = getLithuanianDateString();
-        return { start: `${today.slice(0, 7)}-01`, end: today };
-    });
-    const [historyPeriod, setHistoryPeriod] = useState('month'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
-    const [historyPeriodOpen, setHistoryPeriodOpen] = useState(false);
-    const [calendarHistory, setCalendarHistory] = useState([]);
     const [filteredTasks, setFilteredTasks] = useState([]);
     const [taskSort, setTaskSort] = useState('date_desc'); // date_desc, date_asc, time_desc, time_asc
 
@@ -114,14 +102,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchWorkHours is recreated each render; intentionally refetch only on tab/period/range change
     }, [activeTab, reportPeriod, dateRange.start, dateRange.end]);
-
-    // Fetch Calendar History
-    useEffect(() => {
-        if (activeTab === 'calendar-history') {
-            fetchCalendarHistory();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchCalendarHistory is recreated each render; intentionally refetch only on tab/range change
-    }, [activeTab, historyRange.start, historyRange.end]);
 
     // Fetch Tasks Data
     useEffect(() => {
@@ -504,38 +484,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         }
     };
 
-    const fetchCalendarHistory = async () => {
-        setLoading(true);
-        try {
-            const startStr = `${historyRange.start}T00:00:00.000Z`;
-            const endStr = `${historyRange.end}T23:59:59.999Z`;
-
-            const q = query(
-                collection(db, 'calendar_requests'),
-                where('createdAt', '>=', startStr),
-                where('createdAt', '<=', endStr),
-                orderBy('createdAt', 'desc')
-            );
-
-            const snap = await getDocs(q);
-            const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-            // If it's a worker, only show their own history
-            const isManager = isManagerRole(userRole);
-            if (!isManager) {
-                setCalendarHistory(data.filter(item => item.userId === currentUser.uid));
-            } else {
-                setCalendarHistory(data);
-            }
-            setError('');
-        } catch (error) {
-            console.error("Error fetching calendar history:", error);
-            setError('Nepavyko užkrauti kalendoriaus istorijos. Patikrinkite ryšį ir bandykite dar kartą.');
-        } finally {
-            setLoading(false);
-        }
-    };
-
     const handleToggleConfirm = async (task) => {
         try {
             if (task.isArchived) {
@@ -668,16 +616,6 @@ export default function Reports({ users, canExport = false, viewRole }) {
         setReportPeriod(period);
         setPeriodOpen(false);
         if (period !== 'day') applyPreset(period);
-    };
-
-    // Calendar-history period picker — same collapsible modal + preset logic as the work report,
-    // but every preset (including 'day') resolves to a from/to range, since history is always a
-    // range query (there is no special daily-timeline mode here).
-    const chooseHistoryPeriod = (period) => {
-        setHistoryPeriod(period);
-        setHistoryPeriodOpen(false);
-        const range = resolvePresetRange(period);
-        if (range) setHistoryRange(range);
     };
 
     // Group tasks by date
@@ -883,80 +821,12 @@ export default function Reports({ users, canExport = false, viewRole }) {
         </div>
     );
 
-    // Per-user "Dienos Išklotinė" panel — shared by the desktop expanded row and the mobile card
-    // (keeps the day breakdown identical across both layouts instead of duplicating ~80 lines).
-    // Derive the display fields for one calendar-history entry. Computed once and shared by the
-    // mobile card and the desktop table so both layouts stay in sync (ISSUE #17b).
-    const deriveCalendarEntry = (item) => {
-        const workerLabel = item.userName || "Nežinomas vykdytojas";
-
-        const eventStart = item.requestedEvent?.start || item.originalEvent?.start || null;
-        const eventEnd = item.requestedEvent?.end || item.originalEvent?.end || null;
-        const formatEventTime = (timeStr) => {
-            if (!timeStr) return '-';
-            const d = new Date(timeStr);
-            return `${d.toLocaleDateString('lt-LT')} ${d.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit' })}`;
-        };
-        const calendarTimeLabel = `${formatEventTime(eventStart)} – ${formatEventTime(eventEnd)}`;
-        const actionTimeLabel = new Date(item.createdAt).toLocaleString('lt-LT');
-
-        const getActionColor = (action) => {
-            if (action === 'add') return 'text-feedback-success bg-feedback-success-soft border-feedback-success-border';
-            if (action === 'delete') return 'text-feedback-danger bg-feedback-danger-soft border-feedback-danger-border';
-            return 'text-feedback-info bg-feedback-info-soft border-feedback-info-border';
-        };
-        const getActionText = (action) => {
-            if (action === 'add') return 'Pridėjo';
-            if (action === 'delete') return 'Ištrynė';
-            return 'Redagavo';
-        };
-
-        const evt = item.requestedEvent || item.originalEvent || {};
-        let TypeIcon = Briefcase;
-        let typeLabel = "Veikla";
-        let typeColor = "text-ink-muted";
-        if (evt.isVacation) {
-            TypeIcon = null;
-            typeLabel = absenceLabel(evt) || "Atostogos";
-            typeColor = "text-feedback-warning";
-        } else if (evt.isWorkFromHome) {
-            TypeIcon = null;
-            typeLabel = "Veikla namuose";
-            typeColor = "text-feedback-info";
-        }
-
-        let statusLabel = "Laukiama";
-        let statusColor = "bg-feedback-warning-soft text-feedback-warning-text";
-        if (item.status === 'approved') {
-            statusLabel = "Patvirtinta";
-            statusColor = "bg-feedback-success-soft text-feedback-success-text";
-        } else if (item.status === 'declined') {
-            statusLabel = "Atmesta";
-            statusColor = "bg-feedback-danger-soft text-feedback-danger-text";
-        }
-
-        const getManagerName = (sysId) => {
-            if (!sysId) return "-";
-            if (sysId === 'system') return 'Sistema';
-            const sysUser = users?.find(u => u.id === sysId);
-            return sysUser ? (sysUser.displayName || sysUser.email) : sysId;
-        };
-        const managerLabel = item.approvedBy ? getManagerName(item.approvedBy) : "-";
-        const reasonLabel = (item.reason === 'PlanningTime') ? "Suplanuota iš anksto" : (item.reason || "-");
-
-        return {
-            workerLabel, calendarTimeLabel, actionTimeLabel,
-            actionColor: getActionColor(item.type), actionText: getActionText(item.type),
-            TypeIcon, typeLabel, typeColor, statusLabel, statusColor, managerLabel, reasonLabel,
-        };
-    };
-
     return (
         <div className="space-y-6">
-            {/* TABS — the calendar-change-history tab is a team/oversight feature, so it only
-                appears in the manager team view. In a personal report (worker, or a manager
-                viewing their OWN data via viewRole="worker") there is just one view, so the
-                whole switcher is dropped. */}
+            {/* TABS — Darbo ataskaita / Pridavimas / Istorija. These are team/oversight surfaces,
+                so the switcher only appears in the manager team view. In a personal report (worker,
+                or a manager viewing their OWN data via viewRole="worker") there is just one view, so
+                the whole switcher is dropped. */}
             {isManagerRole(userRole) && (
                 <div role="tablist" aria-label="Ataskaitų skiltys">
                     {/* Segmented switcher — same control as the Komandos darbai sub-tabs
@@ -994,15 +864,15 @@ export default function Reports({ users, canExport = false, viewRole }) {
                         <button
                             type="button"
                             role="tab"
-                            aria-selected={activeTab === 'calendar-history'}
-                            onClick={() => setActiveTab('calendar-history')}
+                            aria-selected={activeTab === 'history'}
+                            onClick={() => setActiveTab('history')}
                             className={cn(
                                 'flex-1 sm:flex-none inline-flex items-center justify-center px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
                                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                activeTab === 'calendar-history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                activeTab === 'history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                             )}
                         >
-                            Kalendoriaus istorija
+                            Istorija
                         </button>
                     </div>
                 </div>
@@ -1184,8 +1054,10 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 </div>
             )}
 
-            {/* --- APPROVAL TAB: today's finished + awaiting-confirmation tasks and the task-history
-                archive, scoped to the tasks this manager is responsible for. --- */}
+            {/* --- PRIDAVIMAS TAB: tasks finished by the team and awaiting THIS manager's acceptance
+                (status 'completed'), scoped to the tasks they are responsible for. The accepted
+                ('confirmed') half and the archive move to the sibling "Istorija" tab, so a task
+                lives in exactly one place across the two tabs. --- */}
             {activeTab === 'approval' && (
                 <DailyStatistics
                     currentUser={currentUser}
@@ -1193,168 +1065,24 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     users={users}
                     canExport={canExport}
                     view="approval"
+                    approvalPhase="pending"
                 />
             )}
 
-            {/* --- CALENDAR HISTORY TAB CONTENT --- */}
-            {activeTab === 'calendar-history' && (
-                <div className="space-y-4">
-                    {/* Period selector — identical collapsible modal to the work report tab, so
-                        calendar filtering behaves the same everywhere in the app. */}
-                    <PeriodPicker
-                        presets={PERIOD_PRESETS}
-                        activeId={historyPeriod}
-                        onChoose={chooseHistoryPeriod}
-                        open={historyPeriodOpen}
-                        onToggle={() => setHistoryPeriodOpen((o) => !o)}
-                        label="Laikotarpis"
-                    >
-                        <div className="flex flex-col gap-3 border-t border-line pt-3 sm:flex-row sm:items-end">
-                            <div className="flex-1">
-                                <label htmlFor="history-from" className="block text-caption font-semibold text-ink-muted mb-1">Nuo</label>
-                                <DatePicker
-                                    id="history-from"
-                                    value={historyRange.start}
-                                    max={historyRange.end}
-                                    onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, start: v })); }}
-                                />
-                            </div>
-                            <div className="flex-1">
-                                <label htmlFor="history-to" className="block text-caption font-semibold text-ink-muted mb-1">Iki</label>
-                                <DatePicker
-                                    id="history-to"
-                                    value={historyRange.end}
-                                    min={historyRange.start}
-                                    max={getLithuanianDateString()}
-                                    onChange={(v) => { setHistoryPeriod('custom'); setHistoryRange(prev => ({ ...prev, end: v })); }}
-                                />
-                            </div>
-                        </div>
-                    </PeriodPicker>
-
-                    {loading && (
-                        <div className="bg-surface-card rounded-card shadow-sm">
-                            <Spinner label="Kraunami duomenys…" />
-                        </div>
-                    )}
-
-                    {!loading && !error && calendarHistory.length === 0 && (
-                        <div className="bg-surface-card p-8 rounded-card shadow-sm text-center text-ink-muted">
-                            Pagal pasirinktą laikotarpį nėra išsaugota jokių kalendoriaus pakeitimų istorijoje.
-                        </div>
-                    )}
-
-                    {!loading && calendarHistory.length > 0 && (
-                        <>
-                            {/* Mobile / touch: one card per change (never a horizontally-scrolling table — §9) */}
-                            <ul className="space-y-3 md:hidden">
-                                {calendarHistory.map((item) => {
-                                    const e = deriveCalendarEntry(item);
-                                    const { TypeIcon } = e;
-                                    return (
-                                        <li key={item.id} className="bg-surface-card rounded-card border border-line shadow-sm p-4 space-y-3">
-                                            <div className="flex items-start justify-between gap-2">
-                                                <span className="text-body font-bold text-ink-strong truncate">{e.workerLabel}</span>
-                                                <span className={`shrink-0 px-2 py-0.5 rounded-full text-caption font-bold ${e.statusColor}`}>
-                                                    {e.statusLabel}
-                                                </span>
-                                            </div>
-                                            <div className="flex flex-wrap items-center gap-2">
-                                                <span className={`px-2 py-0.5 rounded text-caption uppercase font-bold border ${e.actionColor}`}>
-                                                    {e.actionText}
-                                                </span>
-                                                <span className={`text-caption font-semibold flex items-center gap-1 ${e.typeColor}`}>
-                                                    {TypeIcon && <TypeIcon className="w-3.5 h-3.5" aria-hidden="true" />}
-                                                    {e.typeLabel}
-                                                </span>
-                                            </div>
-                                            <dl className="grid grid-cols-1 gap-1 text-body">
-                                                <div className="flex flex-col">
-                                                    <dt className="text-caption uppercase font-bold tracking-wide text-ink-muted">Data ir laikas</dt>
-                                                    <dd className="font-mono text-ink">{e.calendarTimeLabel}</dd>
-                                                </div>
-                                                <div className="flex flex-col">
-                                                    <dt className="text-caption uppercase font-bold tracking-wide text-ink-muted">Keitimo laikas</dt>
-                                                    <dd className="font-mono text-ink-muted">{e.actionTimeLabel}</dd>
-                                                </div>
-                                                <div className="flex flex-col">
-                                                    <dt className="text-caption uppercase font-bold tracking-wide text-ink-muted">Patvirtino</dt>
-                                                    <dd className="text-ink">{e.managerLabel}</dd>
-                                                </div>
-                                                {e.reasonLabel !== '-' && (
-                                                    <div className="flex flex-col">
-                                                        <dt className="text-caption uppercase font-bold tracking-wide text-ink-muted">Priežastis</dt>
-                                                        <dd className="italic text-ink break-words">{e.reasonLabel}</dd>
-                                                    </div>
-                                                )}
-                                            </dl>
-                                        </li>
-                                    );
-                                })}
-                            </ul>
-
-                            {/* Desktop / wide: denser table is allowed (§9) */}
-                            <div className="hidden bg-surface-card rounded-card shadow-sm border border-line overflow-x-auto md:block">
-                                <table className="min-w-full divide-y divide-line">
-                                    <thead className="bg-surface-sunken">
-                                        <tr>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Vykdytojas</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Data ir laikas (kalendoriuje)</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Veiksmas / tipas</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Keitimo laikas</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Patvirtino / būsena</th>
-                                            <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Priežastis</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="bg-surface-card divide-y divide-line">
-                                        {calendarHistory.map((item) => {
-                                            const e = deriveCalendarEntry(item);
-                                            const { TypeIcon } = e;
-                                            return (
-                                                <tr key={item.id} className="hover:bg-surface-sunken transition-colors">
-                                                    <td className="px-4 py-3 whitespace-nowrap text-body font-medium text-ink-strong">
-                                                        {e.workerLabel}
-                                                    </td>
-                                                    <td className="px-4 py-3 whitespace-nowrap text-caption text-ink-muted font-mono">
-                                                        {e.calendarTimeLabel}
-                                                    </td>
-                                                    <td className="px-4 py-3 whitespace-nowrap">
-                                                        <div className="flex flex-col gap-1 items-start">
-                                                            <span className={`px-2 py-0.5 rounded text-caption uppercase font-bold border ${e.actionColor}`}>
-                                                                {e.actionText}
-                                                            </span>
-                                                            <span className={`text-caption font-semibold flex items-center gap-1 ${e.typeColor}`}>
-                                                                {TypeIcon && <TypeIcon className="w-3 h-3" aria-hidden="true" />}
-                                                                {e.typeLabel}
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-4 py-3 whitespace-nowrap text-caption text-ink-muted font-mono">
-                                                        {e.actionTimeLabel}
-                                                    </td>
-                                                    <td className="px-4 py-3 whitespace-nowrap">
-                                                        <div className="flex flex-col gap-1 items-start">
-                                                            <span className={`px-2 py-0.5 rounded-full text-caption font-bold ${e.statusColor}`}>
-                                                                {e.statusLabel}
-                                                            </span>
-                                                            <span className="text-caption text-ink-muted font-medium">
-                                                                {e.managerLabel}
-                                                            </span>
-                                                        </div>
-                                                    </td>
-                                                    <td className="px-4 py-3 text-body text-ink italic max-w-xs break-words">
-                                                        {e.reasonLabel}
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </>
-                    )}
-                </div>
+            {/* --- ISTORIJA TAB: tasks the manager has already accepted (status 'confirmed') — the
+                live, not-yet-archived ones on top, the archived ones in the TaskHistory browser
+                below. Same manager scoping as Pridavimas. --- */}
+            {activeTab === 'history' && (
+                <DailyStatistics
+                    currentUser={currentUser}
+                    userRole={userRole}
+                    users={users}
+                    canExport={canExport}
+                    view="approval"
+                    approvalPhase="accepted"
+                />
             )}
+
 
 
             {/* --- TASKS TAB CONTENT --- */}

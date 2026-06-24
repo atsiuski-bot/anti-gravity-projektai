@@ -31,7 +31,7 @@ import UserChip from './UserChip';
 import SessionEditModal from './SessionEditModal';
 import SessionEditedBadge from './task/SessionEditedBadge';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', showTestUsers = false, periodSummaryAbove = false }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', approvalPhase = 'pending', showTestUsers = false, periodSummaryAbove = false }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
@@ -507,10 +507,17 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     };
     const approvalTodayTasks = applyApprovalFilter ? todayTasks.filter(isApprovalRelevant) : todayTasks;
     const approvalEarlierTasks = applyApprovalFilter ? earlierTasks.filter(isApprovalRelevant) : earlierTasks;
+    // The approval surface is split into two phases of the same pipeline, each its own tab so a
+    // task lives in exactly one place: 'pending' = finished, awaiting the manager's acceptance
+    // (status 'completed'); 'accepted' = already accepted (status 'confirmed'), the live half of
+    // the "Istorija" tab whose archived half is the TaskHistory browser below. The full/hours
+    // surfaces are unaffected — they keep the raw, unsplit lists.
+    const matchesApprovalPhase = (task) =>
+        approvalPhase === 'accepted' ? task.status === 'confirmed' : task.status === 'completed';
     // The two task lists shown by this surface: full/hours surfaces use the raw split lists;
-    // the approval surface uses the manager-scoped ones.
-    const shownTodayTasks = view === 'approval' ? approvalTodayTasks : todayTasks;
-    const shownEarlierTasks = view === 'approval' ? approvalEarlierTasks : earlierTasks;
+    // the approval surface uses the manager-scoped ones, narrowed to the active phase.
+    const shownTodayTasks = view === 'approval' ? approvalTodayTasks.filter(matchesApprovalPhase) : todayTasks;
+    const shownEarlierTasks = view === 'approval' ? approvalEarlierTasks.filter(matchesApprovalPhase) : earlierTasks;
 
     // Test/founder accounts are kept out of the report unless the manager opted in (showTestUsers),
     // resolved against each user's isTest flag — applied to every session/timeline source below.
@@ -1540,7 +1547,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {shownTodayTasks.length > 0 && (
                 <TaskListTable
                     tasks={shownTodayTasks}
-                    title={isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}`}
+                    title={
+                        view === 'approval'
+                            ? (approvalPhase === 'accepted' ? 'Šiandien priimtos užduotys' : 'Užbaigta šiandien, laukia priėmimo')
+                            : (isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}`)
+                    }
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
@@ -1559,7 +1570,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             {shownEarlierTasks.length > 0 && (
                 <TaskListTable
                     tasks={shownEarlierTasks}
-                    title="Užduotys atliktos anksčiau, laukia priėmimo"
+                    title={
+                        view === 'approval' && approvalPhase === 'accepted'
+                            ? 'Priimta anksčiau'
+                            : 'Užduotys atliktos anksčiau, laukia priėmimo'
+                    }
                     viewMode={viewMode}
                     onToggleConfirm={handleToggleConfirm}
                     onAddComment={handleAddComment}
@@ -1576,10 +1591,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 />
             )}
 
-            {/* Full task-history browser — omitted in the embedded calendar drill-down, which is a
-                focused single-day report, not the archive browser. On the approval surface it is
-                scoped to this manager's tasks (matching the lists above). */}
-            {!embedded && (
+            {/* Full task-history browser (the archived, already-accepted tasks). Omitted in the
+                embedded calendar drill-down (a focused single-day report, not the archive browser)
+                AND on the "Pridavimas" tab (view='approval', pending phase) — there the archive
+                belongs to the sibling "Istorija" tab, so a task lives in exactly one place. It IS
+                shown on the "Istorija" tab (accepted phase), scoped to this manager's tasks. */}
+            {!embedded && (view !== 'approval' || approvalPhase === 'accepted') && (
                 <div className="mt-8">
                     <TaskHistory
                         userId={selectedUserId}
@@ -1590,11 +1607,12 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 </div>
             )}
 
-            {/* Empty-state notice. On the normal report surface the TaskHistory browser rendered
-                just above already shows its own "Istorija tuščia…" message, so a second "Nėra atliktų
-                užduočių…" box here is redundant — suppress it there. Keep it only where TaskHistory is
-                absent (the embedded calendar drill-down) or where the message is distinct (approval). */}
-            {(view === 'approval'
+            {/* Empty-state notice. Shown only on the "Pridavimas" tab (approval/pending), whose
+                lists are the whole surface. On the "Istorija" tab (approval/accepted) and the normal
+                report surface the TaskHistory browser below shows its own "Istorija tuščia…" message,
+                so a second box here is redundant — suppress it. Also keep it for the embedded
+                calendar drill-down, which has no TaskHistory of its own. */}
+            {(view === 'approval' && approvalPhase !== 'accepted'
                 ? (shownTodayTasks.length === 0 && shownEarlierTasks.length === 0)
                 : (embedded && todayTasks.length === 0 && earlierTasks.length === 0 && archivedTasks.length === 0)
             ) && (
