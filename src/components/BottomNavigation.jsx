@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, Fragment } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
+import { usePendingApprovalsCount } from '../hooks/usePendingApprovalsCount';
 import { isManagerRole } from '../utils/formatters';
 import { getNavSections } from '../config/navTabs';
 import { Plus, MoreHorizontal } from 'lucide-react';
@@ -16,7 +17,12 @@ const navItemBase =
 const BottomNavigation = () => {
     const { userRole, currentUser } = useAuth();
     const { activeTab, setActiveTab } = useNavigation();
+    const pendingApprovals = usePendingApprovalsCount();
     const [moreOpen, setMoreOpen] = useState(false);
+
+    // Pending-approval count for a tab (admin-only Vartotojai; 0 elsewhere) and its capped label.
+    const badgeFor = (tabId) => (tabId === 'users' ? pendingApprovals : 0);
+    const badgeLabel = (n) => (n > 99 ? '99+' : String(n));
 
     // Tabs come from the shared nav config so the bottom bar and the desktop side rail can
     // never drift (DESIGN_SYSTEM §3). Sections carry the personal/team/admin grouping.
@@ -30,6 +36,9 @@ const BottomNavigation = () => {
     const primaryTabs = needsOverflow ? flatTabs.slice(0, 4) : flatTabs;
     const overflowTabs = needsOverflow ? flatTabs.slice(4) : [];
     const overflowActive = overflowTabs.some((t) => t.id === activeTab);
+    // When a badged destination (Vartotojai) lives under the "Daugiau" sheet, surface the count on
+    // the overflow trigger so a pending approval is never hidden a tap deep on a phone.
+    const overflowPending = overflowTabs.reduce((sum, t) => sum + badgeFor(t.id), 0);
 
     const showCreateButton = (userRole === 'worker') || isManagerRole(userRole);
 
@@ -92,14 +101,16 @@ const BottomNavigation = () => {
                                 {si > 0 && <div className="mx-3 h-10 w-px bg-surface-sunken" />}
                                 {section.items.map((tab) => {
                                     const active = activeTab === tab.id;
+                                    const badge = badgeFor(tab.id);
                                     return (
                                         <button
                                             key={tab.id}
                                             onClick={() => handleTab(tab.id)}
                                             aria-current={active ? 'page' : undefined}
+                                            aria-label={badge > 0 ? `${tab.label}, ${badge} laukia patvirtinimo` : undefined}
                                             className={cn(
                                                 navItemBase,
-                                                'min-w-[90px] px-4 py-2.5 hover:bg-surface-sunken',
+                                                'relative min-w-[90px] px-4 py-2.5 hover:bg-surface-sunken',
                                                 active ? 'bg-brand-soft text-brand' : 'text-ink-muted'
                                             )}
                                         >
@@ -107,6 +118,14 @@ const BottomNavigation = () => {
                                             <span className="whitespace-nowrap text-caption font-medium leading-tight">
                                                 {tab.label}
                                             </span>
+                                            {badge > 0 && (
+                                                <span
+                                                    aria-hidden="true"
+                                                    className="absolute right-2 top-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand px-1 text-caption font-bold leading-none text-white"
+                                                >
+                                                    {badgeLabel(badge)}
+                                                </span>
+                                            )}
                                         </button>
                                     );
                                 })}
@@ -147,6 +166,7 @@ const BottomNavigation = () => {
                                 onClick={() => setMoreOpen(true)}
                                 aria-haspopup="dialog"
                                 aria-expanded={moreOpen}
+                                aria-label={overflowPending > 0 ? `Daugiau, ${overflowPending} laukia patvirtinimo` : undefined}
                                 className={cn(
                                     navItemBase,
                                     'relative min-h-touch flex-1 px-0.5 py-1',
@@ -161,6 +181,14 @@ const BottomNavigation = () => {
                                 )}
                                 <MoreHorizontal className="relative mb-0.5 h-5 w-5" aria-hidden="true" />
                                 <span className="relative text-center text-caption font-medium leading-tight">Daugiau</span>
+                                {overflowPending > 0 && (
+                                    <span
+                                        aria-hidden="true"
+                                        className="absolute right-1.5 top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-brand px-1 text-caption font-bold leading-none text-white"
+                                    >
+                                        {badgeLabel(overflowPending)}
+                                    </span>
+                                )}
                             </button>
                         )}
                     </div>
@@ -173,11 +201,13 @@ const BottomNavigation = () => {
                     <div className="flex flex-col gap-1">
                         {overflowTabs.map((tab) => {
                             const active = activeTab === tab.id;
+                            const badge = badgeFor(tab.id);
                             return (
                                 <button
                                     key={tab.id}
                                     onClick={() => handleTab(tab.id)}
                                     aria-current={active ? 'page' : undefined}
+                                    aria-label={badge > 0 ? `${tab.label}, ${badge} laukia patvirtinimo` : undefined}
                                     className={cn(
                                         'flex min-h-touch items-center gap-3 rounded-control px-3 text-body font-medium transition-colors',
                                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
@@ -186,6 +216,14 @@ const BottomNavigation = () => {
                                 >
                                     <tab.icon className="h-5 w-5" aria-hidden="true" />
                                     <span>{tab.label}</span>
+                                    {badge > 0 && (
+                                        <span
+                                            aria-hidden="true"
+                                            className="ml-auto inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-brand px-1.5 text-caption font-bold leading-none text-white"
+                                        >
+                                            {badgeLabel(badge)}
+                                        </span>
+                                    )}
                                 </button>
                             );
                         })}
