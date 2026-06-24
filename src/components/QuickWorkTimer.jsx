@@ -1,11 +1,15 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
-import { useFrequentQuickWork } from '../hooks/useFrequentQuickWork';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
 import { Zap, Square, Check, ShieldAlert, Mic, Clock } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from '../utils/timeUtils';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import {
+    buildTemplateOptions,
+    resolveQuickWorkEntry,
+    canSubmitQuickWork,
+} from '../utils/quickWorkTemplates';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
@@ -14,17 +18,32 @@ import { startSession, endSession } from '../utils/sessionActions';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
+import PersonSelect from './ui/PersonSelect';
 import SessionToggleButton from './ui/SessionToggleButton';
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '', frequentChips = [] }) => {
+const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '', templateOptions = [], roster = [] }) => {
     const textareaRef = useRef(null);
     // Which manager confirms this work. Primary pre-selected so the common case is one tap;
     // the worker can switch before saving. Initialized once — by the time the prompt opens the
     // roster and the worker's team are already loaded.
     const [selectedManagerId, setSelectedManagerId] = useState(defaultManagerId || managers[0]?.id || '');
+    // Which quick-work TEMPLATE (category) is chosen — its label becomes the title and the textarea
+    // turns into an optional comment. null = free-write mode (textarea IS the title). `helpUserId`
+    // is only meaningful for the 'help' template (Pagalba: <member>).
+    const [selectedTemplateId, setSelectedTemplateId] = useState(null);
+    const [helpUserId, setHelpUserId] = useState('');
+    // Track only WHETHER the textarea has text (cheap), so "Patvirtinti" can enable/disable without
+    // making the field controlled — which would fight the dictation hook that writes el.value
+    // directly (it dispatches an 'input' event, so onInput keeps this flag in sync).
+    const [hasText, setHasText] = useState(false);
     const totalDisplay = formatMinutesToTimeString(currentSessionMinutes);
     const { supported: dictationSupported, isListening, toggle: toggleDictation } = useSpeechDictation(textareaRef);
+
+    const selectedTemplate = templateOptions.find((o) => o.id === selectedTemplateId) || null;
+    const isHelp = selectedTemplate?.kind === 'help';
+    // With a template chosen the box is a comment; otherwise it's the title itself.
+    const textIsComment = !!selectedTemplate;
 
     // The manager who will confirm this work, whether it's named now or deferred. Mirrors the
     // type-now resolution so the routing (and the single-manager default) survives a defer.
@@ -32,12 +51,20 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
         ? (selectedManagerId || defaultManagerId || managers[0]?.id || null)
         : null;
 
+    const canSubmit = canSubmitQuickWork({ template: selectedTemplate, helpUserId, text: hasText ? 'x' : '' });
+
     const handleSubmit = (e) => {
         e.preventDefault();
-        const titleFromTextarea = textareaRef.current?.value || '';
-        if (titleFromTextarea.trim()) {
-            onSubmit(titleFromTextarea, resolvedAuditorId);
-        }
+        const helpName = isHelp
+            ? formatDisplayName(roster.find((u) => u.id === helpUserId)?.displayName || roster.find((u) => u.id === helpUserId)?.email || '')
+            : '';
+        const { title, comment } = resolveQuickWorkEntry({
+            template: selectedTemplate,
+            helpName,
+            text: textareaRef.current?.value || '',
+        });
+        if (!title) return;
+        onSubmit(title, resolvedAuditorId, comment);
     };
 
     // "Vėliau aprašysiu": log the quick work now with no title. It still routes to the same
@@ -56,7 +83,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
             <form onSubmit={handleSubmit} className="flex flex-col">
                 <p className="text-body text-ink-muted mb-4 flex items-center gap-2">
                     <Zap className="w-5 h-5 text-session-quickWork-accent fill-current shrink-0" aria-hidden="true" />
-                    Įveskite atliktos veiklos aprašymą
+                    Pasirinkite šabloną arba įrašykite, ką nuveikėte
                 </p>
 
                 <div className="mb-5 bg-session-quickWork-surface rounded-card p-4 border border-session-quickWork-soft flex items-center justify-between">
@@ -64,41 +91,70 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                     <span className="text-4xl font-mono font-bold text-session-quickWork-accent">{totalDisplay}</span>
                 </div>
 
+                {/* Template (category) picker — built-ins + this worker's own profile templates.
+                    Single-select: tapping the active one again clears it (back to free-write). A
+                    selected template becomes the title; the textarea below then acts as a comment. */}
+                <div className="mb-4">
+                    <span id="quickWorkTemplateLabel" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
+                        Greito darbo šablonas
+                    </span>
+                    <div role="radiogroup" aria-labelledby="quickWorkTemplateLabel" className="grid grid-cols-2 gap-2">
+                        {templateOptions.map((opt) => {
+                            const selected = opt.id === selectedTemplateId;
+                            return (
+                                <button
+                                    key={opt.id}
+                                    type="button"
+                                    role="radio"
+                                    aria-checked={selected}
+                                    onClick={() => setSelectedTemplateId(selected ? null : opt.id)}
+                                    className={clsx(
+                                        'flex min-h-touch flex-col items-start justify-center gap-0.5 rounded-card border px-3 py-2 text-left transition-colors',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        selected
+                                            ? 'border-brand bg-brand-soft text-ink-strong'
+                                            : 'border-line bg-surface-card text-ink hover:bg-surface-sunken'
+                                    )}
+                                >
+                                    <span className="flex items-center gap-1.5 text-body font-medium">
+                                        {selected && <Check className="h-4 w-4 text-brand shrink-0" aria-hidden="true" />}
+                                        {opt.label}
+                                    </span>
+                                    {opt.hint && (
+                                        <span className="text-caption text-ink-muted">{opt.hint}</span>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* "Pagalba" expands a full-roster member picker; the title becomes "Pagalba: <vardas>". */}
+                {isHelp && (
+                    <div className="mb-4">
+                        <PersonSelect
+                            value={helpUserId}
+                            onChange={setHelpUserId}
+                            users={roster}
+                            label="Kuriam nariui padėjote?"
+                            placeholder="Pasirinkite narį"
+                        />
+                    </div>
+                )}
+
                 <div>
                     <label htmlFor="quickWorkTextarea" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
-                        Ką nuveikėte?
+                        {textIsComment ? 'Komentaras (nebūtinas)' : 'Ką nuveikėte?'}
                     </label>
-
-                    {/* One-tap "frequent activity" chips, derived from THIS worker's own quick-work
-                        history (shown only to the repetitive cohort — see useFrequentQuickWork). A tap
-                        pre-fills the title; it never auto-submits, so the worker stays in control. */}
-                    {frequentChips.length > 0 && (
-                        <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Dažnos veiklos">
-                            {frequentChips.map((chip) => (
-                                <button
-                                    key={chip}
-                                    type="button"
-                                    onClick={() => {
-                                        if (textareaRef.current) {
-                                            textareaRef.current.value = chip;
-                                            textareaRef.current.focus();
-                                        }
-                                    }}
-                                    className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
-                                >
-                                    {chip}
-                                </button>
-                            ))}
-                        </div>
-                    )}
 
                     <div className="relative">
                         <textarea
                             ref={textareaRef}
                             id="quickWorkTextarea"
                             name="taskDescription"
-                            placeholder="Trumpai aprašykite atliktą veiklą..."
-                            rows={4}
+                            onInput={(e) => setHasText(e.currentTarget.value.trim().length > 0)}
+                            placeholder={textIsComment ? 'Papildoma informacija (nebūtina)...' : 'Trumpai aprašykite atliktą veiklą...'}
+                            rows={textIsComment ? 2 : 4}
                             className="border-2 border-line rounded-card bg-surface-card text-ink-strong"
                             style={{
                                 width: '100%',
@@ -109,7 +165,6 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                                 direction: 'ltr',
                                 textAlign: 'left'
                             }}
-                            required
                         />
                         {/* Voice dictation — feature-detected; hidden where the Web Speech API is
                             absent. Listening state is signalled by color AND a label change AND the
@@ -180,8 +235,8 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                         <Button type="button" variant="secondary" onClick={onClose}>
                             Atšaukti
                         </Button>
-                        <Button type="submit" variant="primary" loading={isSubmitting} icon={Check}>
-                            {isSubmitting ? 'Saugoma...' : 'Išsaugoti veiklą'}
+                        <Button type="submit" variant="primary" loading={isSubmitting} icon={Check} disabled={!canSubmit}>
+                            {isSubmitting ? 'Saugoma...' : 'Patvirtinti'}
                         </Button>
                     </div>
                     {/* Defer naming: log the work now without a description. The "describe later"
@@ -199,12 +254,20 @@ QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
 
 export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     const { currentUser, userData, setOptimisticUserData } = useAuth();
-    const { usersMap } = useUsers();
+    const { usersMap, activeUsers } = useUsers();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
 
-    // Per-user "frequent activity" chips for the finish prompt — derived read-only from this
-    // worker's own quick-work history; empty (no chips) for one-off loggers. One-shot read.
-    const frequentChips = useFrequentQuickWork(currentUser);
+    // Quick-work finish templates: the fixed categories plus THIS worker's own profile templates
+    // (users/{uid}.quickWorkTemplates). Picking one becomes the session title; the box turns into a
+    // comment. Built once per render from the live user doc.
+    const templateOptions = useMemo(() => buildTemplateOptions(userData?.quickWorkTemplates), [userData?.quickWorkTemplates]);
+
+    // Full active roster for the "Pagalba" member picker (any teammate the worker may have helped),
+    // minus the worker themselves. Reduced to the {id, displayName, email, photoURL} PersonSelect needs.
+    const roster = useMemo(() => (activeUsers || [])
+        .filter((u) => u.id !== currentUser?.uid)
+        .map((u) => ({ id: u.id, displayName: u.displayName, email: u.email, photoURL: u.photoURL })),
+    [activeUsers, currentUser?.uid]);
 
     // The worker's managers, resolved to {id, name} for the finish prompt. Managers/admins
     // self-confirm their own quick work, so they get no picker (empty list). Source of truth is
@@ -297,7 +360,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     // title, the exact record the "describe later" banner (QuickWorkDescribePrompt) surfaces for
     // retroactive naming. The confirming manager (auditorManagerId) is carried either way so the
     // single-manager default and routing survive a defer.
-    const finishQuickWork = useCallback(async (taskTitle, auditorManagerId) => {
+    const finishQuickWork = useCallback(async (taskTitle, auditorManagerId, comment) => {
         setIsSubmitting(true);
         setError('');
         try {
@@ -322,6 +385,9 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             // only on the type-now path — omitting it triggers the autoStopped log path.
             const overrides = { auditorManagerId: auditorManagerId || null };
             if (taskTitle) overrides.customTitle = taskTitle;
+            // A comment only accompanies a template-titled entry (free-write text is the title
+            // itself). It rides into the task description alongside the recorded time.
+            if (comment) overrides.customComment = comment;
             await endSession(currentUser.uid, null, overrides);
             setShowTitleModal(false);
         } catch (err) {
@@ -333,9 +399,9 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         }
     }, [currentUser, userData, setOptimisticUserData]);
 
-    const handleCompleteQuickWork = useCallback((taskTitle, auditorManagerId) => {
+    const handleCompleteQuickWork = useCallback((taskTitle, auditorManagerId, comment) => {
         if (!taskTitle || !taskTitle.trim()) return;
-        return finishQuickWork(taskTitle.trim(), auditorManagerId);
+        return finishQuickWork(taskTitle.trim(), auditorManagerId, comment);
     }, [finishQuickWork]);
 
     // "Vėliau aprašysiu": log the quick work now with no title (deferred naming).
@@ -351,7 +417,8 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             isSubmitting={isSubmitting}
             managers={managers}
             defaultManagerId={defaultManagerId}
-            frequentChips={frequentChips}
+            templateOptions={templateOptions}
+            roster={roster}
         />
     );
 
