@@ -1641,11 +1641,11 @@ exports.parseTaskDraft = onCall(
     async (request) => {
         const callerUid = request.auth && request.auth.uid;
         if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
-        const callerSnap = await db.collection('users').doc(callerUid).get();
-        const role = callerSnap.exists ? callerSnap.data().role : '';
-        if (!['admin', 'Administratorius', 'manager', 'seniorManager'].includes(role)) {
-            throw new HttpsError('permission-denied', 'Managers only.');
-        }
+        // Any signed-in user may request a DRAFT. Workers self-create tasks too, and this callable
+        // never writes anything — the assignee is still resolved server-side from the caller-supplied
+        // (client-scoped) roster, so it cannot invent a user. The previous manager-only gate left the
+        // ✨ button visible to workers but ALWAYS failing for them ("AI nepavyko"); opening the
+        // callable makes the button honest for everyone who can see it.
         const apiKey = OPENROUTER_API_KEY.value();
         if (!apiKey) throw new HttpsError('failed-precondition', 'AI not configured.');
 
