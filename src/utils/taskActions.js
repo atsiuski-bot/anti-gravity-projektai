@@ -1,4 +1,4 @@
-import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setDoc, deleteDoc, orderBy } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setDoc, deleteDoc, orderBy, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
@@ -338,7 +338,7 @@ export const archiveTask = async (task, userId) => {
  * @param {Object} user - The current user object.
  * @returns {Promise<void>}
  */
-export const saveTaskTemplate = async (templateName, selectedData, user, category = '') => {
+export const saveTaskTemplate = async (templateName, selectedData, user, category = '', scope = 'personal') => {
     try {
         await addDoc(collection(db, 'task_templates'), {
             templateName,
@@ -346,6 +346,9 @@ export const saveTaskTemplate = async (templateName, selectedData, user, categor
             // Top-level (not inside `data`) so it groups templates without ever leaking into the
             // task form when the template is applied.
             category: category || '',
+            // 'personal' (private to this user) by default; 'team' = the shared, admin-curated
+            // library everyone sees. The Firestore rules only let an admin write a 'team' scope.
+            scope: scope === 'team' ? 'team' : 'personal',
             createdBy: user.uid,
             creatorName: user.displayName || user.email,
             createdAt: new Date().toISOString()
@@ -353,6 +356,38 @@ export const saveTaskTemplate = async (templateName, selectedData, user, categor
 
     } catch (err) {
         console.error("Error saving template:", err);
+        throw err;
+    }
+};
+
+/**
+ * Hide a (team) template from THIS user's own list without deleting it for anyone else. The hidden
+ * set lives on the user's own doc (`hiddenTemplateIds`), so each person prunes their own view; the
+ * shared template stays intact. Reversible via {@link unhideTemplateForUser}.
+ * @param {string} uid
+ * @param {string} templateId
+ */
+export const hideTemplateForUser = async (uid, templateId) => {
+    if (!uid || !templateId) return;
+    try {
+        await updateDoc(doc(db, 'users', uid), { hiddenTemplateIds: arrayUnion(templateId) });
+    } catch (err) {
+        console.error('Error hiding template:', err);
+        throw err;
+    }
+};
+
+/**
+ * Un-hide a template previously hidden via {@link hideTemplateForUser} — it reappears in the list.
+ * @param {string} uid
+ * @param {string} templateId
+ */
+export const unhideTemplateForUser = async (uid, templateId) => {
+    if (!uid || !templateId) return;
+    try {
+        await updateDoc(doc(db, 'users', uid), { hiddenTemplateIds: arrayRemove(templateId) });
+    } catch (err) {
+        console.error('Error un-hiding template:', err);
         throw err;
     }
 };
@@ -393,16 +428,20 @@ export const deleteTaskTemplate = async (templateId) => {
  * @param {Object} user - The current user object.
  * @returns {Promise<void>}
  */
-export const updateTaskTemplate = async (templateId, templateName, selectedData, user, category = '') => {
+export const updateTaskTemplate = async (templateId, templateName, selectedData, user, category = '', scope = undefined) => {
     try {
-        await updateDoc(doc(db, 'task_templates', templateId), {
+        const payload = {
             templateName,
             data: selectedData,
             category: category || '',
             updatedBy: user.uid,
             updatedByName: user.displayName || user.email,
             updatedAt: new Date().toISOString()
-        });
+        };
+        // Re-scoping (promote personal → team or back) is admin-only and rare, so it is opt-in:
+        // pass a scope to change it, omit it to leave the template's current scope untouched.
+        if (scope === 'team' || scope === 'personal') payload.scope = scope;
+        await updateDoc(doc(db, 'task_templates', templateId), payload);
 
     } catch (err) {
         console.error("Error updating template:", err);
@@ -536,6 +575,21 @@ export const deleteTask = async (task, userId, options = { keepWorkHours: false 
             { task, keepWorkHours: !!options.keepWorkHours, isManager },
             { actor, mode: MODES.COMMIT, reason: options.keepWorkHours ? 'deleted (kept hours)' : 'deleted (hard)' },
         );
+
+        // Tell the assignee their task was removed (so it doesn't just silently vanish from their
+        // list). Best-effort + self-dropped by notify(): a worker deleting their own task, or a task
+        // with no assignee, never pings. Fired after the delete commits, so a notify failure can't
+        // block the deletion.
+        if (task.assignedUserId) {
+            await notify({
+                recipientId: task.assignedUserId,
+                type: 'task_deleted',
+                taskId: task.id,
+                taskTitle: task.title || 'Užduotis',
+                actorUid: userId,
+                actorName: userData.displayName || userData.email,
+            });
+        }
     } catch (err) {
         console.error("Error deleting task:", err);
         throw err;

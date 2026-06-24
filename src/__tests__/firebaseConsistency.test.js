@@ -316,17 +316,28 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     time_extension_request: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     session_correction_request: [{ day: '2026-06-20', commentText: '  klaida   trukmėje ' }, { day: '2026-06-20' }, {}],
     new_comment: [{ taskTitle: 'Užduotis', commentText: '  ilgas\n komentaras ' }, { taskTitle: 'Užduotis' }, {}],
+    new_photo: [{ taskTitle: 'Užduotis' }, {}],
     task_assigned: [{ taskTitle: 'Užduotis' }],
-    task_approved: [{ taskTitle: 'Užduotis' }],
+    // Both the plain approval and the approve+edit (edited:true) branch.
+    task_approved: [{ taskTitle: 'Užduotis' }, { taskTitle: 'Užduotis', edited: true }],
+    task_edited: [{ taskTitle: 'Užduotis' }, {}],
+    task_unassigned: [{ taskTitle: 'Užduotis' }, {}],
+    task_deleted: [{ taskTitle: 'Užduotis' }, {}],
     task_confirmed: [{ taskTitle: 'Užduotis' }],
-    task_reverted: [{ taskTitle: 'Užduotis' }],
+    task_reverted: [{ taskTitle: 'Užduotis' }, { taskTitle: 'Užduotis', edited: true }],
     extension_granted: [{ taskTitle: 'Užduotis' }],
     extension_denied: [{ taskTitle: 'Užduotis' }],
     calendar_decision: [{ decision: 'approved' }, { decision: 'declined' }],
     session_edited: [{ day: '2026-06-20' }, {}],
     session_deleted: [{ day: '2026-06-20' }, {}],
+    session_auto_closed: [{ day: '2026-06-20' }, {}],
     account_approval: [{ targetUserName: 'Jonas Jonaitis' }, { targetUserEmail: 'j@x.lt' }, {}],
     recurring_reassign: [{ taskTitle: 'Užduotis' }],
+    // Both label-present branches (Skubus/Aukštas) and the missing-field fallbacks.
+    task_priority_escalated: [{ taskTitle: 'Užduotis', priorityLabel: 'Skubus' }, { taskTitle: 'Užduotis', priorityLabel: 'Aukštas' }, { taskTitle: 'Užduotis' }, {}],
+    // Badge name + tier, name-only (no tier), and the empty fallback.
+    achievement: [{ badgeName: 'Ištvermė', tierName: 'Sidabras' }, { badgeName: 'Ištvermė' }, {}],
+    task_overdue: [{ taskTitle: 'Užduotis' }, {}],
   };
 
   it('the registry and the server switch cover the same set of types', () => {

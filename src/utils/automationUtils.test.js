@@ -21,77 +21,19 @@ vi.mock('./timeUtils', async (importActual) => ({
     getLithuanianNow: vi.fn(),
 }));
 
-import { getDocs, updateDoc } from 'firebase/firestore';
+import { getDocs } from 'firebase/firestore';
 import { archiveTask } from './taskActions';
 import { getLithuanianNow } from './timeUtils';
-import { checkAndPromoteTasks, archiveOldTasks } from './automationUtils';
+import { archiveOldTasks } from './automationUtils';
+
+// NOTE: deadline-based priority escalation moved to a scheduled Cloud Function
+// (functions/index.js → escalateTaskPriorities); its Vilnius-bucketing behaviour is covered by the
+// firebase consistency gate. Only the client-side ARCHIVING job remains tested here.
 
 const snapshotOf = (tasks) => ({ docs: tasks.map((t) => ({ id: t.id, data: () => t })) });
 
-// Build a map of taskId -> priority written by checkAndPromoteTasks.
-const promotedPriorities = () => {
-    const out = {};
-    for (const [ref, data] of updateDoc.mock.calls) out[ref.id] = data.priority;
-    return out;
-};
-
 beforeEach(() => {
     vi.clearAllMocks();
-});
-
-describe('checkAndPromoteTasks — deadline buckets are computed in Vilnius time', () => {
-    it('buckets overdue/today/tomorrow -> Urgent, day-after-tomorrow -> High, 3+ days -> untouched', async () => {
-        // "now" = 2026-06-21 15:00 Vilnius (summer, UTC+3). todayStr = 2026-06-21.
-        getLithuanianNow.mockReturnValue(new Date('2026-06-21T12:00:00Z'));
-        getDocs.mockResolvedValue(
-            snapshotOf([
-                { id: 'overdue', deadline: '2026-06-19T10:00:00Z', priority: 'Medium' },
-                { id: 'today', deadline: '2026-06-21T10:00:00Z', priority: 'Low' },
-                { id: 'tomorrow', deadline: '2026-06-22T08:00:00Z', priority: 'Medium' },
-                { id: 'dayAfter', deadline: '2026-06-23T08:00:00Z', priority: 'Medium' },
-                { id: 'far', deadline: '2026-06-30T08:00:00Z', priority: 'Low' },
-            ])
-        );
-
-        const count = await checkAndPromoteTasks();
-        const pr = promotedPriorities();
-
-        // Promotion now writes the canonical UPPERCASE PRIORITIES tokens (was Title-Case
-        // 'Urgent'/'High'), matching normalizePriority's output so no consumer must re-case.
-        expect(pr.overdue).toBe('URGENT');
-        expect(pr.today).toBe('URGENT');
-        expect(pr.tomorrow).toBe('URGENT');
-        expect(pr.dayAfter).toBe('HIGH');
-        expect(pr.far).toBeUndefined(); // 3+ days out -> no update
-        expect(count).toBe(4);
-    });
-
-    it('uses the Vilnius day, not the UTC day, at the day boundary (the bug the fix closed)', async () => {
-        getLithuanianNow.mockReturnValue(new Date('2026-06-21T12:00:00Z')); // today = 2026-06-21
-        // 22:00 UTC on the 22nd is 01:00 Vilnius on the 23rd (summer +3): a Vilnius
-        // day-after-tomorrow -> High. The old local/UTC-date logic mis-read it as the
-        // 22nd (tomorrow) and would have promoted it to Urgent.
-        getDocs.mockResolvedValue(
-            snapshotOf([{ id: 'boundary', deadline: '2026-06-22T22:00:00Z', priority: 'Medium' }])
-        );
-
-        await checkAndPromoteTasks();
-        expect(promotedPriorities().boundary).toBe('HIGH');
-    });
-
-    it('skips tasks with no deadline and tasks already at the target priority', async () => {
-        getLithuanianNow.mockReturnValue(new Date('2026-06-21T12:00:00Z'));
-        getDocs.mockResolvedValue(
-            snapshotOf([
-                { id: 'noDeadline', priority: 'Low' },
-                { id: 'alreadyUrgent', deadline: '2026-06-21T10:00:00Z', priority: 'Urgent' },
-            ])
-        );
-
-        const count = await checkAndPromoteTasks();
-        expect(updateDoc).not.toHaveBeenCalled();
-        expect(count).toBe(0);
-    });
 });
 
 describe('archiveOldTasks — work-day cutoff flips at 03:00 Vilnius', () => {
