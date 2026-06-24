@@ -37,7 +37,7 @@ const STEPS = [
     },
     {
         title: 'Profilis ir darbo laikas',
-        body: 'Profilyje nustatykite nuotrauką bei spalvą, o kalendoriuje suplanuokite savo darbo laiką.',
+        body: 'Profilyje nustatykite nuotrauką, o kalendoriuje suplanuokite savo darbo laiką.',
     },
 ];
 

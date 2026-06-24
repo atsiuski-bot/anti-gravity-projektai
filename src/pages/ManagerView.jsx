@@ -237,7 +237,11 @@ export default function ManagerView() {
                     "Naujas darbas" modal (TaskModal), beside the title. */}
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
                     <div role="tablist" aria-label="Komandos darbų rodinys">
-                        <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                        {/* Mobile: a horizontally scrollable strip (no-scrollbar) so all four
+                            sub-tabs keep their natural width and full labels instead of being
+                            squeezed equal with flex-1 — the row swipes sideways when it overflows
+                            the viewport, without growing taller. md+ keeps the fitted inline pill. */}
+                        <div className="flex w-full overflow-x-auto no-scrollbar snap-x snap-mandatory sm:inline-flex sm:w-auto sm:overflow-hidden rounded-control border border-line bg-surface-sunken">
                             <button
                                 type="button"
                                 role="tab"
@@ -246,7 +250,7 @@ export default function ManagerView() {
                                 aria-controls="team-active-panel"
                                 onClick={() => setTeamTasksSubTab('active')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
@@ -255,7 +259,7 @@ export default function ManagerView() {
                                 <span className="sm:hidden">Aktyvūs</span>
                                 <span className="hidden sm:inline">Aktyvios užduotys</span>
                             </button>
-                            <div className="w-px bg-line" aria-hidden="true" />
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
                             <button
                                 type="button"
                                 role="tab"
@@ -264,7 +268,7 @@ export default function ManagerView() {
                                 aria-controls="team-list-panel"
                                 onClick={() => setTeamTasksSubTab('list')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
@@ -273,7 +277,7 @@ export default function ManagerView() {
                                 <span className="sm:hidden">Sąrašas</span>
                                 <span className="hidden sm:inline">Sąrašas užduočių</span>
                             </button>
-                            <div className="w-px bg-line" aria-hidden="true" />
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
                             <button
                                 type="button"
                                 role="tab"
@@ -282,7 +286,7 @@ export default function ManagerView() {
                                 aria-controls="team-approvals-panel"
                                 onClick={() => setTeamTasksSubTab('approvals')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'approvals' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
@@ -303,7 +307,7 @@ export default function ManagerView() {
                                     </span>
                                 )}
                             </button>
-                            <div className="w-px bg-line" aria-hidden="true" />
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
                             <button
                                 type="button"
                                 role="tab"
@@ -312,7 +316,7 @@ export default function ManagerView() {
                                 aria-controls="team-recurring-panel"
                                 onClick={() => setTeamTasksSubTab('recurring')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'recurring' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
@@ -587,7 +591,7 @@ export default function ManagerView() {
                             >
                                 Kalendorius
                             </button>
-                            <div className="w-px bg-line" aria-hidden="true" />
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
                             <button
                                 type="button"
                                 role="tab"

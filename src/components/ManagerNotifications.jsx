@@ -828,7 +828,7 @@ export default function ManagerNotifications({ onClose }) {
                                 <div className="flex items-start gap-3">
                                     <RotateCcw className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
                                     <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
-                                        <p>{(notif.createdById || notif.createdByName) ? <UserChip userId={notif.createdById} name={notif.createdByName} /> : <span className="font-semibold">Vadovas</span>} grąžino užduotį tobulinti:</p>
+                                        <p>{(notif.createdBy || notif.createdByName) ? <UserChip userId={notif.createdBy} name={notif.createdByName} /> : <span className="font-semibold">Vadovas</span>} grąžino užduotį tobulinti:</p>
                                         <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
                                     </div>
                                 </div>
@@ -958,7 +958,7 @@ export default function ManagerNotifications({ onClose }) {
                                         <MessageCircle className="w-5 h-5 text-feedback-info mt-0.5 flex-shrink-0" />
                                         <div className="min-w-0">
                                             <div className="text-sm text-feedback-info-text">
-                                                <p><UserChip userId={notif.createdById} name={notif.createdByName} /> pakomentavo užduotį:</p>
+                                                <p><UserChip userId={notif.createdBy} name={notif.createdByName} /> pakomentavo užduotį:</p>
                                                 <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
                                                 {notif.commentText && <p className="mt-2 text-xs italic opacity-80 border-l-2 border-feedback-info-border pl-2"> &quot;{notif.commentText}&quot;</p>}
                                             </div>
@@ -1151,7 +1151,7 @@ export default function ManagerNotifications({ onClose }) {
                                     <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
                                     <div>
                                         <div className="text-sm text-feedback-warning-text">
-                                            <p><UserChip userId={notif.createdById} name={notif.createdByName} /> priskyrė Jus vadovu užduočiai:</p>
+                                            <p><UserChip userId={notif.createdBy} name={notif.createdByName} /> priskyrė Jus vadovu užduočiai:</p>
                                             <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
                                             {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
                                             {notif.description && <p className="mt-1 text-xs italic border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}

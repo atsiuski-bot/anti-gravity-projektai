@@ -2,8 +2,8 @@ import React, { useState, useRef, useCallback } from 'react';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
-import { Phone, Square, Check, ShieldAlert, Mic, Clock } from 'lucide-react';
-import { formatMinutesToTimeString, MIN_LOGGED_SESSION_MINUTES } from '../utils/timeUtils';
+import { Phone, Square, Check, ShieldAlert, Mic } from 'lucide-react';
+import { formatMinutesToTimeString } from '../utils/timeUtils';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
@@ -16,7 +16,7 @@ import IconButton from './ui/IconButton';
 import SessionToggleButton from './ui/SessionToggleButton';
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting }) {
+const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) {
     const textareaRef = useRef(null);
     // Who was on the call — required (single-select). The call cannot be saved until one is
     // chosen, so reports can always group calls by audience. Notes are free-text and optional.
@@ -124,21 +124,12 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                 </div>
 
                 {/* Footer */}
-                <div className="mt-6 flex flex-col gap-2">
-                    <div className="flex gap-3 justify-end">
-                        <Button type="button" variant="secondary" onClick={onClose}>
-                            Atšaukti
-                        </Button>
-                        <Button type="submit" variant="primary" loading={isSubmitting} icon={Check} disabled={!contactType}>
-                            {isSubmitting ? 'Saugoma...' : 'Išsaugoti skambutį'}
-                        </Button>
-                    </div>
-                    {/* Defer naming: log the call now without classifying or describing it, so the
-                        worker isn't blocked at the stop screen. It records a plain "Skambutis"
-                        (no contactType). Subordinate (ghost) so the classify-now primary stays
-                        dominant (§8); it stays available even before a type is picked. */}
-                    <Button type="button" variant="ghost" icon={Clock} onClick={onDefer} disabled={isSubmitting} className="self-end">
-                        Vėliau aprašysiu
+                <div className="mt-6 flex gap-3 justify-end">
+                    <Button type="button" variant="secondary" onClick={onClose}>
+                        Atšaukti
+                    </Button>
+                    <Button type="submit" variant="primary" loading={isSubmitting} icon={Check} disabled={!contactType}>
+                        {isSubmitting ? 'Saugoma...' : 'Išsaugoti skambutį'}
                     </Button>
                 </div>
             </form>
@@ -152,8 +143,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
 
     const {
         isActive: isCalling,
-        currentSessionMinutes,
-        startTime
+        currentSessionMinutes
     } = useTimerState(currentUser, 'callState', 'isCalling', null, null, 'call');
 
     const isDisabled = isSecondarySessionActive && !isCalling && activeSessionType !== 'break' && activeSessionType !== 'quickWork';
@@ -190,19 +180,12 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
     };
 
     const handleStopCall = async () => {
-        // Check duration and decide whether to show modal or stop immediately
-        const now = new Date();
-        let sessionDuration = 0;
-        if (startTime) {
-            sessionDuration = (now - startTime) / (1000 * 60);
-        }
-
-        // Discard an accidental sub-minute tap rather than prompting to name/log it.
-        if (sessionDuration <= MIN_LOGGED_SESSION_MINUTES) {
-            await endSession(currentUser.uid); // Auto discard/stop
-            return;
-        }
-
+        // The end-of-call modal is the deliberate gate for classifying the call (who was on it +
+        // optional notes), so it ALWAYS opens when a call is stopped — even a very short one. The
+        // worker then chooses to classify, defer ("Vėliau aprašysiu"), or cancel (resume the call).
+        // This intentionally drops the old sub-minute auto-discard, which silently swallowed brief
+        // calls without ever asking; a real but short call must not vanish. Accidental mis-taps are
+        // handled at the modal (Atšaukti resumes the call), not by suppressing the prompt.
         SoundManager.playCallSound();
         setShowTitleModal(true);
     };
@@ -254,14 +237,13 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         }
     }, [currentUser, userData, setOptimisticUserData]);
 
-    // Classify-now: the modal hands over the required contactType + optional notes.
+    // Classify-now: the modal hands over the required contactType + optional notes. This is the
+    // ONLY save path — every logged call must name who was on it, so reports can always group by
+    // audience. (Cancelling just resumes the call.)
     const handleCompleteCall = useCallback(({ contactType, notes }) => {
         if (!contactType) return;
         return finishCall({ contactType, notes });
     }, [finishCall]);
-
-    // "Vėliau aprašysiu": log the call now without classifying or describing it.
-    const handleDeferCall = useCallback(() => finishCall(), [finishCall]);
 
     const handleToggleCall = async () => {
         if (!currentUser || isDisabled) return;
@@ -286,7 +268,6 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         <CallModalComponent
             onSubmit={handleCompleteCall}
             onClose={() => setShowTitleModal(false)}
-            onDefer={handleDeferCall}
             currentSessionMinutes={currentSessionMinutes}
             isSubmitting={isSubmitting}
         />

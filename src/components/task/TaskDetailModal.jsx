@@ -10,6 +10,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
 import { ImageModal } from '../TaskDetailsModals';
 import Modal from '../ui/Modal';
+import Linkify from '../ui/Linkify';
 import Button from '../ui/Button';
 import IconButton from '../ui/IconButton';
 import PriorityBadge from './PriorityBadge';
@@ -312,7 +313,9 @@ export default function TaskDetailModal({
                                 type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
                                 className="mt-0.5 h-4 w-4 flex-shrink-0"
                             />
-                            <p className="whitespace-pre-wrap text-body leading-relaxed text-ink">{task.description}</p>
+                            <p className="whitespace-pre-wrap text-body leading-relaxed text-ink">
+                                <Linkify text={task.description} />
+                            </p>
                         </div>
                     )}
 
@@ -396,7 +399,7 @@ export default function TaskDetailModal({
                                                     </div>
                                                 </div>
                                             ) : (
-                                                <p className="whitespace-pre-wrap break-words text-body leading-snug text-ink">{c.text}</p>
+                                                <p className="whitespace-pre-wrap break-words text-body leading-snug text-ink"><Linkify text={c.text} /></p>
                                             )}
                                             {isDeleting && (
                                                 <div className="mt-2 flex items-center justify-end gap-2 text-caption">

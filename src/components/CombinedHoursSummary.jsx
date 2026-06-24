@@ -240,15 +240,9 @@ export default function CombinedHoursSummary() {
                             <p className="text-body italic text-ink-muted">Nėra duomenų.</p>
                         ) : (
                             combinedStats.data.map(user => (
-                                <div key={user.id} className="mb-5 last:mb-0">
-                                    {/* User Info — sits directly above this worker's rows so the
-                                        name and its Planuota/Dirbta figures read as one group. */}
-                                    <div className="flex items-center gap-2 mb-1.5">
-                                        <UserChip userId={user.id} name={user.name} colorDot={user.color} className="truncate" />
-                                    </div>
-
-                                    {/* Bars Area — indented under the name to bind them visually */}
-                                    <div className="flex flex-col gap-1.5 pl-5">
+                                <div key={user.id} className="mb-5 last:mb-0 flex items-center gap-4">
+                                    {/* Bars Area */}
+                                    <div className="flex flex-col gap-1.5 flex-1 min-w-0">
                                         {/* Planned Bar — labelled so colour is never the sole signal (§5) */}
                                         <div className="flex items-center gap-2">
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Planuota</span>
@@ -263,9 +257,7 @@ export default function CombinedHoursSummary() {
                                             </div>
                                         </div>
 
-                                        {/* Worked Bar — green = work (comparable to Planned above); breaks
-                                            stacked in amber after it. The worked figure stays work-only; the
-                                            amber addend/segment is shown beside it, never folded into it. */}
+                                        {/* Worked Bar */}
                                         <div className="flex items-center gap-2">
                                             <span className="w-14 shrink-0 text-caption text-ink-muted">Dirbta</span>
                                             <span className="text-body-lg font-bold font-mono w-24 text-right tabular-nums">
@@ -289,6 +281,9 @@ export default function CombinedHoursSummary() {
                                             </div>
                                         </div>
                                     </div>
+
+                                    {/* User name — right side, vertically centred between the two bar rows */}
+                                    <UserChip userId={user.id} name={user.name} colorDot={user.color} className="shrink-0" />
                                 </div>
                             ))
                         )}

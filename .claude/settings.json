@@ -1,5 +1,17 @@
 {
   "$comment": "Committed, PUBLIC repo settings. Read-only / non-destructive allow-list ONLY — never put secrets, account emails, or destructive commands here. Personal or sensitive overrides go in .claude/settings.local.json (gitignored). Rationale: docs/adr — 'Minimizing manual toil' in CLAUDE.md.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/sync-env-local.cjs"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(npm run lint)",
