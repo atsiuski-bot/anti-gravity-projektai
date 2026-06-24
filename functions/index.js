@@ -118,6 +118,11 @@ async function sendToUser(uid, notification, data) {
 
 // Friendly Lithuanian copy per request_notification type (UI strings are Lithuanian). This feed is
 // two-way, so it covers both the worker→manager requests and the manager→worker decision notices.
+//
+// MIRROR of src/notifications/registry.js (the client's single source of truth). The client cannot be
+// imported across the deploy boundary, so this is hand-copied — and src/__tests__/firebaseConsistency.test.js
+// evaluates this function and fails the gate if its title/body output drifts from the registry. Change
+// a string here? Change it in the registry too (and vice versa).
 function copyForRequestNotification(n) {
     const title = n.taskTitle || 'WORKZ';
     switch (n.type) {
@@ -148,7 +153,8 @@ function copyForRequestNotification(n) {
         case 'task_approved':
             return { title: 'Užduotis patvirtinta', body: title };
         case 'task_confirmed':
-            return { title: 'Užduotis užbaigta ir patvirtinta', body: title };
+            // COMPLETION-gate vocabulary is "priimta" (kept in lockstep with the toast + Reports tab).
+            return { title: 'Užduotis užbaigta ir priimta', body: title };
         case 'task_reverted':
             return { title: 'Užduotis grąžinta taisyti', body: title };
         case 'extension_granted':
@@ -158,19 +164,19 @@ function copyForRequestNotification(n) {
         case 'calendar_decision':
             return {
                 title: n.decision === 'approved' ? 'Kalendoriaus pakeitimas patvirtintas' : 'Kalendoriaus pakeitimas atmestas',
-                body: 'Darbo kalendorius',
+                body: 'Veiklos kalendorius',
             };
         case 'session_edited':
-            return { title: 'Pakoreguotas darbo laikas', body: n.day || 'Darbo laikas' };
+            return { title: 'Pakoreguotas veiklos laikas', body: n.day || 'Veiklos laikas' };
         case 'session_deleted':
-            return { title: 'Pašalintas darbo laikas', body: n.day || 'Darbo laikas' };
+            return { title: 'Pašalintas veiklos laikas', body: n.day || 'Veiklos laikas' };
         case 'session_correction_request':
-            // Worker → manager: a logged-time error report. Body = the worker's note (clamped) or day.
+            // Worker → manager: a logged-time error report. Body = "day: note" (note clamped) or day.
             return {
-                title: 'Pranešimas apie darbo laiko klaidą',
+                title: 'Pranešimas apie veiklos laiko klaidą',
                 body: n.commentText
-                    ? String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)
-                    : (n.day || 'Darbo laikas'),
+                    ? `${n.day || 'Veiklos laikas'}: ${String(n.commentText).replace(/\s+/g, ' ').trim().slice(0, 100)}`
+                    : (n.day || 'Veiklos laikas'),
             };
         default:
             return { title: 'WORKZ pranešimas', body: title };
@@ -306,7 +312,7 @@ const BADGES = {
     plans_ahead: { name: 'Planuoja iš anksto', stat: 'planAheadWeeks', thresholds: [2, 8, 20, 40] },        // R4 (high-water weeks)
     on_time_start: { name: 'Punktualus startas', stat: 'punctualDays', thresholds: [5, 20, 50, 120] },      // R6 (planned vs actual start)
     // Quality
-    approved_craft: { name: 'Priimtas darbas', stat: 'confirmedTasks', thresholds: [3, 15, 50, 120] },      // Q1
+    approved_craft: { name: 'Priimta veikla', stat: 'confirmedTasks', thresholds: [3, 15, 50, 120] },      // Q1
     thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [3, 15, 40, 100] },                        // Q2
     hard_tasks: { name: 'Imasi sunkių', stat: 'hardTasks', thresholds: [3, 12, 30, 75] }                    // Q4
 };
@@ -1442,7 +1448,7 @@ async function generateOneRecurring(templateId, template, dayStr, force, source)
 
         const nowIso = new Date().toISOString();
         const task = {
-            title: data.title || template.templateName || 'Pasikartojantis darbas',
+            title: data.title || template.templateName || 'Pasikartojanti veikla',
             description: data.description || '',
             priority: normalizeRecurringPriority(data.priority),
             estimatedTime: data.estimatedTime || '',
@@ -1459,7 +1465,7 @@ async function generateOneRecurring(templateId, template, dayStr, force, source)
             completed: false,
             createdAt: nowIso,
             createdBy: 'system_recurring',
-            creatorName: 'Pasikartojantis darbas',
+            creatorName: 'Pasikartojanti veikla',
             assignedAt: nowIso,
             updatedAt: nowIso,
             // Provenance — makes recurring-vs-adhoc reporting exact instead of inferred.
@@ -1486,7 +1492,7 @@ async function generateOneRecurring(templateId, template, dayStr, force, source)
                 + (result.needsReassignment ? ' (assignee absent — flagged for reassignment)' : ''),
             before: null,
             after: {
-                title: data.title || template.templateName || 'Pasikartojantis darbas',
+                title: data.title || template.templateName || 'Pasikartojanti veikla',
                 assignedUserId: assignee || null,
                 priority: normalizeRecurringPriority(data.priority),
                 generatedForDate: dayStr,
@@ -1502,7 +1508,7 @@ async function generateOneRecurring(templateId, template, dayStr, force, source)
                 recipientId: managerId,
                 type: 'recurring_reassign',
                 taskId: result.taskId,
-                taskTitle: data.title || template.templateName || 'Pasikartojantis darbas',
+                taskTitle: data.title || template.templateName || 'Pasikartojanti veikla',
                 userId: assignee,
                 isRead: false,
                 createdAt: new Date().toISOString(),

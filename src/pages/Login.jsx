@@ -106,7 +106,7 @@ export default function Login() {
                     <span className="text-5xl font-extrabold tracking-tight text-ink-strong">WORK</span>
                     <span className="text-5xl font-extrabold tracking-tight text-brand">Z</span>
                 </div>
-                <p className="mb-8 text-body text-ink-muted">Darbo laiko apskaita</p>
+                <p className="mb-8 text-body text-ink-muted">Veiklos laiko apskaita</p>
 
                 <h1 className="mb-1 text-h2 text-ink-strong">Sveiki sugrįžę</h1>
                 <p className="mb-6 text-body text-ink-muted">Prisijunkite, kad matytumėte savo užduotis</p>

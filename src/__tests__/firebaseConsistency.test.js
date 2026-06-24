@@ -29,6 +29,7 @@ import { dirname, resolve, join } from 'node:path';
 import { PRIORITIES } from '../utils/priority.js';
 import { MAX_SESSION_MINUTES } from '../utils/timeUtils.js';
 import { recurrenceFiresOn } from '../utils/recurrence.js';
+import { NOTIFICATIONS, notificationCopy } from '../notifications/registry.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..', '..'); // src/__tests__ -> repo root
@@ -270,7 +271,97 @@ describe('recurrence firing lockstep (functions recurringFiresOn ↔ client recu
 });
 
 // =============================================================================================
-// 7. SECONDARY-SESSION RECORD-ID LOCKSTEP — a finished break/call/quick-work is logged with a
+// 7. NOTIFICATION COPY LOCKSTEP — the Cloud Function copyForRequestNotification is a hand-copied
+//    MIRROR of the client notification registry (src/notifications/registry.js). The copy strings
+//    live on both sides of the deploy boundary with nothing linking them, and they HAD already
+//    drifted (task_confirmed said "priimta" in the toast but "patvirtinta" in the push). We slice the
+//    server function out, evaluate it in isolation, and assert it returns the SAME { title, body } as
+//    the registry for every type across representative payloads — AND that the two cover the same set
+//    of types (no type the push knows but the in-app feed doesn't, or vice versa).
+// =============================================================================================
+
+describe('notification copy lockstep (functions copyForRequestNotification ↔ client registry)', () => {
+  // Slice the self-contained copy function out of functions/index.js and build it. It references only
+  // its argument and built-ins, so it evaluates with no dependencies. Moved markers throw clearly.
+  function buildServerCopy() {
+    const start = FUNCTIONS_SRC.indexOf('function copyForRequestNotification');
+    const end = FUNCTIONS_SRC.indexOf('exports.notifyOnRequestNotification');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not slice copyForRequestNotification out of functions/index.js — markers moved; update this test.');
+    }
+    const block = FUNCTIONS_SRC.slice(start, end);
+    return new Function(`${block}\n;return copyForRequestNotification;`)();
+  }
+
+  const serverCopy = buildServerCopy();
+
+  // The server's switch cases — the set of types the push copy knows how to render.
+  const serverTypes = (() => {
+    const start = FUNCTIONS_SRC.indexOf('function copyForRequestNotification');
+    const end = FUNCTIONS_SRC.indexOf('exports.notifyOnRequestNotification');
+    const block = FUNCTIONS_SRC.slice(start, end);
+    const out = new Set();
+    const re = /case\s+'([^']+)'/g;
+    let m;
+    while ((m = re.exec(block)) !== null) out.add(m[1]);
+    return out;
+  })();
+
+  // Representative payload(s) per type — branchy types (calendar_decision, the comment-bearing ones)
+  // get several so both branches are compared. EVERY registry type must have an entry here, so a new
+  // type can't be added without giving it copy coverage.
+  const SAMPLES = {
+    task_approval: [{ taskTitle: 'Sutvarkyti sandėlį' }],
+    task_completion: [{ taskTitle: 'Sutvarkyti sandėlį' }],
+    time_extension_request: [{ taskTitle: 'Sutvarkyti sandėlį' }],
+    session_correction_request: [{ day: '2026-06-20', commentText: '  klaida   trukmėje ' }, { day: '2026-06-20' }, {}],
+    new_comment: [{ taskTitle: 'Užduotis', commentText: '  ilgas\n komentaras ' }, { taskTitle: 'Užduotis' }, {}],
+    task_assigned: [{ taskTitle: 'Užduotis' }],
+    task_approved: [{ taskTitle: 'Užduotis' }],
+    task_confirmed: [{ taskTitle: 'Užduotis' }],
+    task_reverted: [{ taskTitle: 'Užduotis' }],
+    extension_granted: [{ taskTitle: 'Užduotis' }],
+    extension_denied: [{ taskTitle: 'Užduotis' }],
+    calendar_decision: [{ decision: 'approved' }, { decision: 'declined' }],
+    session_edited: [{ day: '2026-06-20' }, {}],
+    session_deleted: [{ day: '2026-06-20' }, {}],
+    account_approval: [{ targetUserName: 'Jonas Jonaitis' }, { targetUserEmail: 'j@x.lt' }, {}],
+    recurring_reassign: [{ taskTitle: 'Užduotis' }],
+  };
+
+  it('the registry and the server switch cover the same set of types', () => {
+    const registryTypes = new Set(Object.keys(NOTIFICATIONS));
+    const onlyRegistry = [...registryTypes].filter((t) => !serverTypes.has(t));
+    const onlyServer = [...serverTypes].filter((t) => !registryTypes.has(t));
+    expect(onlyRegistry, `In the registry but the server push has no case: ${onlyRegistry.join(', ')}`).toEqual([]);
+    expect(onlyServer, `In the server push but the registry has no entry: ${onlyServer.join(', ')}`).toEqual([]);
+  });
+
+  it('every registry type has copy-test coverage here', () => {
+    const missing = Object.keys(NOTIFICATIONS).filter((t) => !SAMPLES[t]);
+    expect(missing, `Add a SAMPLES payload for: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  it('server push copy === registry copy for every type and payload', () => {
+    const disagreements = [];
+    for (const type of Object.keys(NOTIFICATIONS)) {
+      for (const payload of SAMPLES[type] || []) {
+        const n = { type, ...payload };
+        const server = serverCopy(n);
+        const client = notificationCopy(n);
+        if (server.title !== client.title || server.body !== client.body) {
+          disagreements.push(
+            `${type} @ ${JSON.stringify(payload)}: server=${JSON.stringify(server)} client=${JSON.stringify(client)}`,
+          );
+        }
+      }
+    }
+    expect(disagreements, `notification copy diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// 8. SECONDARY-SESSION RECORD-ID LOCKSTEP — a finished break/call/quick-work is logged with a
 //    DETERMINISTIC doc id (sess_<kind>_<uid>_<startMs>) by BOTH the client (sessionActions.js
 //    handleLegacyLogging) and the server net (functions/index.js writeSecondaryCloseRecords). That
 //    shared id is what dedups the two independent closers so an abandoned session is never credited

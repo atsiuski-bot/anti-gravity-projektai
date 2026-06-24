@@ -81,13 +81,13 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
 
                 <div className="flex items-center gap-2 rounded-control bg-feedback-danger/10 px-3 py-2 text-body font-semibold text-feedback-danger">
                     <PauseCircle className="h-5 w-5 flex-shrink-0" aria-hidden="true" />
-                    Darbas automatiškai sustabdytas.
+                    Veikla automatiškai sustabdyta.
                 </div>
 
                 <p className="text-body text-ink-muted">
                     {hasManager
                         ? 'Vadovui jau išsiųsta laiko pratęsimo užklausa. Palaukite jo sprendimo arba aptarkite tolesnę eigą.'
-                        : 'Aptarkite tolesnę užduoties eigą su darbo vadovu.'}
+                        : 'Aptarkite tolesnę užduoties eigą su veiklos vadovu.'}
                 </p>
             </div>
 

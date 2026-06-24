@@ -358,7 +358,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
             console.error("Error fetching work hours:", error);
             // Surface the failure as a friendly banner instead of silently leaving the report
             // empty — a swallowed fetch error otherwise reads as a genuine "no work" result.
-            setError('Nepavyko užkrauti darbo valandų ataskaitos. Patikrinkite ryšį ir bandykite dar kartą.');
+            setError('Nepavyko užkrauti veiklos valandų ataskaitos. Patikrinkite ryšį ir bandykite dar kartą.');
         } finally {
             setLoading(false);
         }
@@ -741,7 +741,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                     <tr>
                         <th scope="col" className="px-2 py-2 text-center w-8 text-caption font-bold text-ink-muted uppercase tracking-wider">OK</th>
                         <th scope="col" className="px-2 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">UŽDUOTIS</th>
-                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-12">DARB.</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-12">VYKD.</th>
                         <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-24">LAIKAS</th>
                         <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIO</th>
                         <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">BŪSENA</th>
@@ -824,13 +824,13 @@ export default function Reports({ users, canExport = false, viewRole }) {
 
     return (
         <div className="space-y-6">
-            {/* TABS — Darbo ataskaita / Pridavimas / Istorija. These are team/oversight surfaces,
+            {/* TABS — Veiklos ataskaita / Pridavimas / Istorija. These are team/oversight surfaces,
                 so the switcher only appears in the manager team view. In a personal report (worker,
                 or a manager viewing their OWN data via viewRole="worker") there is just one view, so
                 the whole switcher is dropped. */}
             {isManagerRole(userRole) && (
                 <div role="tablist" aria-label="Ataskaitų skiltys">
-                    {/* Segmented switcher — same control as the Komandos darbai sub-tabs
+                    {/* Segmented switcher — same control as the Komandos veiklos sub-tabs
                         (ManagerView). Labels wrap to multiple lines on a narrow screen
                         instead of forcing a horizontal scroll. */}
                     <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
@@ -845,7 +845,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 activeTab === 'report' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                             )}
                         >
-                            Darbo ataskaita
+                            Veiklos ataskaita
                         </button>
                         <div className="w-px bg-line" aria-hidden="true" />
                         <button
@@ -1002,7 +1002,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                             view={isManagerRole(userRole) ? 'hours' : 'full'}
                             showTestUsers={showTestUsers}
                             // The team summary card above (shown for the same isManagerRole condition)
-                            // already carries the period span + Darbas/Pertraukos/Viso totals, so tell
+                            // already carries the period span + Veikla/Pertraukos/Viso totals, so tell
                             // the timeline below to drop its own duplicate summary in range mode.
                             periodSummaryAbove={isManagerRole(userRole)}
                         />
@@ -1301,12 +1301,12 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
 
             {/* Time triplet — the period's worked / break / total hours to the minute, from the same
                 aggregator the rest of the card uses. This is the former standalone
-                Darbas/Pertraukos/Viso bar (previously rendered by DailyStatistics below), folded in so
+                Veikla/Pertraukos/Viso bar (previously rendered by DailyStatistics below), folded in so
                 the whole period reads as ONE summary instead of two disconnected blocks. Colour-coded
                 (break = session-break accent, total = brand) but always paired with a text label. */}
             <div className="grid grid-cols-3 divide-x divide-line">
                 <SummaryStat
-                    label="Darbas"
+                    label="Veikla"
                     value={formatMinutesToTimeString(t.totalWorkMinutes)}
                     delta={p ? delta(t.totalWorkMinutes, p.totalWorkMinutes) : null}
                 />

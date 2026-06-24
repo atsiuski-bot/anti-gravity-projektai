@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
+import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { pauseTask } from '../utils/taskActions';
+import { notify } from '../utils/notify';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
 
@@ -142,22 +143,18 @@ export function useTaskTimeMonitor(tasks) {
                     // 5. Send notification to manager
                     const managerId = task.managerId || task.taskAuditor;
                     if (managerId) {
-                        try {
-                            await addDoc(collection(db, 'request_notifications'), {
-                                recipientId: managerId,
-                                type: 'time_extension_request',
-                                taskId: taskId,
-                                taskTitle: task.title || 'Užduotis',
-                                estimatedTime: task.estimatedTime,
-                                actualMinutes: actualTime,
-                                userName: currentUser?.displayName || currentUser?.email || 'Vykdytojas',
-                                userId: currentUser?.uid,
-                                isRead: false,
-                                createdAt: new Date().toISOString()
-                            });
-                        } catch (e) {
-                            console.error('Failed to send time extension notification:', e);
-                        }
+                        // Worker-authored (userId = caller), so notify() stamps the rule-required
+                        // provenance and the registry category; it swallows its own write errors.
+                        await notify({
+                            recipientId: managerId,
+                            type: 'time_extension_request',
+                            taskId: taskId,
+                            taskTitle: task.title || 'Užduotis',
+                            estimatedTime: task.estimatedTime,
+                            actualMinutes: actualTime,
+                            userName: currentUser?.displayName || currentUser?.email || 'Vykdytojas',
+                            userId: currentUser?.uid,
+                        });
                     }
                 } else {
                     limitReachedRef.current.add(taskId); // Already reached, just track

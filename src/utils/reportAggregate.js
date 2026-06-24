@@ -42,7 +42,7 @@ const RECOGNITION_FIELDS = [
     { key: 'confirmedTasks', label: 'Priimta' },
     { key: 'onEstimate', label: 'Telpa į planą' },
     { key: 'punctualDays', label: 'Punktualių dienų' },
-    { key: 'workDays', label: 'Darbo dienų' },
+    { key: 'workDays', label: 'Veiklos dienų' },
     { key: 'hardTasks', label: 'Sunkių užduočių' },
     { key: 'thorough', label: 'Kruopščių' },
     { key: 'planAheadWeeks', label: 'Suplanuota savaičių' },
@@ -251,7 +251,7 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
     const team = {
         workerCount: builtWorkers.length,
         totalHours: Math.round(sum((w) => w.current.totalHours) * 10) / 10,
-        // Exact team-wide work/break minutes — the on-screen summary renders Darbas/Pertraukos/Viso
+        // Exact team-wide work/break minutes — the on-screen summary renders Veikla/Pertraukos/Viso
         // from these (one source of truth) so the merged card never disagrees with itself.
         totalWorkMinutes: sum((w) => w.current.totalWorkMinutes),
         totalBreakMinutes: sum((w) => w.current.totalBreakMinutes),
@@ -272,8 +272,8 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
             onTimeGraceMin: ON_TIME_GRACE_MIN,
             assumptions: [
                 'Laikas — Europe/Vilnius vietinis.',
-                'Trukmės apkarpytos iki realių ribų (darbo sesija ≤ 16 val.) prieš sumuojant.',
-                `Punktualumas: darbas pradėtas ≤ ${ON_TIME_GRACE_MIN} min. po planuotos pamainos = „laiku".`,
+                'Trukmės apkarpytos iki realių ribų (veiklos sesija ≤ 16 val.) prieš sumuojant.',
+                `Punktualumas: veikla pradėta ≤ ${ON_TIME_GRACE_MIN} min. po planuotos pamainos = „laiku".`,
                 'Δ — pokytis prieš ankstesnį tokio paties ilgio laikotarpį; „geriau"/„prasčiau" pagal metrikos kryptį.',
                 'Uždarbis — neto po mokesčių, tarpinis pagal vykdytojo tarifų pakopas ir kaupiamas mėnesio valandas.',
                 'Pripažinimo skaičiai — viso per visą laiką (ne šio laikotarpio).',
@@ -317,7 +317,7 @@ function deltaSuffix(delta) {
 // header + team rollup + one section per worker, every metric grouped exactly as the UI groups it.
 export function renderReportMarkdown(report) {
     const L = [];
-    L.push('# WORKZ darbo ataskaita');
+    L.push('# WORKZ veiklos ataskaita');
     L.push('');
     L.push(`- Laikotarpis: ${report.period.start} – ${report.period.end}`);
     L.push(`- Lyginama su: ${report.period.compareStart} – ${report.period.compareEnd}`);
@@ -373,7 +373,7 @@ export function renderReportMarkdown(report) {
         if (w.daily && w.daily.length) {
             L.push('### Dienų išklotinė (faktai, ne išvada)');
             w.daily.forEach((d) =>
-                L.push(`- ${d.date}: darbas ${formatStatValue(d.workMinutes, 'minutes')} · pertraukos ${formatStatValue(d.breakMinutes, 'minutes')}`)
+                L.push(`- ${d.date}: veikla ${formatStatValue(d.workMinutes, 'minutes')} · pertraukos ${formatStatValue(d.breakMinutes, 'minutes')}`)
             );
             L.push('');
         }
@@ -398,14 +398,14 @@ export function renderReportJSON(report) {
 // (see computePeriodEarnings), so a per-day price would mis-tier and read as fact. Workers without
 // a pay rate, or whose window earns nothing, leave both money cells blank — same null policy as
 // buildReport. The earnings figure ALSO uses the analysis 16h clamp (no allowLarge), so it can
-// differ slightly from the allowLarge "Darbas" total above; that mirrors EarningsModal exactly.
+// differ slightly from the allowLarge "Veikla" total above; that mirrors EarningsModal exactly.
 export function renderTimesheetCSV(workers, window, { includeEarnings = false } = {}) {
     const escape = (str) => {
         if (str === null || str === undefined) return '';
         const s = String(str);
         return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const headers = ['Vykdytojas', 'Data', 'Darbas (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
+    const headers = ['Vykdytojas', 'Data', 'Veikla (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
     if (includeEarnings) headers.push('Neto (€)', 'Bruto (€)');
     const rows = [];
     // Pad a base 6-cell row out to the full header width so daily rows keep blank money columns.

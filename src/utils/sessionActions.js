@@ -6,11 +6,12 @@ import { logError } from './errorLog';
 import { isManagerRole } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
 import { buildCallTitle } from './callContacts';
+import { notify } from './notify';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
 // Shared by the auto-log path and the retroactive-description fallback so the two never drift.
-export const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greitas darbas (Automatiškai išsaugotas)';
+export const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greita veikla (Automatiškai išsaugota)';
 
 /**
  * Starts a new session for the user.
@@ -77,7 +78,7 @@ export const startSession = async (userId, type, metadata = {}) => {
                     if (partialDuration > MIN_LOGGED_SESSION_MINUTES) {
                         // Log the partial segment and capture doc ID for later renaming
                         const partialType = userData.activeSession.type;
-                        const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greitas darbas');
+                        const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greita veikla');
                         try {
                             const partialDocRef = await addDoc(collection(db, 'work_sessions'), {
                                 taskId: `${partialType}_partial_${interruptNow.getTime()}`,
@@ -301,7 +302,10 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
         const doLogging = async () => {
             try {
                 const logPromises = [];
-                if (durationMinutes > MIN_LOGGED_SESSION_MINUTES) {
+                // A call always reaches end-of-session through the deliberate classify/defer modal,
+                // so it is logged regardless of duration (a real but brief call must not vanish);
+                // break/quickWork/task still discard sub-minute mis-taps that have no such gate.
+                if (durationMinutes > MIN_LOGGED_SESSION_MINUTES || session.type === 'call') {
                     logPromises.push(
                         addDoc(collection(db, 'sessions'), {
                             userId,
@@ -495,7 +499,9 @@ const endLegacySession = async (userId, type, userData) => {
 };
 
 const handleLegacyLogging = async (userId, userData, session, now, durationMinutes) => {
-    if (durationMinutes <= MIN_LOGGED_SESSION_MINUTES) return; // Ignore accidental sub-minute taps
+    // Ignore accidental sub-minute taps — EXCEPT calls, which always pass through the deliberate
+    // end-of-call modal (classify or "Vėliau aprašysiu") and so must be logged at any length.
+    if (durationMinutes <= MIN_LOGGED_SESSION_MINUTES && session.type !== 'call') return;
     const sessionDate = getLithuanianDateString(now);
 
     // DETERMINISTIC record id, keyed on (kind + owner + this session's start instant). Two
@@ -648,8 +654,10 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
         // later if the worker describes it. Provenance is the worker's own uid (userId), which
         // firestore.rules requires for a request_notifications create.
         if (routedManagerId && routedManagerId !== userId && !autoStopped) {
+            // Worker-authored (userId = caller); notify() stamps provenance + the registry category and
+            // swallows its own write errors, so the completion log is never blocked by a notify failure.
             logPromises.push(
-                addDoc(collection(db, 'request_notifications'), {
+                notify({
                     recipientId: routedManagerId,
                     type: 'task_completion',
                     taskId: taskRef.id,
@@ -659,9 +667,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                     userName: userData.displayName || 'Vykdytojas',
                     userId,
                     completedAt: now.toISOString(),
-                    isRead: false,
-                    createdAt: new Date().toISOString()
-                }).catch(e => logError(e, { source: 'writeFail:endSession.quickWorkNotify' }))
+                })
             );
         }
 

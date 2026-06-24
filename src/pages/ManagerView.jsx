@@ -47,7 +47,7 @@ export default function ManagerView() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     const [viewMode, setViewMode] = useState('desktop');
-    // Komandos darbai splits into two sub-tabs: live activity first, the task list second.
+    // Komandos veiklos splits into two sub-tabs: live activity first, the task list second.
     const [teamTasksSubTab, setTeamTasksSubTab] = useState('active');
     // Komandos kalendorius splits into two sub-tabs: the live calendar, then the calendar-change
     // history (moved out of Kom. ataskaitos to sit beside the calendar it describes).
@@ -227,17 +227,21 @@ export default function ManagerView() {
                 </div>
             )}
 
-            {/* Tab Content — Komandos darbai splits into two sub-tabs:
-                 1. Aktyvūs darbai   — live team activity (ActiveWorkSessions).
+            {/* Tab Content — Komandos veiklos splits into two sub-tabs:
+                 1. Aktyvios veiklos — live team activity (ActiveWorkSessions).
                  2. Užduočių sąrašas — the manageable task list + its filters.
                 The weekly planned-vs-worked summary that used to head this tab now lives in
                 Kom. kalendorius, next to the calendar it summarises. */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
                 {/* The single-line quick-add bar was removed; its AI draft-fill now lives in the
-                    "Naujas darbas" modal (TaskModal), beside the title. */}
+                    "Nauja veikla" modal (TaskModal), beside the title. */}
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
-                    <div role="tablist" aria-label="Komandos darbų rodinys">
-                        <div className="flex w-full sm:inline-flex sm:w-auto overflow-hidden rounded-control border border-line bg-surface-sunken">
+                    <div role="tablist" aria-label="Komandos veiklų rodinys">
+                        {/* Mobile: a horizontally scrollable strip (no-scrollbar) so all four
+                            sub-tabs keep their natural width and full labels instead of being
+                            squeezed equal with flex-1 — the row swipes sideways when it overflows
+                            the viewport, without growing taller. md+ keeps the fitted inline pill. */}
+                        <div className="flex w-full overflow-x-auto no-scrollbar snap-x snap-mandatory sm:inline-flex sm:w-auto sm:overflow-hidden rounded-control border border-line bg-surface-sunken">
                             <button
                                 type="button"
                                 role="tab"
@@ -246,7 +250,7 @@ export default function ManagerView() {
                                 aria-controls="team-active-panel"
                                 onClick={() => setTeamTasksSubTab('active')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
@@ -255,7 +259,7 @@ export default function ManagerView() {
                                 <span className="sm:hidden">Aktyvūs</span>
                                 <span className="hidden sm:inline">Aktyvios užduotys</span>
                             </button>
-                            <div className="w-px bg-line" aria-hidden="true" />
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
                             <button
                                 type="button"
                                 role="tab"
@@ -264,7 +268,7 @@ export default function ManagerView() {
                                 aria-controls="team-list-panel"
                                 onClick={() => setTeamTasksSubTab('list')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'list' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
@@ -273,7 +277,7 @@ export default function ManagerView() {
                                 <span className="sm:hidden">Sąrašas</span>
                                 <span className="hidden sm:inline">Sąrašas užduočių</span>
                             </button>
-                            <div className="w-px bg-line" aria-hidden="true" />
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
                             <button
                                 type="button"
                                 role="tab"
@@ -282,7 +286,7 @@ export default function ManagerView() {
                                 aria-controls="team-approvals-panel"
                                 onClick={() => setTeamTasksSubTab('approvals')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'approvals' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
@@ -303,7 +307,7 @@ export default function ManagerView() {
                                     </span>
                                 )}
                             </button>
-                            <div className="w-px bg-line" aria-hidden="true" />
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
                             <button
                                 type="button"
                                 role="tab"
@@ -312,7 +316,7 @@ export default function ManagerView() {
                                 aria-controls="team-recurring-panel"
                                 onClick={() => setTeamTasksSubTab('recurring')}
                                 className={cn(
-                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
                                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
                                     teamTasksSubTab === 'recurring' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
                                 )}
@@ -327,7 +331,7 @@ export default function ManagerView() {
                     {/* Užduočių sąrašas toolbar lifted onto the tab row (desktop only) and split
                         off with a vertical divider, so it reads as a separate control cluster — not
                         part of the tab switcher. md+ only; mobile keeps the full toolbar in-panel
-                        below. Rendered only on the list sub-tab — Aktyvūs darbai has no filters. */}
+                        below. Rendered only on the list sub-tab — Aktyvios veiklos has no filters. */}
                     {teamTasksSubTab === 'list' && (
                         <div className="hidden items-center gap-2 md:ml-auto md:flex md:border-l md:border-line md:pl-4">
                             <SearchPopover
@@ -366,7 +370,7 @@ export default function ManagerView() {
                     )}
                 </div>
 
-                {/* Sub-tab 1 — Aktyvūs darbai */}
+                {/* Sub-tab 1 — Aktyvios veiklos */}
                 <div
                     id="team-active-panel"
                     role="tabpanel"
@@ -587,7 +591,7 @@ export default function ManagerView() {
                             >
                                 Kalendorius
                             </button>
-                            <div className="w-px bg-line" aria-hidden="true" />
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
                             <button
                                 type="button"
                                 role="tab"
@@ -609,8 +613,8 @@ export default function ManagerView() {
                         and back remounts it correctly, and the history listener only runs on its tab. */}
                     {teamCalendarSubTab === 'calendar' && (
                         <>
-                            {/* Komandos darbai (Savaitės): the weekly planned-vs-worked summary moved
-                                here from Kom. darbai — it belongs beside the calendar it summarises. */}
+                            {/* Komandos veiklos (Savaitės): the weekly planned-vs-worked summary moved
+                                here from Kom. veiklos — it belongs beside the calendar it summarises. */}
                             <CombinedHoursSummary />
                             <ErrorBoundary boundaryName="manager:team-calendar">
                                 <React.Suspense fallback={<Spinner />}>

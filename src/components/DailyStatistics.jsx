@@ -90,7 +90,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const rangeStart = isRange ? dateRange.start : selectedDate;
     const rangeEnd = isRange ? dateRange.end : selectedDate;
     // When a team summary card already sits above this view (manager range report), it owns the
-    // period span + Darbas/Pertraukos/Viso totals. Drop our own duplicate summary chrome (the
+    // period span + Veikla/Pertraukos/Viso totals. Drop our own duplicate summary chrome (the
     // desktop toolbar, which in range mode holds nothing else, and the mobile summary card) so the
     // period reads as one block instead of two. Only ever true for the range instance.
     const summaryHandledAbove = periodSummaryAbove && isRange;
@@ -128,11 +128,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const [restoreTarget, setRestoreTarget] = useState(null);
     const [restoring, setRestoring] = useState(false);
 
-    // Per-worker drill-down: clicking a row in the team "Darbo valandos" summary opens a
+    // Per-worker drill-down: clicking a row in the team "Veiklos valandos" summary opens a
     // modal listing everything that worker touched that day — both finished work and the
     // session still running — without forcing the manager to switch the user filter.
     // In workerDetailOnly mode (the team-calendar drill-down) the component renders nothing but
-    // this drill-down, opened immediately for the clicked worker — the same "Darbo valandos" table
+    // this drill-down, opened immediately for the clicked worker — the same "Veiklos valandos" table
     // the team report shows, never the full dashboard. forcedWorker is the stable descriptor we
     // reopen against after the viewer dips into a task and back.
     const forcedWorker = workerDetailOnly && forceUserId
@@ -944,9 +944,9 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         const day = item.date || getLithuanianDateString(item.startTime);
         const span = `${formatTime(item.startTime)}–${formatTime(item.endTime)}`;
         const dur = formatMinutesToTimeString(item.duration);
-        const label = item.title || 'Darbas';
+        const label = item.title || 'Veikla';
         // One human line the manager reads in the bell: what, when, how long, and why it's wrong.
-        const commentText = `Pranešimas apie klaidą darbo laike. ${day} ${span} (${dur}) — „${label}“. Priežastis: ${trimmed}`;
+        const commentText = `Pranešimas apie klaidą veiklos laike. ${day} ${span} (${dur}) — „${label}“. Priežastis: ${trimmed}`;
         const actorName = formatDisplayName(currentUser?.displayName || currentUser?.email) || currentUser?.email || '';
         try {
             await notifyMany(myManagerIds, {
@@ -1168,7 +1168,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         min-h-touch row, so text-h2 (20px) fills it without overflowing while the
                         caption labels stay small — the number is the signal, the word is the legend. */}
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
-                        <span className="text-caption text-ink-muted">Darbas</span>
+                        <span className="text-caption text-ink-muted">Veikla</span>
                         <span className="text-h2 font-bold text-ink-strong tabular-nums">{formatMinutesToTimeString(totalWorkedMinutes)}</span>
                     </span>
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
@@ -1204,7 +1204,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     holds it on desktop is hidden on phones), centred and a notch larger than the
                     desktop caption so the date and its totals read as one merged block. */}
                 {isRange && (
-                    <div className="flex items-center justify-center gap-2 border-b border-line pb-2.5 mb-2.5 text-center">
+                    <div className="flex items-center justify-center gap-2 border-b border-line pb-2.5 mb-2.5 text-center min-h-touch">
                         <Calendar className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
                         <span className="text-body font-semibold text-ink-strong tabular-nums">
                             {rangeStart} – {rangeEnd}
@@ -1248,7 +1248,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     <div className="flex flex-col items-center px-1 text-center">
                         <span className="flex items-center gap-1 text-caption text-ink-muted">
                             <MetricWorkedGlyph className="w-3.5 h-3.5" aria-hidden="true" />
-                            Darbas
+                            Veikla
                         </span>
                         <span className="mt-1 text-h3 font-bold text-ink-strong tabular-nums">
                             {formatMinutesToTimeString(totalWorkedMinutes)}
@@ -1279,13 +1279,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
                 {selectedUserId !== 'all' && (
                     <div className="px-6 py-4 border-b border-line bg-surface-sunken text-ink-strong">
-                        <h3 className="font-semibold">Darbų eiga</h3>
+                        <h3 className="font-semibold">Veiklų eiga</h3>
                     </div>
                 )}
 
                 {combinedTimelineItems.length === 0 ? (
                     <div className="p-12 text-center text-ink-muted">
-                        <p>{isRange ? 'Šiuo laikotarpiu darbo sesijų nefiksuota.' : 'Šią dieną darbo sesijų nefiksuota.'}</p>
+                        <p>{isRange ? 'Šiuo laikotarpiu veiklos sesijų nefiksuota.' : 'Šią dieną veiklos sesijų nefiksuota.'}</p>
                     </div>
                 ) : selectedUserId === 'all' ? (
                     <>
@@ -1325,7 +1325,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                 </li>
                             ))}
                             {/* "Viso komanda" sum — dropped when the merged summary card above already
-                                carries the same team Pertraukos/Darbas/Viso totals (manager range view).
+                                carries the same team Pertraukos/Veikla/Viso totals (manager range view).
                                 Kept in day mode / personal reports, where it is the only running total. */}
                             {!summaryHandledAbove && (
                             <li className="bg-surface-sunken p-4">
@@ -1360,8 +1360,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pabaiga</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Pertraukos</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Užduotims</th>
-                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-strong" title="Bendras laikas: darbas ir pertraukos — ne tik darbo valandos.">Bendras laikas</th>
-                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted" title="Dienų su pažymėta pertrauka dalis nuo darbo dienų — kaip nuosekliai vykdytojas žymi pertraukas.">Pertraukų žym.</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-strong" title="Bendras laikas: veikla ir pertraukos — ne tik veiklos valandos.">Bendras laikas</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted" title="Dienų su pažymėta pertrauka dalis nuo veiklos dienų — kaip nuosekliai vykdytojas žymi pertraukas.">Pertraukų žym.</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
@@ -1460,7 +1460,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                         className="w-3.5 h-3.5 flex-shrink-0"
                                                         aria-hidden="true"
                                                     />
-                                                    <span className="truncate">{item.title || 'Darbas'}</span>
+                                                    <span className="truncate">{item.title || 'Veikla'}</span>
                                                 </>
                                             )}
                                         </div>
@@ -1519,7 +1519,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                         type={item.isSystemTask ? 'call' : (item.isQuickWork ? 'quickWork' : 'task')}
                                                         className="w-3.5 h-3.5 flex-shrink-0"
                                                     />
-                                                    {item.title || 'Darbas'}
+                                                    {item.title || 'Veikla'}
                                                 </span>
                                             )}
                                             <SessionEditedBadge item={item} />
@@ -1784,12 +1784,12 @@ function SessionErrorReportModal({ item, onSubmit, onClose }) {
         >
             <div className="space-y-4">
                 <p className="text-body text-ink">
-                    Pranešite vadovui, kad ši užfiksuoto darbo laiko eilutė neteisinga. Laiko Jūs
+                    Pranešite vadovui, kad ši užfiksuotos veiklos laiko eilutė neteisinga. Laiko Jūs
                     pakeisti negalite — vadovas jį pataisys.
                 </p>
                 <div className="rounded-control border border-line bg-surface-sunken p-3">
                     <p className="text-caption uppercase font-bold tracking-wide text-ink-muted">Eilutė</p>
-                    <p className="mt-1 text-body text-ink-strong break-words">{item.title || 'Darbas'}</p>
+                    <p className="mt-1 text-body text-ink-strong break-words">{item.title || 'Veikla'}</p>
                     <p className="mt-0.5 font-mono text-caption text-ink-muted">
                         {day} · {span} · {dur}
                     </p>
@@ -1814,7 +1814,7 @@ function SessionErrorReportModal({ item, onSubmit, onClose }) {
 
 // Worker day drill-down — chronological list of everything one worker did over the shown span
 // (a single day, or the whole range in the period report): tasks and quick-work/calls (finished
-// or still running) plus breaks. Opened from a row in the team "Darbo valandos" summary so a
+// or still running) plus breaks. Opened from a row in the team "Veiklos valandos" summary so a
 // manager never has to switch the user filter just to inspect one person. Each work row carries
 // the same status the task shows everywhere else and, when resolvable, opens the full task on
 // click — editable only for a viewer with the rights (TaskModal gates that itself).
@@ -1906,7 +1906,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                             className="w-3.5 h-3.5 flex-shrink-0"
                             aria-hidden="true"
                         />
-                        <span className="break-words font-medium">{item.title || 'Darbas'}</span>
+                        <span className="break-words font-medium">{item.title || 'Veikla'}</span>
                         {task?.priority && <PriorityBadge priority={task.priority} />}
                     </div>
                     <p className="mt-0.5 font-mono text-caption text-ink-muted">
@@ -1932,7 +1932,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                             <button
                                 type="button"
                                 onClick={() => onOpenTask?.(task)}
-                                aria-label={`Atidaryti užduotį: ${item.title || 'Darbas'}`}
+                                aria-label={`Atidaryti užduotį: ${item.title || 'Veikla'}`}
                                 className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                             >
                                 {body}
@@ -1966,7 +1966,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                     <h2 id="worker-detail-title" className="text-h2 text-ink-strong">{worker.name}</h2>
                     <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-caption">
                         <span className="font-mono text-ink-muted">{headerSpan}</span>
-                        <span className="text-ink-muted">Darbas <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
+                        <span className="text-ink-muted">Veikla <span className="font-mono font-bold text-ink-strong">{formatMinutesToTimeString(dayWorkMinutes)}</span></span>
                         <span className="text-ink-muted">Pertraukos <span className="font-mono font-bold text-feedback-warning-text">{formatMinutesToTimeString(dayBreakMinutes)}</span></span>
                     </div>
                 </div>
@@ -2191,7 +2191,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                             <tr>
                                 {(isManagerRole(userRole)) && <th scope="col" className="px-2 py-2 text-center w-8 text-caption font-bold text-ink-muted uppercase tracking-wider">OK</th>}
                                 <th scope="col" className="px-2 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
-                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">DARB.</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">VYKD.</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">PRIO</th>

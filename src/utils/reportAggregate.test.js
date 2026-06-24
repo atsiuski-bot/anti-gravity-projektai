@@ -30,7 +30,7 @@ const buildOne = (worker, window, prevWindow, includeEarnings = true) =>
         generatedAt: '2026-06-23 12:00:00',
         window,
         prevWindow,
-        scopeLabel: '1 darbuotojas',
+        scopeLabel: '1 vykdytojas',
         includeEarnings,
         workers: [worker],
     });
@@ -192,7 +192,7 @@ describe('renderers', () => {
 
     it('Markdown includes the worker name and the reading-guide header', () => {
         const md = renderReportMarkdown(report);
-        expect(md).toContain('# WORKZ darbo ataskaita');
+        expect(md).toContain('# WORKZ veiklos ataskaita');
         expect(md).toContain('Test Worker');
         expect(md).toContain('Skaitymo gairės modeliui');
     });

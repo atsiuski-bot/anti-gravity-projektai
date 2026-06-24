@@ -158,7 +158,7 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
         setMsg(null);
         try {
             await createManagerTask({ ...template.data, assignedUserId: baked, sourceTemplateId: template.id }, currentUser);
-            setMsg({ text: 'Darbas sukurtas.', tone: 'ok' });
+            setMsg({ text: 'Veikla sukurta.', tone: 'ok' });
             onChanged?.();
         } catch {
             setMsg({ text: 'Nepavyko sukurti.', tone: 'err' });
@@ -199,10 +199,10 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                         icon={Play}
                         loading={busyAction === 'create-once'}
                         onClick={handleCreateOnce}
-                        aria-label="Sukurti darbą"
+                        aria-label="Sukurti veiklą"
                         className="shrink-0 px-3 sm:px-4"
                     >
-                        <span className="hidden sm:inline">Sukurti darbą</span>
+                        <span className="hidden sm:inline">Sukurti veiklą</span>
                     </Button>
                 )}
                 <button
@@ -368,7 +368,7 @@ export default function RecurringTasksPanel({ embedded = false }) {
     const body = (
         <>
             <p className={cn('mb-3 px-1 text-caption text-ink-muted', embedded && 'mt-1')}>
-                Pažymėkite šabloną kaip pasikartojantį — sistema kas rytą automatiškai sukurs darbą pagal grafiką
+                Pažymėkite šabloną kaip pasikartojantį — sistema kas rytą automatiškai sukurs veiklą pagal grafiką
                 ir priskirs pasirinktam vykdytojui. „Sukurti dabar“ paleidžia iškart.
             </p>
 
@@ -379,7 +379,7 @@ export default function RecurringTasksPanel({ embedded = false }) {
                 <p className="px-1 py-3 text-body text-feedback-danger" role="alert">{error}</p>
             )}
             {!loading && !error && templates.length === 0 && (
-                <p className="px-1 py-3 text-body text-ink-muted">Šablonų dar nėra. Sukurkite šabloną kurdami darbą.</p>
+                <p className="px-1 py-3 text-body text-ink-muted">Šablonų dar nėra. Sukurkite šabloną kurdami veiklą.</p>
             )}
 
             {!loading && !error && templates.length > 0 && (
@@ -425,7 +425,7 @@ export default function RecurringTasksPanel({ embedded = false }) {
                 className="flex w-full min-h-touch items-center gap-3 rounded-card px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
             >
                 <Repeat className="h-5 w-5 shrink-0 text-brand" aria-hidden="true" />
-                <span className="flex-1 text-body-lg font-bold text-ink-strong">Pasikartojantys darbai</span>
+                <span className="flex-1 text-body-lg font-bold text-ink-strong">Pasikartojančios veiklos</span>
                 {activeCount > 0 && (
                     <span className="rounded-full bg-brand/10 px-2 py-0.5 text-caption font-semibold text-brand tabular-nums">{activeCount}</span>
                 )}

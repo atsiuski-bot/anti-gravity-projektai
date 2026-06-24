@@ -171,6 +171,6 @@ export async function gatherReportData({
 export function reportFilename(format, window) {
     const ext = format === 'md' ? 'md' : format === 'json' ? 'json' : 'csv';
     const stamp = `${window.startStr}_${window.endStr}`;
-    const base = format === 'csv' ? 'darbo_ataskaita' : 'darbo_ataskaita_ai';
+    const base = format === 'csv' ? 'veiklos_ataskaita' : 'veiklos_ataskaita_ai';
     return `${base}_${stamp}.${ext}`;
 }

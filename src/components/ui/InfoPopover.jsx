@@ -78,7 +78,7 @@ export default function InfoPopover({ label = 'Daugiau informacijos', children, 
                 </span>
             )}
             {open && isMobile && (
-                <Modal open onClose={() => setOpen(false)} ariaLabel={label} size="sm">
+                <Modal open onClose={() => setOpen(false)} title={label} size="sm">
                     <div role="note" className="text-body text-ink-muted">
                         {children}
                     </div>

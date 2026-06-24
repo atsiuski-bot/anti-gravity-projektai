@@ -1,4 +1,7 @@
-# ADR 0016 — Resume backgrounded secondary sessions; bound abandoned ones server-side
+# ADR 0018 — Resume backgrounded secondary sessions; bound abandoned ones server-side
+
+> Renumbered from 0016 at merge time — `origin/main` had already taken 0016 (theme-reactive session
+> colors) and 0017 (notification registry).
 
 - **Date:** 2026-06-24
 - **Status:** Accepted (client live on merge; server net awaits a `functions` deploy)

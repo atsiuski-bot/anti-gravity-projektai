@@ -441,7 +441,7 @@ export default function AuditDashboard() {
                 </div>
                 <p className="mt-1 text-body text-ink-muted">
                     Sistemos vientisumo ataskaitos ir sprendimų žurnalas — kas, ką ir kodėl pakeitė
-                    (žmogus, AI agentas ar automatinis darbas).
+                    (žmogus, AI agentas ar automatinė veikla).
                 </p>
             </header>
 
@@ -520,7 +520,7 @@ export default function AuditDashboard() {
                         title={decisions.length === 0 ? 'Žurnalas tuščias' : 'Pagal filtrą įrašų nėra'}
                         description={
                             decisions.length === 0
-                                ? 'Įrašai atsiras savaime: pasikartojančių darbų generatorius (05:00) ir vientisumo skenavimas (06:00) palieka „sistemos“ įrašus, o žmonių/agentų komandos — savuosius.'
+                                ? 'Įrašai atsiras savaime: pasikartojančių veiklų generatorius (05:00) ir vientisumo skenavimas (06:00) palieka „sistemos“ įrašus, o žmonių/agentų komandos — savuosius.'
                                 : 'Pakeiskite aktoriaus filtrą, kad pamatytumėte kitus įrašus.'
                         }
                     />
