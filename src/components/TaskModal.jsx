@@ -4,8 +4,9 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate } from 'lucide-react';
+import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate, Tag } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
+import { TASK_TAGS } from '../utils/taskUtils';
 import { scopeRoster } from '../utils/teamScope';
 import { saveTaskTemplate, getTaskTemplates, updateTaskTemplate, deleteTaskTemplate } from '../utils/taskActions';
 import { parseTaskText } from '../utils/aiActions';
@@ -182,6 +183,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         comments: [],
         completed: false,
         deadline: '',
+        tag: '',
         attachmentUrl: '',
         attachmentUrls: [], // New field for multiple attachments
         checklist: []
@@ -377,6 +379,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 comments: task.comments || [],
                 completed: task.completed || false,
                 deadline: task.deadline || '',
+                tag: task.tag || '',
                 attachmentUrl: task.attachmentUrl || '', // Keep for legacy
                 attachmentUrls: existingUrls,
                 checklist: task.checklist || []
@@ -398,6 +401,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 comments: [],
                 completed: false,
                 deadline: d.deadline || '',
+                tag: '',
                 attachmentUrl: '',
                 attachmentUrls: [],
                 checklist: []
@@ -430,6 +434,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     comments: [],
                     completed: false,
                     deadline: '',
+                    tag: '',
                     attachmentUrl: '',
                     attachmentUrls: [],
                     checklist: []
@@ -1400,27 +1405,49 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                 </div>
                             </div>
 
-                            {/* Deadline — optional; the placeholder carries the label. The text→date type
-                                swap keeps that placeholder readable until the field is focused, and a tap
-                                immediately pops the native calendar (showPicker) instead of needing a second
-                                tap on the tiny date glyph. */}
-                            <div>
-                                <input
-                                    type={formData.deadline ? "date" : "text"}
-                                    value={formData.deadline}
-                                    onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-                                    onFocus={(e) => { e.target.type = 'date'; }}
-                                    onClick={(e) => {
-                                        e.target.type = 'date';
-                                        // showPicker needs a user gesture (this click) and isn't in every
-                                        // browser; ignore if unsupported/blocked — the field still works.
-                                        try { e.target.showPicker?.(); } catch { /* no-op */ }
-                                    }}
-                                    onBlur={(e) => { if (!e.target.value) e.target.type = 'text'; }}
-                                    aria-label="Atlikti iki"
-                                    placeholder="Atlikti iki… (neprivalomas įrašas)"
+                            {/* Deadline + tag — one row (deadline left, tag right). */}
+                            <div className="grid grid-cols-2 gap-3">
+                                {/* Deadline — optional. The field is ALWAYS a native date control, so a single
+                                    click opens the calendar (showPicker) with no intermediate text-edit step.
+                                    An overlay carries the Lithuanian label while empty; the native empty value
+                                    (yyyy-mm-dd) is hidden by rendering the input text transparent until a date
+                                    is chosen. (Replaces the old text→date type swap that needed a second tap.) */}
+                                <div className="relative min-w-0">
+                                    <input
+                                        type="date"
+                                        value={formData.deadline}
+                                        onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
+                                        onClick={(e) => {
+                                            // showPicker needs a user gesture (this click) and isn't in every
+                                            // browser; ignore if unsupported/blocked — the field still works.
+                                            try { e.currentTarget.showPicker?.(); } catch { /* no-op */ }
+                                        }}
+                                        aria-label="Atlikti iki"
+                                        disabled={fieldsLocked}
+                                        className={`w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base ${formData.deadline ? '' : 'text-transparent'}`}
+                                    />
+                                    {!formData.deadline && (
+                                        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base text-ink-muted">
+                                            Atlikti iki…
+                                        </span>
+                                    )}
+                                </div>
+                                {/* Žyma — optional single tag from the canonical list. Opens a list panel
+                                    (Select sheet) just like the other pickers; "Be žymos" clears it. */}
+                                <Select
+                                    value={formData.tag}
+                                    onChange={(val) => setFormData({ ...formData, tag: val })}
+                                    options={[
+                                        { value: '', label: 'Be žymos' },
+                                        ...TASK_TAGS.map((t) => ({ value: t, label: t })),
+                                    ]}
+                                    label="Žyma"
+                                    placeholder="Žyma"
+                                    ariaLabel="Žyma"
+                                    icon={Tag}
+                                    alwaysSheet
                                     disabled={fieldsLocked}
-                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
+                                    className="min-w-0"
                                 />
                             </div>
 
