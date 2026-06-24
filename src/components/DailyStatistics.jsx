@@ -13,10 +13,11 @@ import { StatusRunningGlyph } from './icons/statusGlyphs';
 import { MetricWorkedGlyph, MetricTotalGlyph } from './icons/metricGlyphs';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
+import TaskCard from './TaskCard';
 import { addComment } from '../utils/commentActions';
 import { notifyMany } from '../utils/notify';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, MessageSquare, Check, CheckCircle2, RotateCcw, X, Pencil, Plus, Flag } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, RotateCcw, X, Pencil, Plus, Flag, MessageSquare } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
@@ -2004,137 +2005,8 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
     );
 }
 
-// Mobile Stats Card Component
-function MobileStatsCard({ task, onToggleConfirm, onAddComment: _onAddComment, onRestore, users, userRole, setActiveModal, currentUser: _currentUser }) {
-    const isConfirmed = task.status === 'confirmed';
-    const worker = users.find(u => u.id === task.assignedUserId);
-    const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '—');
-
-    return (
-        <div className={clsx(
-            "p-3 rounded-control border mb-3 shadow-sm",
-            isConfirmed ? "bg-surface-sunken border-line" : "bg-surface-card border-line"
-        )}>
-            <div className="flex justify-between items-start mb-2">
-                <div className="flex-1">
-                    <div className={clsx(
-                        "font-bold text-body",
-                        task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : ""
-                    )}>
-                        {!task.isDeleted && <CompletedMarker task={task} className="mr-1.5" />}
-                        {task.title}
-                    </div>
-                    {task.isDeleted && <DeletedBadge />}
-                </div>
-
-                <PriorityBadge priority={task.priority} className="ml-2" />
-            </div>
-
-            {task.description && (
-                <div className="text-xs text-ink-muted mb-2 whitespace-pre-wrap break-words">
-                    {task.description}
-                </div>
-            )}
-
-            {(task.managerName || task.creatorName) && (
-                <div className="text-caption text-ink-muted mb-2 flex items-center gap-1">
-                    <User className="w-3 h-3" />
-                    <span>Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
-                </div>
-            )}
-
-            <div className="flex flex-wrap items-center gap-2 mb-2 text-caption text-ink-muted">
-                <UserChip userId={task.assignedUserId} name={userName} />
-                <div className="bg-surface-sunken px-1.5 py-0.5 rounded font-mono">
-                    {/* Logged time is read-only here; corrections are made on the day timeline via
-                        the per-session editor (start/end), not as a task-total delta. */}
-                    <span className="flex items-center gap-1">
-                        {task.estimatedTime || '-'} / {calculateCurrentTotalMinutes(task) !== 0 ? formatMinutesToTimeString(calculateCurrentTotalMinutes(task)) : '-'}
-                    </span>
-                    <TimeChangedWarning task={task} />
-                </div>
-                {task.deadline && (
-                    <div className="bg-feedback-warning-soft text-feedback-warning-text border border-feedback-warning-border px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Calendar className="w-3 h-3 text-feedback-warning" />
-                        {task.deadline}
-                    </div>
-                )}
-                {task.completedAt && (
-                    <div className="bg-feedback-success-soft text-feedback-success-text border border-feedback-success-border px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Check className="w-3 h-3 text-feedback-success" />
-                        {new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                )}
-            </div>
-
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-line">
-                <div className="flex items-center gap-2">
-                    {(isManagerRole(userRole)) ? (
-                        <label className="flex items-center gap-1.5 cursor-pointer">
-                            <input
-                                type="checkbox"
-                                checked={isConfirmed}
-                                onChange={() => onToggleConfirm(task)}
-                                disabled={task.archivedAt}
-                                className="w-4 h-4 rounded border-line text-feedback-success focus:ring-feedback-success"
-                            />
-                            <span className={clsx("text-xs font-medium", isConfirmed ? "text-feedback-success-text" : "text-ink-muted")}>
-                                {isConfirmed ? "Priimtas" : "Laukia priėmimo"}
-                            </span>
-                        </label>
-                    ) : (
-                        <span className={clsx("text-xs font-medium", isConfirmed ? "text-feedback-success-text" : "text-ink-muted")}>
-                            {isConfirmed ? "Būsena: Priimtas" : "Būsena: Laukiama priėmimo"}
-                        </span>
-                    )}
-                </div>
-
-                <div className="flex items-center gap-1">
-                    <IconButton
-                        icon={RotateCcw}
-                        label="Grąžinti užduotį"
-                        title="Grąžinti"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            onRestore(task);
-                        }}
-                    />
-                    <IconButton
-                        label={`Komentarai (${task.comments?.length || 0})`}
-                        title="Komentarai"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveModal({ type: 'comments', taskId: task.id, task: task });
-                        }}
-                    >
-                        <span className="flex items-center gap-1">
-                            <MessageSquare className="w-4 h-4" aria-hidden="true" />
-                            <span className="text-xs font-bold">{task.comments?.length || 0}</span>
-                        </span>
-                    </IconButton>
-                </div>
-            </div>
-
-            {task.comments && task.comments.length > 0 && (
-                <div className="mt-2 bg-surface-card border border-line rounded p-2 text-xs text-ink-muted">
-                    {task.comments.slice(-2).map((c, i) => (
-                        <div key={i} className="mb-1 last:mb-0">
-                            <UserChip userId={c.userId} name={c.user} />: {c.text}
-                        </div>
-                    ))}
-                    {task.comments.length > 2 && (
-                        <div className="text-caption text-ink-muted italic mt-1">
-                            + dar {task.comments.length - 2} komentarai...
-                        </div>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-}
-
 // Task List Helper Component
-function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, onRestore, users, userRole, currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false, collapsible = false, defaultOpen = true }) {
+function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: _onAddComment, onRestore, users, userRole, currentUser: _currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false, collapsible = false, defaultOpen = true }) {
     // The header doubles as an accordion toggle on the approval surface (collapsible); elsewhere
     // the body is always shown.
     const [open, setOpen] = useState(defaultOpen);
@@ -2169,41 +2041,51 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
             </div>
 
             {(!collapsible || open) && (viewMode === 'mobile' ? (
-                <div className="space-y-1">
-                    {tasks.map(task => (
-                        <MobileStatsCard
-                            key={task.id}
-                            task={task}
-                            onToggleConfirm={onToggleConfirm}
-                            onAddComment={onAddComment}
-                            onRestore={onRestore}
-                            users={users}
-                            userRole={userRole}
-                            currentUser={currentUser}
-                            setActiveModal={setActiveModal}
-                        />
-                    ))}
-                </div>
+                <ul className="space-y-3">
+                    {tasks.map((task) => {
+                        // The SAME shared TaskCard the active lists use (report surface: timer hidden,
+                        // accept/restore buttons). Confirm is a manager toggle (the old checkbox), shown
+                        // disabled once archived; restore mirrors the old per-row Grąžinti.
+                        const isManager = isManagerRole(userRole);
+                        const isConfirmed = task.status === 'confirmed';
+                        const acts = [];
+                        if (isManager) acts.push({ key: 'confirm', label: isConfirmed ? 'Priimta' : 'Priimti', icon: CheckCircle2, variant: isConfirmed ? 'secondary' : 'success', disabled: !!task.archivedAt, onClick: () => onToggleConfirm(task) });
+                        acts.push({ key: 'restore', label: 'Grąžinti', icon: RotateCcw, variant: 'secondary', onClick: () => onRestore(task) });
+                        return (
+                            <li key={task.id}>
+                                <TaskCard
+                                    task={task}
+                                    role={isManager ? 'manager' : 'worker'}
+                                    surface="report"
+                                    actions={acts}
+                                    detailOverrides={{
+                                        canManage: isManager,
+                                        canDelete: false,
+                                        onConfirm: (isManager && !task.archivedAt) ? () => onToggleConfirm(task) : undefined,
+                                        onRevert: () => onRestore(task),
+                                    }}
+                                />
+                            </li>
+                        );
+                    })}
+                </ul>
             ) : (
                 <div className="overflow-x-auto">
                     <table className="w-full md:w-auto divide-y divide-line text-sm md:table-auto table-fixed">
                         <thead className="bg-surface-sunken">
                             <tr>
-                                {(isManagerRole(userRole)) && <th scope="col" className="px-2 py-2 text-center w-8 text-caption font-bold text-ink-muted uppercase tracking-wider">OK</th>}
                                 <th scope="col" className="px-2 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">VYKD.</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">PRIOR.</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
-                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-24 md:w-auto">ATLIKTA</th>
-                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">PRIO</th>
-                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">BŪSENA</th>
-                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-center text-caption font-bold text-ink-muted uppercase tracking-wider w-10 md:w-auto">KOM.</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-20 md:w-auto">ŽYMOS</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-center text-caption font-bold text-ink-muted uppercase tracking-wider w-10 md:w-auto"></th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-line">
                             {tasks.length === 0 ? (
                                 <tr>
-                                    <td colSpan="7" className="px-6 py-8 text-center text-ink-muted">
+                                    <td colSpan="6" className="px-6 py-8 text-center text-ink-muted">
                                         Nėra užduočių.
                                     </td>
                                 </tr>
@@ -2221,16 +2103,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                 "group transition-colors",
                                                 isConfirmed ? "bg-surface-sunken" : "bg-surface-card hover:bg-surface-sunken"
                                             )}
-                                            showConfirm={isManagerRole(userRole)}
-                                            confirmChecked={isConfirmed}
-                                            confirmDisabled={!!task.archivedAt}
-                                            onToggleConfirm={onToggleConfirm}
-                                            confirmAriaLabel="Priimti užduotį"
                                             assigneeName={userName}
-                                            showCompletedAt
-                                            completedAtCell={task.completedAt ? new Date(task.completedAt).toLocaleString('lt-LT', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
-                                            commentCount={task.comments?.length || 0}
-                                            onOpenComments={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
                                             titleCell={
                                                 <>
                                                     <div
@@ -2291,16 +2164,30 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment, 
                                                 </>
                                             }
                                             actions={
-                                                <IconButton
-                                                    icon={RotateCcw}
-                                                    label="Grąžinti užduotį"
-                                                    title="Grąžinti"
-                                                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        onRestore(task);
-                                                    }}
-                                                />
+                                                <div className="flex items-center justify-end gap-1">
+                                                    {isManagerRole(userRole) && (
+                                                        <IconButton
+                                                            icon={CheckCircle2}
+                                                            label={isConfirmed ? 'Atšaukti priėmimą' : 'Priimti'}
+                                                            disabled={!!task.archivedAt}
+                                                            className={isConfirmed ? '' : 'text-feedback-success hover:bg-feedback-success/10'}
+                                                            onClick={(e) => { e.stopPropagation(); onToggleConfirm(task); }}
+                                                        />
+                                                    )}
+                                                    <span className="relative inline-flex">
+                                                        <IconButton icon={MessageSquare} label="Komentarai" onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'comments', taskId: task.id, task: task }); }} />
+                                                        {task.comments?.length > 0 && (
+                                                            <span className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 bg-brand text-white text-caption font-bold flex items-center justify-center rounded-full leading-none">
+                                                                {task.comments.length}
+                                                            </span>
+                                                        )}
+                                                    </span>
+                                                    <IconButton
+                                                        icon={RotateCcw}
+                                                        label="Grąžinti užduotį"
+                                                        onClick={(e) => { e.stopPropagation(); onRestore(task); }}
+                                                    />
+                                                </div>
                                             }
                                         />
                                     );
