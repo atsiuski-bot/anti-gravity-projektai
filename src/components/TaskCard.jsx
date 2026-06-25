@@ -56,7 +56,7 @@ const DEADLINE_TONE = {
  * button opens the create/edit form directly, bypassing the preview.
  */
 const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null }) => {
-    const { currentUser, userRole } = useAuth();
+    const { currentUser, userRole, userData } = useAuth();
     const runUndoable = useUndoableAction();
     const [activeModal, setActiveModal] = useState(null); // 'checklist' | 'timeAdjustments'
     const [showDetail, setShowDetail] = useState(false);
@@ -157,6 +157,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
     // Strict UI logic: activeSession is the PRIMARY source of truth, workStatus is the fallback.
     const isRunning = useIsTaskRunning(task);
+    // Detect "on break from this task": the user started a break while this task's timer was
+    // running — the break session stores the interrupted task in pausedSession.
+    const isOnBreak = !isRunning
+        && task.assignedUserId === currentUser?.uid
+        && userData?.activeSession?.type === 'break'
+        && userData?.activeSession?.pausedSession?.type === 'task'
+        && userData?.activeSession?.pausedSession?.taskId === task.id;
 
     useEffect(() => {
         const updateSpentTime = () => {
@@ -325,7 +332,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 onClick={openDetail}
                 className={clsx(
                     "rounded-card border-2 shadow-sm p-3 mb-2 cursor-pointer transition-shadow duration-base",
-                    isRunning ? "bg-session-task-surface border-session-task-shell"
+                    isRunning ? "bg-session-task-surface border-session-task-shell ring-2 ring-session-task-accent"
+                        : isOnBreak ? "bg-session-task-surface border-session-break-soft ring-2 ring-session-break-accent"
                         : flagTint
                             ? flagTint
                             : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),

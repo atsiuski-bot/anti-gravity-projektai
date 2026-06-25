@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, X, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3 } from 'lucide-react';
+import { ArrowUpDown, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3 } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -239,14 +239,6 @@ export default function ManagerView() {
         { value: 'user-priority', label: 'Pagal vartotoją-prioritetą' },
         { value: 'manual', label: 'Rankiniu būdu' },
     ];
-    const hasActiveFilters = !!(searchText || filterUser || filterPriority || filterTag || filterStatus);
-    const clearFilters = () => {
-        setSearchText('');
-        setFilterUser('');
-        setFilterPriority('');
-        setFilterTag('');
-        setFilterStatus('');
-    };
 
     // Desktop data-grid wiring. The team list's headers carry single-axis sort (user/priority/
     // status) + per-column filters; the composite/manual sorts (no single column) stay in the
@@ -442,16 +434,6 @@ export default function ManagerView() {
                                     Rūšiuojama:&nbsp;<span className="font-medium text-ink">{activeAdvancedSortLabel}</span>
                                 </span>
                             )}
-                            {hasActiveFilters && (
-                                <button
-                                    type="button"
-                                    onClick={clearFilters}
-                                    className="inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                                >
-                                    <X className="w-4 h-4" aria-hidden="true" />
-                                    Išvalyti filtrus
-                                </button>
-                            )}
                         </div>
                     )}
                 </div>
@@ -502,16 +484,6 @@ export default function ManagerView() {
                         ariaLabel="Ieškoti užduočių"
                         className="w-full"
                     />
-                    {hasActiveFilters && (
-                        <button
-                            type="button"
-                            onClick={clearFilters}
-                            className="mt-2 inline-flex items-center justify-center gap-1.5 min-h-touch px-3 py-2 rounded-input border border-line text-body font-medium text-ink-muted bg-surface-card hover:text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
-                        >
-                            <X className="w-4 h-4" aria-hidden="true" />
-                            Išvalyti filtrus
-                        </button>
-                    )}
                 </div>
 
                 {viewMode === 'mobile' ? (

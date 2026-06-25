@@ -151,7 +151,7 @@ const BottomNavigation = () => {
                                     {active && (
                                         <span
                                             aria-hidden="true"
-                                            className="absolute inset-x-1 inset-y-1.5 rounded-control bg-brand-soft"
+                                            className="absolute inset-x-1 top-0 bottom-1.5 rounded-control bg-brand-soft"
                                         />
                                     )}
                                     <tab.icon className="relative mb-0.5 h-5 w-5" aria-hidden="true" />
