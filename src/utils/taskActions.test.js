@@ -253,6 +253,94 @@ describe('startTask / resumeTask — running-state writes', () => {
     });
 });
 
+describe('startTask / resumeTask — per-user serialization (the activeSession lock)', () => {
+    // startTask & resumeTask both WRITE users/{uid}.activeSession, so they must run one-at-a-time
+    // per user: a second start fired in the same tick must see the first's committed write, not
+    // the pre-write state (the reproduced session-engine lost-update race). withUserLock provides
+    // that — the primitive itself is covered in sessionLock.test.js; here we assert the taskActions
+    // entry points actually CHAIN onto it, share ONE lock across the two functions, and DON'T
+    // serialize unrelated users. The first call's pauseOtherTasks read is gated to hold the lock
+    // open while a second call is fired; without the lock the second would proceed concurrently.
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
+
+    it('two startTask calls for the SAME user run strictly one-at-a-time', async () => {
+        const order = [];
+        const gate = deferred();
+        let getDocsCall = 0;
+        getDocs.mockImplementation(() => {
+            getDocsCall += 1;
+            order.push('getDocs:' + getDocsCall);
+            return getDocsCall === 1 ? gate.promise.then(() => ({ docs: [] })) : Promise.resolve({ docs: [] });
+        });
+        updateDoc.mockImplementation((ref) => {
+            if (ref?._path === 'users/u1') order.push('userWrite');
+            return Promise.resolve();
+        });
+
+        const p1 = startTask({ id: 't1' }, 'u1');
+        const p2 = startTask({ id: 't2' }, 'u1');
+        await flush();
+        // Only the first start has begun; the second is queued behind the lock.
+        expect(order).toEqual(['getDocs:1']);
+
+        gate.resolve();
+        await Promise.all([p1, p2]);
+        // The first start fully commits (its user write) BEFORE the second even reads.
+        expect(order).toEqual(['getDocs:1', 'userWrite', 'getDocs:2', 'userWrite']);
+    });
+
+    it('resumeTask shares the SAME per-user lock as startTask (no interleave across the two)', async () => {
+        const order = [];
+        const gate = deferred();
+        let getDocsCall = 0;
+        getDocs.mockImplementation(() => {
+            getDocsCall += 1;
+            return getDocsCall === 1 ? gate.promise.then(() => ({ docs: [] })) : Promise.resolve({ docs: [] });
+        });
+        updateDoc.mockImplementation((ref) => {
+            if (ref?._path === 'tasks/t1') order.push('start:t1');
+            if (ref?._path === 'tasks/t2') order.push('resume:t2');
+            return Promise.resolve();
+        });
+
+        const p1 = startTask({ id: 't1' }, 'u1');   // holds the lock (its read is gated)
+        const p2 = resumeTask({ id: 't2' }, 'u1');  // must queue behind it on the SAME user lock
+        await flush();
+        // Neither task write happened: the start is gated before its write, the resume is locked out.
+        expect(order).toEqual([]);
+
+        gate.resolve();
+        await Promise.all([p1, p2]);
+        expect(order).toEqual(['start:t1', 'resume:t2']);
+    });
+
+    it('does NOT serialize startTask across DIFFERENT users (independent locks)', async () => {
+        const order = [];
+        const gate = deferred();
+        let getDocsCall = 0;
+        getDocs.mockImplementation(() => {
+            getDocsCall += 1;
+            return getDocsCall === 1 ? gate.promise.then(() => ({ docs: [] })) : Promise.resolve({ docs: [] });
+        });
+        updateDoc.mockImplementation((ref) => {
+            if (ref?._path === 'users/u1') order.push('u1');
+            if (ref?._path === 'users/u2') order.push('u2');
+            return Promise.resolve();
+        });
+
+        const p1 = startTask({ id: 't1' }, 'u1');  // gated, holds u1's lock
+        const p2 = startTask({ id: 't2' }, 'u2');  // different user → must NOT wait on u1
+        await flush();
+        // u2 committed while u1 is still gated — the lock is per-user, not global.
+        expect(order).toEqual(['u2']);
+
+        gate.resolve();
+        await Promise.all([p1, p2]);
+        expect(order).toEqual(['u2', 'u1']);
+    });
+});
+
 describe('crash-log coverage — failures reach the durable ring buffer (findings #4/#5)', () => {
     it('startTask logs to errorLog and rethrows when the write fails', async () => {
         updateDoc.mockRejectedValue(new Error('permission-denied'));

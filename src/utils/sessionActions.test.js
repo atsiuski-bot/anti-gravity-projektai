@@ -15,6 +15,9 @@ vi.mock('firebase/firestore', () => ({
     addDoc: vi.fn(() => Promise.resolve({ id: 'generated-id' })),
     setDoc: vi.fn(() => Promise.resolve()),
     getDoc: vi.fn(() => Promise.resolve({ exists: () => false, data: () => ({}) })),
+    // Server-first user reads route through getDocFromServer (the activeSession-critical reads);
+    // beforeEach makes it delegate to getDoc so a test that configures getDoc configures both.
+    getDocFromServer: vi.fn(() => Promise.resolve({ exists: () => false, data: () => ({}) })),
     getDocs: vi.fn(() => Promise.resolve({ docs: [] })),
     query: vi.fn((...args) => args),
     where: vi.fn(() => 'where-clause'),
@@ -32,7 +35,7 @@ vi.mock('./timeUtils', async (importActual) => ({
     getLithuanianNow: vi.fn(),
 }));
 
-import { updateDoc, addDoc, setDoc, getDoc } from 'firebase/firestore';
+import { updateDoc, addDoc, setDoc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { logError } from './errorLog';
 import { pauseTask, resumeTask } from './taskActions';
 import { getLithuanianNow, MAX_SESSION_MINUTES } from './timeUtils';
@@ -58,6 +61,10 @@ beforeEach(() => {
     updateDoc.mockResolvedValue(undefined);
     addDoc.mockResolvedValue({ id: 'generated-id' });
     getLithuanianNow.mockReturnValue(NOW);
+    // The production code reads the user doc server-first (getDocFromServer) and only falls back to
+    // getDoc when offline. Delegate so the existing tests — which drive `getDoc` — keep working
+    // unchanged AND actually exercise the server-first branch.
+    getDocFromServer.mockImplementation((ref) => getDoc(ref));
 });
 
 describe('startSession — opening a secondary session', () => {
@@ -160,6 +167,34 @@ describe('startSession — opening a secondary session', () => {
     });
 });
 
+describe('startSession — concurrent starts serialize (the reproduced lost-update race)', () => {
+    it('a second start fired in the SAME tick nests the first instead of clobbering it', async () => {
+        // Stateful user doc: the read returns the latest committed activeSession, and updateDoc
+        // commits the new one. This is the live race (#1): firing two secondary-session starts in
+        // one synchronous tick. WITHOUT the per-user lock both reads see the initial null stack, so
+        // the second overwrites the first and a session vanishes silently. WITH it, the second read
+        // sees the first's committed write and nests under it (depth 2).
+        let committed = null;
+        const snap = () => ({ exists: () => true, data: () => ({ displayName: 'W', activeSession: committed }) });
+        getDoc.mockImplementation(() => Promise.resolve(snap()));
+        getDocFromServer.mockImplementation(() => Promise.resolve(snap()));
+        updateDoc.mockImplementation((ref, updates) => {
+            if (ref?._path === 'users/u1' && updates && 'activeSession' in updates) committed = updates.activeSession;
+            return Promise.resolve();
+        });
+
+        // Fire both WITHOUT awaiting the first — the same-React-batch / sub-round-trip window.
+        const p1 = startSession('u1', 'quickWork');
+        const p2 = startSession('u1', 'call');
+        await Promise.all([p1, p2]);
+        await flush();
+
+        // Serialized: the call nested the quick-work; nothing was lost.
+        expect(committed.type).toBe('call');
+        expect(committed.pausedSession?.type).toBe('quickWork');
+    });
+});
+
 describe('endSession — credit math, clamping & the daily-break total', () => {
     it('credits a normal break and folds it into dailyAccumulatedMinutes', async () => {
         const userData = {
@@ -208,11 +243,14 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
         expect(setsTo('break_sessions')).toHaveLength(0); // sub-minute -> nothing persisted
     });
 
-    it('swallows a failed critical write but records it durably (no rethrow)', async () => {
+    it('rethrows a failed critical write after recording it durably (so the optimistic overlay reverts)', async () => {
+        // Was previously swallowed — which left the timer components showing a phantom session that
+        // had not actually closed. endSession now rethrows the critical-write failure so their
+        // existing catch (setOptimisticUserData(null)) reverts. It must STILL log durably first.
         updateDoc.mockRejectedValue(new Error('offline'));
         const userData = { activeSession: { type: 'break', startTime: '2026-06-23T11:00:00.000Z' }, breakState: {} };
 
-        await expect(endSession('u1', userData)).resolves.toBeUndefined(); // does not throw
+        await expect(endSession('u1', userData)).rejects.toThrow('offline'); // now propagates
         expect(logError).toHaveBeenCalledWith(expect.any(Error), { source: 'endSession', userId: 'u1' });
     });
 });

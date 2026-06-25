@@ -5,6 +5,7 @@ import { isManagerRole } from './formatters';
 import { logError } from './errorLog';
 import { notify, categoryOf } from './notify';
 import { createTask, reopenTask, deleteTask as deleteTaskCommand, completeTask, humanActor, MODES } from '../domain';
+import { withUserLock } from './sessionLock';
 
 /**
  * Updates the user's work status in Firestore.
@@ -36,10 +37,18 @@ const updateUserWorkStatus = async (userId, isWorking, status, taskId) => {
 
 /**
  * Starts a task.
+ *
+ * Serialized per user via {@link withUserLock}: starting a task writes `activeSession`, and must
+ * not interleave with a concurrent start/resume/secondary-session for the same worker (the shared
+ * lost-update race). `pauseOtherTasks` it awaits is intentionally NOT separately locked — it runs
+ * inside this critical section, which is why the lock wraps the public entry point, not the helper.
+ *
  * @param {Object} task - The task to start.
  * @param {string} userId - The user ID.
  */
-export const startTask = async (task, userId) => {
+export const startTask = (task, userId) => withUserLock(userId, () => startTaskImpl(task, userId));
+
+const startTaskImpl = async (task, userId) => {
     try {
         // 1. Pause others (must complete before starting new task)
         await pauseOtherTasks(userId, task.id);
@@ -198,11 +207,18 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
 
 /**
  * Resumes a paused task.
+ *
+ * Serialized per user via {@link withUserLock} (same rationale as startTask). Note endSession's
+ * fire-and-forget resume calls THIS function after it has released its own lock, so the two queue
+ * rather than deadlock.
+ *
  * @param {Object} task - The task object to resume.
  * @param {string} userId - The user ID.
  * @returns {Promise<void>}
  */
-export const resumeTask = async (task, userId) => {
+export const resumeTask = (task, userId) => withUserLock(userId, () => resumeTaskImpl(task, userId));
+
+const resumeTaskImpl = async (task, userId) => {
     try {
         // 1. Pause others (must complete before resuming)
         await pauseOtherTasks(userId, task.id);

@@ -346,7 +346,15 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
 
         // Discard an accidental sub-minute tap rather than prompting to name/log it.
         if (sessionDuration <= MIN_LOGGED_SESSION_MINUTES) {
-            await endSession(currentUser.uid); // Auto discard/stop
+            try {
+                await endSession(currentUser.uid); // Auto discard/stop
+            } catch (err) {
+                // endSession now rethrows a failed critical write (so the described/finish paths can
+                // revert their optimistic overlay). This discard path sets no optimistic state, but
+                // still needs to handle the rejection rather than leave it unhandled.
+                console.error('Error stopping quick work:', err);
+                setError('Nepavyko sustabdyti greitos veiklos. Bandykite dar kartą.');
+            }
             return;
         }
 

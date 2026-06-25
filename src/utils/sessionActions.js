@@ -1,6 +1,7 @@
-import { doc, getDoc, updateDoc, collection, addDoc, setDoc, getDocs, query, where } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, updateDoc, collection, addDoc, setDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
+import { withUserLock } from './sessionLock';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
 import { isManagerRole } from './formatters';
@@ -13,20 +14,42 @@ import { notify } from './notify';
 // Shared by the auto-log path and the retroactive-description fallback so the two never drift.
 export const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greita veikla (Automatiškai išsaugota)';
 
+// Read the user doc SERVER-FIRST for the activeSession-critical reads. The whole paused-session
+// stack lives in this one field, and `persistentLocalCache` can serve a snapshot that predates a
+// write made on another device/tab — rebuilding the stack from that stale base silently drops a
+// live session. Forcing the server copy closes the residue the per-user lock can't (the lock only
+// orders writes within ONE client). Fall back to the cached read only when the device is offline,
+// so a session toggle still works on a flaky field connection (the lock + latency-compensated
+// local cache then keep same-device writes correctly ordered).
+const getUserSnapServerFirst = async (userRef) => {
+    try {
+        return await getDocFromServer(userRef);
+    } catch {
+        return await getDoc(userRef);
+    }
+};
+
 /**
  * Starts a new session for the user.
  * Automatically ends any existing session.
- * 
- * @param {string} userId 
+ *
+ * Serialized per user via {@link withUserLock}: two starts fired in one tick must not both read the
+ * same pre-write `activeSession` (that silently drops one — the reproduced lost-update race).
+ *
+ * @param {string} userId
  * @param {string} type - 'break', 'call', 'quickWork', 'task'
  * @param {Object} metadata - Additional data (e.g. taskId, taskTitle)
  */
-export const startSession = async (userId, type, metadata = {}) => {
+export const startSession = (userId, type, metadata = {}) =>
+    withUserLock(userId, () => startSessionImpl(userId, type, metadata));
+
+const startSessionImpl = async (userId, type, metadata = {}) => {
     try {
         const userRef = doc(db, 'users', userId);
 
-        // 1. Fetch current user state
-        const userSnap = await getDoc(userRef);
+        // 1. Fetch current user state (server-first — a stale cached stack would silently drop a
+        // session opened on another device/tab).
+        const userSnap = await getUserSnapServerFirst(userRef);
         const userData = userSnap.data();
 
         // 2. Identify tasks that need to be resumed later
@@ -197,16 +220,24 @@ export const startSession = async (userId, type, metadata = {}) => {
  * Ends the current active session.
  * Logs to 'sessions' collection and legacy collections.
  * 
- * @param {string} userId 
+ * Serialized per user via {@link withUserLock} so an end cannot interleave with a concurrent
+ * start/resume for the same worker (each then sees the other's committed write).
+ *
+ * @param {string} userId
  * @param {Object} [userInfo] - Optional, if we already fetched user doc
  * @param {Object} [sessionOverrides] - Optional, metadata to merge/override (e.g. customTitle)
  */
-export const endSession = async (userId, userInfo = null, sessionOverrides = {}, skipResume = false) => {
+export const endSession = (userId, userInfo = null, sessionOverrides = {}, skipResume = false) =>
+    withUserLock(userId, () => endSessionImpl(userId, userInfo, sessionOverrides, skipResume));
+
+const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, skipResume = false) => {
     try {
         const userRef = doc(db, 'users', userId);
         let userData = userInfo;
         if (!userData) {
-            const snap = await getDoc(userRef);
+            // Server-first: when no caller-supplied snapshot, the live timer-stop path reads here,
+            // and a stale cached activeSession would mis-credit / mis-restore the wrong session.
+            const snap = await getUserSnapServerFirst(userRef);
             userData = snap.data();
         }
 
@@ -360,8 +391,11 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
                                 let userStartedAnotherTask = false;
                                 try {
                                     // Fetch the real-time user document from server to prevent race conditions
-                                    // and avoid unreliable cache behavior that aborts resumes.
-                                    const latestUserDoc = await getDoc(doc(db, 'users', userId));
+                                    // and avoid unreliable cache behavior that aborts resumes. Server-first
+                                    // for real this time: a stale cached read here is exactly what lets a
+                                    // queued task resume OVER a session the worker just started (resumeTask
+                                    // overwrites activeSession) — the "phantom/stuck" symptom (finding #2).
+                                    const latestUserDoc = await getUserSnapServerFirst(doc(db, 'users', userId));
                                     if (latestUserDoc.exists()) {
                                         const uData = latestUserDoc.data();
                                         if (uData?.activeSession && uData.activeSession.type !== 'task') {
@@ -420,9 +454,15 @@ export const endSession = async (userId, userInfo = null, sessionOverrides = {},
             wasCapped: rawMinutes - durationMinutes > 1,
         };
     } catch (err) {
-        // endSession swallowed its failure (no rethrow) and never logged it, so a failed
-        // critical user-doc update left the session in limbo with no durable trace. Record it.
+        // Record durably, THEN rethrow. The only failures that reach here are the critical path —
+        // the server read (line above) or the critical user-doc updateDoc; the logging/resume work
+        // is fire-and-forget with its own catches and never bubbles here. Previously this swallowed
+        // the failure, so a failed end left the timer components' optimistic overlay in place (their
+        // revert lives only in their `catch`) — the worker saw a phantom session that wasn't really
+        // closed, persisting until reload. Rethrowing activates that existing revert. (startSession
+        // already rethrows for the same reason; the orphan-recovery hook wraps its call in .catch.)
         logError(err, { source: 'endSession', userId });
+        throw err;
     }
 };
 
