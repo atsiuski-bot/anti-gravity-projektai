@@ -838,7 +838,10 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         ) : (
                                             <div className="text-caption leading-tight">
                                                 {showSpent && (
-                                                    <div className="text-body font-bold text-brand whitespace-nowrap">{formatMinutesToTimeString(totalMinutes)}</div>
+                                                    <div className={clsx(
+                                                        "text-body font-bold whitespace-nowrap",
+                                                        isLimitExceeded ? "text-feedback-danger" : "text-brand"
+                                                    )}>{formatMinutesToTimeString(totalMinutes)}</div>
                                                 )}
                                                 {task.estimatedTime && (
                                                     <div className="text-ink-muted whitespace-nowrap">{showSpent ? `/ ${task.estimatedTime}` : task.estimatedTime}</div>

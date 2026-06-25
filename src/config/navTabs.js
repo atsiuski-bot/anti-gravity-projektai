@@ -2,7 +2,7 @@ import { UserCog, ScrollText } from 'lucide-react';
 import {
     TasksGlyph, TasksTeamGlyph,
     CalendarGlyph, CalendarTeamGlyph,
-    ReportsGlyph, ReportsTeamGlyph,
+    ReportsGlyph,
 } from '../components/icons/navGlyphs';
 import { isManagerRole } from '../utils/formatters';
 
@@ -33,9 +33,10 @@ export function getNavSections(userRole) {
                 id: 'team',
                 label: 'Komanda',
                 items: [
+                    // Kom. ataskaitos was retired: its three sub-tabs were redistributed —
+                    // Veiklos ataskaita → Kom. kalendorius, Pridavimas + Istorija → Kom. veiklos.
                     { id: 'tasks', label: 'Kom. veiklos', icon: TasksTeamGlyph },
                     { id: 'team-calendar', label: 'Kom. kalendorius', icon: CalendarTeamGlyph },
-                    { id: 'reports', label: 'Kom. ataskaitos', icon: ReportsTeamGlyph },
                 ],
             },
             ...(userRole === 'admin'

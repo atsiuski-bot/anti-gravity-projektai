@@ -36,7 +36,8 @@ const SELECT_CLASS =
 
 // `canExport` gates the CSV / AI-JSON download buttons. It is OFF by default so personal
 // report views (a worker's own "Ataskaitos", and a manager's personal "Ataskaitos") never
-// expose a self-export. Only the manager team report ("Kom. ataskaitos") opts in.
+// expose a self-export. Only the manager team report opts in — the "Veiklos ataskaita" sub-tab
+// of "Kom. kalendorius" (formerly the standalone "Kom. ataskaitos" tab).
 export default function TaskHistory({ userId, users = [], canExport = false, approvalManagerUid = null }) {
     const { userRole, currentUser, userData } = useAuth();
     const isManagerOrAdmin = isManagerRole(userRole);

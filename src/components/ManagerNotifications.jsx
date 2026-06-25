@@ -1169,10 +1169,12 @@ export default function ManagerNotifications({ onClose }) {
 
                     // Worker → manager ACTION: the worker flagged one of their own logged work-time
                     // rows as wrong. Workers have no session-edit right, so this is a REQUEST, not a
-                    // mutation: the manager resolves it manually in „Kom. ataskaitos“ with the existing
-                    // session editor. The card surfaces the worker's reason (already encoded with the
-                    // day / time span / duration in commentText) and offers a benign dismiss plus a
-                    // navigate-to-reports shortcut — never a task delete (this notif carries no taskId).
+                    // mutation: the manager resolves it manually in the work-hours report — now the
+                    // „Veiklos ataskaita“ sub-tab of „Kom. kalendorius“ (since the standalone
+                    // „Kom. ataskaitos“ tab was retired) — with the existing session editor. The card
+                    // surfaces the worker's reason (already encoded with the day / time span /
+                    // duration in commentText) and offers a benign dismiss plus a shortcut that opens
+                    // that sub-tab directly — never a task delete (this notif carries no taskId).
                     if (notif.type === 'session_correction_request') {
                         return (
                             <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
@@ -1182,7 +1184,7 @@ export default function ManagerNotifications({ onClose }) {
                                         <div className="min-w-0 text-sm text-feedback-warning-text">
                                             <p><UserChip userId={notif.userId} name={notif.userName} /> pranešė apie klaidą veiklos laike:</p>
                                             {notif.commentText && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
-                                            <p className="mt-2 text-xs">Pataisykite įrašą skiltyje „Kom. ataskaitos“ — pasirinkite šio vykdytojo dieną.</p>
+                                            <p className="mt-2 text-xs">Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“ — pasirinkite šio vykdytojo dieną.</p>
                                         </div>
                                     </div>
                                     {!readOnly && (
@@ -1190,7 +1192,7 @@ export default function ManagerNotifications({ onClose }) {
                                             className="mt-1"
                                             actions={[
                                                 { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
-                                                { key: 'open', label: 'Atidaryti ataskaitas', icon: Edit, variant: 'primary', onClick: () => { setActiveTab('reports'); onClose?.(); } },
+                                                { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); } },
                                             ]}
                                         />
                                     )}
