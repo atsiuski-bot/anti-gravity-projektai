@@ -104,7 +104,10 @@ export function AuthProvider({ children }) {
                     role: 'worker',
                     createdAt: new Date().toISOString(),
                     isDisabled: true,
-                    status: 'pending'
+                    status: 'pending',
+                    // Approval-free backdated time-logging is OFF by default — an admin grants it
+                    // per-user in User Management (the flag is admin-only by firestore.rules).
+                    canBackdateTime: false
                 };
                 // Must persist BEFORE we sign out — and it now can, because the onSnapshot
                 // disabled-handler defers while isProvisioning is set (otherwise its signOut

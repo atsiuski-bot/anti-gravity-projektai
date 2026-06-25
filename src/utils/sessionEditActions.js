@@ -1,8 +1,14 @@
 import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
-import { getLithuanianDateString, MAX_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
+import {
+    getLithuanianDateString,
+    addDaysToDateString,
+    MAX_SESSION_MINUTES,
+    MAX_BACKDATE_DAYS,
+    formatMinutesToTimeString,
+} from './timeUtils';
 import { logError } from './errorLog';
-import { notify } from './notify';
+import { notify, notifyMany } from './notify';
 
 // The worker's OWN durationMinutes before an edit (the value already credited to their day). Used
 // to phrase the "before → after" summary the worker sees when an admin corrects their paid time.
@@ -186,6 +192,95 @@ export const createWorkSession = async ({ userId, userName, taskTitle, startTime
         return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
     } catch (err) {
         logError(err, { source: 'writeFail:createWorkSession' });
+        return { ok: false, error: 'write' };
+    }
+};
+
+// Bound a TRUSTED worker's self-logged backdated session to the allowed window, on TOP of the
+// plausibility checks deriveSessionFields already applies (order, 16h). Two extra rules, both
+// expressed against the worker's local Vilnius day so they read the same way the worker thinks:
+//   • 'future' — the entry must be PAST work: the end may not land after now (a 1-minute tolerance
+//     absorbs second-level device-clock skew when logging up to the current moment).
+//   • 'tooOld' — the start day may not be earlier than today − MAX_BACKDATE_DAYS, so an
+//     approval-free entry can never reach back weeks to fabricate payable time.
+// Pure (now is injectable) so the window math is unit-tested without touching Firestore. Returns
+// { ok, error } with a stable code the UI maps to copy. The action layer calls this AFTER
+// deriveSessionFields, so start/end are already known to parse and to be correctly ordered.
+export const validateBackdateWindow = (startISO, endISO, now = new Date()) => {
+    const start = new Date(startISO);
+    const end = new Date(endISO);
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        return { ok: false, error: 'invalid' };
+    }
+    if (end.getTime() > now.getTime() + 60000) {
+        return { ok: false, error: 'future' };
+    }
+    const minDay = addDaysToDateString(getLithuanianDateString(now), -MAX_BACKDATE_DAYS);
+    if (getLithuanianDateString(start) < minDay) {
+        return { ok: false, error: 'tooOld' };
+    }
+    return { ok: true, error: null };
+};
+
+// A trusted worker (canBackdateTime) logs a session they forgot to track, on one of their OWN
+// tasks, at a past time — WITHOUT manager approval. The write is identical in shape to a normal
+// tracked session (real taskId, so every report aggregates it exactly like timer-logged time),
+// but stamped as worker-authored + backdated for audit, and it fans an INFORMATIONAL notice to the
+// admins so the approval-free entry is never invisible. Returns { ok, error, ... }. Error codes
+// extend createWorkSession's: 'future' / 'tooOld' from the window guard; 'task' when no task id.
+// The admin notification is best-effort — fired after the (already-persisted) session write and
+// swallowed inside notify() — so a notification failure can never undo the logged time.
+export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTime, reason, adminUids } = {}) => {
+    if (!worker?.uid) return { ok: false, error: 'user' };
+    if (!task?.id) return { ok: false, error: 'task' };
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) return { ok: false, error: 'reason' };
+
+    const derived = deriveSessionFields(startTime, endTime);
+    if (!derived.ok) return { ok: false, error: derived.error };
+
+    const windowCheck = validateBackdateWindow(startTime, endTime);
+    if (!windowCheck.ok) return { ok: false, error: windowCheck.error };
+
+    const nowIso = new Date().toISOString();
+    const workerName = worker.displayName || worker.email || null;
+    const payload = {
+        taskId: task.id,
+        taskTitle: (task.title || '').trim() || 'Užduotis',
+        userId: worker.uid,
+        userName: workerName,
+        startTime,
+        endTime,
+        durationMinutes: derived.durationMinutes,
+        date: derived.date,
+        createdAt: nowIso,
+        // Provenance: hand-entered by the WORKER (not a timer, not an admin), and explicitly
+        // backdated. isManualSession keeps it out of the task-assignment double-count guard exactly
+        // like the admin manual path; isBackdated marks the approval-free worker origin for audit.
+        isManualSession: true,
+        isBackdated: true,
+        createdBy: worker.uid,
+        createdByName: workerName || 'Nežinomas',
+        editReason: trimmedReason,
+    };
+    try {
+        const ref = await addDoc(collection(db, 'work_sessions'), payload);
+        // FYI to every admin that an approval-free backdated entry was logged. notifyMany dedupes and
+        // drops the actor, so a backdating admin never self-notifies. userId == the worker's uid
+        // satisfies the rules' provenance check on a worker-authored notification.
+        await notifyMany(adminUids, {
+            type: 'backdated_time_logged',
+            actorUid: worker.uid,
+            actorName: workerName,
+            userId: worker.uid,
+            userName: workerName,
+            day: derived.date,
+            taskTitle: payload.taskTitle,
+            summary: formatMinutesToTimeString(derived.durationMinutes),
+        });
+        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
+    } catch (err) {
+        logError(err, { source: 'writeFail:logBackdatedWorkerSession' });
         return { ok: false, error: 'write' };
     }
 };

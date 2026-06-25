@@ -52,3 +52,55 @@ export function resolvePresetRange(preset) {
     }
     return { start, end };
 }
+
+// Shift a date range by one period unit in `direction` (+1 forward, -1 back). Named presets use
+// their canonical unit (week = 7 days aligned to Monday, month/3months/year = calendar boundaries);
+// 'custom' shifts by the current window length. The returned end is capped at today so future
+// ranges are never produced.
+export function shiftRange(reportPeriod, dateRange, direction) {
+    const today = getLithuanianDateString();
+    const pad = (n) => String(n).padStart(2, '0');
+    const [sy, sm] = dateRange.start.split('-').map(Number);
+    const [ey, em, ed] = dateRange.end.split('-').map(Number);
+
+    if (reportPeriod === 'week') {
+        const newStart = addDaysToDateString(dateRange.start, direction * 7);
+        const newEnd = addDaysToDateString(newStart, 6);
+        return { start: newStart, end: newEnd > today ? today : newEnd };
+    }
+
+    if (reportPeriod === 'month') {
+        let newY = sy, newM = sm + direction;
+        while (newM > 12) { newM -= 12; newY++; }
+        while (newM < 1) { newM += 12; newY--; }
+        const lastDay = new Date(Date.UTC(newY, newM, 0)).getUTCDate();
+        const end = `${newY}-${pad(newM)}-${pad(lastDay)}`;
+        return { start: `${newY}-${pad(newM)}-01`, end: end > today ? today : end };
+    }
+
+    if (reportPeriod === '3months') {
+        let newStartY = sy, newStartM = sm + direction * 3;
+        while (newStartM > 12) { newStartM -= 12; newStartY++; }
+        while (newStartM < 1) { newStartM += 12; newStartY--; }
+        let newEndY = newStartY, newEndM = newStartM + 2;
+        while (newEndM > 12) { newEndM -= 12; newEndY++; }
+        const lastDay = new Date(Date.UTC(newEndY, newEndM, 0)).getUTCDate();
+        const end = `${newEndY}-${pad(newEndM)}-${pad(lastDay)}`;
+        return { start: `${newStartY}-${pad(newStartM)}-01`, end: end > today ? today : end };
+    }
+
+    if (reportPeriod === 'year') {
+        const newStartY = sy + direction;
+        const end = `${newStartY}-12-31`;
+        return { start: `${newStartY}-01-01`, end: end > today ? today : end };
+    }
+
+    // custom: shift by the current window's day count
+    const sd = Number(dateRange.start.split('-')[2]);
+    const startDate = new Date(Date.UTC(sy, sm - 1, sd));
+    const endDate = new Date(Date.UTC(ey, em - 1, ed));
+    const days = Math.round((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    const newStart = addDaysToDateString(dateRange.start, direction * days);
+    const newEnd = addDaysToDateString(dateRange.end, direction * days);
+    return { start: newStart, end: newEnd > today ? today : newEnd };
+}

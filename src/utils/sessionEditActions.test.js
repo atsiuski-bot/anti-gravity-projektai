@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // deriveSessionFields + MAX_EDIT_SESSION_MINUTES are PURE: they only do Date math and call the
 // real getLithuanianDateString. They need no mocking and are exercised here as real logic. The
@@ -16,20 +16,26 @@ vi.mock('firebase/firestore', () => ({
     addDoc: vi.fn(() => Promise.resolve({ id: 'generated-id' })),
 }));
 
-// notify() is exercised in its own surface; here we only assert the action layer hands it the
-// right worker-facing payload after a successful edit/delete (recipient, type, day, summary, reason).
-vi.mock('./notify', () => ({ notify: vi.fn(() => Promise.resolve()) }));
+// notify()/notifyMany() are exercised in their own surface; here we only assert the action layer
+// hands them the right payload after a successful edit/delete/backdate (recipient(s), type, day,
+// summary, reason).
+vi.mock('./notify', () => ({
+    notify: vi.fn(() => Promise.resolve()),
+    notifyMany: vi.fn(() => Promise.resolve()),
+}));
 
 import { updateDoc, addDoc } from 'firebase/firestore';
-import { notify } from './notify';
+import { notify, notifyMany } from './notify';
 import {
     deriveSessionFields,
     MAX_EDIT_SESSION_MINUTES,
     editWorkSession,
     deleteWorkSession,
     createWorkSession,
+    validateBackdateWindow,
+    logBackdatedWorkerSession,
 } from './sessionEditActions';
-import { MAX_SESSION_MINUTES } from './timeUtils';
+import { MAX_SESSION_MINUTES, MAX_BACKDATE_DAYS } from './timeUtils';
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -335,5 +341,146 @@ describe('worker notification on admin time correction (Step 4)', () => {
         );
         expect(res.ok).toBe(false);
         expect(notify).not.toHaveBeenCalled();
+    });
+});
+
+describe('MAX_BACKDATE_DAYS', () => {
+    it('is the 7-day trusted-backdating window', () => {
+        expect(MAX_BACKDATE_DAYS).toBe(7);
+    });
+});
+
+describe('validateBackdateWindow (bound a worker self-log to [today−N, now])', () => {
+    // Fixed reference: 2026-06-23 12:00 UTC = 15:00 Vilnius (summer). Today = 2026-06-23; the
+    // earliest allowed start day is today − 7 = 2026-06-16.
+    const NOW = new Date('2026-06-23T12:00:00.000Z');
+
+    it('accepts a past session inside the window', () => {
+        expect(validateBackdateWindow('2026-06-23T08:00:00.000Z', '2026-06-23T09:00:00.000Z', NOW)).toEqual({
+            ok: true,
+            error: null,
+        });
+    });
+
+    it('accepts the earliest allowed start day (today − MAX_BACKDATE_DAYS)', () => {
+        // 2026-06-16 11:00 Vilnius — exactly the boundary day, so it is allowed (not < minDay).
+        expect(validateBackdateWindow('2026-06-16T08:00:00.000Z', '2026-06-16T10:00:00.000Z', NOW).ok).toBe(true);
+    });
+
+    it('rejects a start day older than the window as tooOld', () => {
+        // 2026-06-15 11:00 Vilnius — one day before the boundary.
+        expect(validateBackdateWindow('2026-06-15T08:00:00.000Z', '2026-06-15T10:00:00.000Z', NOW)).toEqual({
+            ok: false,
+            error: 'tooOld',
+        });
+    });
+
+    it('rejects an end after now as future', () => {
+        expect(validateBackdateWindow('2026-06-23T11:00:00.000Z', '2026-06-23T12:02:00.000Z', NOW)).toEqual({
+            ok: false,
+            error: 'future',
+        });
+    });
+
+    it('tolerates up to a minute of clock skew at "now"', () => {
+        // Exactly now: allowed. 90s past now: future.
+        expect(validateBackdateWindow('2026-06-23T10:00:00.000Z', '2026-06-23T12:00:00.000Z', NOW).ok).toBe(true);
+        expect(validateBackdateWindow('2026-06-23T10:00:00.000Z', '2026-06-23T12:01:30.000Z', NOW).error).toBe('future');
+    });
+
+    it('rejects an un-parseable timestamp', () => {
+        expect(validateBackdateWindow('bad', '2026-06-23T09:00:00.000Z', NOW)).toEqual({ ok: false, error: 'invalid' });
+    });
+});
+
+describe('logBackdatedWorkerSession (trusted worker self-log, approval-free + admin FYI)', () => {
+    // Freeze "now" so the window guard (which reads the real clock) is deterministic.
+    beforeEach(() => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-06-23T12:00:00.000Z'));
+    });
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    const base = {
+        task: { id: 't1', title: 'Roof repair' },
+        worker: { uid: 'w1', displayName: 'Worker One' },
+        startTime: '2026-06-23T08:00:00.000Z',
+        endTime: '2026-06-23T11:00:00.000Z', // 3h, ends before "now"
+        reason: 'forgot to start the timer',
+        adminUids: ['a1', 'a2'],
+    };
+
+    it('requires a worker, a task, and a non-blank reason', async () => {
+        expect(await logBackdatedWorkerSession({ ...base, worker: {} })).toEqual({ ok: false, error: 'user' });
+        expect(await logBackdatedWorkerSession({ ...base, task: {} })).toEqual({ ok: false, error: 'task' });
+        expect(await logBackdatedWorkerSession({ ...base, reason: '   ' })).toEqual({ ok: false, error: 'reason' });
+        expect(addDoc).not.toHaveBeenCalled();
+        expect(notifyMany).not.toHaveBeenCalled();
+    });
+
+    it('propagates a derive error and writes nothing', async () => {
+        const r = await logBackdatedWorkerSession({
+            ...base,
+            startTime: '2026-06-23T11:00:00.000Z',
+            endTime: '2026-06-23T10:00:00.000Z', // end before start
+        });
+        expect(r).toEqual({ ok: false, error: 'order' });
+        expect(addDoc).not.toHaveBeenCalled();
+        expect(notifyMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects an out-of-window entry (and never writes or notifies)', async () => {
+        const r = await logBackdatedWorkerSession({
+            ...base,
+            startTime: '2026-06-15T08:00:00.000Z',
+            endTime: '2026-06-15T10:00:00.000Z', // 8 days back
+        });
+        expect(r).toEqual({ ok: false, error: 'tooOld' });
+        expect(addDoc).not.toHaveBeenCalled();
+        expect(notifyMany).not.toHaveBeenCalled();
+    });
+
+    it('persists a worker-authored, backdated session linked to the real task', async () => {
+        const res = await logBackdatedWorkerSession(base);
+        expect(res).toEqual({ ok: true, id: 'generated-id', durationMinutes: 180, date: '2026-06-23' });
+        expect(addDoc).toHaveBeenCalledTimes(1);
+
+        const payload = addDoc.mock.calls[0][1];
+        expect(payload.taskId).toBe('t1'); // the REAL task id — aggregates like a tracked session
+        expect(payload.taskTitle).toBe('Roof repair');
+        expect(payload.userId).toBe('w1');
+        expect(payload.userName).toBe('Worker One');
+        expect(payload.durationMinutes).toBe(180);
+        expect(payload.date).toBe('2026-06-23');
+        expect(payload.isManualSession).toBe(true);
+        expect(payload.isBackdated).toBe(true);
+        expect(payload.createdBy).toBe('w1'); // worker provenance (satisfies the rules' check)
+        expect(payload.createdByName).toBe('Worker One');
+        expect(payload.editReason).toBe('forgot to start the timer');
+    });
+
+    it('fans an informational FYI to every admin after the write', async () => {
+        await logBackdatedWorkerSession(base);
+        expect(notifyMany).toHaveBeenCalledTimes(1);
+        const [recipients, opts] = notifyMany.mock.calls[0];
+        expect(recipients).toEqual(['a1', 'a2']);
+        expect(opts).toMatchObject({
+            type: 'backdated_time_logged',
+            actorUid: 'w1',
+            userId: 'w1',
+            userName: 'Worker One',
+            day: '2026-06-23',
+            taskTitle: 'Roof repair',
+            summary: '3h',
+        });
+    });
+
+    it('does NOT notify when the write itself fails', async () => {
+        addDoc.mockRejectedValueOnce(new Error('boom'));
+        const res = await logBackdatedWorkerSession(base);
+        expect(res).toEqual({ ok: false, error: 'write' });
+        expect(notifyMany).not.toHaveBeenCalled();
     });
 });
