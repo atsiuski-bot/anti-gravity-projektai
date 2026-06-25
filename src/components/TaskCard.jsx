@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Calendar, Trash2, ArrowUp, ArrowDown, Undo2, Edit, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
+import { Clock, Calendar, ArrowUp, ArrowDown, Undo2, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -292,16 +292,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         key: 'confirm', label: 'Priimti', icon: CheckCircle2, variant: 'success',
         onClick: (e) => { e.stopPropagation(); performConfirm(); },
     });
-    // The completion-sign-off card (bell) shows ONLY Priimti / Grąžinti — Redaguoti is reached via
-    // Grąžinti (which reopens the editor) and Trinti is intentionally not offered there.
-    if (!signoffOnly && onEdit && canEdit) actions.push({
-        key: 'edit', label: 'Redaguoti', icon: Edit, variant: 'primary',
-        onClick: (e) => { e.stopPropagation(); onEdit(task); },
-    });
-    if (!signoffOnly && isManager) actions.push({
-        key: 'delete', label: 'Ištrinti', icon: Trash2, variant: 'danger',
-        onClick: (e) => { e.stopPropagation(); handleDeleteTask(); },
-    });
+    // Edit / comment / delete are NOT row actions — they live in the task detail sheet (open on tap),
+    // so the footer carries only the lifecycle sign-off actions and fits one line.
 
     // Footer buttons: a caller (archive / report surface) may hand a ready-made action set whose
     // semantics differ from an active task (restore-from-archive, archived-confirm); otherwise the

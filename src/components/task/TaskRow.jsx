@@ -21,6 +21,9 @@ import TaskStatusIcon from './TaskStatusIcon';
  * @param {string} [props.assigneeName] - assignee display name (VYKD. cell)
  * @param {import('react').ReactNode} props.timeCell - the time cell content (plan / actual)
  * @param {import('react').ReactNode} [props.actions] - trailing action cell content
+ * @param {Function} [props.onOpen] - (task) => void; when set the whole row is a click target that
+ *   opens the shared task detail sheet (the time + actions cells stop propagation so their own
+ *   controls still work). This is how a task reads identically everywhere: one click → one sheet.
  */
 export default function TaskRow({
     task,
@@ -29,9 +32,24 @@ export default function TaskRow({
     assigneeName,
     timeCell,
     actions = null,
+    onOpen = null,
 }) {
+    const stop = (e) => e.stopPropagation();
     return (
-        <tr className={rowClassName}>
+        <tr
+            className={onOpen
+                ? `${rowClassName || ''} cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand`
+                : rowClassName}
+            onClick={onOpen ? () => onOpen(task) : undefined}
+            // Keyboard parity (WCAG 2.1.1): the whole row is an "open the task" control, so it must be
+            // focusable and operable with Enter / Space, not mouse-only.
+            role={onOpen ? 'button' : undefined}
+            tabIndex={onOpen ? 0 : undefined}
+            aria-label={onOpen ? `Atidaryti užduotį: ${task.title}` : undefined}
+            onKeyDown={onOpen ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(task); }
+            } : undefined}
+        >
             {/* UŽDUOTIS — a leading status glyph (the same shape the card + active board show) sits in
                 front of the caller's title content, so lifecycle/approval state reads at a glance
                 while scanning. Decorative: the title text already names the task. */}
@@ -47,7 +65,7 @@ export default function TaskRow({
             <td className="px-1 py-2 whitespace-nowrap align-top">
                 <PriorityBadge priority={task.priority} />
             </td>
-            <td className="px-1 py-2 whitespace-nowrap text-right align-top font-mono text-ink-strong">{timeCell}</td>
+            <td className="px-1 py-2 whitespace-nowrap text-right align-top font-mono text-ink-strong" onClick={onOpen ? stop : undefined}>{timeCell}</td>
             {/* Žymos — its own column, far right before the actions (mirrors TaskTable). */}
             <td className="px-1 py-2 align-top">
                 {task.tag && (
@@ -56,7 +74,7 @@ export default function TaskRow({
                     </span>
                 )}
             </td>
-            <td className="px-1 py-2 text-right align-top">{actions}</td>
+            <td className="px-1 py-2 text-right align-top" onClick={onOpen ? stop : undefined}>{actions}</td>
         </tr>
     );
 }

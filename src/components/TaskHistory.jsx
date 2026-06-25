@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, getDocs } from 'firebase/firestore';
-import { FileText, Download, RotateCcw, Calendar, UserCheck, Trash2, Clock, AlertCircle, ChevronDown, ChevronUp, MessageSquare } from 'lucide-react';
+import { FileText, Download, RotateCcw, Calendar, UserCheck, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { confirmTask, humanActor, MODES } from '../domain';
 import { getPriorityLabel } from '../utils/priority';
@@ -21,11 +21,12 @@ import InfoPopover from './ui/InfoPopover';
 import Select from './ui/Select';
 import ConfirmDialog from './ui/ConfirmDialog';
 import DatePicker from './ui/DatePicker';
-import CompletedMarker from './task/CompletedMarker';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
 import TaskRow from './task/TaskRow';
+import TaskActionRow from './task/TaskActionRow';
+import TaskDetailModal from './task/TaskDetailModal';
 
 // Filter field label — shared by every filter control. 12px floor (§5): was text-[10px].
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
@@ -48,10 +49,12 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     const scoped = isScopedOverseer(userData);
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [expandedTasks, setExpandedTasks] = useState(new Set());
     const [deleteModalTask, setDeleteModalTask] = useState(null);
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null });
     const [commentsModalTask, setCommentsModalTask] = useState(null);
+    // The shared "open the task" detail sheet — clicking any archive row opens the same window the
+    // mobile archive card opens.
+    const [detailTask, setDetailTask] = useState(null);
 
     // Confirm dialogs (replace window.confirm — §8) and friendly error banner (replace alert — §10)
     const [restoreTarget, setRestoreTarget] = useState(null);
@@ -86,16 +89,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             document.removeEventListener('keydown', onKeyDown);
         };
     }, [dateRangeOpen]);
-
-    const toggleExpand = (taskId) => {
-        const newExpanded = new Set(expandedTasks);
-        if (newExpanded.has(taskId)) {
-            newExpanded.delete(taskId);
-        } else {
-            newExpanded.add(taskId);
-        }
-        setExpandedTasks(newExpanded);
-    };
 
     // Initialize dates on mount (Last 2 weeks)
     useEffect(() => {
@@ -518,7 +511,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         const acts = [];
         if (canAccept) acts.push({ key: 'confirm', label: 'Priimti', icon: UserCheck, variant: 'success', onClick: () => handleConfirm(task) });
         acts.push({ key: 'restore', label: 'Grąžinti', icon: RotateCcw, variant: 'secondary', onClick: () => handleRestore(task) });
-        if (isManagerOrAdmin) acts.push({ key: 'delete', label: 'Trinti', icon: Trash2, variant: 'danger', onClick: () => handleDelete(task) });
+        // Delete is NOT a row action — it lives in the task detail sheet (open on card tap).
         return {
             actions: acts,
             detailOverrides: {
@@ -787,26 +780,23 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         <tbody className="bg-surface-card divide-y divide-line">
                             {tasks.map((task) => {
                                 const deleted = task.isDeleted || task.status === 'deleted';
-                                const canAccept = isManagerOrAdmin && task.status === 'completed' && !deleted;
+                                // The SAME action set the mobile archive card shows (accept / restore /
+                                // delete — no comment/edit), on one adaptive single-line row.
+                                const { actions: rowActions } = archiveCardProps(task);
                                 return (
                                     <TaskRow
                                         key={task.id}
                                         task={task}
+                                        onOpen={() => setDetailTask(task)}
                                         rowClassName="hover:bg-surface-sunken transition-colors border-b border-line last:border-0"
                                         assigneeName={task.assignedUserName}
                                         titleCell={
                                             <>
                                                 <div
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    aria-expanded={expandedTasks.has(task.id)}
-                                                    onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
                                                     className={clsx(
-                                                        "text-body font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                        "text-body font-bold whitespace-normal break-words",
                                                         deleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                                     )}>
-                                                    {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
                                                     {task.title}
                                                 </div>
                                                 <div className="text-caption text-ink-muted flex items-center gap-1 mt-0.5 whitespace-nowrap">
@@ -820,25 +810,12 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                                     <span>Archyvuota: {new Date(task.archivedAt).toLocaleDateString()}</span>
                                                 </div>
                                                 {task.description && (
-                                                    <div className={clsx(
-                                                        "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
-                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                                    )}>
+                                                    <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1 whitespace-normal break-words line-clamp-2">
                                                         <SessionTypeIcon
                                                             type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
                                                             className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
                                                         />
                                                         {task.description}
-                                                    </div>
-                                                )}
-                                                {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                                    <div className="mt-2 pl-4 border-l-2 border-line">
-                                                        <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
-                                                        {task.comments.map((comment, idx) => (
-                                                            <div key={idx} className="text-caption text-ink mb-1">
-                                                                <UserChip userId={comment.userId} name={comment.user} />: {comment.text}
-                                                            </div>
-                                                        ))}
                                                     </div>
                                                 )}
                                                 {(task.managerName || task.creatorName) && (
@@ -862,30 +839,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                                 <TimeChangedWarning task={task} alignEnd className="mt-0.5" />
                                             </>
                                         }
-                                        actions={
-                                            <div className="flex items-center justify-end gap-1">
-                                                {canAccept && (
-                                                    <IconButton
-                                                        icon={UserCheck}
-                                                        label="Priimti"
-                                                        onClick={() => handleConfirm(task)}
-                                                        className="text-feedback-success hover:bg-feedback-success/10"
-                                                    />
-                                                )}
-                                                <span className="relative inline-flex">
-                                                    <IconButton icon={MessageSquare} label="Komentarai" onClick={() => setCommentsModalTask(task)} />
-                                                    {task.comments?.length > 0 && (
-                                                        <span className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 bg-brand text-white text-caption font-bold flex items-center justify-center rounded-full leading-none">
-                                                            {task.comments.length}
-                                                        </span>
-                                                    )}
-                                                </span>
-                                                <IconButton icon={RotateCcw} label="Grąžinti" onClick={() => handleRestore(task)} />
-                                                {isManagerOrAdmin && (
-                                                    <IconButton icon={Trash2} label="Ištrinti" variant="danger" onClick={() => handleDelete(task)} />
-                                                )}
-                                            </div>
-                                        }
+                                        actions={<TaskActionRow actions={rowActions} />}
                                     />
                                 );
                             })}
@@ -902,6 +856,26 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             </div>
             </>
             )}
+            {/* The shared task detail sheet — opened by an archive-row click. Reuses the EXACT wiring
+                the mobile archive card uses (archiveCardProps.detailOverrides). */}
+            {detailTask && (() => {
+                const ov = archiveCardProps(detailTask).detailOverrides;
+                return (
+                    <TaskDetailModal
+                        isOpen
+                        onClose={() => setDetailTask(null)}
+                        task={{ ...detailTask, isArchived: true }}
+                        allowPhotoAdd={false}
+                        showManagerLine
+                        canManage={ov.canManage}
+                        canDelete={ov.canDelete}
+                        onConfirm={ov.onConfirm ? () => { setDetailTask(null); ov.onConfirm(); } : undefined}
+                        onRevert={ov.onRevert ? () => { setDetailTask(null); ov.onRevert(); } : undefined}
+                        onDelete={ov.onDelete ? () => { setDetailTask(null); ov.onDelete(); } : undefined}
+                    />
+                );
+            })()}
+
             <DeleteConfirmationModal
                 isOpen={!!deleteModalTask}
                 onClose={() => setDeleteModalTask(null)}

@@ -54,7 +54,7 @@ function useOneLineActions() {
  * an accessible name (via aria-label/title), never a bare glyph (DESIGN_SYSTEM §8).
  *
  * @param {Object} props
- * @param {Array<{key:string,label:string,icon?:Function,variant?:string,onClick?:Function,disabled?:boolean,loading?:boolean}>} props.actions
+ * @param {Array<{key:string,label:string,icon?:Function,variant?:string,onClick?:Function,disabled?:boolean,loading?:boolean,className?:string}>} props.actions
  * @param {string} [props.className] - wrapper classes (e.g. spacing)
  */
 export default function TaskActionRow({ actions, className }) {
@@ -75,7 +75,7 @@ export default function TaskActionRow({ actions, className }) {
                         size="md"
                         icon={a.icon}
                         tabIndex={-1}
-                        className="shrink-0 whitespace-nowrap px-3"
+                        className={clsx('shrink-0 whitespace-nowrap px-3', a.className)}
                     >
                         {a.label}
                     </Button>
@@ -93,7 +93,7 @@ export default function TaskActionRow({ actions, className }) {
                         title={a.label}
                         disabled={a.disabled}
                         loading={a.loading}
-                        className="min-w-0 flex-auto px-3"
+                        className={clsx('min-w-0 flex-auto px-3', a.className)}
                         onClick={a.onClick}
                     >
                         {!compact && <span className="truncate">{a.label}</span>}
