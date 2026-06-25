@@ -16,11 +16,16 @@ import IconButton from './ui/IconButton';
 import SessionToggleButton from './ui/SessionToggleButton';
 
 // Separate memoized modal component to prevent re-renders from timer updates
-const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, currentSessionMinutes, isSubmitting }) {
+const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, onDiscard, currentSessionMinutes, isSubmitting, isDiscarding }) {
     const textareaRef = useRef(null);
     // Who was on the call — required (single-select). The call cannot be saved until one is
     // chosen, so reports can always group calls by audience. Notes are free-text and optional.
     const [contactType, setContactType] = useState(null);
+    // Annul ("Anuliuoti") throws the whole call away — its time is logged nowhere — so it is
+    // guarded by one explicit inline confirm (kept INSIDE this modal, never a second stacked
+    // dialog) rather than firing on the first tap.
+    const [confirmingDiscard, setConfirmingDiscard] = useState(false);
+    const busy = isSubmitting || isDiscarding;
     const totalDisplay = formatMinutesToTimeString(currentSessionMinutes);
     const { supported: dictationSupported, isListening, toggle: toggleDictation } = useSpeechDictation(textareaRef);
 
@@ -123,15 +128,39 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                     )}
                 </div>
 
-                {/* Footer */}
-                <div className="mt-6 flex gap-3 justify-end">
-                    <Button type="button" variant="secondary" onClick={onClose}>
-                        Atšaukti
-                    </Button>
-                    <Button type="submit" variant="primary" loading={isSubmitting} icon={Check} disabled={!contactType}>
-                        {isSubmitting ? 'Saugoma...' : 'Išsaugoti skambutį'}
-                    </Button>
-                </div>
+                {/* Footer. Three intents: Anuliuoti throws the call away (no log anywhere),
+                    Atšaukti just closes this prompt and leaves the call running, Išsaugoti logs it.
+                    "Anuliuoti" swaps the footer for an inline confirm so the irreversible time loss
+                    is always a deliberate two-step. */}
+                {confirmingDiscard ? (
+                    <div className="mt-6 rounded-card border border-feedback-danger-soft bg-feedback-danger-soft p-4">
+                        <p className="text-body text-feedback-danger-text mb-3">
+                            Anuliuoti šį skambutį? Užfiksuotas laikas ({totalDisplay}) nebus niekur išsaugotas.
+                        </p>
+                        <div className="flex gap-3 justify-end">
+                            <Button type="button" variant="secondary" onClick={() => setConfirmingDiscard(false)} disabled={busy}>
+                                Grįžti
+                            </Button>
+                            <Button type="button" variant="danger" loading={isDiscarding} onClick={onDiscard}>
+                                Taip, anuliuoti
+                            </Button>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+                        <Button type="button" variant="ghost" className="text-feedback-danger hover:text-feedback-danger" onClick={() => setConfirmingDiscard(true)} disabled={busy}>
+                            Anuliuoti skambutį
+                        </Button>
+                        <div className="flex gap-3 justify-end">
+                            <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
+                                Atšaukti
+                            </Button>
+                            <Button type="submit" variant="primary" loading={isSubmitting} icon={Check} disabled={!contactType || busy}>
+                                {isSubmitting ? 'Saugoma...' : 'Išsaugoti skambutį'}
+                            </Button>
+                        </div>
+                    </div>
+                )}
             </form>
         </Modal>
     );
@@ -150,6 +179,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
 
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isDiscarding, setIsDiscarding] = useState(false);
     const [error, setError] = useState('');
 
     const handleStartCall = async () => {
@@ -194,8 +224,12 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
     // and optional notes; the defer path passes neither, so endSession logs a plain "Skambutis"
     // (contactType null) and the worker isn't blocked at the stop screen. Either way the same
     // paused-session restore logic runs.
-    const finishCall = useCallback(async ({ contactType = null, notes = '' } = {}) => {
-        setIsSubmitting(true);
+    const finishCall = useCallback(async ({ contactType = null, notes = '', discard = false } = {}) => {
+        // The two end paths share ALL the paused-session restore logic below; they differ only in
+        // what reaches endSession — a real classification vs. a `discard` flag that suppresses every
+        // log. Separate busy flags so each button shows its own spinner without disabling the other.
+        const setBusy = discard ? setIsDiscarding : setIsSubmitting;
+        setBusy(true);
         setError('');
         try {
             // Determine what will be restored from pausedSession
@@ -223,17 +257,20 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             // Optimistic UI Update: Instantly assume call ended and paused session restored
             setOptimisticUserData(optimistic);
 
-            // End session. The logger (handleLegacyLogging) derives the call title from
-            // contactType ("Skambutis – Klientas", or plain "Skambutis" when null on the defer
-            // path) and folds the optional notes into the description.
-            await endSession(currentUser.uid, null, { contactType, callNotes: (notes || '').trim() });
+            // End session. On the SAVE path the logger (handleLegacyLogging) derives the call title
+            // from contactType ("Skambutis – Klientas", or plain "Skambutis" when null on the defer
+            // path) and folds the optional notes into the description. On the DISCARD path the
+            // `discard` flag makes endSession skip every log, so the call is recorded nowhere.
+            await endSession(currentUser.uid, null, discard ? { discard: true } : { contactType, callNotes: (notes || '').trim() });
             setShowTitleModal(false);
         } catch (err) {
-            console.error("Error completing call:", err);
+            console.error(discard ? "Error discarding call:" : "Error completing call:", err);
             setOptimisticUserData(null); // Revert
-            setError("Nepavyko išsaugoti skambučio. Bandykite dar kartą.");
+            setError(discard
+                ? "Nepavyko anuliuoti skambučio. Bandykite dar kartą."
+                : "Nepavyko išsaugoti skambučio. Bandykite dar kartą.");
         } finally {
-            setIsSubmitting(false);
+            setBusy(false);
         }
     }, [currentUser, userData, setOptimisticUserData]);
 
@@ -244,6 +281,10 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         if (!contactType) return;
         return finishCall({ contactType, notes });
     }, [finishCall]);
+
+    // Annul: end the call but log it nowhere — its whole duration is thrown away. The modal's
+    // inline confirm already gated this, so it fires straight through.
+    const handleDiscardCall = useCallback(() => finishCall({ discard: true }), [finishCall]);
 
     const handleToggleCall = async () => {
         if (!currentUser || isDisabled) return;
@@ -268,8 +309,10 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         <CallModalComponent
             onSubmit={handleCompleteCall}
             onClose={() => setShowTitleModal(false)}
+            onDiscard={handleDiscardCall}
             currentSessionMinutes={currentSessionMinutes}
             isSubmitting={isSubmitting}
+            isDiscarding={isDiscarding}
         />
     );
 
