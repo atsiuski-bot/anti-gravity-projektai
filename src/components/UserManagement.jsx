@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, Fragment } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
 import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe, Sparkles, Coins, ChevronDown, Search, X, SearchX } from 'lucide-react';
@@ -1165,10 +1165,8 @@ export default function UserManagement() {
                 })}
             </ul>
 
-            {/* Desktop / wide: denser table is allowed (§9). Each control owns ONE column, so a row
-                is a single line tall instead of a vertical stack: the role SELECT lives in the Rolė
-                column (no separate read-only badge to duplicate it), the weekly quota gets a compact
-                Norma column, and Veiksmai holds only the 44px icon toolbar. */}
+            {/* Desktop / wide: compact single-line rows with progressive disclosure — Vadovai editing
+                lives behind a per-row chevron so the default roster is scannable at a glance. */}
             <div className={cn('hidden overflow-x-auto md:block', visibleUsers.length === 0 && 'md:hidden')}>
                 <table className="min-w-full divide-y divide-line">
                     <thead className="bg-surface-sunken">
@@ -1184,68 +1182,99 @@ export default function UserManagement() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-line bg-surface-card">
-                        {visibleUsers.map((user) => (
-                            <tr key={user.id} className={user.isDisabled ? 'bg-surface-sunken/60' : ''}>
-                                <td className="whitespace-nowrap px-4 py-2.5 align-top">
-                                    <div className="flex flex-wrap items-center gap-2 text-body font-medium text-ink-strong">
-                                        <UserChip
-                                            userId={user.id}
-                                            name={user.displayName || 'Be vardo'}
-                                            size="md"
-                                            block
-                                        />
-                                        <DisabledPill user={user} />
-                                        <NewUserBadge user={user} />
-                                        <LastActiveBadge user={user} />
-                                    </div>
-                                    <div className="text-body text-ink-muted">{user.email}</div>
-                                </td>
-                                <td className="px-4 py-2.5 align-top">
-                                    <div className="w-40">
-                                        <RoleSelect user={user} onChange={handleRoleChange} />
-                                    </div>
-                                </td>
-                                <td className="whitespace-nowrap px-4 py-2.5 align-top">
-                                    <ColorSwatch user={user} onEdit={startEditingColor} />
-                                </td>
-                                <td className="px-4 py-2.5 align-top">
-                                    <ManagerControl
-                                        user={user}
-                                        overseerCandidates={overseerCandidates}
-                                        managerCandidates={managerCandidates}
-                                        seniorCandidates={seniorCandidates}
-                                        onToggleManager={handleToggleManager}
-                                        onSetPrimary={handleSetPrimary}
-                                        onToggleScoped={handleToggleScoped}
-                                        onToggleSenior={handleToggleSenior}
-                                    />
-                                </td>
-                                <td className="whitespace-nowrap px-4 py-2.5 align-top">
-                                    <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} hideLabel />
-                                </td>
-                                <td className="whitespace-nowrap px-4 py-2.5 align-top">
-                                    <div className="flex items-center gap-1.5">
-                                        <BlockButton
-                                            user={user}
-                                            isSelf={user.id === currentUser?.uid}
-                                            onRequest={requestBlock}
-                                            iconOnly
-                                        />
-                                        {isAdmin && user.role === 'worker' && (
-                                            <PayRateButton user={user} onEdit={setPayRateUser} iconOnly />
+                        {visibleUsers.map((user) => {
+                            const expanded = expandedIds.has(user.id);
+                            return (
+                                <Fragment key={user.id}>
+                                    <tr
+                                        className={cn(
+                                            'transition-colors',
+                                            user.isDisabled ? 'bg-surface-sunken/60' : '',
+                                            expanded && 'border-b-0'
                                         )}
-                                        {isAdmin && (
-                                            <DeleteButton
-                                                user={user}
-                                                isSelf={user.id === currentUser?.uid}
-                                                onRequest={requestDelete}
-                                                iconOnly
-                                            />
-                                        )}
-                                    </div>
-                                </td>
-                            </tr>
-                        ))}
+                                        style={{ borderLeft: `3px solid ${user.color || WORKER_FALLBACK_COLOR}` }}
+                                    >
+                                        {/* Vartotojas */}
+                                        <td className="whitespace-nowrap px-4 py-2.5 align-middle">
+                                            <div className="flex flex-wrap items-center gap-2 text-body font-medium text-ink-strong">
+                                                <UserChip
+                                                    userId={user.id}
+                                                    name={user.displayName || 'Be vardo'}
+                                                    size="md"
+                                                    block
+                                                />
+                                                <DisabledPill user={user} />
+                                                <NewUserBadge user={user} />
+                                                <LastActiveBadge user={user} />
+                                            </div>
+                                            <div className="text-body text-ink-muted">{user.email}</div>
+                                        </td>
+                                        {/* Rolė */}
+                                        <td className="px-4 py-2.5 align-middle">
+                                            <div className="w-40">
+                                                <RoleSelect user={user} onChange={handleRoleChange} />
+                                            </div>
+                                        </td>
+                                        {/* Spalva */}
+                                        <td className="whitespace-nowrap px-4 py-2.5 align-middle">
+                                            <ColorSwatch user={user} onEdit={startEditingColor} />
+                                        </td>
+                                        {/* Vadovai — read-only summary collapsed, full editor expanded */}
+                                        <td className="px-4 py-2.5 align-middle">
+                                            {expanded ? (
+                                                <ManagerControl
+                                                    user={user}
+                                                    overseerCandidates={overseerCandidates}
+                                                    managerCandidates={managerCandidates}
+                                                    seniorCandidates={seniorCandidates}
+                                                    onToggleManager={handleToggleManager}
+                                                    onSetPrimary={handleSetPrimary}
+                                                    onToggleScoped={handleToggleScoped}
+                                                    onToggleSenior={handleToggleSenior}
+                                                />
+                                            ) : (
+                                                <OverseerSummary user={user} usersById={usersById} />
+                                            )}
+                                        </td>
+                                        {/* Norma */}
+                                        <td className="whitespace-nowrap px-4 py-2.5 align-middle">
+                                            <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} hideLabel />
+                                        </td>
+                                        {/* Veiksmai + expand toggle */}
+                                        <td className="whitespace-nowrap px-4 py-2.5 align-middle">
+                                            <div className="flex items-center gap-1.5">
+                                                <BlockButton
+                                                    user={user}
+                                                    isSelf={user.id === currentUser?.uid}
+                                                    onRequest={requestBlock}
+                                                    iconOnly
+                                                />
+                                                {isAdmin && user.role === 'worker' && (
+                                                    <PayRateButton user={user} onEdit={setPayRateUser} iconOnly />
+                                                )}
+                                                {isAdmin && (
+                                                    <DeleteButton
+                                                        user={user}
+                                                        isSelf={user.id === currentUser?.uid}
+                                                        onRequest={requestDelete}
+                                                        iconOnly
+                                                    />
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleExpanded(user.id)}
+                                                    aria-expanded={expanded}
+                                                    aria-label={expanded ? 'Suskleisti' : 'Tvarkyti vadovus'}
+                                                    className="inline-flex h-11 w-11 items-center justify-center rounded-control border border-line text-ink-muted transition-colors hover:bg-surface-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                >
+                                                    <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                </Fragment>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>

@@ -241,6 +241,11 @@ export default function CombinedHoursSummary() {
                         ) : (
                             combinedStats.data.map(user => (
                                 <div key={user.id} className="mb-5 last:mb-0 flex items-center gap-4">
+                                    {/* User name — left side, fixed width so all bars start on the same column */}
+                                    <div className="w-36 shrink-0 flex items-center">
+                                        <UserChip userId={user.id} name={user.name} colorDot={user.color} />
+                                    </div>
+
                                     {/* Bars Area */}
                                     <div className="flex flex-col gap-1.5 flex-1 min-w-0">
                                         {/* Planned Bar — labelled so colour is never the sole signal (§5) */}
@@ -281,9 +286,6 @@ export default function CombinedHoursSummary() {
                                             </div>
                                         </div>
                                     </div>
-
-                                    {/* User name — right side, vertically centred between the two bar rows */}
-                                    <UserChip userId={user.id} name={user.name} colorDot={user.color} className="shrink-0" />
                                 </div>
                             ))
                         )}
