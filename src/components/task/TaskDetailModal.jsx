@@ -8,7 +8,9 @@ import {
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
+import { useUsers } from '../../context/UsersContext';
 import { ImageModal } from '../TaskDetailsModals';
+import BackdateTimeModal from '../BackdateTimeModal';
 import Modal from '../ui/Modal';
 import Linkify from '../ui/Linkify';
 import Button from '../ui/Button';
@@ -93,7 +95,18 @@ export default function TaskDetailModal({
 }) {
     const titleId = useId();
     const { currentUser, userData } = useAuth();
+    const { users } = useUsers();
 
+    // Recipients for the approval-free backdate FYI: every ACTIVE admin (legacy spelling included),
+    // computed from the roster the worker can already read.
+    const adminUids = useMemo(
+        () => (users || [])
+            .filter((u) => (u.role === 'admin' || u.role === 'Administratorius') && !u.isDisabled)
+            .map((u) => u.id),
+        [users]
+    );
+
+    const [backdateOpen, setBackdateOpen] = useState(false);
     const [newComment, setNewComment] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [uploading, setUploading] = useState(false);
@@ -153,6 +166,9 @@ export default function TaskDetailModal({
     const samePerson = !!task.assignedUserId && managerId === task.assignedUserId;
 
     const isAssignee = currentUser?.uid === task.assignedUserId;
+    // A trusted worker (canBackdateTime) may self-log a missed session on their OWN active task,
+    // without approval. Off on a deleted task (no time edits on a removed task).
+    const canBackdate = userData?.canBackdateTime === true && isAssignee && !isDeleted;
     // Photo-add is an ACTIVE-task affordance. Off the active surface (archive / report) the task is
     // historical, so the preview is read-only for photos — `allowPhotoAdd` gates it (the gallery
     // still shows existing photos; only the add controls are withheld).
@@ -287,8 +303,10 @@ export default function TaskDetailModal({
 
                     <TimeChangedWarning task={task} />
 
-                    {/* Row 2 — planned vs spent time; time-adjust shown only to managers who can edit */}
-                    {(task.estimatedTime || showSpent) && (
+                    {/* Row 2 — planned vs spent time; time-adjust shown only to managers who can edit.
+                        Also renders for a trusted worker (canBackdate) even with no time yet, so the
+                        "Įrašyti praėjusį laiką" affordance is reachable on a fresh task. */}
+                    {(task.estimatedTime || showSpent || canBackdate) && (
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-line py-2.5 text-body text-ink">
                             {task.estimatedTime && (
                                 <span className="inline-flex items-center gap-1.5">
@@ -309,6 +327,15 @@ export default function TaskDetailModal({
                                     className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                 >
                                     <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Koreguoti laiką
+                                </button>
+                            )}
+                            {canBackdate && (
+                                <button
+                                    type="button"
+                                    onClick={() => setBackdateOpen(true)}
+                                    className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                >
+                                    <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Įrašyti praėjusį laiką
                                 </button>
                             )}
                         </div>
@@ -537,6 +564,17 @@ export default function TaskDetailModal({
 
             {lightboxIndex !== null && (
                 <ImageModal isOpen onClose={() => setLightboxIndex(null)} imageUrls={imageUrls} initialIndex={lightboxIndex} />
+            )}
+
+            {canBackdate && (
+                <BackdateTimeModal
+                    open={backdateOpen}
+                    onClose={() => setBackdateOpen(false)}
+                    task={task}
+                    worker={{ uid: currentUser?.uid, displayName: currentUser?.displayName, email: currentUser?.email }}
+                    adminUids={adminUids}
+                    onSaved={() => setBackdateOpen(false)}
+                />
             )}
         </Modal>
     );

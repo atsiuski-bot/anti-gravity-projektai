@@ -78,6 +78,14 @@ export const formatSignedMinutesToHHMM = (minutes) => {
 // 16h is comfortably above any real shift, so legitimate intervals are never clipped.
 export const MAX_SESSION_MINUTES = 16 * 60;
 
+// How far back a TRUSTED worker (canBackdateTime) may self-log a missed session, in whole
+// Vilnius calendar days counted from today (today − N). The window caps the audit exposure of an
+// approval-free, worker-authored time entry: it covers the realistic "forgot to start the timer
+// yesterday / over the weekend" case without letting someone fabricate weeks-old payable time.
+// The worker UI (BackdateTimeModal date range) and the action-layer guard (validateBackdateWindow)
+// both read this one constant, so the picker and the server-of-truth check can never disagree.
+export const MAX_BACKDATE_DAYS = 7;
+
 // Sanitize a raw (now - start) minute delta before it is credited or logged: a
 // non-finite or negative value (clock set backward, a future start time) collapses to
 // 0; an implausibly large value is capped to MAX_SESSION_MINUTES. Every place that
