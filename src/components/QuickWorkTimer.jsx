@@ -296,7 +296,10 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         startTime
     } = useTimerState(currentUser, 'quickWorkState', 'isQuickWorking', null, null, 'quickWork');
 
-    const isDisabled = isSecondarySessionActive && !isQuickWorking;
+    // Quick work may be started ON TOP of an active break (the break nests as pausedSession and
+    // resumes when the quick work ends) — mirroring how a call is allowed during a break. Any
+    // OTHER secondary session (a call) still blocks it.
+    const isDisabled = isSecondarySessionActive && !isQuickWorking && activeSessionType !== 'break';
 
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -316,10 +319,16 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         if (!currentUser || isDisabled) return;
         setError('');
         try {
-            // Optimistic UI Update: Instantly assume Quick Work started, clear other sessions
+            // Optimistic UI Update: Instantly assume Quick Work started, clear other sessions.
+            // Preserve whatever session was active (e.g. a break started first) as pausedSession so
+            // the optimistic state matches what the server writes and the break can resume on finish.
             setOptimisticUserData({
                 ...userData,
-                activeSession: { type: 'quickWork', startTime: new Date().toISOString() },
+                activeSession: {
+                    type: 'quickWork',
+                    startTime: new Date().toISOString(),
+                    pausedSession: userData?.activeSession || null
+                },
                 quickWorkState: { ...userData?.quickWorkState, isQuickWorking: true, lastStartedAt: new Date().toISOString() },
                 breakState: { ...userData?.breakState, isTakingBreak: false },
                 callState: { ...userData?.callState, isCalling: false },
@@ -372,21 +381,33 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         setIsSubmitting(true);
         setError('');
         try {
-            // Determine if a task will be resumed
-            const resumableTasks = userData?.quickWorkState?.resumableTaskIds || [];
-            const activeTaskId = resumableTasks.length > 0 ? resumableTasks[0] : null;
+            // Optimistic UI Update: restore whatever this quick work interrupted. If it was started
+            // on top of a break/call/task (pausedSession), that session resumes — so finishing a
+            // quick work taken during a break drops the worker straight back into the break, with no
+            // flash through an idle state. Falls back to the queued task (resumableTaskIds) when the
+            // quick work was started from idle.
+            const pausedSession = userData?.activeSession?.pausedSession;
+            const pausedType = pausedSession?.type;
+            const optimistic = { ...userData, quickWorkState: { ...userData?.quickWorkState, isQuickWorking: false } };
 
-            // Optimistic UI Update: Instantly assume Quick Work ended and task resumed
-            setOptimisticUserData({
-                ...userData,
-                activeSession: activeTaskId ? { type: 'task', startTime: new Date().toISOString(), taskId: activeTaskId } : null,
-                quickWorkState: { ...userData?.quickWorkState, isQuickWorking: false },
-                workStatus: activeTaskId ? {
-                    isWorking: true,
-                    status: 'running',
-                    activeTaskId: activeTaskId,
-                } : userData?.workStatus
-            });
+            if (pausedType === 'break') {
+                optimistic.activeSession = pausedSession;
+                optimistic.breakState = { ...userData?.breakState, isTakingBreak: true };
+            } else if (pausedType === 'call') {
+                optimistic.activeSession = pausedSession;
+                optimistic.callState = { ...userData?.callState, isCalling: true };
+            } else if (pausedType === 'task' && pausedSession?.taskId) {
+                optimistic.activeSession = pausedSession;
+                optimistic.workStatus = { isWorking: true, status: 'running', activeTaskId: pausedSession.taskId };
+            } else {
+                // Fallback: resume a queued task (quick work started from idle).
+                const resumableTasks = userData?.quickWorkState?.resumableTaskIds || [];
+                const activeTaskId = resumableTasks.length > 0 ? resumableTasks[0] : null;
+                optimistic.activeSession = activeTaskId ? { type: 'task', startTime: new Date().toISOString(), taskId: activeTaskId } : null;
+                optimistic.workStatus = activeTaskId ? { isWorking: true, status: 'running', activeTaskId } : userData?.workStatus;
+            }
+
+            setOptimisticUserData(optimistic);
 
             // End session with the chosen confirming manager (null if the worker has no managers;
             // endSession then leaves the auditor unset, today's behavior). A title is included

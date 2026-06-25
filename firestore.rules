@@ -259,7 +259,16 @@ service cloud.firestore {
                     // Pay rate (tiered NET hourly rates) is admin-only, like team membership — a
                     // worker must never be able to set their own rate. (ADR 0012)
                     && (isAdmin() ||
-                        request.resource.data.get('payRate', {}) == resource.data.get('payRate', {}));
+                        request.resource.data.get('payRate', {}) == resource.data.get('payRate', {}))
+                    // Approval-free backdated time-logging is a privilege an admin grants per-user;
+                    // it must be admin-only to set, or a worker could self-grant it on one of their
+                    // own routine self-writes (workStatus/activeSession). Pinned with .get(...,false)
+                    // on BOTH sides so a legacy doc without the field stays editable (the isDisabled
+                    // dot-access trap). NOTE: this only gates WHO sets the flag — a worker can already
+                    // create their own work_sessions at any timestamp; the flag/UI is the product
+                    // gate, the admin notification is the audit trail.
+                    && (isAdmin() ||
+                        request.resource.data.get('canBackdateTime', false) == resource.data.get('canBackdateTime', false));
       allow delete: if isAdmin();
 
       // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------

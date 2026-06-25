@@ -170,6 +170,7 @@ const CATEGORY_BY_TYPE = {
     session_edited: 'info',
     session_deleted: 'info',
     session_auto_closed: 'info',
+    backdated_time_logged: 'info',
     task_priority_escalated: 'info',
     achievement: 'info',
     task_overdue: 'info',
@@ -242,6 +243,13 @@ function copyForRequestNotification(n) {
         case 'session_auto_closed':
             // System → worker: a forgotten secondary-session timer was auto-closed + time credited.
             return { title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' };
+        case 'backdated_time_logged': {
+            // Trusted worker → admin: an approval-free backdated session was logged. Body = WHO + day.
+            // userName is the only free-form field; clamp identically to the registry MIRROR.
+            const name = n.userName ? String(n.userName).replace(/\s+/g, ' ').trim().slice(0, 100) : '';
+            const day = n.day || 'Veiklos laikas';
+            return { title: 'Įrašytas atbulinis laikas', body: name ? `${name} · ${day}` : day };
+        }
         case 'session_correction_request':
             // Worker → manager: a logged-time error report. Body = "day: note" (note clamped) or day.
             return {
