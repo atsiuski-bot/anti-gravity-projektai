@@ -346,7 +346,7 @@ export default function WorkPlanner() {
     };
     const approvalFootnote = (needsApproval, type) =>
         needsApproval
-            ? `${ACTION_NOUN_ACC[type] || 'Įrašą'} turės patvirtinti vadovas — reikės nurodyti priežastį.`
+            ? `${ACTION_NOUN_ACC[type] || 'Įrašą'} turės patvirtinti koordinatorius — reikės nurodyti priežastį.`
             : 'Įrašas išsaugomas ir patvirtinamas iš karto.';
 
     // Name the entry an action collides with, so the overlap error points at the real culprit
@@ -1336,7 +1336,7 @@ export default function WorkPlanner() {
                         <p className="text-body text-ink-muted mb-6">
                             {feedbackVariant === 'approved'
                                 ? 'Veiksmas atliktas ir automatiškai patvirtintas.'
-                                : 'Jūsų užklausą turi patvirtinti vadovas.'}
+                                : 'Jūsų užklausą turi patvirtinti koordinatorius.'}
                         </p>
                         <Button variant="primary" size="lg" fullWidth onClick={() => setShowApprovalFeedback(false)}>
                             Supratau

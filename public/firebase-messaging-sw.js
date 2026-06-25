@@ -28,7 +28,7 @@ try {
 
     messaging.onBackgroundMessage((payload) => {
         const data = payload.data || {};
-        const title = data.title || 'WORKZ';
+        const title = data.title || 'Gildija';
         // 'action' = a decision is owed (server mirrors registry category into data.category).
         const isAction = data.category === 'action';
         // ALWAYS show a notification for every push received here. A push that arrives without a

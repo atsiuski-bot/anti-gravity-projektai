@@ -1361,13 +1361,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                         <table className="w-full divide-y divide-line text-sm">
                             <thead className="bg-surface-sunken">
                                 <tr>
-                                    <th scope="col" className="px-4 py-3 text-left font-medium text-ink-muted">Vykdytojas</th>
+                                    <th scope="col" className="px-4 py-3 text-left font-medium text-ink-muted">Meistras</th>
                                     <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pradžia</th>
                                     <th scope="col" className="px-4 py-3 text-center font-medium text-ink-muted">Pabaiga</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Pertraukos</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted">Užduotims</th>
                                     <th scope="col" className="px-4 py-3 text-right font-medium text-ink-strong" title="Bendras laikas: veikla ir pertraukos — ne tik veiklos valandos.">Bendras laikas</th>
-                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted" title="Dienų su pažymėta pertrauka dalis nuo veiklos dienų — kaip nuosekliai vykdytojas žymi pertraukas.">Pertraukų žym.</th>
+                                    <th scope="col" className="px-4 py-3 text-right font-medium text-ink-muted" title="Dienų su pažymėta pertrauka dalis nuo veiklos dienų — kaip nuosekliai meistras žymi pertraukas.">Pertraukų žym.</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-line">
@@ -1788,15 +1788,15 @@ function SessionErrorReportModal({ item, onSubmit, onClose }) {
                         Atšaukti
                     </Button>
                     <Button variant="primary" fullWidth icon={Flag} loading={submitting} disabled={!canSend} onClick={handleSend}>
-                        Siųsti vadovui
+                        Siųsti koordinatoriui
                     </Button>
                 </div>
             }
         >
             <div className="space-y-4">
                 <p className="text-body text-ink">
-                    Pranešite vadovui, kad ši užfiksuotos veiklos laiko eilutė neteisinga. Laiko Jūs
-                    pakeisti negalite — vadovas jį pataisys.
+                    Pranešite koordinatoriui, kad ši užfiksuotos veiklos laiko eilutė neteisinga. Laiko Jūs
+                    pakeisti negalite — koordinatorius jį pataisys.
                 </p>
                 <div className="rounded-control border border-line bg-surface-sunken p-3">
                     <p className="text-caption uppercase font-bold tracking-wide text-ink-muted">Eilutė</p>
@@ -2093,7 +2093,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                         <thead className="bg-surface-sunken">
                             <tr>
                                 <th scope="col" className="px-2 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider min-w-[200px] md:w-auto">UŽDUOTIS</th>
-                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">VYKD.</th>
+                                <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">MEIST.</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16 md:w-auto">PRIOR.</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-28 md:w-auto">PLAN. / TIKRAS</th>
                                 <th scope="col" className="px-1 py-2 md:px-2 md:py-1 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-20 md:w-auto">ŽYMOS</th>
@@ -2155,7 +2155,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                                                     {(task.managerName || task.creatorName) && (
                                                         <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                             <User className="w-2.5 h-2.5" />
-                                                            <span>Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
+                                                            <span>Koord. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                                         </div>
                                                     )}
                                                 </>

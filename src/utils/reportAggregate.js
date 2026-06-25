@@ -41,7 +41,7 @@ const RECOGNITION_FIELDS = [
     { key: 'completedTasks', label: 'Užbaigta' },
     { key: 'confirmedTasks', label: 'Priimta' },
     { key: 'onEstimate', label: 'Telpa į planą' },
-    { key: 'punctualDays', label: 'Punktualių dienų' },
+    { key: 'punctualDays', label: 'Dienų laiku' },
     { key: 'workDays', label: 'Veiklos dienų' },
     { key: 'hardTasks', label: 'Sunkių užduočių' },
     { key: 'thorough', label: 'Kruopščių' },
@@ -273,9 +273,9 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
             assumptions: [
                 'Laikas — Europe/Vilnius vietinis.',
                 'Trukmės apkarpytos iki realių ribų (veiklos sesija ≤ 16 val.) prieš sumuojant.',
-                `Punktualumas: veikla pradėta ≤ ${ON_TIME_GRACE_MIN} min. po planuotos pamainos = „laiku".`,
+                `Startas laiku: veikla pradėta ≤ ${ON_TIME_GRACE_MIN} min. po planuoto veiklos laiko pradžios = „laiku".`,
                 'Δ — pokytis prieš ankstesnį tokio paties ilgio laikotarpį; „geriau"/„prasčiau" pagal metrikos kryptį.',
-                'Uždarbis — neto po mokesčių, tarpinis pagal vykdytojo tarifų pakopas ir kaupiamas mėnesio valandas.',
+                'Uždarbis — neto po mokesčių, tarpinis pagal meistro tarifų pakopas ir kaupiamas mėnesio valandas.',
                 'Pripažinimo skaičiai — viso per visą laiką (ne šio laikotarpio).',
             ],
         },
@@ -317,7 +317,7 @@ function deltaSuffix(delta) {
 // header + team rollup + one section per worker, every metric grouped exactly as the UI groups it.
 export function renderReportMarkdown(report) {
     const L = [];
-    L.push('# WORKZ veiklos ataskaita');
+    L.push('# Gildijos veiklos ataskaita');
     L.push('');
     L.push(`- Laikotarpis: ${report.period.start} – ${report.period.end}`);
     L.push(`- Lyginama su: ${report.period.compareStart} – ${report.period.compareEnd}`);
@@ -331,10 +331,10 @@ export function renderReportMarkdown(report) {
 
     const t = report.team;
     L.push('## Komandos suvestinė');
-    L.push(`- Vykdytojų: ${t.workerCount}`);
+    L.push(`- Meistrų: ${t.workerCount}`);
     L.push(`- Viso dirbta: ${formatStatValue(t.totalHours, 'hours')}`);
     L.push(`- Užbaigta užduočių: ${t.completedTasks}`);
-    if (Number.isFinite(t.avgOnTimePct)) L.push(`- Vid. punktualus startas: ${t.avgOnTimePct}%`);
+    if (Number.isFinite(t.avgOnTimePct)) L.push(`- Vid. startas laiku: ${t.avgOnTimePct}%`);
     if (t.netEarningsEur) L.push(`- Uždarbis (neto): ${eur(t.netEarningsEur)} (bruto ${eur(t.grossEarningsEur)}, mokesčiai ~${report.manifest.taxRatePct}%)`);
     L.push('');
 
@@ -405,7 +405,7 @@ export function renderTimesheetCSV(workers, window, { includeEarnings = false } 
         const s = String(str);
         return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const headers = ['Vykdytojas', 'Data', 'Veikla (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
+    const headers = ['Meistras', 'Data', 'Veikla (val:min)', 'Pertraukos (val:min)', 'Planuota (val:min)', 'Skirtumas (val:min)'];
     if (includeEarnings) headers.push('Neto (€)', 'Bruto (€)');
     const rows = [];
     // Pad a base 6-cell row out to the full header width so daily rows keep blank money columns.

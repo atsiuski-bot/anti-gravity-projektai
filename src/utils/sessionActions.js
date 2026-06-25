@@ -718,7 +718,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                     taskTitle: title,
                     actualTime: formatMinutesToTimeString(durationMinutes),
                     actualMinutes: durationMinutes,
-                    userName: userData.displayName || 'Vykdytojas',
+                    userName: userData.displayName || 'Meistras',
                     userId,
                     completedAt: now.toISOString(),
                 })

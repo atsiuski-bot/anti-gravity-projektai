@@ -206,7 +206,7 @@ export default function ManagerView() {
     // desktop data-grid headers (gridControls). Lifted out of the old toolbar IIFE so all three
     // read one source of truth.
     const userOptions = [
-        { value: '', label: 'Visi vykdytojai' },
+        { value: '', label: 'Visi meistrai' },
         ...pickerUsers.map((user) => ({ value: user.id, label: user.displayName || user.email })),
     ];
     const priorityOptions = [
@@ -465,7 +465,7 @@ export default function ManagerView() {
                     value={filterUser}
                     onChange={setFilterUser}
                     allLabel="Visi"
-                    ariaLabel="Filtruoti pagal vykdytoją"
+                    ariaLabel="Filtruoti pagal meistrą"
                     className="mb-3"
                 />
 

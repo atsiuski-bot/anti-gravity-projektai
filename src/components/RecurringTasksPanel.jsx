@@ -70,7 +70,7 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
             return;
         }
         if (!draftAssignee) {
-            setMsg({ text: 'Pasirinkite vykdytoją.', tone: 'err' });
+            setMsg({ text: 'Pasirinkite meistrą.', tone: 'err' });
             return;
         }
         setSaving(true);
@@ -136,7 +136,7 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
         try {
             const res = await runRecurringNow(template.id);
             if (res?.deduped) setMsg({ text: 'Šiandien jau sukurta.', tone: 'ok' });
-            else if (res?.needsReassignment) setMsg({ text: 'Sukurta, bet vykdytojas nepasiekiamas — priskirkite kitą.', tone: 'err' });
+            else if (res?.needsReassignment) setMsg({ text: 'Sukurta, bet meistras nepasiekiamas — priskirkite kitą.', tone: 'err' });
             else if (res?.created) setMsg({ text: 'Sukurta.', tone: 'ok' });
             else setMsg({ text: res?.reason || 'Nesukurta.', tone: 'err' });
             onChanged?.();
@@ -151,7 +151,7 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
     // server "Sukurti dabar" with dedup/absence handling instead).
     const handleCreateOnce = async () => {
         if (!baked) {
-            setMsg({ text: 'Šablonas be vykdytojo — atidarykite „Tvarkyti" ir priskirkite.', tone: 'err' });
+            setMsg({ text: 'Šablonas be meistro — atidarykite „Tvarkyti" ir priskirkite.', tone: 'err' });
             return;
         }
         setBusyAction('create-once');
@@ -231,12 +231,12 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                             />
                         </div>
                         <div>
-                            <span className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">Vykdytojas</span>
+                            <span className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">Meistras</span>
                             <Select
                                 value={draftAssignee}
                                 onChange={setDraftAssignee}
                                 options={assignableUsers}
-                                label="Vykdytojas"
+                                label="Meistras"
                                 placeholder="Pasirinkite…"
                                 alwaysSheet
                             />
@@ -369,7 +369,7 @@ export default function RecurringTasksPanel({ embedded = false }) {
         <>
             <p className={cn('mb-3 px-1 text-caption text-ink-muted', embedded && 'mt-1')}>
                 Pažymėkite šabloną kaip pasikartojantį — sistema kas rytą automatiškai sukurs veiklą pagal grafiką
-                ir priskirs pasirinktam vykdytojui. „Sukurti dabar“ paleidžia iškart.
+                ir priskirs pasirinktam meistrui. „Sukurti dabar“ paleidžia iškart.
             </p>
 
             {loading && (

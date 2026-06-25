@@ -325,7 +325,7 @@ export default function TaskDetailModal({
                             )}
                             {showManagerLine && managerName && !samePerson && (
                                 <span className="inline-flex items-center gap-1.5 text-caption text-ink-muted">
-                                    Vad.
+                                    Koord.
                                     <UserChip userId={managerId} name={managerName} />
                                 </span>
                             )}
@@ -338,7 +338,7 @@ export default function TaskDetailModal({
                     {(isAssignee || canManage) && !isDeleted && (
                         <div>
                             <div className="mb-2 text-caption font-medium uppercase tracking-wide text-ink-muted">
-                                Vykdytojo žymos
+                                Meistro žymos
                             </div>
                             <TaskFlagToggles
                                 task={task}

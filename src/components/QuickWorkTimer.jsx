@@ -196,7 +196,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
                 {managers.length >= 2 && (
                     <div className="mt-5">
                         <span id="quickWorkManagerLabel" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
-                            Kuriam vadovui pateikti?
+                            Kuriam koordinatoriui pateikti?
                         </span>
                         <div role="radiogroup" aria-labelledby="quickWorkManagerLabel" className="flex flex-wrap gap-2">
                             {managers.map((m) => {

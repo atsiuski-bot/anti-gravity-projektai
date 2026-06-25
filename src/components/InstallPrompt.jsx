@@ -103,7 +103,7 @@ export default function InstallPrompt() {
                 >
                     <Download className="h-5 w-5 shrink-0 text-brand-hover" aria-hidden="true" />
                     <div className="min-w-0 flex-1">
-                        <p className="truncate text-caption font-semibold text-brand-hover">Įdiegti WORKZ</p>
+                        <p className="truncate text-caption font-semibold text-brand-hover">Įdiegti Gildiją</p>
                         <p className="truncate text-caption text-ink">
                             Spartesnė prieiga ir pranešimai apie naujus prašymus
                         </p>

@@ -93,7 +93,7 @@ export default function OnboardingWelcome() {
         <Modal
             open={open}
             onClose={dismiss}
-            title="Sveiki atvykę į WORKZ"
+            title="Sveiki atvykę į Gildiją"
             size="md"
             footer={
                 <Button variant="primary" fullWidth onClick={dismiss}>

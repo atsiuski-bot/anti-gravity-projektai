@@ -469,7 +469,7 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
                         </Button>
                         {!targetUser && (
                             <p className="mt-2 text-xs text-ink-muted text-center">
-                                Sesijos pridėti negalima — užduotis neturi priskirto vykdytojo.
+                                Sesijos pridėti negalima — užduotis neturi priskirto meistro.
                             </p>
                         )}
                     </div>

@@ -192,7 +192,7 @@ describe('renderers', () => {
 
     it('Markdown includes the worker name and the reading-guide header', () => {
         const md = renderReportMarkdown(report);
-        expect(md).toContain('# WORKZ veiklos ataskaita');
+        expect(md).toContain('# Gildijos veiklos ataskaita');
         expect(md).toContain('Test Worker');
         expect(md).toContain('Skaitymo gairės modeliui');
     });
@@ -215,7 +215,7 @@ describe('renderers', () => {
     it('Timesheet CSV has the per-day header, one row per worked day, and a Viso total', () => {
         const csv = renderTimesheetCSV([worker], window);
         const header = csv.split('\n')[0];
-        expect(header).toContain('Vykdytojas');
+        expect(header).toContain('Meistras');
         expect(header).toContain('Data');
         expect(header).toContain('Skirtumas (val:min)');
         expect(csv).toContain('2026-06-10');

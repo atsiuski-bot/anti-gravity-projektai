@@ -697,7 +697,7 @@ export const requestTimeExtension = async ({ task, currentUser, estimatedTime, a
         actualMinutes: Number.isFinite(actualMinutes)
             ? actualMinutes
             : Math.round((task.timerMinutes || 0) + (task.manualMinutes || 0)),
-        userName: currentUser?.displayName || currentUser?.email || 'Vykdytojas',
+        userName: currentUser?.displayName || currentUser?.email || 'Meistras',
         userId: currentUser?.uid,
         isRead: false,
         createdAt: new Date().toISOString()
@@ -789,7 +789,7 @@ export const completeTaskAtLimit = async (task, { currentUser, userData, userRol
             taskTitle: task.title || 'Užduotis',
             actualTime: formattedTime,
             actualMinutes: totalMinutes,
-            userName: currentUser?.displayName || currentUser?.email || 'Vykdytojas',
+            userName: currentUser?.displayName || currentUser?.email || 'Meistras',
             userId: currentUser?.uid,
             completedAt: new Date().toISOString()
         });

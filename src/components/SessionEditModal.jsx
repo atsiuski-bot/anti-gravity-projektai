@@ -40,7 +40,7 @@ const ERROR_COPY = {
     tooLong: 'Sesija viršija 16 val. — patikrinkite, ar teisinga data.',
     invalid: 'Neteisingas laikas.',
     reason: 'Nurodykite keitimo priežastį.',
-    user: 'Nepasirinktas vykdytojas.',
+    user: 'Nepasirinktas meistras.',
     write: 'Nepavyko išsaugoti. Bandykite dar kartą.',
 };
 
@@ -236,7 +236,7 @@ export default function SessionEditModal({
                     {/* Who the session belongs to — context for the editing admin. */}
                     {targetUser?.name && (
                         <p className="text-body text-ink-muted">
-                            Vykdytojas: <span className="font-semibold text-ink">{targetUser.name}</span>
+                            Meistras: <span className="font-semibold text-ink">{targetUser.name}</span>
                         </p>
                     )}
 

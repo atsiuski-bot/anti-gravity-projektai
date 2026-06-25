@@ -30,7 +30,7 @@ export const TASK_FLAGS = {
         setByNameField: 'needsManagerSetByName',
         setAtField: 'needsManagerSetAt',
         notifyType: 'task_needs_manager',
-        label: 'Reikia vadovo',
+        label: 'Reikia koordinatoriaus',
         tone: 'danger',
         bgClass: 'bg-feedback-danger-soft',
         borderClass: 'border-feedback-danger-border',

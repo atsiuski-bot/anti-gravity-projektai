@@ -91,8 +91,8 @@ export default function RecoveryNotice() {
 
                     <p className="mt-2 text-caption text-ink-muted">
                         {anyCapped
-                            ? 'Laikmatis liko įjungtas po programos uždarymo, todėl užfiksuotas laikas buvo apribotas iki 16 val. Jei tai neteisinga, praneškite vadovui.'
-                            : 'Laikmatis liko įjungtas po programos uždarymo ir buvo automatiškai sustabdytas. Jei užfiksuotas laikas neteisingas, praneškite vadovui.'}
+                            ? 'Laikmatis liko įjungtas po programos uždarymo, todėl užfiksuotas laikas buvo apribotas iki 16 val. Jei tai neteisinga, praneškite koordinatoriui.'
+                            : 'Laikmatis liko įjungtas po programos uždarymo ir buvo automatiškai sustabdytas. Jei užfiksuotas laikas neteisingas, praneškite koordinatoriui.'}
                     </p>
 
                     <div className="mt-3 flex flex-wrap gap-2">

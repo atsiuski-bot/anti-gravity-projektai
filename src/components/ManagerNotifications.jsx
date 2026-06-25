@@ -896,7 +896,7 @@ export default function ManagerNotifications({ onClose }) {
 
                     // Worker-facing INFORMATIONAL notices (manager decisions) — compact read/unread rows.
                     if (['task_assigned', 'task_approved', 'task_confirmed', 'extension_granted', 'extension_denied', 'calendar_decision', 'task_priority_escalated'].includes(notif.type)) {
-                        const who = formatDisplayName(notif.createdByName) || 'Vadovas';
+                        const who = formatDisplayName(notif.createdByName) || 'Koordinatorius';
                         const task = notif.taskTitle ? `„${notif.taskTitle}“` : '';
                         let Icon = AlertCircle;
                         let tone = 'text-brand';
@@ -906,7 +906,7 @@ export default function ManagerNotifications({ onClose }) {
                             case 'task_approved': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų užduotis patvirtinta — galite pradėti: ${task}`; break;
                             case 'task_confirmed': Icon = CheckCircle2; tone = 'text-feedback-success'; text = `Jūsų atlikta užduotis priimta: ${task}`; break;
                             case 'extension_granted': Icon = TimeGrantedGlyph; tone = 'text-feedback-success'; text = `Numatomas laikas pratęstas užduočiai: ${task}`; break;
-                            case 'extension_denied': Icon = TimeDeniedGlyph; tone = 'text-feedback-danger'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su vadovu tolesnę eigą.`; break;
+                            case 'extension_denied': Icon = TimeDeniedGlyph; tone = 'text-feedback-danger'; text = `Numatomas laikas nepratęstas užduočiai: ${task}. Aptarkite su koordinatoriumi tolesnę eigą.`; break;
                             case 'task_priority_escalated': {
                                 // System notice: a deadline closed in, so the task's priority was auto-raised.
                                 Icon = Clock;
@@ -941,7 +941,7 @@ export default function ManagerNotifications({ onClose }) {
                     if (notif.type === 'task_needs_manager' || notif.type === 'task_waiting') {
                         const isNeedsManager = notif.type === 'task_needs_manager';
                         const FlagIcon = isNeedsManager ? Hand : Hourglass;
-                        const flagLabel = isNeedsManager ? 'Reikia vadovo' : 'Laukiama';
+                        const flagLabel = isNeedsManager ? 'Reikia koordinatoriaus' : 'Laukiama';
                         const wrapClass = isNeedsManager
                             ? 'border-feedback-danger-border bg-feedback-danger-soft'
                             : 'border-feedback-info-border bg-feedback-info-soft';
@@ -955,7 +955,7 @@ export default function ManagerNotifications({ onClose }) {
                                         <p className="leading-relaxed">
                                             {(notif.createdBy || notif.createdByName)
                                                 ? <UserChip userId={notif.createdBy} name={notif.createdByName} />
-                                                : <span className="font-semibold">Vykdytojas</span>}{' '}
+                                                : <span className="font-semibold">Meistras</span>}{' '}
                                             pažymėjo „{flagLabel}“:
                                         </p>
                                         <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
@@ -981,7 +981,7 @@ export default function ManagerNotifications({ onClose }) {
                                     <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
                                     <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
                                         <p className="font-medium leading-relaxed">
-                                            Pasikartojanti veikla {task}: įprastas vykdytojas šiandien nepasiekiamas (atostogos / nebuvimas). Priskirkite kitą vykdytoją.
+                                            Pasikartojanti veikla {task}: įprastas meistras šiandien nepasiekiamas (atostogos / nebuvimas). Priskirkite kitą meistrą.
                                         </p>
                                     </div>
                                 </div>
@@ -1020,7 +1020,7 @@ export default function ManagerNotifications({ onClose }) {
                                 <div className="flex items-start gap-3">
                                     <RotateCcw className="mt-0.5 h-5 w-5 flex-shrink-0 text-feedback-warning" aria-hidden="true" />
                                     <div className="min-w-0 flex-1 text-sm text-feedback-warning-text">
-                                        <p>{(notif.createdBy || notif.createdByName) ? <UserChip userId={notif.createdBy} name={notif.createdByName} /> : <span className="font-semibold">Vadovas</span>} grąžino užduotį tobulinti:</p>
+                                        <p>{(notif.createdBy || notif.createdByName) ? <UserChip userId={notif.createdBy} name={notif.createdByName} /> : <span className="font-semibold">Koordinatorius</span>} grąžino užduotį tobulinti:</p>
                                         <p className="mt-1 font-medium">„{notif.taskTitle}“</p>
                                     </div>
                                 </div>
@@ -1086,7 +1086,7 @@ export default function ManagerNotifications({ onClose }) {
                                             </p>
                                         )}
                                         <p className="mt-2 text-xs text-feedback-info-text/90">
-                                            Jei manote, kad tai klaida, susisiekite su vadovu.
+                                            Jei manote, kad tai klaida, susisiekite su koordinatoriumi.
                                         </p>
                                     </div>
                                 </div>
@@ -1184,7 +1184,7 @@ export default function ManagerNotifications({ onClose }) {
                                         <div className="min-w-0 text-sm text-feedback-warning-text">
                                             <p><UserChip userId={notif.userId} name={notif.userName} /> pranešė apie klaidą veiklos laike:</p>
                                             {notif.commentText && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
-                                            <p className="mt-2 text-xs">Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“ — pasirinkite šio vykdytojo dieną.</p>
+                                            <p className="mt-2 text-xs">Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“ — pasirinkite šio meistro dieną.</p>
                                         </div>
                                     </div>
                                     {!readOnly && (
@@ -1328,7 +1328,7 @@ export default function ManagerNotifications({ onClose }) {
                                     <AlertCircle className="w-5 h-5 text-feedback-warning mt-0.5 flex-shrink-0" />
                                     <div>
                                         <div className="text-sm text-feedback-warning-text">
-                                            <p><UserChip userId={notif.createdBy} name={notif.createdByName} /> priskyrė Jus vadovu užduočiai:</p>
+                                            <p><UserChip userId={notif.createdBy} name={notif.createdByName} /> priskyrė Jus koordinatoriumi užduočiai:</p>
                                             <p className="font-medium mt-1">&quot;{notif.taskTitle}&quot;</p>
                                             {notif.estimatedTime && <p className="mt-1 text-xs">Planuojamas laikas: <span className="font-medium">{notif.estimatedTime}</span></p>}
                                             {notif.description && <p className="mt-1 text-xs italic border-l-2 border-feedback-warning-border pl-2"> {notif.description}</p>}

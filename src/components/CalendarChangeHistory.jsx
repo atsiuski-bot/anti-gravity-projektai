@@ -81,7 +81,7 @@ export default function CalendarChangeHistory({ users = [] }) {
     // Derive the display fields for one calendar-history entry. Computed once and shared by the
     // mobile card and the desktop table so both layouts stay in sync.
     const deriveCalendarEntry = (item) => {
-        const workerLabel = item.userName || 'Nežinomas vykdytojas';
+        const workerLabel = item.userName || 'Nežinomas meistras';
 
         const eventStart = item.requestedEvent?.start || item.originalEvent?.start || null;
         const eventEnd = item.requestedEvent?.end || item.originalEvent?.end || null;
@@ -264,7 +264,7 @@ export default function CalendarChangeHistory({ users = [] }) {
                         <table className="min-w-full divide-y divide-line">
                             <thead className="bg-surface-sunken">
                                 <tr>
-                                    <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Vykdytojas</th>
+                                    <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Meistras</th>
                                     <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Data ir laikas (kalendoriuje)</th>
                                     <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Veiksmas / tipas</th>
                                     <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Keitimo laikas</th>

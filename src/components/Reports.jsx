@@ -713,7 +713,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                 <thead className="bg-surface-sunken">
                     <tr>
                         <th scope="col" className="px-2 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">UŽDUOTIS</th>
-                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-12">VYKD.</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-12">MEIST.</th>
                         <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIOR.</th>
                         <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-24">LAIKAS</th>
                         <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">ŽYMOS</th>
@@ -1055,16 +1055,16 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                         </div>
                         {(isManagerRole(userRole)) && (
                             <div>
-                                <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Vykdytoją</label>
+                                <label className="block text-caption font-semibold text-ink-muted mb-1">Filtruoti pagal Meistrą</label>
                                 <Select
                                     value={taskFilters.userId}
                                     onChange={(val) => setTaskFilters(prev => ({ ...prev, userId: val }))}
                                     options={[
-                                        { value: 'all', label: 'Visi Vykdytojai' },
+                                        { value: 'all', label: 'Visi Meistrai' },
                                         ...(users?.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) })) || []),
                                     ]}
-                                    label="Vykdytojas"
-                                    ariaLabel="Filtruoti pagal vykdytoją"
+                                    label="Meistras"
+                                    ariaLabel="Filtruoti pagal meistrą"
                                 />
                             </div>
                         )}
@@ -1297,7 +1297,7 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
             {/* Team KPIs — headline counts and quality, separated from the time triplet by a rule so
                 the two tiers (time · team) read as one card with a clear internal hierarchy. */}
             <div className="mt-4 grid grid-cols-3 gap-x-2 divide-line border-t border-line pt-4 sm:divide-x">
-                <SummaryStat label="Vykdytojų" value={t.workerCount} />
+                <SummaryStat label="Meistrų" value={t.workerCount} />
                 <SummaryStat
                     label="Užbaigta užduočių"
                     value={t.completedTasks}
@@ -1305,7 +1305,7 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
                 />
                 {Number.isFinite(t.avgOnTimePct) ? (
                     <SummaryStat
-                        label="Vid. punktualus startas"
+                        label="Vid. startas laiku"
                         value={`${t.avgOnTimePct}%`}
                         delta={p && Number.isFinite(p.avgOnTimePct) ? delta(t.avgOnTimePct, p.avgOnTimePct) : null}
                     />

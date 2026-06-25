@@ -50,21 +50,21 @@ export const NOTIFICATIONS = {
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Nauja užduotis tvirtinimui', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Nauja užduotis tvirtinimui', body: n.taskTitle || 'Gildija' }),
     },
     task_completion: {
         category: 'action',
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Užduotis atlikta', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Užduotis atlikta', body: n.taskTitle || 'Gildija' }),
     },
     time_extension_request: {
         category: 'action',
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Laiko pratęsimo prašymas', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Laiko pratęsimo prašymas', body: n.taskTitle || 'Gildija' }),
     },
     session_correction_request: {
         category: 'action',
@@ -86,14 +86,14 @@ export const NOTIFICATIONS = {
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Reikia vadovo', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Reikia koordinatoriaus', body: n.taskTitle || 'Gildija' }),
     },
     task_waiting: {
         category: 'info',
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Pažymėta „Laukiama“', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Pažymėta „Laukiama“', body: n.taskTitle || 'Gildija' }),
     },
 
     // ── Both → manager (FYI) ─────────────────────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ export const NOTIFICATIONS = {
         push: true,
         link: TAB_TASKS,
         copy: (n) => {
-            const task = n.taskTitle || 'WORKZ';
+            const task = n.taskTitle || 'Gildija';
             const snippet = clamp(n.commentText);
             return { title: 'Naujas komentaras', body: snippet ? `${task}: ${snippet}` : task };
         },
@@ -115,7 +115,7 @@ export const NOTIFICATIONS = {
         link: TAB_TASKS,
         // Fired to the OTHER party (manager ↔ worker) when a photo is added from the task sheet; the
         // uploader is dropped by notify()'s self-guard, exactly like new_comment.
-        copy: (n) => ({ title: 'Nauja nuotrauka', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Nauja nuotrauka', body: n.taskTitle || 'Gildija' }),
     },
 
     // ── Manager → worker ─────────────────────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ export const NOTIFICATIONS = {
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Nauja užduotis', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Nauja užduotis', body: n.taskTitle || 'Gildija' }),
     },
     task_approved: {
         category: 'info',
@@ -134,28 +134,28 @@ export const NOTIFICATIONS = {
         // When a manager approves a worker-created task AND edits it in the same step ("Redaguoti" on
         // the approval card), the two facts collapse into ONE notice via the `edited` flag — instead
         // of a separate task_approved + task_edited pair. The push MIRROR branches the same way.
-        copy: (n) => ({ title: n.edited ? 'Užduotis patvirtinta ir pakeista' : 'Užduotis patvirtinta', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: n.edited ? 'Užduotis patvirtinta ir pakeista' : 'Užduotis patvirtinta', body: n.taskTitle || 'Gildija' }),
     },
     task_edited: {
         category: 'info',
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Užduotis pakeista', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Užduotis pakeista', body: n.taskTitle || 'Gildija' }),
     },
     task_unassigned: {
         category: 'info',
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Užduotis nebepriskirta jums', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Užduotis nebepriskirta jums', body: n.taskTitle || 'Gildija' }),
     },
     task_deleted: {
         category: 'info',
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Užduotis ištrinta', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Užduotis ištrinta', body: n.taskTitle || 'Gildija' }),
     },
     task_confirmed: {
         category: 'info',
@@ -164,7 +164,7 @@ export const NOTIFICATIONS = {
         link: TAB_TASKS,
         // COMPLETION-gate vocabulary is "priimta/priimtas" (two-gate split, ADR 0015 vocab) — kept in
         // lockstep with the toast and the Reports sub-tab. The push MIRROR must say the same.
-        copy: (n) => ({ title: 'Užduotis užbaigta ir priimta', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Užduotis užbaigta ir priimta', body: n.taskTitle || 'Gildija' }),
     },
     task_reverted: {
         category: 'action',
@@ -174,21 +174,21 @@ export const NOTIFICATIONS = {
         // Returning a finished task from the bell ALWAYS reopens the editor (the only two actions
         // there are Priimti / Grąžinti), so the return + the manager's fixes collapse into ONE notice
         // via the `edited` flag — never a separate task_reverted + task_edited pair. Mirror branches same.
-        copy: (n) => ({ title: n.edited ? 'Užduotis grąžinta taisyti ir pakeista' : 'Užduotis grąžinta taisyti', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: n.edited ? 'Užduotis grąžinta taisyti ir pakeista' : 'Užduotis grąžinta taisyti', body: n.taskTitle || 'Gildija' }),
     },
     extension_granted: {
         category: 'info',
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Laikas pratęstas', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Laikas pratęstas', body: n.taskTitle || 'Gildija' }),
     },
     extension_denied: {
         category: 'info',
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Laikas nepratęstas', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Laikas nepratęstas', body: n.taskTitle || 'Gildija' }),
     },
     calendar_decision: {
         category: 'info',
@@ -237,7 +237,7 @@ export const NOTIFICATIONS = {
         // this copy and the push MIRROR both read one field — no priority→label map on either side.
         copy: (n) => ({
             title: 'Artėja terminas',
-            body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'WORKZ'),
+            body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'Gildija'),
         }),
     },
 
@@ -250,7 +250,7 @@ export const NOTIFICATIONS = {
         sound: null,
         push: true,
         link: TAB_PROFILE,
-        copy: (n) => ({ title: 'Naujas ženkliukas', body: n.badgeName ? (n.tierName ? `${n.badgeName}: ${n.tierName}` : n.badgeName) : 'WORKZ' }),
+        copy: (n) => ({ title: 'Naujas ženkliukas', body: n.badgeName ? (n.tierName ? `${n.badgeName}: ${n.tierName}` : n.badgeName) : 'Gildija' }),
     },
 
     // ── System → manager (oversight: a deadline was missed) ──────────────────────────────────────
@@ -259,7 +259,7 @@ export const NOTIFICATIONS = {
         sound: 'info',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Praleistas terminas', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Praleistas terminas', body: n.taskTitle || 'Gildija' }),
     },
 
     // ── System → admin / manager ─────────────────────────────────────────────────────────────────
@@ -268,14 +268,14 @@ export const NOTIFICATIONS = {
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'WORKZ' }),
+        copy: (n) => ({ title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'Gildija' }),
     },
     recurring_reassign: {
         category: 'action',
         sound: 'alert',
         push: true,
         link: TAB_TASKS,
-        copy: (n) => ({ title: 'Priskirkite kitą vykdytoją', body: n.taskTitle || 'WORKZ' }),
+        copy: (n) => ({ title: 'Priskirkite kitą meistrą', body: n.taskTitle || 'Gildija' }),
     },
 };
 
@@ -298,6 +298,6 @@ export const notificationLink = (type) => NOTIFICATIONS[type]?.link || TAB_TASKS
  */
 export function notificationCopy(n) {
     const entry = NOTIFICATIONS[n?.type];
-    if (!entry) return { title: 'Naujas pranešimas', body: n?.taskTitle || 'WORKZ' };
+    if (!entry) return { title: 'Naujas pranešimas', body: n?.taskTitle || 'Gildija' };
     return entry.copy(n);
 }

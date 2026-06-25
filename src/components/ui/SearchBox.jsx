@@ -37,7 +37,7 @@ import { highlightMatch } from '../../utils/taskSearch';
 // row carries an icon + a word, so it reads the same to everyone (§5).
 const KIND_META = {
     task: { icon: ClipboardList, label: 'Užduotis' },
-    worker: { icon: User, label: 'Vykdytojas' },
+    worker: { icon: User, label: 'Meistras' },
     tag: { icon: Tag, label: 'Žyma' },
 };
 

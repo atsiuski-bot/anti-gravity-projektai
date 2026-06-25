@@ -248,7 +248,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
             open
             title="Užbaigti sesiją?"
             message={`Priverstinai užbaigti ${endTarget.displayName || endTarget.email} sesiją. Vykdoma užduotis bus pristabdyta ir užfiksuotas veiklos laikas; pertraukos / skambučio likutis bus tik išvalytas. Paskyra NEBUS užblokuota.`}
-            warning="Naudokite tik kai sesija įstrigo (telefonas išsijungė ar programa užsidarė), o vykdytojas pats jos užbaigti nebegali."
+            warning="Naudokite tik kai sesija įstrigo (telefonas išsijungė ar programa užsidarė), o meistras pats jos užbaigti nebegali."
             confirmLabel="Užbaigti sesiją"
             cancelLabel="Atšaukti"
             loading={ending}
@@ -507,7 +507,7 @@ const IdlePlannedRow = React.memo(({ row }) => {
                 />
                 <div className="text-xs">
                     Suplanuota, bet nepradėta
-                    {shiftStartLabel && <span className="opacity-80"> · pamaina nuo {shiftStartLabel}</span>}
+                    {shiftStartLabel && <span className="opacity-80"> · veiklos laikas nuo {shiftStartLabel}</span>}
                     {lastActiveLabel && <span className="opacity-80"> · paskutinį kartą aktyvus {lastActiveLabel}</span>}
                 </div>
             </div>

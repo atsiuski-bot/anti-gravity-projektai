@@ -58,7 +58,7 @@ function detectPreset(range) {
 const FORMATS = [
     { id: 'md', label: 'Markdown — AI analizei', hint: 'Apskaičiuotos metrikos + Δ, paruošta įkelti į LLM', icon: FileText, recommended: true },
     { id: 'json', label: 'JSON — struktūrinis', hint: 'Tas pats objektas mašininiam apdorojimui', icon: Braces },
-    { id: 'csv', label: 'CSV — val./diena', hint: 'Timesheet: eilutė / vykdytoją-dieną skaičiuoklei', icon: Table2 },
+    { id: 'csv', label: 'CSV — val./diena', hint: 'Timesheet: eilutė / meistrą-dieną skaičiuoklei', icon: Table2 },
 ];
 
 // Thin wrapper over the shared, cross-browser-safe downloader (handles the iOS-standalone
@@ -172,7 +172,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
         setError('');
         const ids = candidates.filter((c) => selectedIds.has(c.id)).map((c) => c.id);
         if (!ids.length) {
-            setError('Pasirinkite bent vieną vykdytoją.');
+            setError('Pasirinkite bent vieną meistrą.');
             return;
         }
         if (range.start > range.end) {
@@ -195,8 +195,8 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                 ids.length === candidates.length
                     ? `Visi (${ids.length})`
                     : ids.length === 1
-                      ? workers[0]?.name || '1 vykdytojas'
-                      : `${ids.length} vykdytojai`;
+                      ? workers[0]?.name || '1 meistras'
+                      : `${ids.length} meistrai`;
             let content;
             let mime;
             if (format === 'csv') {
@@ -319,7 +319,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                 {showPicker && (
                     <div>
                         <div className="mb-2 flex items-center justify-between">
-                            <p className={sectionLabel}>Vykdytojai</p>
+                            <p className={sectionLabel}>Meistrai</p>
                             <span className="rounded-full bg-brand-soft px-2.5 py-0.5 text-caption font-bold text-brand">
                                 {selectedCount} pasirinkti
                             </span>
@@ -330,8 +330,8 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                 type="text"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
-                                placeholder="Ieškoti vykdytojo…"
-                                aria-label="Ieškoti vykdytojo"
+                                placeholder="Ieškoti meistro…"
+                                aria-label="Ieškoti meistro"
                                 className="w-full bg-transparent py-2 text-body text-ink placeholder:text-ink-muted focus:outline-none"
                             />
                         </div>
@@ -341,7 +341,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                     type="checkbox"
                                     checked={allVisibleSelected}
                                     onChange={toggleAllVisible}
-                                    aria-label="Pažymėti visus matomus vykdytojus"
+                                    aria-label="Pažymėti visus matomus meistrus"
                                     className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                 />
                                 <span className="text-body font-semibold text-ink">Visi (matomi)</span>

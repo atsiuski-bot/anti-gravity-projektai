@@ -34,9 +34,9 @@ import { ROLE_GLYPHS } from '../components/icons/roleInsigniaMap';
 // Role presentation — pair color with text so role is never color-only (DESIGN_SYSTEM §5).
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
-    seniorManager: { label: 'Vyr. vadovas', tone: 'info' },
-    manager: { label: 'Vadovas', tone: 'info' },
-    worker: { label: 'Vykdytojas', tone: 'neutral' },
+    seniorManager: { label: 'Vyr. koordinatorius', tone: 'info' },
+    manager: { label: 'Koordinatorius', tone: 'info' },
+    worker: { label: 'Meistras', tone: 'neutral' },
 };
 
 // Theme choices (ADR 0008). 'system' follows the OS preference and is the default; each option
@@ -66,8 +66,8 @@ const AVATAR_MAX_EDGE = 512;
 // a SHORT list — this is self-insight, not the manager's full analytics. `kind` maps to
 // formatStatValue; `key` indexes into the computeWorkerStats result. (No peer comparison, no delta.)
 const SELF_METRICS = [
-    { key: 'onTimePct', label: 'Punktualus startas', kind: 'pct' },
-    { key: 'approvalPct', label: 'Patvirtinta vadovo', kind: 'pct' },
+    { key: 'onTimePct', label: 'Startas laiku', kind: 'pct' },
+    { key: 'approvalPct', label: 'Patvirtinta koordinatoriaus', kind: 'pct' },
     { key: 'onEstimatePct', label: 'Telpa į planą', kind: 'pct' },
 ];
 
@@ -501,7 +501,7 @@ export default function ProfilePage() {
                     <EmptyState
                         icon={BarChart3}
                         title="Rodikliai dar renkasi"
-                        description="Padirbėkite kelias suplanuotas pamainas — netrukus čia matysite savo punktualumą ir kokybę."
+                        description="Padirbėkite pagal suplanuotą veiklos laiką — netrukus čia matysite, ar pradedate laiku, ir savo kokybę."
                     />
                 )}
             </Card>

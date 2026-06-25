@@ -132,9 +132,9 @@ const WorkerStatsPanel = lazy(() => import('./stats/WorkerStatsPanel'));
 // to the worker entry and read "Vykdytojas".
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
-    seniorManager: { label: 'Vyr. vadovas', tone: 'info' },
-    manager: { label: 'Vadovas', tone: 'info' },
-    worker: { label: 'Vykdytojas', tone: 'neutral' },
+    seniorManager: { label: 'Vyr. koordinatorius', tone: 'info' },
+    manager: { label: 'Koordinatorius', tone: 'info' },
+    worker: { label: 'Meistras', tone: 'neutral' },
 };
 
 // One eligible-task row: a checkbox + the task title and its deadline. Native checkbox (the app has
@@ -182,7 +182,7 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
     const [submitting, setSubmitting] = useState(false);
     const [results, setResults] = useState(null); // null until a run completes: { ok, failed }
 
-    const workerName = formatDisplayName(worker?.displayName || worker?.email || 'Vykdytojas');
+    const workerName = formatDisplayName(worker?.displayName || worker?.email || 'Meistras');
 
     // Load the worker's open tasks + absence window once on open. The task query mirrors the report
     // surfaces (see workerTasksQuerySpec): a whole-team viewer queries the worker's rows by
@@ -219,7 +219,7 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
             } catch (err) {
                 if (cancelled) return;
                 logError(err, { source: 'BulkReassignModal.load', workerId: worker.id });
-                setLoadError('Nepavyko užkrauti vykdytojo užduočių. Bandykite dar kartą.');
+                setLoadError('Nepavyko užkrauti meistro užduočių. Bandykite dar kartą.');
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -346,14 +346,14 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
                     title="Nėra perskirstytinų veiklų"
                     description={
                         windowEnd
-                            ? 'Visos atviros veiklos turi terminą po vykdytojo grįžimo arba neturi termino — jas vykdytojas spės atlikti pats.'
-                            : 'Vykdytojas neturi pažymėto nebuvimo laikotarpio, todėl perskirstytinų veiklų nustatyti negalima.'
+                            ? 'Visos atviros veiklos turi terminą po meistro grįžimo arba neturi termino — jas meistras spės atlikti pats.'
+                            : 'Meistras neturi pažymėto nebuvimo laikotarpio, todėl perskirstytinų veiklų nustatyti negalima.'
                     }
                 />
             ) : (
                 <div className="space-y-4">
                     <p className="text-body text-ink-muted">
-                        {`Šios atviros veiklos turi terminą, kurio vykdytojas nespės įvykdyti iki grįžimo${windowEnd ? ` (nebuvimas iki ${windowEnd})` : ''}. Pasirinkite, ką perskirti, ir kam.`}
+                        {`Šios atviros veiklos turi terminą, kurio meistras nespės įvykdyti iki grįžimo${windowEnd ? ` (nebuvimas iki ${windowEnd})` : ''}. Pasirinkite, ką perskirti, ir kam.`}
                     </p>
 
                     <div>
@@ -365,8 +365,8 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
                             value={targetId}
                             onChange={setTargetId}
                             options={targetOptions}
-                            label="Vykdytojas"
-                            placeholder="Pasirinkite vykdytoją…"
+                            label="Meistras"
+                            placeholder="Pasirinkite meistrą…"
                             alwaysSheet
                         />
                     </div>

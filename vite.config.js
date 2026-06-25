@@ -19,8 +19,8 @@ export default defineConfig({
         globIgnores: ['**/firebase-messaging-sw.js', '**/splash/**']
       },
       manifest: {
-        name: 'WORKZ',
-        short_name: 'WORKZ',
+        name: 'Gildija',
+        short_name: 'Gildija',
         description: 'Productivity App',
         // Pin install identity + scope explicitly (these previously defaulted). `id` keeps the
         // installed app stable across any future start_url change so browsers treat updates as the

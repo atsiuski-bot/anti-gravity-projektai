@@ -511,7 +511,7 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
                                 {managerName && !samePerson && (
                                     <span className="inline-flex items-center whitespace-nowrap">
-                                        Vad. <UserChip userId={managerId} name={managerName} className="ml-1" />
+                                        Koord. <UserChip userId={managerId} name={managerName} className="ml-1" />
                                     </span>
                                 )}
                             </div>

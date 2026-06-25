@@ -13,9 +13,9 @@ import BreakTimer from './BreakTimer';
 import { cn } from '../utils/cn';
 
 const ROLE_NAMES = {
-    seniorManager: 'Vyr. vadovas',
-    manager: 'Vadovas',
-    worker: 'Vykdytojas',
+    seniorManager: 'Vyr. koordinatorius',
+    manager: 'Koordinatorius',
+    worker: 'Meistras',
     admin: 'Administratorius',
 };
 
@@ -86,7 +86,7 @@ function SideRail() {
                 ) : (
                     <>
                         <div className="flex items-center justify-between px-1">
-                            <span className="text-h3 font-extrabold tracking-tight text-ink-strong">WORKZ</span>
+                            <span className="text-h3 font-extrabold tracking-tight text-ink-strong">Gildija</span>
                             <IconButton icon={PanelLeftClose} label="Sutraukti meniu" onClick={toggleCollapsed} />
                         </div>
                         <div className="px-1 pb-1.5">

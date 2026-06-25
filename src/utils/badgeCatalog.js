@@ -64,9 +64,9 @@ export const BADGE_CATALOG = [
     },
     {
         key: 'on_time_start',
-        name: 'Punktualus startas',
-        unit: 'punktualios dienos',
-        description: 'Skiriamas už dienas, kai veiklą pradedate netoli suplanuotos pamainos pradžios.',
+        name: 'Pradeda laiku',
+        unit: 'dienos laiku',
+        description: 'Skiriamas už dienas, kai veiklą pradedate netoli suplanuoto veiklos laiko pradžios.',
         thresholds: [5, 20, 50, 120],
     },
     // Quality
@@ -74,7 +74,7 @@ export const BADGE_CATALOG = [
         key: 'approved_craft',
         name: 'Priimta veikla',
         unit: 'priimtos veiklos',
-        description: 'Skiriamas už veiklas, kurias peržiūrėjęs priėmė vadovas.',
+        description: 'Skiriamas už veiklas, kurias peržiūrėjęs priėmė koordinatorius.',
         thresholds: [3, 15, 50, 120],
     },
     {

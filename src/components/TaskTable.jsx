@@ -219,7 +219,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         // PERMISSION CHECK: Only explicit Managers or Admins can accept tasks.
         // Task-level managers (who are not system managers) cannot accept.
         if (!isManagerRole(userRole)) {
-            setError("Tik vadovai gali priimti užduotis.");
+            setError("Tik koordinatoriai gali priimti užduotis.");
             return;
         }
         setError('');
@@ -287,7 +287,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
         } catch (err) {
             logError(err, { source: 'TaskTable.confirmRevert' });
             if (err.code === 'permission-denied') {
-                setError('Tik vadovai gali grąžinti užduotis.');
+                setError('Tik koordinatoriai gali grąžinti užduotis.');
             } else {
                 setError('Nepavyko grąžinti užduoties. Bandykite vėliau.');
             }
@@ -486,7 +486,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                     </button>
                                     {(task.managerName || task.creatorName) && (
                                         <div className="text-caption text-feedback-info-text font-medium mt-0.5">
-                                            Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
+                                            Koord. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} />
                                         </div>
                                     )}
                                 </div>
@@ -664,7 +664,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                             )}
                             <th className="px-2 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider">Užduotis</th>
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.user)}>
-                                {gc ? <HeaderCell label="Vykd." sortMode={sortCols.user} sort={gc.sort} filter={filters.user} filterLabel="Filtruoti pagal vykdytoją" /> : 'Vykd.'}
+                                {gc ? <HeaderCell label="Meist." sortMode={sortCols.user} sort={gc.sort} filter={filters.user} filterLabel="Filtruoti pagal meistrą" /> : 'Meist.'}
                             </th>
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.priority)}>
                                 {gc ? <HeaderCell label="Prior." sortMode={sortCols.priority} sort={gc.sort} filter={filters.priority} filterLabel="Filtruoti pagal prioritetą" /> : 'Prior.'}
@@ -815,7 +815,7 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                                 )}
                                                 {showManagerLine && (task.managerName || task.creatorName) && (
                                                     <span className="inline-flex items-center font-medium text-feedback-info-text">
-                                                        Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} className="ml-1" />
+                                                        Koord. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} className="ml-1" />
                                                     </span>
                                                 )}
                                             </div>

@@ -91,7 +91,7 @@ async function sendToUser(uid, notification, data) {
     const resp = await getMessaging().sendEachForMulticast({
         tokens,
         data: {
-            title: String(notification.title || 'WORKZ'),
+            title: String(notification.title || 'Gildija'),
             body: String(notification.body || ''),
             ...(data || {})
         },
@@ -176,7 +176,7 @@ const CATEGORY_BY_TYPE = {
 };
 
 function copyForRequestNotification(n) {
-    const title = n.taskTitle || 'WORKZ';
+    const title = n.taskTitle || 'Gildija';
     switch (n.type) {
         // Worker → manager
         case 'time_extension_request':
@@ -187,7 +187,7 @@ function copyForRequestNotification(n) {
             return { title: 'Nauja užduotis tvirtinimui', body: title };
         case 'task_needs_manager':
             // Worker → manager: the vykdytojas raised the "Reikia vadovo" flag on a task.
-            return { title: 'Reikia vadovo', body: title };
+            return { title: 'Reikia koordinatoriaus', body: title };
         case 'task_waiting':
             // Worker → manager: the vykdytojas raised the "Laukiama" flag on a task.
             return { title: 'Pažymėta „Laukiama“', body: title };
@@ -207,10 +207,10 @@ function copyForRequestNotification(n) {
             return { title: 'Nauja užduotis', body: title };
         case 'recurring_reassign':
             // System → manager: the recurring job's usual assignee is away; pick someone else.
-            return { title: 'Priskirkite kitą vykdytoją', body: title };
+            return { title: 'Priskirkite kitą meistrą', body: title };
         case 'account_approval':
             // System → admin: a new sign-up awaits approval. Body = the pending user's name/email.
-            return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'WORKZ' };
+            return { title: 'Naujas vartotojas laukia patvirtinimo', body: n.targetUserName || n.targetUserEmail || 'Gildija' };
         case 'task_approved':
             // `edited` collapses approve+edit into one notice (mirror of the registry variant).
             return { title: n.edited ? 'Užduotis patvirtinta ir pakeista' : 'Užduotis patvirtinta', body: title };
@@ -256,16 +256,16 @@ function copyForRequestNotification(n) {
             // needs no priority map — keep identical to the registry entry.
             return {
                 title: 'Artėja terminas',
-                body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'WORKZ'),
+                body: n.priorityLabel ? `${n.taskTitle || 'Veikla'} → ${n.priorityLabel}` : (n.taskTitle || 'Gildija'),
             };
         case 'achievement':
             // System → worker: a newly-earned badge tier. Body = "Badge: Tier" (mirror of the registry).
-            return { title: 'Naujas ženkliukas', body: n.badgeName ? (n.tierName ? `${n.badgeName}: ${n.tierName}` : n.badgeName) : 'WORKZ' };
+            return { title: 'Naujas ženkliukas', body: n.badgeName ? (n.tierName ? `${n.badgeName}: ${n.tierName}` : n.badgeName) : 'Gildija' };
         case 'task_overdue':
             // System → manager: a task's deadline passed while still unfinished.
             return { title: 'Praleistas terminas', body: title };
         default:
-            return { title: 'WORKZ pranešimas', body: title };
+            return { title: 'Gildijos pranešimas', body: title };
     }
 }
 
@@ -303,7 +303,7 @@ exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', as
         ? r.managerIds
         : (r.managerId ? [r.managerId] : []);
     if (!recipients.length) return;
-    const who = r.userName || 'Vykdytojas';
+    const who = r.userName || 'Meistras';
     try {
         await Promise.all(recipients.map((uid) =>
             sendToUser(uid, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
@@ -404,7 +404,7 @@ const BADGES = {
     steady_rhythm: { name: 'Pastovus ritmas', stat: 'workDays', thresholds: [5, 25, 75, 200] },             // R2 (high-water days)
     on_estimate: { name: 'Telpa į planą', stat: 'onEstimate', thresholds: [5, 20, 60, 150] },               // R3
     plans_ahead: { name: 'Planuoja iš anksto', stat: 'planAheadWeeks', thresholds: [2, 8, 20, 40] },        // R4 (high-water weeks)
-    on_time_start: { name: 'Punktualus startas', stat: 'punctualDays', thresholds: [5, 20, 50, 120] },      // R6 (planned vs actual start)
+    on_time_start: { name: 'Pradeda laiku', stat: 'punctualDays', thresholds: [5, 20, 50, 120] },      // R6 (planned vs actual start)
     // Quality
     approved_craft: { name: 'Priimta veikla', stat: 'confirmedTasks', thresholds: [3, 15, 50, 120] },      // Q1
     thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [3, 15, 40, 100] },                        // Q2

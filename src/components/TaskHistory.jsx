@@ -338,8 +338,8 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         const headers = [
             "Pavadinimas",
             "Aprašymas",
-            "Vykdytojas",
-            "Vadovas",
+            "Meistras",
+            "Koordinatorius",
             "Sukūrė",
             "Būsena",
             "Prioritetas",
@@ -668,7 +668,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 {/* User Filter (Manager Only) */}
                 {(isManagerOrAdmin && userId === 'all') && (
                     <div className="flex flex-col gap-1 min-w-[150px]">
-                        <label className={FILTER_LABEL_CLASS}>Vykdytojas</label>
+                        <label className={FILTER_LABEL_CLASS}>Meistras</label>
                         <Select
                             value={filterUser}
                             onChange={setFilterUser}
@@ -676,8 +676,8 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                 { value: 'all', label: 'Visi' },
                                 ...users.map((u) => ({ value: u.id, label: formatDisplayName(u.displayName || u.email) })),
                             ]}
-                            label="Vykdytojas"
-                            ariaLabel="Filtruoti pagal vykdytoją"
+                            label="Meistras"
+                            ariaLabel="Filtruoti pagal meistrą"
                         />
                     </div>
                 )}
@@ -771,7 +771,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         <thead className="bg-surface-sunken">
                             <tr>
                                 <th className="px-2 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider min-w-[200px] w-auto">UŽDUOTIS</th>
-                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">VYKD.</th>
+                                <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">MEIST.</th>
                                 <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIOR.</th>
                                 <th className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-24">PLAN. / TIKRAS</th>
                                 <th className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-20">ŽYMOS</th>
@@ -822,7 +822,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                                 {(task.managerName || task.creatorName) && (
                                                     <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                         <UserCheck className="w-3.5 h-3.5" aria-hidden="true" />
-                                                        <span>Vad. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
+                                                        <span>Koord. <UserChip userId={task.managerId || task.creatorId} name={task.managerName || task.creatorName} /></span>
                                                     </div>
                                                 )}
                                             </>

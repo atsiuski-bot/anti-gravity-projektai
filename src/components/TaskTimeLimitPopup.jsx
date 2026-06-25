@@ -101,7 +101,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
             console.error('Failed to send time-extension request:', e);
             setError(
                 e?.message === 'no-manager'
-                    ? 'Šiai užduočiai nepriskirtas vadovas, todėl pratęsimo prašyti negalima. Užbaikite užduotį.'
+                    ? 'Šiai užduočiai nepriskirtas koordinatorius, todėl pratęsimo prašyti negalima. Užbaikite užduotį.'
                     : 'Nepavyko išsiųsti užklausos. Bandykite dar kartą.'
             );
             setSubmitting(false);
@@ -161,13 +161,13 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                 {mode === 'choice' ? (
                     <p className="text-body text-ink-muted">
                         {hasManager
-                            ? 'Pasirinkite: prašyti vadovo pratęsti laiką ar užbaigti užduotį.'
-                            : 'Šiai užduočiai nepriskirtas vadovas — galite užbaigti užduotį.'}
+                            ? 'Pasirinkite: prašyti koordinatoriaus pratęsti laiką ar užbaigti užduotį.'
+                            : 'Šiai užduočiai nepriskirtas koordinatorius — galite užbaigti užduotį.'}
                     </p>
                 ) : (
                     <div className="space-y-3">
                         <label htmlFor="ext-comment" className="block text-body font-medium text-ink-strong">
-                            Komentaras vadovui <span className="font-normal text-ink-muted">(neprivaloma)</span>
+                            Komentaras koordinatoriui <span className="font-normal text-ink-muted">(neprivaloma)</span>
                         </label>
                         <textarea
                             id="ext-comment"

@@ -38,7 +38,7 @@ export const setTaskFlag = async (
 
     const on = !!nextValue;
     const now = new Date().toISOString();
-    const actorName = currentUser.displayName || currentUser.email || 'Vykdytojas';
+    const actorName = currentUser.displayName || currentUser.email || 'Meistras';
 
     await updateDoc(doc(db, collectionName, task.id), {
         [flag.field]: on,

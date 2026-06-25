@@ -28,9 +28,9 @@ import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 // is never the sole signal (§5).
 const ROLE_META = {
     admin: { label: 'Administratorius', tone: 'info' },
-    seniorManager: { label: 'Vyr. vadovas', tone: 'neutral' },
-    manager: { label: 'Vadovas', tone: 'neutral' },
-    worker: { label: 'Vykdytojas', tone: 'running' },
+    seniorManager: { label: 'Vyr. koordinatorius', tone: 'neutral' },
+    manager: { label: 'Koordinatorius', tone: 'neutral' },
+    worker: { label: 'Meistras', tone: 'running' },
 };
 
 function RoleBadge({ role }) {
@@ -65,9 +65,9 @@ function RoleSelect({ user, onChange }) {
             value={user.role}
             onChange={(val) => onChange(user.id, val)}
             options={[
-                { value: 'worker', label: 'Vykdytojas' },
-                { value: 'manager', label: 'Vadovas' },
-                { value: 'seniorManager', label: 'Vyr. vadovas' },
+                { value: 'worker', label: 'Meistras' },
+                { value: 'manager', label: 'Koordinatorius' },
+                { value: 'seniorManager', label: 'Vyr. koordinatorius' },
                 { value: 'admin', label: 'Administratorius' },
             ]}
             label="Rolė"
@@ -130,8 +130,8 @@ function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId,
                                 <button
                                     type="button"
                                     aria-pressed={primary}
-                                    aria-label={primary ? `${cName} — pagrindinis vadovas` : `Padaryti ${cName} pagrindiniu vadovu`}
-                                    title={primary ? 'Pagrindinis vadovas' : 'Padaryti pagrindiniu'}
+                                    aria-label={primary ? `${cName} — pagrindinis koordinatorius` : `Padaryti ${cName} pagrindiniu koordinatoriumi`}
+                                    title={primary ? 'Pagrindinis koordinatorius' : 'Padaryti pagrindiniu'}
                                     onClick={() => onSetPrimary(c.id)}
                                     className="inline-flex min-h-touch min-w-touch items-center justify-center border-l border-brand/30 px-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                                 >
@@ -172,16 +172,16 @@ function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCan
             .map((m) => m.id);
         return (
             <div className="space-y-2">
-                <span className="block text-body italic text-ink-muted">Mato priskirtų vadovų komandas</span>
+                <span className="block text-body italic text-ink-muted">Mato priskirtų koordinatorių komandas</span>
                 <ChipMultiSelect
-                    legend={`${name} pavaldūs vadovai`}
+                    legend={`${name} pavaldūs koordinatoriai`}
                     candidates={managerCandidates}
                     selectedIds={myManagerIds}
                     onToggle={(mid) => {
                         const m = managerCandidates.find((c) => c.id === mid);
                         if (m) onToggleSenior(m, user.id);
                     }}
-                    emptyLabel="Nėra vadovų"
+                    emptyLabel="Nėra koordinatorių"
                 />
             </div>
         );
@@ -191,7 +191,7 @@ function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCan
         return (
             <div className="space-y-3">
                 <div>
-                    <span className="mb-1 block text-caption font-medium text-ink-muted">Šis vadovas mato</span>
+                    <span className="mb-1 block text-caption font-medium text-ink-muted">Šis koordinatorius mato</span>
                     <button
                         type="button"
                         aria-pressed={scoped}
@@ -209,13 +209,13 @@ function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCan
                     </button>
                 </div>
                 <div>
-                    <span className="mb-1 block text-caption font-medium text-ink-muted">Vyr. vadovai</span>
+                    <span className="mb-1 block text-caption font-medium text-ink-muted">Vyr. koordinatoriai</span>
                     <ChipMultiSelect
-                        legend={`${name} vyr. vadovai`}
+                        legend={`${name} vyr. koordinatoriai`}
                         candidates={seniorCandidates}
                         selectedIds={effectiveSeniorIds(user)}
                         onToggle={(sid) => onToggleSenior(user, sid)}
-                        emptyLabel="Nėra vyr. vadovų"
+                        emptyLabel="Nėra vyr. koordinatorių"
                     />
                 </div>
             </div>
@@ -224,13 +224,13 @@ function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCan
     // worker
     return (
         <ChipMultiSelect
-            legend={`${name} vadovai`}
+            legend={`${name} koordinatoriai`}
             candidates={overseerCandidates}
             selectedIds={effectiveTeamIds(user)}
             onToggle={(mid) => onToggleManager(user, mid)}
             primaryId={user.defaultManager}
             onSetPrimary={(mid) => onSetPrimary(user, mid)}
-            emptyLabel="Nėra galimų vadovų"
+            emptyLabel="Nėra galimų koordinatorių"
         />
     );
 }
@@ -249,20 +249,20 @@ function overseerName(usersById, id) {
 function OverseerSummary({ user, usersById }) {
     const base = 'text-caption text-ink-muted';
     if (user.role === 'admin') return <p className={base}>Mato visus</p>;
-    if (user.role === 'seniorManager') return <p className={base}>Mato priskirtų vadovų komandas</p>;
+    if (user.role === 'seniorManager') return <p className={base}>Mato priskirtų koordinatorių komandas</p>;
     if (user.role === 'manager') {
         const scoped = user.scopedManager === true;
         const seniors = effectiveSeniorIds(user).map((id) => overseerName(usersById, id)).filter(Boolean);
         return (
             <p className={base}>
                 {scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
-                {seniors.length > 0 && `  ·  Vyr. vadovai: ${seniors.join(', ')}`}
+                {seniors.length > 0 && `  ·  Vyr. koordinatoriai: ${seniors.join(', ')}`}
             </p>
         );
     }
     // worker — list assigned overseers, primary (starred) first; color is never the only signal (§5).
     const ids = effectiveTeamIds(user);
-    if (ids.length === 0) return <p className={cn(base, 'italic')}>Nepriskirtas vadovas</p>;
+    if (ids.length === 0) return <p className={cn(base, 'italic')}>Nepriskirtas koordinatorius</p>;
     const primaryId = user.defaultManager;
     const names = [...ids]
         .sort((a, b) => (a === primaryId ? -1 : b === primaryId ? 1 : 0))
@@ -270,7 +270,7 @@ function OverseerSummary({ user, usersById }) {
         .filter((x) => x.name);
     return (
         <p className={cn(base, 'flex flex-wrap items-center gap-x-1.5 gap-y-1')}>
-            <span className="font-medium text-ink">Vadovai:</span>
+            <span className="font-medium text-ink">Koordinatoriai:</span>
             {names.map((n) => (
                 <span key={n.id} className="inline-flex items-center gap-0.5">
                     {n.id === primaryId && <Star className="h-3 w-3 shrink-0 fill-current text-brand" aria-hidden="true" />}
@@ -362,7 +362,7 @@ function ExpectedHoursInput({ user, onCommit, hideLabel = false }) {
             onChange={(e) => setVal(e.target.value)}
             onBlur={commit}
             placeholder="—"
-            aria-label={`${name} savaitės norma valandomis`}
+            aria-label={`${name} savaitės tikslas valandomis`}
             className={cn(
                 'min-h-touch rounded-input border border-line bg-surface-card px-3 py-2.5 text-body-lg text-ink focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
                 hideLabel ? 'w-20 text-center' : 'block w-full'
@@ -373,7 +373,7 @@ function ExpectedHoursInput({ user, onCommit, hideLabel = false }) {
     if (hideLabel) return input;
     return (
         <label className="block">
-            <span className="mb-1 block text-caption font-medium text-ink-muted">Savaitės norma (val.)</span>
+            <span className="mb-1 block text-caption font-medium text-ink-muted">Savaitės tikslas (val.)</span>
             {input}
         </label>
     );
@@ -533,8 +533,8 @@ function hasOpenSession(user) {
 // source of truth for both the buttons and the filtering. 'all' is the no-op default.
 const ROSTER_FILTERS = [
     { id: 'all', label: 'Visi', match: () => true },
-    { id: 'workers', label: 'Vykdytojai', match: (u) => u.role === 'worker' },
-    { id: 'managers', label: 'Vadovai', match: (u) => u.role === 'manager' || u.role === 'seniorManager' || u.role === 'admin' },
+    { id: 'workers', label: 'Meistrai', match: (u) => u.role === 'worker' },
+    { id: 'managers', label: 'Koordinatoriai', match: (u) => u.role === 'manager' || u.role === 'seniorManager' || u.role === 'admin' },
     { id: 'pending', label: 'Laukia', match: (u) => isPendingUser(u) },
     { id: 'blocked', label: 'Užblokuoti', match: (u) => u.isDisabled && !isPendingUser(u) },
 ];
@@ -792,7 +792,7 @@ export default function UserManagement() {
             });
         } catch (err) {
             console.error("Error updating managers:", err);
-            setError('Nepavyko atnaujinti vadovų. Bandykite dar kartą.');
+            setError('Nepavyko atnaujinti koordinatorių. Bandykite dar kartą.');
         }
     };
 
@@ -809,7 +809,7 @@ export default function UserManagement() {
             });
         } catch (err) {
             console.error("Error setting primary manager:", err);
-            setError('Nepavyko nustatyti pagrindinio vadovo. Bandykite dar kartą.');
+            setError('Nepavyko nustatyti pagrindinio koordinatoriaus. Bandykite dar kartą.');
         }
     };
 
@@ -823,7 +823,7 @@ export default function UserManagement() {
             });
         } catch (err) {
             console.error("Error updating manager scope:", err);
-            setError('Nepavyko atnaujinti vadovo prieigos. Bandykite dar kartą.');
+            setError('Nepavyko atnaujinti koordinatoriaus prieigos. Bandykite dar kartą.');
         }
     };
 
@@ -843,7 +843,7 @@ export default function UserManagement() {
             });
         } catch (err) {
             console.error("Error updating senior managers:", err);
-            setError('Nepavyko atnaujinti vyr. vadovų. Bandykite dar kartą.');
+            setError('Nepavyko atnaujinti vyr. koordinatorių. Bandykite dar kartą.');
         }
     };
 
@@ -861,7 +861,7 @@ export default function UserManagement() {
             await updateDoc(doc(db, 'users', user.id), { weeklyExpectedHours: hours });
         } catch (err) {
             console.error("Error updating expected hours:", err);
-            setError('Nepavyko išsaugoti savaitės normos. Bandykite dar kartą.');
+            setError('Nepavyko išsaugoti savaitės tikslo. Bandykite dar kartą.');
         }
     };
 
@@ -1128,7 +1128,7 @@ export default function UserManagement() {
                                     <RoleSelect user={user} onChange={handleRoleChange} />
                                 </label>
                                 <div>
-                                    <span className="mb-1 block text-caption font-medium text-ink-muted">Vadovai</span>
+                                    <span className="mb-1 block text-caption font-medium text-ink-muted">Koordinatoriai</span>
                                     <ManagerControl
                                         user={user}
                                         overseerCandidates={overseerCandidates}
@@ -1171,7 +1171,7 @@ export default function UserManagement() {
                 <table className="min-w-full divide-y divide-line">
                     <thead className="bg-surface-sunken">
                         <tr>
-                            {['Vartotojas', 'Rolė', 'Spalva', 'Vadovai', 'Norma', 'Veiksmai'].map((h) => (
+                            {['Vartotojas', 'Rolė', 'Spalva', 'Koordinatoriai', 'Tikslas', 'Veiksmai'].map((h) => (
                                 <th
                                     key={h}
                                     className="px-4 py-3 text-left text-caption font-medium uppercase tracking-wider text-ink-muted"
@@ -1264,7 +1264,7 @@ export default function UserManagement() {
                                                     type="button"
                                                     onClick={() => toggleExpanded(user.id)}
                                                     aria-expanded={expanded}
-                                                    aria-label={expanded ? 'Suskleisti' : 'Tvarkyti vadovus'}
+                                                    aria-label={expanded ? 'Suskleisti' : 'Tvarkyti koordinatorius'}
                                                     className="inline-flex h-11 w-11 items-center justify-center rounded-control border border-line text-ink-muted transition-colors hover:bg-surface-sunken/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                 >
                                                     <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />

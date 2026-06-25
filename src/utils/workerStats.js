@@ -418,14 +418,14 @@ export const STAT_GROUPS = [
     },
     {
         key: 'discipline',
-        title: 'Punktualumas ir disciplina',
+        title: 'Patikimumas',
         metrics: [
-            { key: 'onTimePct', label: 'Punktualus startas', kind: 'pct', goodWhen: 'up', hint: `Dienos, kai veikla pradėta ≤ ${ON_TIME_GRACE_MIN} min. po planuotos pamainos pradžios.` },
+            { key: 'onTimePct', label: 'Startas laiku', kind: 'pct', goodWhen: 'up', hint: `Dienos, kai veikla pradėta ≤ ${ON_TIME_GRACE_MIN} min. po planuoto veiklos laiko pradžios.` },
             { key: 'avgLatenessMin', label: 'Vid. vėlavimas', kind: 'minutes', goodWhen: 'down' },
-            { key: 'planCoveragePct', label: 'Plano padengimas', kind: 'pct', goodWhen: 'up', hint: 'Faktinės valandos prieš planuotas pamainų valandas.' },
+            { key: 'planCoveragePct', label: 'Plano padengimas', kind: 'pct', goodWhen: 'up', hint: 'Faktinės valandos prieš planuotas veiklos laiko valandas.' },
             { key: 'plannedVsWorkedDaysPct', label: 'Suplanuotos dienos atidirbtos', kind: 'pct', goodWhen: 'up' },
             { key: 'reschedules', label: 'Atšaukimai / perplanavimai', kind: 'count', goodWhen: 'down' },
-            { key: 'lateReschedules', label: `Vėlyvi (≤ ${LATE_RESCHEDULE_DAYS} d.)`, kind: 'count', goodWhen: 'down', hint: 'Atšaukimai/perplanavimai pateikti likus mažiau kaip 3 d. iki pamainos.' },
+            { key: 'lateReschedules', label: `Vėlyvi (≤ ${LATE_RESCHEDULE_DAYS} d.)`, kind: 'count', goodWhen: 'down', hint: 'Atšaukimai/perplanavimai pateikti likus mažiau kaip 3 d. iki veiklos laiko.' },
         ],
     },
     {
@@ -437,7 +437,7 @@ export const STAT_GROUPS = [
             { key: 'avgTaskDuration', label: 'Vid. užduoties trukmė', kind: 'minutes', goodWhen: 'neutral' },
             { key: 'estimateAccuracyPct', label: 'Plano tikslumas', kind: 'pct', goodWhen: 'neutral', hint: 'Faktinis laikas prieš numatytą (100% = tiksliai pataikyta).' },
             { key: 'onEstimatePct', label: 'Telpa į planą', kind: 'pct', goodWhen: 'up', hint: 'Užduotys, neviršijusios numatyto laiko.' },
-            { key: 'approvalPct', label: 'Priimta vadovo', kind: 'pct', goodWhen: 'up' },
+            { key: 'approvalPct', label: 'Priimta koordinatoriaus', kind: 'pct', goodWhen: 'up' },
         ],
     },
     {

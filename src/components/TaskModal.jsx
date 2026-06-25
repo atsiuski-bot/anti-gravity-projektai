@@ -1057,7 +1057,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                         // told of an assignment that did not land.
                         reassignmentFailed = true;
                         logError(assignErr, { source: 'TaskModal.handleSubmit.reassign' });
-                        setFormError('Turinys išsaugotas, bet nepavyko priskirti vykdytojo. Bandykite priskyrimą dar kartą.');
+                        setFormError('Turinys išsaugotas, bet nepavyko priskirti meistro. Bandykite priskyrimą dar kartą.');
                     }
                 }
 
@@ -1242,7 +1242,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             setAiMsg(
                 hasAssignee
                     ? { text: 'Užpildyta — peržiūrėkite ir sukurkite.', tone: 'ok' }
-                    : { text: 'Užpildyta — pasirinkite vykdytoją.', tone: 'err' },
+                    : { text: 'Užpildyta — pasirinkite meistrą.', tone: 'err' },
             );
         } catch {
             setAiMsg({ text: 'AI nepavyko (ar funkcija/raktas įdiegti?).', tone: 'err' });
@@ -1459,8 +1459,8 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                 className="w-4 h-4 text-brand rounded"
                                             />
                                             <span className="capitalize">{
-                                                key === 'assignedUserId' ? 'Priskirtas vykdytojas' :
-                                                    key === 'managerId' ? 'Priskirtas vadovas' :
+                                                key === 'assignedUserId' ? 'Priskirtas meistras' :
+                                                    key === 'managerId' ? 'Priskirtas koordinatorius' :
                                                         key === 'estimatedTime' ? 'Planuojamas laikas' :
                                                             key === 'deadline' ? 'Terminas' :
                                                                 key === 'title' ? 'Pavadinimas' :
@@ -1512,7 +1512,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                 )}
                                 {!task && !editTemplate && !aiMsg && (
                                     <p className="mt-1 text-caption text-ink-muted">
-                                        Su AI parašykite sakinį, pvz. „rytoj Giedriui 2 val. kostiumų patikra“ — užpildys vykdytoją, laiką ir terminą.
+                                        Su AI parašykite sakinį, pvz. „rytoj Giedriui 2 val. kostiumų patikra“ — užpildys meistrą, laiką ir terminą.
                                     </p>
                                 )}
                             </div>
@@ -1621,15 +1621,15 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     {/* Vykdytojas — manager picks from the scoped roster; a non-manager only
                                         ever does their own work, shown read-only in the same box shape. */}
                                     <div className="min-w-0">
-                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Vykdytojas</span>
+                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Meistras</span>
                                         {isManager ? (
                                             <PersonSelect
                                                 value={formData.assignedUserId}
                                                 onChange={(val) => setFormData({ ...formData, assignedUserId: val })}
                                                 users={assignableWorkers}
-                                                label="Vykdytojas"
+                                                label="Meistras"
                                                 placeholder="Priskirti…"
-                                                ariaLabel="Vykdytojas"
+                                                ariaLabel="Meistras"
                                                 disabled={fieldsLocked}
                                             />
                                         ) : (
@@ -1641,14 +1641,14 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     </div>
                                     {/* Vadovas — the overseer/auditor; same picker, listing the managers. */}
                                     <div className="min-w-0">
-                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Vadovas</span>
+                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Koordinatorius</span>
                                         <PersonSelect
                                             value={formData.managerId}
                                             onChange={(val) => setFormData({ ...formData, managerId: val })}
                                             users={managers}
-                                            label="Vadovas"
+                                            label="Koordinatorius"
                                             placeholder="Priskirti…"
-                                            ariaLabel="Vadovas"
+                                            ariaLabel="Koordinatorius"
                                             disabled={fieldsLocked}
                                         />
                                     </div>
