@@ -5,10 +5,11 @@
  * (not just the pill color) carries the state: readable in sunlight, with gloves, and for
  * colorblind users (DESIGN_SYSTEM §4-A — color is never the sole signal).
  *
- * Drawing canon: 24px grid, rounded caps/joins, ~2px stroke. The monochrome glyphs inherit the
- * pill's text color via `currentColor`; the two finished states deliberately carry the semantic
- * green that matches StatusPill's success/running tone, because "done/confirmed" is a fixed
- * meaning, not a per-surface accent.
+ * Drawing canon: 24px grid, rounded caps/joins, ~2px stroke. Colors are baked per state (not
+ * tone-driven) because each shape's meaning is fixed, not a per-surface accent: the not-started
+ * states are calm grey (ink-muted), a started/paused task is heavier black (ink-strong), and the
+ * running/finished states carry the semantic green that matches StatusPill's success/running tone.
+ * The grey/black use theme-reactive ink tokens so they stay legible in both themes.
  *
  * The two finished states are the split the founder asked for:
  *  - completed (Laukia priėmimo) — thin green RING + green check (finished, not yet accepted)
@@ -20,11 +21,13 @@
 
 const SVG = { viewBox: '0 0 24 24', xmlns: 'http://www.w3.org/2000/svg' };
 
-// Never started — hollow dotted ring, inherits the (muted) pill text color.
+// Approved but not started yet (Patvirtintas / ready to start) — solid grey ring. The grey
+// reads as "calm, waiting" against the loud running/done states; theme-reactive via the ink-muted
+// token (not a fixed palette grey) so it stays legible in both themes.
 export function StatusPendingGlyph({ className, ...props }) {
     return (
         <svg {...SVG} fill="none" className={className} {...props}>
-            <circle cx="12" cy="12" r="9" className="stroke-current opacity-50" strokeWidth="2" strokeDasharray="2.5 3" />
+            <circle cx="12" cy="12" r="9" className="stroke-ink-muted" strokeWidth="2" />
         </svg>
     );
 }
@@ -39,13 +42,14 @@ export function StatusRunningGlyph({ className, ...props }) {
     );
 }
 
-// Started but not running — two bars inside the family circle, monochrome.
+// Started but paused (Pradėta) — black ring + pause bars. Black (ink-strong) reads as "active,
+// engaged" — a started task is heavier than a merely-approved grey one.
 export function StatusPausedGlyph({ className, ...props }) {
     return (
         <svg {...SVG} fill="none" className={className} {...props}>
-            <circle cx="12" cy="12" r="9" className="stroke-current" strokeWidth="2" />
-            <line x1="10" y1="9" x2="10" y2="15" className="stroke-current" strokeWidth="2" strokeLinecap="round" />
-            <line x1="14" y1="9" x2="14" y2="15" className="stroke-current" strokeWidth="2" strokeLinecap="round" />
+            <circle cx="12" cy="12" r="9" className="stroke-ink-strong" strokeWidth="2" />
+            <line x1="10" y1="9" x2="10" y2="15" className="stroke-ink-strong" strokeWidth="2" strokeLinecap="round" />
+            <line x1="14" y1="9" x2="14" y2="15" className="stroke-ink-strong" strokeWidth="2" strokeLinecap="round" />
         </svg>
     );
 }
@@ -70,19 +74,20 @@ export function StatusConfirmedGlyph({ className, ...props }) {
     );
 }
 
-// Creation/approval gate, waiting (Nepatvirtintas) — amber ring + hold dot.
+// Creation/approval gate, waiting (Laukia patvirtinimo / Nepatvirtintas) — grey DOTTED ring.
+// The dashed outline says "provisional, not yet a real commitment"; it solidifies into the
+// plain grey ring once approved.
 export function StatusAwaitingGlyph({ className, ...props }) {
     return (
         <svg {...SVG} fill="none" className={className} {...props}>
-            <circle cx="12" cy="12" r="9" className="stroke-amber-500" strokeWidth="2" />
-            <circle cx="12" cy="12" r="2.4" className="fill-amber-500" />
+            <circle cx="12" cy="12" r="9" className="stroke-ink-muted" strokeWidth="2" strokeDasharray="2.5 3" />
         </svg>
     );
 }
 
-// Approval gate, passed (approved) — reuses the green ring + check (the gate is open). Rarely
-// rendered: the app flips an approved task straight to in-progress.
-export const StatusApprovedGlyph = StatusCompletedGlyph;
+// Approval gate, passed (Patvirtintas, not started) — the plain solid grey ring (same as a
+// ready-to-start task: the gate is open, work simply hasn't begun).
+export const StatusApprovedGlyph = StatusPendingGlyph;
 
 // The status-key -> glyph map lives in ./statusGlyphMap.js (a constants module): this file
 // stays components-only so React Fast Refresh keeps working (react-refresh/only-export-components).
