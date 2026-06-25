@@ -8,6 +8,7 @@ import { lt } from 'date-fns/locale';
 import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Bell, Plus, Ban, UserPlus, Hand, Hourglass } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
+import { notificationCopy } from '../notifications/registry';
 import { cn } from '../utils/cn';
 import UserChip from './UserChip';
 import TaskCard from './TaskCard';
@@ -1270,25 +1271,20 @@ export default function ManagerNotifications({ onClose }) {
                                     )}
                                 </div>
 
-                                {/* Quick-grant chips — one tap extends the estimate and tells the worker,
-                                    instead of the multi-step edit-modal round-trip. The success-toned icon
-                                    pairs the meaning with shape, so color is never the sole signal. One
-                                    adaptive row (collapses to icon-only together when too tight). */}
-                                {!readOnly && (
-                                <TaskActionRow
-                                    className="mt-3"
-                                    actions={[
-                                        { key: 'grant30', label: 'Pratęsti +30 min', icon: TimeGrantedGlyph, variant: 'success', loading: grantingExt === notif.id, disabled: !!grantingExt, onClick: () => handleGrantExtension(notif, '30min') },
-                                        { key: 'grant1h', label: 'Pratęsti +1 val.', icon: TimeGrantedGlyph, variant: 'success', loading: grantingExt === notif.id, disabled: !!grantingExt, onClick: () => handleGrantExtension(notif, '1h') },
-                                    ]}
-                                />
-                                )}
-
-                                {/* Decision row — do-not-extend, or open the task for a precise custom amount. */}
+                                {/* All four decisions on ONE adaptive line — two quick grants (+30 / +1 val.,
+                                    one tap extends the estimate and tells the worker), do-not-extend, and the
+                                    escape hatch to open the task for a precise custom amount. When the labels
+                                    no longer fit, the row collapses to icon-only together — EXCEPT the two
+                                    grants keep a short `compactLabel` (the amount), since they share the same
+                                    "grant time" glyph and would otherwise be indistinguishable as twin icons.
+                                    The success-toned glyph pairs meaning with shape, so color is never the
+                                    sole signal. */}
                                 {!readOnly && (
                                 <TaskActionRow
                                     className="mt-3 mb-1"
                                     actions={[
+                                        { key: 'grant30', label: 'Pratęsti +30 min', compactLabel: '+30 min', icon: TimeGrantedGlyph, variant: 'success', loading: grantingExt === notif.id, disabled: !!grantingExt, onClick: () => handleGrantExtension(notif, '30min') },
+                                        { key: 'grant1h', label: 'Pratęsti +1 val.', compactLabel: '+1 val.', icon: TimeGrantedGlyph, variant: 'success', loading: grantingExt === notif.id, disabled: !!grantingExt, onClick: () => handleGrantExtension(notif, '1h') },
                                         { key: 'deny', label: 'Nepratęsti', icon: X, variant: 'secondary', disabled: !!grantingExt, onClick: () => handleDismissExtension(notif) },
                                         {
                                             key: 'edit', label: 'Redaguoti užduotį', icon: Edit, variant: 'primary', disabled: !!grantingExt,
@@ -1351,11 +1347,15 @@ export default function ManagerNotifications({ onClose }) {
                     );
                 }
 
-                // SAFE fallback for any UNKNOWN or future request_notification type. Never
-                // destructive: it has no task-mutating buttons (the old fallback shipped an
-                // "Ištrinti" wired to a possibly-missing taskId). It shows whatever the notification
-                // carried — a title and any user-authored note — and offers only a dismiss, so a new
-                // type added by another branch degrades to a readable info row instead of a hazard.
+                // Fallback for every type WITHOUT a bespoke card above (e.g. task_edited, new_photo,
+                // task_unassigned, task_deleted, session_auto_closed, achievement, task_overdue) AND
+                // any genuinely unknown/future type. It reads its title+body from the ONE registry —
+                // the SAME copy the foreground toast and the OS push use — so a notification reads
+                // identically wherever it surfaces (toast → active bell → history) instead of being
+                // flattened to a generic "Naujas pranešimas". Never destructive: it carries no
+                // task-mutating buttons (the old fallback shipped an "Ištrinti" wired to a possibly
+                // missing taskId), only a dismiss, so a new type degrades to a readable info row.
+                const { title: fallbackTitle, body: fallbackBody } = notificationCopy(notif);
                 return (
                     <div key={notif.id} className="rounded-card border border-line bg-surface-card p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl relative">
                         {!readOnly && (
@@ -1370,9 +1370,11 @@ export default function ManagerNotifications({ onClose }) {
                         <div className="flex items-start gap-3 pr-6">
                             <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
                             <div className="min-w-0 flex-1 text-sm text-ink">
-                                <p className="font-medium leading-relaxed">Naujas pranešimas</p>
-                                {notif.taskTitle && <p className="mt-1 font-medium">&quot;{notif.taskTitle}&quot;</p>}
-                                {notif.commentText && (
+                                <p className="font-medium leading-relaxed">{fallbackTitle}</p>
+                                {fallbackBody && fallbackBody !== 'WORKZ' && (
+                                    <p className="mt-1 text-ink-muted">{fallbackBody}</p>
+                                )}
+                                {notif.commentText && fallbackBody !== notif.commentText && (
                                     <p className="mt-2 text-xs italic opacity-80 border-l-2 border-line pl-2">
                                         &quot;{notif.commentText}&quot;
                                     </p>

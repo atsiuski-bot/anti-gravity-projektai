@@ -333,6 +333,9 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     session_edited: [{ day: '2026-06-20' }, {}],
     session_deleted: [{ day: '2026-06-20' }, {}],
     session_auto_closed: [{ day: '2026-06-20' }, {}],
+    // Name + day, day-only (name absent), and the empty fallback — covers both copy branches and the
+    // whitespace-clamp on userName (the only free-form field) on both client and server mirrors.
+    backdated_time_logged: [{ userName: '  Jonas   Jonaitis ', day: '2026-06-20' }, { day: '2026-06-20' }, {}],
     account_approval: [{ targetUserName: 'Jonas Jonaitis' }, { targetUserEmail: 'j@x.lt' }, {}],
     recurring_reassign: [{ taskTitle: 'Užduotis' }],
     // Both label-present branches (Skubus/Aukštas) and the missing-field fallbacks.

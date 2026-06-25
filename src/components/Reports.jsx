@@ -9,9 +9,10 @@ import { addComment } from '../utils/commentActions';
 import { gatherReportData } from '../utils/reportData';
 import { buildReport } from '../utils/reportAggregate';
 import { confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
-import { Briefcase, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
+import { Briefcase, AlertTriangle, FileText, Users, User, TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight } from 'lucide-react';
 
 import Button from './ui/Button';
+import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
@@ -29,7 +30,7 @@ import { CommentsModal } from './TaskDetailsModals';
 import { useAuth } from '../context/AuthContext';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { PeriodPicker } from './reports/PeriodPicker';
-import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
+import { PERIOD_PRESETS, resolvePresetRange, shiftRange } from './reports/periodPresets';
 
 
 export default function Reports({ users, canExport = false, viewRole, views = ['report', 'approval', 'history'] }) {
@@ -50,10 +51,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     // --- HOURS REPORT STATE ---
     // Free from/to range (YYYY-MM-DD) instead of a single month, so a manager can pull an
     // arbitrary span for payroll. Defaults to the current month so far (1st → today).
-    const [dateRange, setDateRange] = useState(() => {
-        const today = getLithuanianDateString();
-        return { start: `${today.slice(0, 7)}-01`, end: today };
-    });
+    const [dateRange, setDateRange] = useState(() => resolvePresetRange('week'));
     const [, setWorkData] = useState([]); // populated by fetchWorkHours; read only in CSV export path
     // Test/founder accounts are excluded from the work report by default so payroll totals and
     // the leaderboard aren't skewed by non-production data; a manager can opt to show them.
@@ -62,7 +60,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
 
     // Unified report period. 'day' renders DailyStatistics (its own day navigation); any other
     // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
-    const [reportPeriod, setReportPeriod] = useState('day'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
+    const [reportPeriod, setReportPeriod] = useState('week'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
     const [periodOpen, setPeriodOpen] = useState(false);
 
     // The rich "Atsisiųsti ataskaitą" modal (Markdown / JSON / CSV summary + per-worker selection).
@@ -625,6 +623,13 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
         if (period !== 'day') applyPreset(period);
     };
 
+    // Shift the active period window one unit in the given direction (−1 back, +1 forward).
+    // The preset type is preserved so the shift function knows the canonical step size (week=7 days,
+    // month=calendar month, etc.). The date range is replaced; the picker chip stays highlighted.
+    const shiftPeriod = (direction) => {
+        setDateRange(shiftRange(reportPeriod, dateRange, direction));
+    };
+
     // Group tasks by date
     const groupedTasks = React.useMemo(() => {
         const groups = {};
@@ -915,17 +920,29 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                         (calendar or expected-hours baseline) for the span. Surfaces silently-missing
                         plans so a manager sees that Skirtumas can't be trusted for the remainder. */}
 
-                    {/* On-screen team summary — manager-only, multi-day ranges only. Reuses the same
-                        aggregated report the download produces (buildReport): the team rollup with
-                        period-over-period deltas, plus an "Įspėjimai" list of workers whose sessions
-                        were clamped (dataTrust.implausibleSessions > 0), each linking into that
-                        worker's day timeline so the manager can fix them. */}
+                    {/* On-screen team summary — manager-only, multi-day ranges only. */}
                     {reportPeriod !== 'day' && isManagerRole(userRole) && (
                         <TeamPeriodSummary
                             range={dateRange}
                             users={users}
                             scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
                             onDrillWorker={(userId, name) => setSummaryDrillWorker({ userId, name })}
+                            onShiftPeriod={shiftPeriod}
+                            atToday={dateRange.end >= getLithuanianDateString()}
+                        />
+                    )}
+
+                    {/* Personal summary card — worker view (or manager on their own personal report),
+                        multi-day ranges only. Same card shape as TeamPeriodSummary but scoped to the
+                        signed-in user: Veikla/Pertraukos/Viso with period-over-period deltas. */}
+                    {reportPeriod !== 'day' && !isManagerRole(userRole) && (
+                        <PersonalPeriodSummary
+                            range={dateRange}
+                            currentUser={currentUser}
+                            users={users}
+                            scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
+                            onShiftPeriod={shiftPeriod}
+                            atToday={dateRange.end >= getLithuanianDateString()}
                         />
                     )}
 
@@ -953,10 +970,11 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             dateRange={dateRange}
                             view={isManagerRole(userRole) ? 'hours' : 'full'}
                             showTestUsers={showTestUsers}
-                            // The team summary card above (shown for the same isManagerRole condition)
-                            // already carries the period span + Veikla/Pertraukos/Viso totals, so tell
-                            // the timeline below to drop its own duplicate summary in range mode.
-                            periodSummaryAbove={isManagerRole(userRole)}
+                            // The summary card above (team for managers, personal for workers)
+                            // already carries the period span + Veikla/Pertraukos/Viso totals,
+                            // so suppress the duplicate summary inside DailyStatistics.
+                            periodSummaryAbove
+                            onShiftPeriod={shiftPeriod}
                         />
                     )}
 
@@ -1157,6 +1175,123 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     );
 }
 
+// Personal period summary — same card shape as TeamPeriodSummary but scoped to one worker.
+// Calls gatherReportData with workerIds=[uid] so it only reads data the security rules already
+// permit the viewer to see, then reads workers[0] for the individual's totals and deltas.
+function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod, atToday }) {
+    const { userData, uid, effectiveRole } = scope || {};
+    const [state, setState] = useState({ loading: true, current: null, previous: null, error: false });
+
+    const startStr = range?.start;
+    const endStr = range?.end;
+    const selfUid = currentUser?.uid;
+
+    useEffect(() => {
+        let ignore = false;
+        if (!startStr || !endStr || !selfUid) {
+            setState({ loading: false, worker: null, prevWorker: null, error: false });
+            return undefined;
+        }
+        setState((s) => ({ ...s, loading: true, error: false }));
+        (async () => {
+            try {
+                const reportWindow = { startStr, endStr };
+                const workerIds = [selfUid];
+                const { workers, prevWindow } = await gatherReportData({
+                    db, userData, uid, effectiveRole, users, window: reportWindow, workerIds, includeRecognition: false,
+                });
+                const generatedAt = new Date().toISOString();
+                const current = buildReport({ generatedAt, window: reportWindow, prevWindow, scopeLabel: '', includeEarnings: false, workers });
+                const previous = buildReport({ generatedAt, window: prevWindow, prevWindow, scopeLabel: '', includeEarnings: false, workers });
+                if (ignore) return;
+                setState({
+                    loading: false,
+                    current: current.team || null,
+                    previous: previous.team || null,
+                    error: false,
+                });
+            } catch (err) {
+                console.error('Personal summary build failed:', err);
+                if (!ignore) setState({ loading: false, worker: null, prevWorker: null, error: true });
+            }
+        })();
+        return () => { ignore = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [startStr, endStr, selfUid, uid, effectiveRole]);
+
+    const delta = (cur, prev) => {
+        if (!Number.isFinite(cur) || !Number.isFinite(prev) || prev === 0) return null;
+        const pct = Math.round(((cur - prev) / Math.abs(prev)) * 100);
+        if (pct === 0) return { pct: 0, improved: null };
+        return { pct, improved: pct > 0 };
+    };
+
+    if (state.loading) {
+        return (
+            <div className="mb-4 rounded-card border border-line bg-surface-card p-4 shadow-sm">
+                <Spinner label="Kraunama asmeninė suvestinė…" />
+            </div>
+        );
+    }
+    if (state.error || !state.current) return null;
+
+    const w = state.current;
+    const p = state.previous;
+
+    return (
+        <section
+            className="mb-4 rounded-card border border-line bg-surface-card p-4 shadow-sm"
+            aria-label="Asmeninė laikotarpio suvestinė"
+        >
+            <div className="mb-3 flex items-center gap-2">
+                {onShiftPeriod && (
+                    <IconButton icon={ChevronLeft} label="Ankstesnis laikotarpis" onClick={() => onShiftPeriod(-1)} />
+                )}
+                <span className="font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
+                {onShiftPeriod && (
+                    <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
+                )}
+                <User className="h-5 w-5 text-brand ml-auto" aria-hidden="true" />
+                <h3 className="text-body font-bold text-ink-strong">Mano suvestinė</h3>
+            </div>
+
+            <div className="grid grid-cols-3 divide-x divide-line">
+                <SummaryStat
+                    label="Veikla"
+                    value={formatMinutesToTimeString(w.totalWorkMinutes)}
+                    delta={p ? delta(w.totalWorkMinutes, p.totalWorkMinutes) : null}
+                />
+                <SummaryStat
+                    label="Pertraukos"
+                    value={formatMinutesToTimeString(w.totalBreakMinutes)}
+                    valueClass="text-session-break-accent"
+                />
+                <SummaryStat
+                    label="Viso"
+                    value={formatMinutesToTimeString(w.totalWorkMinutes + w.totalBreakMinutes)}
+                    valueClass="text-brand"
+                    labelClass="text-brand"
+                />
+            </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-x-2 divide-line border-t border-line pt-4 sm:divide-x">
+                <SummaryStat
+                    label="Užbaigta užduočių"
+                    value={w.completedTasks ?? '—'}
+                    delta={p ? delta(w.completedTasks, p.completedTasks) : null}
+                />
+                {Number.isFinite(w.avgOnTimePct) && (
+                    <SummaryStat
+                        label="Punktualus startas"
+                        value={`${w.avgOnTimePct}%`}
+                        delta={p && Number.isFinite(p.avgOnTimePct) ? delta(w.avgOnTimePct, p.avgOnTimePct) : null}
+                    />
+                )}
+            </div>
+        </section>
+    );
+}
+
 // One team-rollup metric tile with an optional period-over-period delta. The delta is derived by
 // diffing the current vs previous team total (both from buildReport), so its arrow/colour mean the
 // same thing as the per-worker deltas in the downloaded report. `goodWhen` says which direction is
@@ -1190,7 +1325,7 @@ function SummaryStat({ label, value, delta, valueClass = 'text-ink-strong', labe
 // already spans it), and lists workers whose sessions were clamped (dataTrust.implausibleSessions).
 // Pure presentation over the shared aggregator: reportAggregate.js is imported and called, never
 // modified. Best-effort — any failure renders nothing, leaving the work-hours report below intact.
-function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
+function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, atToday }) {
     const { userData, uid, effectiveRole } = scope || {};
     const [state, setState] = useState({ loading: true, team: null, prevTeam: null, warnings: [], error: false });
 
@@ -1265,8 +1400,14 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
             aria-label="Komandos laikotarpio suvestinė"
         >
             <div className="mb-3 flex items-center gap-2">
+                {onShiftPeriod && (
+                    <IconButton icon={ChevronLeft} label="Ankstesnis laikotarpis" onClick={() => onShiftPeriod(-1)} />
+                )}
                 <span className="font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
-                <Users className="h-5 w-5 text-brand" aria-hidden="true" />
+                {onShiftPeriod && (
+                    <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
+                )}
+                <Users className="h-5 w-5 text-brand ml-auto" aria-hidden="true" />
                 <h3 className="text-body font-bold text-ink-strong">Komandos suvestinė</h3>
             </div>
 

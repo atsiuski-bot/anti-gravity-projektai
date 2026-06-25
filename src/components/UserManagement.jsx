@@ -10,6 +10,7 @@ import { hasPayRate } from '../utils/payRate';
 import { getContrastingTextColor } from '../utils/priority';
 import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
+import { MAX_BACKDATE_DAYS } from '../utils/timeUtils';
 import { scoreFields, tokenizeQuery } from '../utils/taskSearch';
 import UserChip from './UserChip';
 import Card from './ui/Card';
@@ -376,6 +377,49 @@ function ExpectedHoursInput({ user, onCommit, hideLabel = false }) {
             <span className="mb-1 block text-caption font-medium text-ink-muted">Savaitės tikslas (val.)</span>
             {input}
         </label>
+    );
+}
+
+// Per-user switch granting approval-free backdated time-logging. A switch-role button (the whole
+// row is the ≥44px target; the knob position AND the text both convey state, so colour is never
+// the sole signal) — admin-only to flip, enforced by firestore.rules. Available for ANY role: the
+// founder's model is a special mark layered on top of the role, not a worker-only setting.
+function BackdateToggle({ user, onToggle }) {
+    const on = user.canBackdateTime === true;
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            onClick={() => onToggle(user)}
+            className={cn(
+                'flex w-full items-center justify-between gap-3 rounded-control border p-3 text-left min-h-touch',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                on ? 'border-brand bg-brand/5' : 'border-line bg-surface-card hover:bg-surface-sunken/60'
+            )}
+        >
+            <span>
+                <span className="block text-body font-medium text-ink-strong">Atbulinis laiko įrašymas</span>
+                <span className="mt-0.5 block text-caption text-ink-muted">
+                    Pats įrašo praleistą veiklos laiką iki {MAX_BACKDATE_DAYS} d. atgal — be patvirtinimo;
+                    administratoriai gauna pranešimą.
+                </span>
+            </span>
+            <span
+                className={cn(
+                    'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
+                    on ? 'bg-brand' : 'bg-line'
+                )}
+                aria-hidden="true"
+            >
+                <span
+                    className={cn(
+                        'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                        on ? 'translate-x-6' : 'translate-x-1'
+                    )}
+                />
+            </span>
+        </button>
     );
 }
 
@@ -865,6 +909,20 @@ export default function UserManagement() {
         }
     };
 
+    // Grant/revoke approval-free backdated time-logging for one user. Admin-only — enforced by
+    // firestore.rules (the canBackdateTime pin); the toggle is also behind the admin-gated roster.
+    const handleToggleBackdate = async (user) => {
+        setError('');
+        try {
+            await updateDoc(doc(db, 'users', user.id), {
+                canBackdateTime: !(user.canBackdateTime === true),
+            });
+        } catch (err) {
+            console.error("Error updating backdate permission:", err);
+            setError('Nepavyko atnaujinti atbulinio laiko teisės. Bandykite dar kartą.');
+        }
+    };
+
     const requestBlock = (user) => {
         if (user.id === currentUser?.uid) {
             setError('Negalite užblokuoti savęs.');
@@ -1141,6 +1199,9 @@ export default function UserManagement() {
                                     />
                                 </div>
                                 <ExpectedHoursInput user={user} onCommit={handleSetExpectedHours} />
+                                {isAdmin && (
+                                    <BackdateToggle user={user} onToggle={handleToggleBackdate} />
+                                )}
                                 {isAdmin && user.role === 'worker' && (
                                     <PayRateButton user={user} onEdit={setPayRateUser} fullWidth />
                                 )}
@@ -1272,6 +1333,17 @@ export default function UserManagement() {
                                             </div>
                                         </td>
                                     </tr>
+                                    {/* Expanded: advanced per-user flags behind the chevron (keeps the
+                                        default row scannable). Admin-only — the flag is admin-pinned. */}
+                                    {expanded && isAdmin && (
+                                        <tr className="bg-surface-sunken/30">
+                                            <td colSpan={6} className="px-4 pb-3 pt-1">
+                                                <div className="max-w-xl">
+                                                    <BackdateToggle user={user} onToggle={handleToggleBackdate} />
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
                                 </Fragment>
                             );
                         })}

@@ -8,7 +8,9 @@ import {
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../context/AuthContext';
+import { useUsers } from '../../context/UsersContext';
 import { ImageModal } from '../TaskDetailsModals';
+import BackdateTimeModal from '../BackdateTimeModal';
 import Modal from '../ui/Modal';
 import Linkify from '../ui/Linkify';
 import Button from '../ui/Button';
@@ -93,11 +95,24 @@ export default function TaskDetailModal({
 }) {
     const titleId = useId();
     const { currentUser, userData } = useAuth();
+    const { users } = useUsers();
 
+    // Recipients for the approval-free backdate FYI: every ACTIVE admin (legacy spelling included),
+    // computed from the roster the worker can already read.
+    const adminUids = useMemo(
+        () => (users || [])
+            .filter((u) => (u.role === 'admin' || u.role === 'Administratorius') && !u.isDisabled)
+            .map((u) => u.id),
+        [users]
+    );
+
+    const [backdateOpen, setBackdateOpen] = useState(false);
     const [newComment, setNewComment] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [uploadingCompletion, setUploadingCompletion] = useState(false);
     const [lightboxIndex, setLightboxIndex] = useState(null); // null = closed; number = open at that photo
+    const [completionLightboxIndex, setCompletionLightboxIndex] = useState(null); // separate gallery's lightbox
     const [error, setError] = useState('');
 
     // Inline comment editing — the author (or a manager) edits / deletes in place, so comment
@@ -118,6 +133,14 @@ export default function TaskDetailModal({
         if (task.attachmentUrls?.length) return task.attachmentUrls;
         return task.attachmentUrl ? [task.attachmentUrl] : [];
     }, [task]);
+
+    // Work-end proof photos live in their OWN field (completionPhotoUrls), shown as a separate
+    // gallery from the before/during-work photos above. This is the set the "Dokumentuoja darbą"
+    // badge counts.
+    const completionUrls = useMemo(
+        () => (task?.completionPhotoUrls?.length ? task.completionPhotoUrls : []),
+        [task],
+    );
 
     useEffect(() => {
         const el = bodyRef.current;
@@ -153,10 +176,16 @@ export default function TaskDetailModal({
     const samePerson = !!task.assignedUserId && managerId === task.assignedUserId;
 
     const isAssignee = currentUser?.uid === task.assignedUserId;
+    // A trusted worker (canBackdateTime) may self-log a missed session on their OWN active task,
+    // without approval. Off on a deleted task (no time edits on a removed task).
+    const canBackdate = userData?.canBackdateTime === true && isAssignee && !isDeleted;
     // Photo-add is an ACTIVE-task affordance. Off the active surface (archive / report) the task is
     // historical, so the preview is read-only for photos — `allowPhotoAdd` gates it (the gallery
     // still shows existing photos; only the add controls are withheld).
     const canAddPhoto = (canManage || isAssignee) && allowPhotoAdd;
+    // The completion-photo ADD control only makes sense once the task is finished — it documents the
+    // RESULT. (The gallery itself still shows whenever such photos exist, e.g. on an archived task.)
+    const canAddCompletionPhoto = canAddPhoto && !!task.completed;
     const collectionName = task.isArchived ? 'archived_tasks' : 'tasks';
 
     const canConfirm = canManage && task.status === 'completed';
@@ -224,6 +253,40 @@ export default function TaskDetailModal({
         }
     };
 
+    // Same upload path as onPickPhotos, but lands in the SEPARATE completionPhotoUrls field — so a
+    // worker who skipped the post-finish prompt can still attach the work-end photo here (and earn
+    // the "Dokumentuoja darbą" badge: the server counts the empty→non-empty edge on a completed task).
+    const onPickCompletionPhotos = async (e) => {
+        const picked = Array.from(e.target.files || []).filter((f) => f.type.startsWith('image/'));
+        e.target.value = '';
+        if (!picked.length) return;
+        if (completionUrls.length + picked.length > MAX_ATTACHMENTS) {
+            setError(`Daugiausia ${MAX_ATTACHMENTS} nuotraukos.`);
+            return;
+        }
+        setError('');
+        setUploadingCompletion(true);
+        try {
+            const urls = await uploadAttachments(picked, currentUser.uid);
+            await updateDoc(doc(db, collectionName, task.id), {
+                completionPhotoUrls: [...completionUrls, ...urls],
+                updatedAt: new Date().toISOString(),
+            });
+            await notifyMany([task.managerId, task.assignedUserId], {
+                type: 'new_photo',
+                taskId: task.id,
+                taskTitle: task.title || 'Užduotis',
+                actorUid: currentUser.uid,
+                actorName: currentUser.displayName || currentUser.email,
+            });
+        } catch (err) {
+            logError(err, { source: 'TaskDetailModal.onPickCompletionPhotos' });
+            setError('Nepavyko įkelti nuotraukos. Bandykite vėliau.');
+        } finally {
+            setUploadingCompletion(false);
+        }
+    };
+
     const startEdit = (key, text) => { setEditingKey(key); setEditText(text); setDeletingKey(null); };
     const cancelEdit = () => { setEditingKey(null); setEditText(''); };
     const saveEdit = async (key) => {
@@ -287,8 +350,10 @@ export default function TaskDetailModal({
 
                     <TimeChangedWarning task={task} />
 
-                    {/* Row 2 — planned vs spent time; time-adjust shown only to managers who can edit */}
-                    {(task.estimatedTime || showSpent) && (
+                    {/* Row 2 — planned vs spent time; time-adjust shown only to managers who can edit.
+                        Also renders for a trusted worker (canBackdate) even with no time yet, so the
+                        "Įrašyti praėjusį laiką" affordance is reachable on a fresh task. */}
+                    {(task.estimatedTime || showSpent || canBackdate) && (
                         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-y border-line py-2.5 text-body text-ink">
                             {task.estimatedTime && (
                                 <span className="inline-flex items-center gap-1.5">
@@ -309,6 +374,15 @@ export default function TaskDetailModal({
                                     className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                 >
                                     <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Koreguoti laiką
+                                </button>
+                            )}
+                            {canBackdate && (
+                                <button
+                                    type="button"
+                                    onClick={() => setBackdateOpen(true)}
+                                    className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                >
+                                    <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Įrašyti praėjusį laiką
                                 </button>
                             )}
                         </div>
@@ -517,6 +591,50 @@ export default function TaskDetailModal({
                             )}
                         </div>
                     )}
+
+                    {/* Row 8 — work-end (completion) photos: a SEPARATE gallery from the photos above,
+                        documenting the finished result. Shown whenever such photos exist; the add
+                        control appears only once the task is completed. */}
+                    {(completionUrls.length > 0 || canAddCompletionPhoto) && (
+                        <div>
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 text-caption font-medium uppercase tracking-wide text-ink-muted">
+                                    <Camera className="h-4 w-4" aria-hidden="true" /> Darbo pabaigos nuotraukos{completionUrls.length ? ` · ${completionUrls.length}` : ''}
+                                </div>
+                                {canAddCompletionPhoto && (
+                                    <div className="flex items-center gap-2">
+                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
+                                            <Camera className="h-4 w-4" aria-hidden="true" />
+                                            Fotografuoti
+                                            <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={onPickCompletionPhotos} disabled={uploadingCompletion} />
+                                        </label>
+                                        <label className="inline-flex min-h-touch cursor-pointer items-center gap-1.5 rounded-control border border-line px-2.5 py-1.5 text-caption font-medium text-ink hover:bg-surface-sunken focus-within:outline-none focus-within:ring-2 focus-within:ring-brand">
+                                            <ImagePlus className="h-4 w-4" aria-hidden="true" />
+                                            {uploadingCompletion ? 'Įkeliama…' : 'Pridėti'}
+                                            <input type="file" accept="image/*" multiple className="sr-only" onChange={onPickCompletionPhotos} disabled={uploadingCompletion} />
+                                        </label>
+                                    </div>
+                                )}
+                            </div>
+                            {completionUrls.length > 0 ? (
+                                <div className="flex flex-wrap gap-2">
+                                    {completionUrls.map((url, idx) => (
+                                        <button
+                                            key={idx}
+                                            type="button"
+                                            onClick={() => setCompletionLightboxIndex(idx)}
+                                            className="h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                            aria-label={`Peržiūrėti pabaigos nuotrauką ${idx + 1}`}
+                                        >
+                                            <img src={url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-cover" />
+                                        </button>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="text-caption text-ink-muted">Pabaigos nuotraukų dar nėra.</p>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {showFade && (
@@ -537,6 +655,21 @@ export default function TaskDetailModal({
 
             {lightboxIndex !== null && (
                 <ImageModal isOpen onClose={() => setLightboxIndex(null)} imageUrls={imageUrls} initialIndex={lightboxIndex} />
+            )}
+
+            {completionLightboxIndex !== null && (
+                <ImageModal isOpen onClose={() => setCompletionLightboxIndex(null)} imageUrls={completionUrls} initialIndex={completionLightboxIndex} />
+            )}
+
+            {canBackdate && (
+                <BackdateTimeModal
+                    open={backdateOpen}
+                    onClose={() => setBackdateOpen(false)}
+                    task={task}
+                    worker={{ uid: currentUser?.uid, displayName: currentUser?.displayName, email: currentUser?.email }}
+                    adminUids={adminUids}
+                    onSaved={() => setBackdateOpen(false)}
+                />
             )}
         </Modal>
     );

@@ -34,7 +34,7 @@ import UserChip from './UserChip';
 import SessionEditModal from './SessionEditModal';
 import SessionEditedBadge from './task/SessionEditedBadge';
 
-export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', approvalPhase = 'pending', showTestUsers = false, periodSummaryAbove = false }) {
+export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', approvalPhase = 'pending', showTestUsers = false, periodSummaryAbove = false, onShiftPeriod = null }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
     // `userRole` prop is the surface's effective role (a manager's own report passes 'worker').
     const { userData } = useAuth();
@@ -1129,15 +1129,26 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 {/* Day mode: a day stepper. Range mode: a static span label — the period is
                     chosen by the picker in the parent (Reports), so there is nothing to step. */}
                 {isRange ? (
-                    // Same sunken `p-1` shell + `min-h-touch` inner row as the day stepper below, so
-                    // the date control is the exact same height in both modes — the toolbar card no
-                    // longer changes height when toggling day ↔ period (only the chevrons are absent,
-                    // since a fixed span has nothing to step).
-                    <div className="flex items-center bg-surface-sunken p-1 rounded-control border border-line">
-                        <div className="flex items-center gap-1.5 px-3 min-h-touch font-medium text-caption text-ink-strong whitespace-nowrap">
+                    <div className="flex items-center gap-1 bg-surface-sunken p-1 rounded-control border border-line">
+                        {onShiftPeriod && (
+                            <IconButton
+                                icon={ChevronLeft}
+                                label="Ankstesnis laikotarpis"
+                                onClick={() => onShiftPeriod(-1)}
+                            />
+                        )}
+                        <div className="flex items-center gap-1.5 px-1.5 min-h-touch font-medium text-caption text-ink-strong whitespace-nowrap">
                             <Calendar className="w-3.5 h-3.5 text-ink-muted shrink-0" aria-hidden="true" />
                             {rangeStart} – {rangeEnd}
                         </div>
+                        {onShiftPeriod && (
+                            <IconButton
+                                icon={ChevronRight}
+                                label="Kitas laikotarpis"
+                                onClick={() => onShiftPeriod(1)}
+                                disabled={rangeEnd >= getLithuanianDateString()}
+                            />
+                        )}
                     </div>
                 ) : (
                     <div className="flex items-center gap-1 bg-surface-sunken p-1 rounded-control border border-line">
@@ -1210,11 +1221,26 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     holds it on desktop is hidden on phones), centred and a notch larger than the
                     desktop caption so the date and its totals read as one merged block. */}
                 {isRange && (
-                    <div className="flex items-center justify-center gap-2 border-b border-line pb-2.5 mb-2.5 text-center min-h-touch">
-                        <Calendar className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
-                        <span className="text-body font-semibold text-ink-strong tabular-nums">
+                    <div className="flex items-center justify-center gap-1 border-b border-line pb-2.5 mb-2.5 min-h-touch">
+                        {onShiftPeriod && (
+                            <IconButton
+                                icon={ChevronLeft}
+                                label="Ankstesnis laikotarpis"
+                                onClick={() => onShiftPeriod(-1)}
+                            />
+                        )}
+                        <span className="flex items-center gap-1.5 px-1.5 text-body font-semibold text-ink-strong tabular-nums">
+                            <Calendar className="w-4 h-4 text-ink-muted shrink-0" aria-hidden="true" />
                             {rangeStart} – {rangeEnd}
                         </span>
+                        {onShiftPeriod && (
+                            <IconButton
+                                icon={ChevronRight}
+                                label="Kitas laikotarpis"
+                                onClick={() => onShiftPeriod(1)}
+                                disabled={rangeEnd >= getLithuanianDateString()}
+                            />
+                        )}
                     </div>
                 )}
                 {/* Day mode: the date stepper lives in this same card on mobile (the toolbar that

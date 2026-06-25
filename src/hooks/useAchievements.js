@@ -20,6 +20,7 @@ export const STAT_FIELD_BY_KEY = {
     approved_craft: 'confirmedTasks',
     thorough: 'thorough',
     hard_tasks: 'hardTasks',
+    documented: 'documentedTasks',
 };
 
 /**

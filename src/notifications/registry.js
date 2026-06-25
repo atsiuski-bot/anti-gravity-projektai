@@ -227,6 +227,22 @@ export const NOTIFICATIONS = {
         copy: (n) => ({ title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' }),
     },
 
+    // ── Trusted worker → admin (oversight: an approval-free backdated entry was logged) ──────────
+    // A worker granted canBackdateTime self-logged a missed session at a past time without approval.
+    // FYI to every admin so the entry is never invisible: WHO + the affected day. userName is the
+    // only free-form field, clamped exactly like the server mirror.
+    backdated_time_logged: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => {
+            const name = clamp(n.userName);
+            const day = n.day || 'Veiklos laikas';
+            return { title: 'Įrašytas atbulinis laikas', body: name ? `${name} · ${day}` : day };
+        },
+    },
+
     // ── System → worker (deadline closing in → priority auto-raised) ─────────────────────────────
     task_priority_escalated: {
         category: 'info',

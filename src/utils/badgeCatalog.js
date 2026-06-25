@@ -1,4 +1,4 @@
-import { CheckCircle2, CalendarCheck, Target, CalendarClock, ShieldCheck, ListChecks, Flame, AlarmClock } from 'lucide-react';
+import { CheckCircle2, CalendarCheck, Target, CalendarClock, ShieldCheck, ListChecks, Flame, AlarmClock, Camera } from 'lucide-react';
 
 /**
  * Client-side badge presentation. The awarded doc (users/{uid}/achievements/{key}) carries the
@@ -14,6 +14,7 @@ export const BADGE_ICONS = {
     approved_craft: ShieldCheck,  // Q1 — work a manager accepted
     thorough: ListChecks,         // Q2 — completes the full checklist
     hard_tasks: Flame,            // Q4 — takes the high-priority work
+    documented: Camera,           // A1 — attaches a work-end proof photo
 };
 
 // Awarded docs store the tier as a number (1-4); <Badge> takes the tier KEY.
@@ -90,5 +91,13 @@ export const BADGE_CATALOG = [
         unit: 'sunkios veiklos',
         description: 'Skiriamas už užbaigtas aukšto prioriteto veiklas.',
         thresholds: [3, 12, 30, 75],
+    },
+    // Accountability
+    {
+        key: 'documented',
+        name: 'Dokumentuoja darbą',
+        unit: 'veiklos su pabaigos nuotrauka',
+        description: 'Skiriamas už užbaigtas veiklas, prie kurių pridedate darbo pabaigos nuotrauką.',
+        thresholds: [3, 15, 40, 100],
     },
 ];
