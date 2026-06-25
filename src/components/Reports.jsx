@@ -9,9 +9,10 @@ import { addComment } from '../utils/commentActions';
 import { gatherReportData } from '../utils/reportData';
 import { buildReport } from '../utils/reportAggregate';
 import { confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
-import { Briefcase, AlertTriangle, FileText, Users, User, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
+import { Briefcase, AlertTriangle, FileText, Users, User, TrendingUp, TrendingDown, Minus, ChevronLeft, ChevronRight } from 'lucide-react';
 
 import Button from './ui/Button';
+import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
@@ -50,10 +51,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     // --- HOURS REPORT STATE ---
     // Free from/to range (YYYY-MM-DD) instead of a single month, so a manager can pull an
     // arbitrary span for payroll. Defaults to the current month so far (1st → today).
-    const [dateRange, setDateRange] = useState(() => {
-        const today = getLithuanianDateString();
-        return { start: `${today.slice(0, 7)}-01`, end: today };
-    });
+    const [dateRange, setDateRange] = useState(() => resolvePresetRange('week'));
     const [, setWorkData] = useState([]); // populated by fetchWorkHours; read only in CSV export path
     // Test/founder accounts are excluded from the work report by default so payroll totals and
     // the leaderboard aren't skewed by non-production data; a manager can opt to show them.
@@ -62,7 +60,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
 
     // Unified report period. 'day' renders DailyStatistics (its own day navigation); any other
     // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
-    const [reportPeriod, setReportPeriod] = useState('day'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
+    const [reportPeriod, setReportPeriod] = useState('week'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
     const [periodOpen, setPeriodOpen] = useState(false);
 
     // The rich "Atsisiųsti ataskaitą" modal (Markdown / JSON / CSV summary + per-worker selection).
@@ -929,6 +927,8 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             users={users}
                             scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
                             onDrillWorker={(userId, name) => setSummaryDrillWorker({ userId, name })}
+                            onShiftPeriod={shiftPeriod}
+                            atToday={dateRange.end >= getLithuanianDateString()}
                         />
                     )}
 
@@ -941,6 +941,8 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                             currentUser={currentUser}
                             users={users}
                             scope={{ userData, uid: currentUser?.uid, effectiveRole: userRole }}
+                            onShiftPeriod={shiftPeriod}
+                            atToday={dateRange.end >= getLithuanianDateString()}
                         />
                     )}
 
@@ -1176,7 +1178,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
 // Personal period summary — same card shape as TeamPeriodSummary but scoped to one worker.
 // Calls gatherReportData with workerIds=[uid] so it only reads data the security rules already
 // permit the viewer to see, then reads workers[0] for the individual's totals and deltas.
-function PersonalPeriodSummary({ range, currentUser, users, scope }) {
+function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod, atToday }) {
     const { userData, uid, effectiveRole } = scope || {};
     const [state, setState] = useState({ loading: true, current: null, previous: null, error: false });
 
@@ -1242,8 +1244,14 @@ function PersonalPeriodSummary({ range, currentUser, users, scope }) {
             aria-label="Asmeninė laikotarpio suvestinė"
         >
             <div className="mb-3 flex items-center gap-2">
+                {onShiftPeriod && (
+                    <IconButton icon={ChevronLeft} label="Ankstesnis laikotarpis" onClick={() => onShiftPeriod(-1)} />
+                )}
                 <span className="font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
-                <User className="h-5 w-5 text-brand" aria-hidden="true" />
+                {onShiftPeriod && (
+                    <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
+                )}
+                <User className="h-5 w-5 text-brand ml-auto" aria-hidden="true" />
                 <h3 className="text-body font-bold text-ink-strong">Mano suvestinė</h3>
             </div>
 
@@ -1317,7 +1325,7 @@ function SummaryStat({ label, value, delta, valueClass = 'text-ink-strong', labe
 // already spans it), and lists workers whose sessions were clamped (dataTrust.implausibleSessions).
 // Pure presentation over the shared aggregator: reportAggregate.js is imported and called, never
 // modified. Best-effort — any failure renders nothing, leaving the work-hours report below intact.
-function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
+function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, atToday }) {
     const { userData, uid, effectiveRole } = scope || {};
     const [state, setState] = useState({ loading: true, team: null, prevTeam: null, warnings: [], error: false });
 
@@ -1392,8 +1400,14 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
             aria-label="Komandos laikotarpio suvestinė"
         >
             <div className="mb-3 flex items-center gap-2">
+                {onShiftPeriod && (
+                    <IconButton icon={ChevronLeft} label="Ankstesnis laikotarpis" onClick={() => onShiftPeriod(-1)} />
+                )}
                 <span className="font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
-                <Users className="h-5 w-5 text-brand" aria-hidden="true" />
+                {onShiftPeriod && (
+                    <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
+                )}
+                <Users className="h-5 w-5 text-brand ml-auto" aria-hidden="true" />
                 <h3 className="text-body font-bold text-ink-strong">Komandos suvestinė</h3>
             </div>
 
