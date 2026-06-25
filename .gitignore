@@ -126,3 +126,6 @@ dist-ssr
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Session handoff scratch (working notes, not project history)
+.handoffs/
