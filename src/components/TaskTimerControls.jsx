@@ -467,12 +467,13 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     onClick: () => undoFinish({ preFinishTimerMinutes, sessionDocRef })
                 });
                 try { SoundManager.playQuickTaskSound(); } catch { /* audio is best-effort */ }
-                // Show the earnings popup (gross/net) for the worker's OWN completed task, but only
-                // when a pay rate is set — otherwise there is nothing to compute. WorkerView listens
-                // for this and renders EarningsModal, which stacks this task on the month's hours.
-                if (hasPayRate(userData?.payRate)) {
-                    window.dispatchEvent(new CustomEvent('task-earnings', { detail: { task, totalMinutes } }));
-                }
+                // Post-finish, invite a work-end proof photo (skippable) for the worker's OWN task.
+                // WorkerView renders CompletionPhotoModal. The earnings popup (gross/net), shown only
+                // when a pay rate is set, is CHAINED after that modal closes so the two never stack —
+                // we hand the showEarnings flag + minutes along rather than firing 'task-earnings' here.
+                window.dispatchEvent(new CustomEvent('request-completion-photo', {
+                    detail: { task, totalMinutes, showEarnings: hasPayRate(userData?.payRate) }
+                }));
             } else {
                 showToast('Užduotis užbaigta.', { tone: 'success' });
             }

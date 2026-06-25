@@ -408,7 +408,9 @@ const BADGES = {
     // Quality
     approved_craft: { name: 'Priimta veikla', stat: 'confirmedTasks', thresholds: [3, 15, 50, 120] },      // Q1
     thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [3, 15, 40, 100] },                        // Q2
-    hard_tasks: { name: 'Imasi sunkių', stat: 'hardTasks', thresholds: [3, 12, 30, 75] }                    // Q4
+    hard_tasks: { name: 'Imasi sunkių', stat: 'hardTasks', thresholds: [3, 12, 30, 75] },                   // Q4
+    // Accountability
+    documented: { name: 'Dokumentuoja darbą', stat: 'documentedTasks', thresholds: [3, 15, 40, 100] }       // A1 (work-end proof photo)
 };
 
 function tierForCount(count, thresholds) {
@@ -555,11 +557,18 @@ function mondayKey(iso) {
     return d.toISOString().slice(0, 10);
 }
 
-// Task-finish badges. Two independent edges on a task update:
-//   • completed false→true  → R1 follow_through, R3 on_estimate, Q2 thorough, Q4 hard_tasks
-//   • status →'confirmed'    → Q1 approved_craft (a manager accepted the worker's work)
-// Both can fire on the same update (a manager finishing sets completed+confirmed at once); the
-// per-edge guards make each count exactly once even across separate complete-then-confirm steps.
+// Length of a (possibly absent) photo-url array on a task — tolerant of the legacy/undefined shape.
+function photoCount(value) {
+    return Array.isArray(value) ? value.length : 0;
+}
+
+// Task-finish badges. Three independent edges on a task update:
+//   • completed false→true                 → R1 follow_through, R3 on_estimate, Q2 thorough, Q4 hard_tasks
+//   • status →'confirmed'                   → Q1 approved_craft (a manager accepted the worker's work)
+//   • completionPhotoUrls empty→non-empty   → A1 documented (the worker attached a work-end proof photo)
+// The edges are independent (a manager finishing sets completed+confirmed at once; the proof photo
+// lands in a SEPARATE later write from the post-finish prompt). The per-edge guards make each count
+// exactly once even across separate complete-then-confirm-then-document steps.
 exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
     const before = event.data && event.data.before && event.data.before.data();
     const after = event.data && event.data.after && event.data.after.data();
@@ -569,7 +578,13 @@ exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
 
     const justCompleted = before.completed !== true && after.completed === true;
     const justConfirmed = before.status !== 'confirmed' && after.status === 'confirmed';
-    if (!justCompleted && !justConfirmed) return;
+    // A1 counts the FIRST work-end photo on a completed task — the empty→non-empty edge, so adding
+    // more photos later never re-counts. Gated on `completed` so it can only ever be a genuine
+    // completion photo (the client prompt only writes this field after the finish).
+    const justDocumented = photoCount(before.completionPhotoUrls) === 0 &&
+                           photoCount(after.completionPhotoUrls) > 0 &&
+                           after.completed === true;
+    if (!justCompleted && !justConfirmed && !justDocumented) return;
 
     try {
         if (justCompleted) {
@@ -581,6 +596,9 @@ exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
         // Q1 counts a MANAGER sign-off — not a worker (in a manager role) confirming their own task.
         if (justConfirmed && after.confirmedBy && after.confirmedBy !== uid) {
             await bumpAndGrant(uid, 'approved_craft');
+        }
+        if (justDocumented) {
+            await bumpAndGrant(uid, 'documented');
         }
     } catch (err) {
         logger.error('onTaskFinishedBadge failed', { uid, err: err.message });

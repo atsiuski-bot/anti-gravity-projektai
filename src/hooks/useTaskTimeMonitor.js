@@ -185,9 +185,17 @@ export function useTaskTimeMonitor(tasks) {
     // writes the completion fields (→ manager acceptance for a worker) and closes the popup.
     const finishFromLimit = useCallback(async () => {
         if (!limitPopup?.task) return;
-        const result = await completeTaskAtLimit(limitPopup.task, { currentUser, userData, userRole });
+        const finishedTask = limitPopup.task;
+        const result = await completeTaskAtLimit(finishedTask, { currentUser, userData, userRole });
         SoundManager.stopTimeLimitRepeat();
         setLimitPopup(null);
+        // Same post-finish nudge as the timer's "Užbaigti": invite a work-end proof photo. No
+        // earnings chained here — the limit-popup finish never showed earnings. WorkerView listens.
+        if (finishedTask.assignedUserId === currentUser?.uid) {
+            window.dispatchEvent(new CustomEvent('request-completion-photo', {
+                detail: { task: finishedTask, showEarnings: false }
+            }));
+        }
         return result;
     }, [limitPopup, currentUser, userData, userRole]);
 

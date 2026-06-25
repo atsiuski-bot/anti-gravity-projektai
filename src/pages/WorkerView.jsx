@@ -31,6 +31,7 @@ import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery'
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import EarningsModal from '../components/EarningsModal';
+import CompletionPhotoModal from '../components/CompletionPhotoModal';
 
 import { useNavigation } from '../context/NavigationContext';
 
@@ -49,9 +50,12 @@ export default function WorkerView() {
     const [tasks, setTasks] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
-    // Post-completion earnings popup payload ({ task, totalMinutes }), set by the 'task-earnings'
-    // event dispatched from TaskTimerControls when the worker finishes their own task.
+    // Post-completion earnings popup payload ({ task, totalMinutes }). No longer set from an event
+    // directly — it is chained AFTER the completion-photo prompt closes, so the two never stack.
     const [earnings, setEarnings] = useState(null);
+    // Post-finish work-end photo prompt payload ({ task, totalMinutes, showEarnings }), set by the
+    // 'request-completion-photo' event from both finish doors (timer "Užbaigti" + the limit popup).
+    const [completionPhoto, setCompletionPhoto] = useState(null);
 
     const [error, setError] = useState(null);
 
@@ -128,12 +132,19 @@ export default function WorkerView() {
         };
         window.addEventListener('open-task-modal', handleOpenTaskModal);
 
-        // The earnings popup is fired by TaskTimerControls.performFinish (worker's own task only)
-        // once payRate is set; it carries the finished task + its total minutes for the breakdown.
-        const handleEarnings = (e) => {
-            if (e?.detail?.task) setEarnings({ task: e.detail.task, totalMinutes: e.detail.totalMinutes });
+        // After a worker finishes their OWN task (either finish door), prompt for a work-end proof
+        // photo. The earnings breakdown — when a pay rate is set — rides along as showEarnings and is
+        // shown only once this modal closes (chained in the modal's onClose), never stacked over it.
+        const handleCompletionPhoto = (e) => {
+            if (e?.detail?.task) {
+                setCompletionPhoto({
+                    task: e.detail.task,
+                    totalMinutes: e.detail.totalMinutes,
+                    showEarnings: !!e.detail.showEarnings,
+                });
+            }
         };
-        window.addEventListener('task-earnings', handleEarnings);
+        window.addEventListener('request-completion-photo', handleCompletionPhoto);
 
         const filterInterval = setInterval(() => {
             setTasks(currentTasks => {
@@ -152,7 +163,7 @@ export default function WorkerView() {
         return () => {
             unsubscribe();
             window.removeEventListener('open-task-modal', handleOpenTaskModal);
-            window.removeEventListener('task-earnings', handleEarnings);
+            window.removeEventListener('request-completion-photo', handleCompletionPhoto);
             clearInterval(filterInterval);
         };
     }, [currentUser, usersLoading, usersMap]);
@@ -405,6 +416,21 @@ export default function WorkerView() {
                     uid={currentUser?.uid}
                     onRequestExtension={requestExtension}
                     onFinish={finishFromLimit}
+                />
+            )}
+
+            {/* Post-finish work-end photo prompt (skippable). On close, chain the earnings popup when
+                a pay rate was set, so the two never stack. */}
+            {completionPhoto && (
+                <CompletionPhotoModal
+                    task={completionPhoto.task}
+                    onClose={() => {
+                        const pending = completionPhoto;
+                        setCompletionPhoto(null);
+                        if (pending?.showEarnings && pending.task) {
+                            setEarnings({ task: pending.task, totalMinutes: pending.totalMinutes });
+                        }
+                    }}
                 />
             )}
 
