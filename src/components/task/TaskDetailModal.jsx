@@ -530,7 +530,7 @@ export default function TaskDetailModal({
                 (Redaguoti) outweighs the destructive (Ištrinti, last per DESIGN_SYSTEM §8); the row
                 stays on a single line and collapses to icon-only together when too tight. */}
             {hasFooterActions && (
-                <div className="flex-shrink-0 border-t border-line bg-surface-card px-5 py-3">
+                <div className="flex-shrink-0 border-t border-line bg-surface-sunken px-5 py-4">
                     <TaskActionRow actions={footerActions} />
                 </div>
             )}
