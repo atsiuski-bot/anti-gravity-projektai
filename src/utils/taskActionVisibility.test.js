@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canApproveTask, canConfirmTask, canRevertTask } from './taskActionVisibility';
+import { canApproveTask, canConfirmTask, canRevertTask, buildReviewActions } from './taskActionVisibility';
 
 // These predicates are the single source of truth for WHICH manager sign-off actions a task
 // offers, shared by the mobile card, the desktop table and the detail modal. The contract:
@@ -53,6 +53,53 @@ describe('taskActionVisibility', () => {
         });
         it('false for a worker even on a completed task', () => {
             expect(canRevertTask({ task: { completed: true }, role: 'worker', userRole: 'worker' })).toBe(false);
+        });
+    });
+
+    describe('buildReviewActions — the manager review/acceptance action set', () => {
+        const noop = () => {};
+
+        it('awaiting acceptance (completed): manager gets Priimti + Grąžinti', () => {
+            const acts = buildReviewActions({
+                task: { status: 'completed' }, isManager: true, canRestore: true,
+                onToggleConfirm: noop, onRestore: noop,
+            });
+            expect(acts.map(a => a.key)).toEqual(['confirm', 'restore']);
+            expect(acts.find(a => a.key === 'confirm').label).toBe('Priimti');
+            expect(acts.find(a => a.key === 'restore').label).toBe('Grąžinti');
+        });
+
+        it('awaiting acceptance: restore is withheld when not permitted', () => {
+            const acts = buildReviewActions({
+                task: { status: 'completed' }, isManager: true, canRestore: false,
+                onToggleConfirm: noop, onRestore: noop,
+            });
+            expect(acts.map(a => a.key)).toEqual(['confirm']);
+        });
+
+        it('accepted (confirmed): the only action is Atnaujinti — never Grąžinti', () => {
+            const acts = buildReviewActions({
+                task: { status: 'confirmed' }, isManager: true, canRestore: true,
+                onToggleConfirm: noop, onRestore: noop,
+            });
+            expect(acts.map(a => a.key)).toEqual(['reopen']);
+            expect(acts[0].label).toBe('Atnaujinti');
+        });
+
+        it('a non-manager sees no accept/re-open action', () => {
+            expect(buildReviewActions({ task: { status: 'confirmed' }, isManager: false, canRestore: false, onToggleConfirm: noop, onRestore: noop })).toEqual([]);
+            // ...but a permitted non-manager may still restore an awaiting task.
+            const acts = buildReviewActions({ task: { status: 'completed' }, isManager: false, canRestore: true, onToggleConfirm: noop, onRestore: noop });
+            expect(acts.map(a => a.key)).toEqual(['restore']);
+        });
+
+        it('an archived awaiting task disables (but still shows) the accept action', () => {
+            const acts = buildReviewActions({
+                task: { status: 'completed', archivedAt: '2026-01-01T00:00:00Z' }, isManager: true, canRestore: false,
+                onToggleConfirm: noop, onRestore: noop,
+            });
+            expect(acts[0].key).toBe('confirm');
+            expect(acts[0].disabled).toBe(true);
         });
     });
 });

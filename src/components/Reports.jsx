@@ -9,18 +9,19 @@ import { addComment } from '../utils/commentActions';
 import { gatherReportData } from '../utils/reportData';
 import { buildReport } from '../utils/reportAggregate';
 import { confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
-import { Briefcase, RotateCcw, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight, CheckCircle2, MessageSquare } from 'lucide-react';
+import { Briefcase, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
 
-import IconButton from './ui/IconButton';
 import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
 import { Spinner } from './ui/Loading';
 import DeletedBadge from './task/DeletedBadge';
-import CompletedMarker from './task/CompletedMarker';
 import TaskRow from './task/TaskRow';
+import TaskActionRow from './task/TaskActionRow';
 import TaskCard from './TaskCard';
+import TaskDetailModal from './task/TaskDetailModal';
+import { buildReviewActions } from '../utils/taskActionVisibility';
 
 import DailyStatistics from './DailyStatistics';
 import ReportExportModal from './ReportExportModal';
@@ -86,6 +87,9 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
 
     // Modal state
     const [activeModal, setActiveModal] = useState({ type: null, taskId: null, task: null });
+    // The shared "open the task" detail sheet — the SAME one the mobile card opens, so a task reads
+    // identically whether tapped on a phone or clicked in the desktop table.
+    const [detailTask, setDetailTask] = useState(null);
 
     // Friendly error banner (replaces banned window.alert — §8/§10). Never holds raw err.message.
     const [error, setError] = useState('');
@@ -653,18 +657,14 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
         const isManager = isManagerRole(userRole);
         const isCompleter = task.completedBy === currentUser?.uid;
         const canRevert = (isManager || isCompleter) && !task.isArchived;
-        const isConfirmed = task.status === 'confirmed';
-        const acts = [{
-            key: 'confirm',
-            label: isConfirmed ? 'Priimta' : 'Priimti',
-            icon: CheckCircle2,
-            variant: isConfirmed ? 'secondary' : 'success',
-            disabled: task.isArchived,
-            onClick: () => handleToggleConfirm(task),
-        }];
-        if (canRevert) acts.push({ key: 'revert', label: 'Grąžinti', icon: RotateCcw, variant: 'secondary', onClick: () => handleRevert(task) });
         return {
-            actions: acts,
+            actions: buildReviewActions({
+                task,
+                isManager,
+                canRestore: canRevert,
+                onToggleConfirm: handleToggleConfirm,
+                onRestore: handleRevert,
+            }),
             detailOverrides: {
                 canManage: isManager,
                 canDelete: false,
@@ -725,24 +725,21 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                         const dateStr = task.completedAt || task.archivedAt || task.updatedAt;
                         const worker = users?.find(u => u.id === task.assignedUserId);
                         const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '-');
-                        const isConfirmed = task.status === 'confirmed';
-
-                        // Check permissions for revert button
-                        const isManager = isManagerRole(userRole);
-                        const isCompleter = task.completedBy === currentUser?.uid;
-                        const canRevert = (isManager || isCompleter) && !task.isArchived;
+                        // The SAME action set the mobile card shows, rendered through the one adaptive
+                        // single-line row (no comment / edit buttons — those live in the detail sheet).
+                        const { actions: rowActions } = reportCardProps(task);
 
                         return (
                             <TaskRow
                                 key={task.id}
                                 task={task}
-                                rowClassName={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-feedback-info-soft'}`}
+                                onOpen={setDetailTask}
+                                rowClassName={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${task.status === 'confirmed' ? 'bg-surface-card' : 'bg-feedback-info-soft'}`}
                                 assigneeName={userName}
                                 titleCell={
                                     <>
                                         <div className="flex items-center gap-2">
                                             <div className={`text-sm font-bold whitespace-normal break-words ${(task.isDeleted || task.status === 'deleted') ? 'line-through text-ink-muted' : task.completed ? 'text-ink' : 'text-ink-strong'}`}>
-                                                {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                                 {task.title}
                                             </div>
                                             {(task.isDeleted || task.status === 'deleted') && <DeletedBadge />}
@@ -767,28 +764,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                                         <span className="text-ink-strong">{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
                                     </>
                                 }
-                                actions={
-                                    <div className="flex items-center justify-end gap-1">
-                                        <IconButton
-                                            icon={CheckCircle2}
-                                            label={isConfirmed ? 'Atšaukti priėmimą' : 'Priimti'}
-                                            disabled={task.isArchived}
-                                            className={isConfirmed ? '' : 'text-feedback-success hover:bg-feedback-success/10'}
-                                            onClick={() => handleToggleConfirm(task)}
-                                        />
-                                        <span className="relative inline-flex">
-                                            <IconButton icon={MessageSquare} label="Komentarai" onClick={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })} />
-                                            {task.comments?.length > 0 && (
-                                                <span className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 bg-brand text-white text-caption font-bold flex items-center justify-center rounded-full leading-none">
-                                                    {task.comments.length}
-                                                </span>
-                                            )}
-                                        </span>
-                                        {canRevert && (
-                                            <IconButton icon={RotateCcw} label="Grąžinti užduotį" onClick={() => handleRevert(task)} />
-                                        )}
-                                    </div>
-                                }
+                                actions={<TaskActionRow actions={rowActions} />}
                             />
                         );
                     })}
@@ -1143,6 +1119,25 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                     onAddComment={handleAddComment}
                 />
             )}
+
+            {/* The shared task detail sheet — opened by a desktop-table row click. Reuses the EXACT
+                per-surface wiring the mobile card uses (reportCardProps.detailOverrides). */}
+            {detailTask && (() => {
+                const ov = reportCardProps(detailTask).detailOverrides;
+                return (
+                    <TaskDetailModal
+                        isOpen
+                        onClose={() => setDetailTask(null)}
+                        task={{ ...detailTask, isArchived: !!(detailTask.isArchived || detailTask.archivedAt) }}
+                        allowPhotoAdd={false}
+                        showManagerLine
+                        canManage={ov.canManage}
+                        canDelete={ov.canDelete}
+                        onConfirm={ov.onConfirm ? () => { setDetailTask(null); ov.onConfirm(); } : undefined}
+                        onRevert={ov.onRevert ? () => { setDetailTask(null); ov.onRevert(); } : undefined}
+                    />
+                );
+            })()}
 
             {/* Revert confirmation (replaces window.confirm — §8) */}
             {revertTarget && (

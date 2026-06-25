@@ -7,17 +7,19 @@ import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
 import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
-import CompletedMarker from './task/CompletedMarker';
 import TaskStatusPill from './task/TaskStatusPill';
 import { StatusRunningGlyph } from './icons/statusGlyphs';
 import { MetricWorkedGlyph, MetricTotalGlyph } from './icons/metricGlyphs';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import TaskRow from './task/TaskRow';
+import TaskActionRow from './task/TaskActionRow';
 import TaskCard from './TaskCard';
+import TaskDetailModal from './task/TaskDetailModal';
+import { buildReviewActions } from '../utils/taskActionVisibility';
 import { addComment } from '../utils/commentActions';
 import { notifyMany } from '../utils/notify';
 import { logError } from '../utils/errorLog';
-import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, RotateCcw, X, Pencil, Plus, Flag, MessageSquare } from 'lucide-react';
+import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, X, Pencil, Plus, Flag } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
 import TaskHistory from './TaskHistory';
@@ -156,17 +158,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         setSelectedDate(getLithuanianDateString(date));
     };
 
-    const [expandedTasks, setExpandedTasks] = useState(new Set());
-
-    const toggleExpand = (taskId) => {
-        const newExpanded = new Set(expandedTasks);
-        if (newExpanded.has(taskId)) {
-            newExpanded.delete(taskId);
-        } else {
-            newExpanded.add(taskId);
-        }
-        setExpandedTasks(newExpanded);
-    };
 
     useEffect(() => {
         if (!selectedUserId || !rangeStart || !rangeEnd) return;
@@ -1594,9 +1585,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     users={users}
                     userRole={userRole}
                     currentUser={currentUser}
-                    expandedTasks={expandedTasks}
-                    toggleExpand={toggleExpand}
-                    setActiveModal={setActiveModal}
                     collapsible={view === 'approval'}
                     defaultOpen
                 />
@@ -1617,9 +1605,6 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     users={users}
                     userRole={userRole}
                     currentUser={currentUser}
-                    expandedTasks={expandedTasks}
-                    toggleExpand={toggleExpand}
-                    setActiveModal={setActiveModal}
                 />
             )}
 
@@ -2008,12 +1993,17 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
 }
 
 // Task List Helper Component
-function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: _onAddComment, onRestore, users, userRole, currentUser: _currentUser, expandedTasks, toggleExpand, setActiveModal, highlight = false, collapsible = false, defaultOpen = true }) {
+function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: _onAddComment, onRestore, users, userRole, currentUser: _currentUser, highlight = false, collapsible = false, defaultOpen = true }) {
     // The header doubles as an accordion toggle on the approval surface (collapsible); elsewhere
     // the body is always shown.
     const [open, setOpen] = useState(defaultOpen);
+    // The shared "open the task" detail sheet — a desktop row click opens the SAME window the mobile
+    // card opens (canManage gates accept/re-open; restore mirrors the row's Grąžinti).
+    const [detailTask, setDetailTask] = useState(null);
+    const detailIsManager = isManagerRole(userRole);
 
     return (
+        <>
         <div className={clsx("rounded-card shadow-sm border border-line overflow-hidden mb-6", viewMode === 'mobile' ? "bg-transparent border-0 shadow-none" : "bg-surface-card")}>
             {title && (
                 <div className={clsx(
@@ -2045,14 +2035,17 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
             {(!collapsible || !title || open) && (viewMode === 'mobile' ? (
                 <ul className="space-y-3">
                     {tasks.map((task) => {
-                        // The SAME shared TaskCard the active lists use (report surface: timer hidden,
-                        // accept/restore buttons). Confirm is a manager toggle (the old checkbox), shown
-                        // disabled once archived; restore mirrors the old per-row Grąžinti.
+                        // The SAME shared TaskCard the active lists use (report surface: timer hidden).
+                        // One source for the buttons (buildReviewActions): an accepted task offers only
+                        // "Atnaujinti" (re-open), an awaiting one "Priimti" + "Grąžinti".
                         const isManager = isManagerRole(userRole);
-                        const isConfirmed = task.status === 'confirmed';
-                        const acts = [];
-                        if (isManager) acts.push({ key: 'confirm', label: isConfirmed ? 'Priimta' : 'Priimti', icon: CheckCircle2, variant: isConfirmed ? 'secondary' : 'success', disabled: !!task.archivedAt, onClick: () => onToggleConfirm(task) });
-                        acts.push({ key: 'restore', label: 'Grąžinti', icon: RotateCcw, variant: 'secondary', onClick: () => onRestore(task) });
+                        const acts = buildReviewActions({
+                            task,
+                            isManager,
+                            canRestore: true,
+                            onToggleConfirm,
+                            onRestore,
+                        });
                         return (
                             <li key={task.id}>
                                 <TaskCard
@@ -2096,11 +2089,20 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                                     const isConfirmed = task.status === 'confirmed';
                                     const worker = users.find(u => u.id === task.assignedUserId);
                                     const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '—');
+                                    // Same buttons as the mobile card, on one adaptive line (no comment).
+                                    const rowActions = buildReviewActions({
+                                        task,
+                                        isManager: isManagerRole(userRole),
+                                        canRestore: true,
+                                        onToggleConfirm,
+                                        onRestore,
+                                    });
 
                                     return (
                                         <TaskRow
                                             key={task.id}
                                             task={task}
+                                            onOpen={() => setDetailTask(task)}
                                             rowClassName={clsx(
                                                 "group transition-colors",
                                                 isConfirmed ? "bg-surface-sunken" : "bg-surface-card hover:bg-surface-sunken"
@@ -2108,17 +2110,10 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                                             assigneeName={userName}
                                             titleCell={
                                                 <>
-                                                    <div
-                                                        role="button"
-                                                        tabIndex={0}
-                                                        aria-expanded={expandedTasks.has(task.id)}
-                                                        onClick={(e) => { e.stopPropagation(); toggleExpand(task.id); }}
-                                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleExpand(task.id); } }}
-                                                        className={clsx(
-                                                        "text-sm font-bold whitespace-normal break-words cursor-pointer rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                    <div className={clsx(
+                                                        "text-sm font-bold whitespace-normal break-words",
                                                         (task.isDeleted || task.status === 'deleted') ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong"
                                                     )}>
-                                                        {!(task.isDeleted || task.status === 'deleted') && <CompletedMarker task={task} className="mr-1.5" />}
                                                         {task.title}
                                                     </div>
                                                     {task.deadline && (
@@ -2127,26 +2122,13 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                                                             {task.deadline}
                                                         </div>
                                                     )}
-                                                    <div className={clsx(
-                                                        "text-caption text-ink-muted mt-0.5 flex items-start gap-1 cursor-pointer hover:text-ink whitespace-normal break-words",
-                                                        expandedTasks.has(task.id) ? "whitespace-pre-wrap" : ""
-                                                    )}>
+                                                    <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1 whitespace-normal break-words line-clamp-2">
                                                         <SessionTypeIcon
                                                             type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
                                                             className="w-3.5 h-3.5 flex-shrink-0 mt-0.5"
                                                         />
                                                         {task.description}
                                                     </div>
-                                                    {expandedTasks.has(task.id) && task.comments && task.comments.length > 0 && (
-                                                        <div className="mt-2 pl-4 border-l-2 border-line">
-                                                            <div className="text-caption font-semibold text-ink-muted mb-1">Komentarai:</div>
-                                                            {task.comments.map((comment, idx) => (
-                                                                <div key={idx} className="text-caption text-ink-muted mb-1">
-                                                                    <UserChip userId={comment.userId} name={comment.user} />: {comment.text}
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    )}
                                                     {(task.managerName || task.creatorName) && (
                                                         <div className="text-caption text-ink-muted mt-1 flex items-center gap-1">
                                                             <User className="w-2.5 h-2.5" />
@@ -2166,29 +2148,8 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                                                 </>
                                             }
                                             actions={
-                                                <div className="flex items-center justify-end gap-1">
-                                                    {isManagerRole(userRole) && (
-                                                        <IconButton
-                                                            icon={CheckCircle2}
-                                                            label={isConfirmed ? 'Atšaukti priėmimą' : 'Priimti'}
-                                                            disabled={!!task.archivedAt}
-                                                            className={isConfirmed ? '' : 'text-feedback-success hover:bg-feedback-success/10'}
-                                                            onClick={(e) => { e.stopPropagation(); onToggleConfirm(task); }}
-                                                        />
-                                                    )}
-                                                    <span className="relative inline-flex">
-                                                        <IconButton icon={MessageSquare} label="Komentarai" onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'comments', taskId: task.id, task: task }); }} />
-                                                        {task.comments?.length > 0 && (
-                                                            <span className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 bg-brand text-white text-caption font-bold flex items-center justify-center rounded-full leading-none">
-                                                                {task.comments.length}
-                                                            </span>
-                                                        )}
-                                                    </span>
-                                                    <IconButton
-                                                        icon={RotateCcw}
-                                                        label="Grąžinti užduotį"
-                                                        onClick={(e) => { e.stopPropagation(); onRestore(task); }}
-                                                    />
+                                                <div onClick={(e) => e.stopPropagation()}>
+                                                    <TaskActionRow actions={rowActions} />
                                                 </div>
                                             }
                                         />
@@ -2200,5 +2161,19 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                 </div>
             ))}
         </div>
+        {detailTask && (
+            <TaskDetailModal
+                isOpen
+                onClose={() => setDetailTask(null)}
+                task={{ ...detailTask, isArchived: !!detailTask.archivedAt }}
+                allowPhotoAdd={false}
+                showManagerLine
+                canManage={detailIsManager}
+                canDelete={false}
+                onConfirm={(detailIsManager && !detailTask.archivedAt) ? () => { const t = detailTask; setDetailTask(null); onToggleConfirm(t); } : undefined}
+                onRevert={() => { const t = detailTask; setDetailTask(null); onRestore(t); }}
+            />
+        )}
+        </>
     );
 }

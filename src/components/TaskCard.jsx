@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Calendar, Trash2, ArrowUp, ArrowDown, Undo2, Edit, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
+import { Clock, Calendar, ArrowUp, ArrowDown, Undo2, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -146,9 +146,13 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
     const taskStatus = task.status || 'pending';
 
-    // Worker-set attention tint ("Reikia vadovo" red / "Laukiama" blue). Sits BELOW the live/limit
-    // states in the cascade below (a running or over-limit card keeps its own colour), but ABOVE the
-    // plain status fallback — so an otherwise-calm card glows the moment the worker raises a flag.
+    // Worker-set attention tint ("Reikia vadovo" red / "Laukiama" blue). Sits just BELOW the running
+    // state but ABOVE the plain status fallback — so an otherwise-calm card glows the moment the
+    // worker raises a flag. Two former whole-card tints were removed so each colour now has ONE
+    // meaning: over-limit no longer floods red (its signal is localised to the red time readout + the
+    // full red bar below, so whole-card red means "Reikia vadovo" alone), and the dead "inspecting"
+    // blue branch (inspectionStatus is never set to 'inspecting') is gone, so whole-card blue means
+    // "Laukiama" alone.
     const flagTint = getTaskFlagTint(task);
 
     // Strict UI logic: activeSession is the PRIMARY source of truth, workStatus is the fallback.
@@ -292,16 +296,8 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
         key: 'confirm', label: 'Priimti', icon: CheckCircle2, variant: 'success',
         onClick: (e) => { e.stopPropagation(); performConfirm(); },
     });
-    // The completion-sign-off card (bell) shows ONLY Priimti / Grąžinti — Redaguoti is reached via
-    // Grąžinti (which reopens the editor) and Trinti is intentionally not offered there.
-    if (!signoffOnly && onEdit && canEdit) actions.push({
-        key: 'edit', label: 'Redaguoti', icon: Edit, variant: 'primary',
-        onClick: (e) => { e.stopPropagation(); onEdit(task); },
-    });
-    if (!signoffOnly && isManager) actions.push({
-        key: 'delete', label: 'Ištrinti', icon: Trash2, variant: 'danger',
-        onClick: (e) => { e.stopPropagation(); handleDeleteTask(); },
-    });
+    // Edit / comment / delete are NOT row actions — they live in the task detail sheet (open on tap),
+    // so the footer carries only the lifecycle sign-off actions and fits one line.
 
     // Footer buttons: a caller (archive / report surface) may hand a ready-made action set whose
     // semantics differ from an active task (restore-from-archive, archived-confirm); otherwise the
@@ -330,8 +326,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 className={clsx(
                     "rounded-card border-2 shadow-sm p-3 mb-2 cursor-pointer transition-shadow duration-base",
                     isRunning ? "bg-session-task-surface border-session-task-shell"
-                        : task.inspectionStatus === 'inspecting' ? "bg-feedback-info-soft border-feedback-info-border"
-                        : isLimitExceeded ? "bg-feedback-danger-soft border-feedback-danger-border"
                         : flagTint
                             ? flagTint
                             : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),
