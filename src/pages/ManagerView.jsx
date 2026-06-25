@@ -363,24 +363,6 @@ export default function ManagerView() {
                             <button
                                 type="button"
                                 role="tab"
-                                id="team-recurring-tab"
-                                aria-selected={teamTasksSubTab === 'recurring'}
-                                aria-controls="team-recurring-panel"
-                                onClick={() => setTeamTasksSubTab('recurring')}
-                                className={cn(
-                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
-                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                    teamTasksSubTab === 'recurring' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
-                                )}
-                            >
-                                <Repeat className="h-4 w-4 shrink-0" aria-hidden="true" />
-                                <span className="sm:hidden">Pasikartojančios</span>
-                                <span className="hidden sm:inline">Pasikartojančios užduotys</span>
-                            </button>
-                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
-                            <button
-                                type="button"
-                                role="tab"
                                 id="team-signoff-tab"
                                 aria-selected={teamTasksSubTab === 'signoff'}
                                 aria-controls="team-signoff-panel"
@@ -410,6 +392,24 @@ export default function ManagerView() {
                             >
                                 <History className="h-4 w-4 shrink-0" aria-hidden="true" />
                                 <span>Istorija</span>
+                            </button>
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
+                                id="team-recurring-tab"
+                                aria-selected={teamTasksSubTab === 'recurring'}
+                                aria-controls="team-recurring-panel"
+                                onClick={() => setTeamTasksSubTab('recurring')}
+                                className={cn(
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'recurring' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <Repeat className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span className="sm:hidden">Pasikartojančios</span>
+                                <span className="hidden sm:inline">Pasikartojančios užduotys</span>
                             </button>
                         </div>
                     </div>
