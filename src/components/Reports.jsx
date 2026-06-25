@@ -31,13 +31,19 @@ import { PeriodPicker } from './reports/PeriodPicker';
 import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 
 
-export default function Reports({ users, canExport = false, viewRole }) {
+export default function Reports({ users, canExport = false, viewRole, views = ['report', 'approval', 'history'] }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
     // viewRole lets a caller scope the whole report to a role other than the signed-in one — a
     // manager opening their OWN "Ataskaitos" passes 'worker' so it shows only personal data
     // (no team aggregates, no user dropdown, no export), identical to a worker's view.
     const userRole = viewRole ?? authUserRole;
-    const [activeTab, setActiveTab] = useState('report');
+    // `views` selects which report sections this instance carries. The three manager sections
+    // (Veiklos ataskaita / Pridavimas / Istorija) were lifted OUT of a standalone "Kom. ataskaitos"
+    // tab and re-hosted as sub-tabs of other top-level tabs (report → Kom. kalendorius;
+    // approval + history → Kom. veiklos). Each host renders Reports with a single view, so the
+    // internal switcher is suppressed (views.length === 1) and the parent tab strip is the only
+    // tab affordance. Defaults to all three for any caller that still wants the full surface.
+    const [activeTab, setActiveTab] = useState(views[0]);
     const [loading, setLoading] = useState(false);
 
     // --- HOURS REPORT STATE ---
@@ -798,7 +804,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                 so the switcher only appears in the manager team view. In a personal report (worker,
                 or a manager viewing their OWN data via viewRole="worker") there is just one view, so
                 the whole switcher is dropped. */}
-            {isManagerRole(userRole) && (
+            {isManagerRole(userRole) && views.length > 1 && (
                 <div role="tablist" aria-label="Ataskaitų skiltys">
                     {/* Segmented switcher — same control as the Komandos veiklos sub-tabs
                         (ManagerView). Labels wrap to multiple lines on a narrow screen

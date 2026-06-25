@@ -90,6 +90,5 @@ function ReportsBase() {
 export function ReportsGlyph({ className, ...props }) {
     return (<svg {...SVG} className={className} {...props}><ReportsBase /></svg>);
 }
-export function ReportsTeamGlyph({ className, ...props }) {
-    return (<svg {...SVG} className={className} {...props}><ReportsBase /><TeamBadgeMark /></svg>);
-}
+// ReportsTeamGlyph was retired together with the standalone "Kom. ataskaitos" tab — its three
+// sections moved under Kom. veiklos / Kom. kalendorius, which keep their own team glyphs.
