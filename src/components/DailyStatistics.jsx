@@ -516,6 +516,15 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const displayTodayPending = isFullView ? shownTodayTasks.filter(t => t.status === 'completed') : shownTodayTasks;
     const displayEarlierPending = isFullView ? shownEarlierTasks.filter(t => t.status === 'completed') : shownEarlierTasks;
 
+    // Istorija tab (accepted phase): single flat list sorted newest-first by confirmedAt.
+    const displayAcceptedAll = (view === 'approval' && approvalPhase === 'accepted')
+        ? [...shownTodayTasks, ...shownEarlierTasks].sort((a, b) => {
+            const aTs = a.confirmedAt?.toMillis?.() ?? a.confirmedAt ?? 0;
+            const bTs = b.confirmedAt?.toMillis?.() ?? b.confirmedAt ?? 0;
+            return bTs - aTs;
+        })
+        : null;
+
     // Test/founder accounts are kept out of the report unless the manager opted in (showTestUsers),
     // resolved against each user's isTest flag — applied to every session/timeline source below.
     const testUserIds = useMemo(() => new Set((users || []).filter(u => u.isTest).map(u => u.id)), [users]);
@@ -1570,42 +1579,56 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 by default, the history archive collapsed). */}
             {view !== 'hours' && (
               <>
-            {displayTodayPending.length > 0 && (
-                <TaskListTable
-                    tasks={displayTodayPending}
-                    title={
-                        view === 'approval'
-                            ? (approvalPhase === 'accepted' ? 'Šiandien priimtos užduotys' : 'Užbaigta šiandien, laukia priėmimo')
-                            : (isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}, laukia priėmimo`)
-                    }
-                    viewMode={viewMode}
-                    onToggleConfirm={handleToggleConfirm}
-                    onAddComment={handleAddComment}
-                    onRestore={handleRestore}
-                    users={users}
-                    userRole={userRole}
-                    currentUser={currentUser}
-                    collapsible={view === 'approval'}
-                    defaultOpen
-                />
-            )}
+            {displayAcceptedAll !== null ? (
+                displayAcceptedAll.length > 0 && (
+                    <TaskListTable
+                        tasks={displayAcceptedAll}
+                        title="Priimtos užduotys"
+                        viewMode={viewMode}
+                        onToggleConfirm={handleToggleConfirm}
+                        onAddComment={handleAddComment}
+                        onRestore={handleRestore}
+                        users={users}
+                        userRole={userRole}
+                        currentUser={currentUser}
+                    />
+                )
+            ) : (
+                <>
+                    {displayTodayPending.length > 0 && (
+                        <TaskListTable
+                            tasks={displayTodayPending}
+                            title={
+                                view === 'approval'
+                                    ? 'Užbaigta šiandien, laukia priėmimo'
+                                    : (isRange ? `Atliktos užduotys (${rangeStart} – ${rangeEnd})` : `Užduotys atliktos ${selectedDate} ${weekday}, laukia priėmimo`)
+                            }
+                            viewMode={viewMode}
+                            onToggleConfirm={handleToggleConfirm}
+                            onAddComment={handleAddComment}
+                            onRestore={handleRestore}
+                            users={users}
+                            userRole={userRole}
+                            currentUser={currentUser}
+                            collapsible={view === 'approval'}
+                            defaultOpen
+                        />
+                    )}
 
-            {displayEarlierPending.length > 0 && (
-                <TaskListTable
-                    tasks={displayEarlierPending}
-                    title={
-                        view === 'approval' && approvalPhase === 'accepted'
-                            ? 'Priimta anksčiau'
-                            : 'Atliktos užduotys, laukiančios priėmimo'
-                    }
-                    viewMode={viewMode}
-                    onToggleConfirm={handleToggleConfirm}
-                    onAddComment={handleAddComment}
-                    onRestore={handleRestore}
-                    users={users}
-                    userRole={userRole}
-                    currentUser={currentUser}
-                />
+                    {displayEarlierPending.length > 0 && (
+                        <TaskListTable
+                            tasks={displayEarlierPending}
+                            title="Atliktos užduotys, laukiančios priėmimo"
+                            viewMode={viewMode}
+                            onToggleConfirm={handleToggleConfirm}
+                            onAddComment={handleAddComment}
+                            onRestore={handleRestore}
+                            users={users}
+                            userRole={userRole}
+                            currentUser={currentUser}
+                        />
+                    )}
+                </>
             )}
 
             {/* Full task-history browser (the archived, already-accepted tasks). Omitted in the
