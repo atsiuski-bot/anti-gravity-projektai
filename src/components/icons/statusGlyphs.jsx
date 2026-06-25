@@ -70,12 +70,14 @@ export function StatusConfirmedGlyph({ className, ...props }) {
     );
 }
 
-// Creation/approval gate, waiting (Nepatvirtintas) — amber ring + hold dot.
+// Creation/approval gate, waiting (Nepatvirtintas) — ring + hold dot. Inherits the pill's amber
+// "pending" tone via currentColor (text-feedback-warning-text → amber-700 light / amber-400 dark),
+// so the color is a theme-reactive semantic token, not a fixed palette amber.
 export function StatusAwaitingGlyph({ className, ...props }) {
     return (
         <svg {...SVG} fill="none" className={className} {...props}>
-            <circle cx="12" cy="12" r="9" className="stroke-amber-500" strokeWidth="2" />
-            <circle cx="12" cy="12" r="2.4" className="fill-amber-500" />
+            <circle cx="12" cy="12" r="9" className="stroke-current" strokeWidth="2" />
+            <circle cx="12" cy="12" r="2.4" className="fill-current" />
         </svg>
     );
 }
