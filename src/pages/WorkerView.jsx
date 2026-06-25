@@ -13,7 +13,7 @@ import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow } from
 import { Spinner } from '../components/ui/Loading';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
-import TagFilterPills from '../components/ui/TagFilterPills';
+import FilterPills from '../components/ui/FilterPills';
 import {
     filterRankTasks,
     buildTaskSuggestions,
@@ -244,15 +244,12 @@ export default function WorkerView() {
 
     return (
         <div className="pt-1">
-            <div className="mb-2 sm:mb-6">
-                {error && (
-                    <div className="mt-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-feedback-danger-soft p-4 wz-shake" role="alert">
-                        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
-                        <p className="text-body text-feedback-danger">{error}</p>
-                    </div>
-                )}
-            </div>
-            
+            {error && (
+                <div className="mb-4 flex items-start gap-2 rounded-card border-l-4 border-feedback-danger bg-feedback-danger-soft p-4 wz-shake" role="alert">
+                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                    <p className="text-body text-feedback-danger">{error}</p>
+                </div>
+            )}
 
             {/* Tasks Tab */}
             <div className={activeTab === 'tasks' ? 'block' : 'hidden'}>
@@ -275,7 +272,13 @@ export default function WorkerView() {
 
                 {/* Tag filter — shown immediately as pills (no dropdown), and ONLY the tags that occur
                     on the worker's own tasks. Renders nothing when no task is tagged. */}
-                <TagFilterPills tags={presentTags} value={filterTag} onChange={setFilterTag} className="mb-4" />
+                <FilterPills
+                    options={presentTags.map((tag) => ({ value: tag, label: tag }))}
+                    value={filterTag}
+                    onChange={setFilterTag}
+                    ariaLabel="Filtruoti pagal žymą"
+                    className="mb-4"
+                />
 
                 <DailyWorkProgress currentUser={currentUser} tasks={sortedTasks} />
 

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, X, Activity, ListChecks, Repeat, BadgeCheck } from 'lucide-react';
+import { ArrowUpDown, X, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3 } from 'lucide-react';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
@@ -13,7 +13,7 @@ import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
-import TagFilterPills from '../components/ui/TagFilterPills';
+import FilterPills from '../components/ui/FilterPills';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -21,6 +21,7 @@ import { useNavigation } from '../context/NavigationContext';
 import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, TASK_TAGS } from '../utils/taskUtils';
 import { PRIORITIES, getPriorityLabel } from '../utils/priority';
 import { STATUS_LABELS } from '../utils/taskConstants';
+import { formatDisplayName } from '../utils/formatters';
 
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
@@ -48,10 +49,13 @@ export default function ManagerView() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     const [viewMode, setViewMode] = useState('desktop');
-    // Komandos veiklos splits into two sub-tabs: live activity first, the task list second.
+    // Komandos veiklos sub-tabs: live activity, task list, approvals queue, recurring — plus the
+    // two oversight sections lifted out of the retired Kom. ataskaitos tab: Pridavimas (tasks
+    // awaiting acceptance) and Istorija (already-accepted tasks).
     const [teamTasksSubTab, setTeamTasksSubTab] = useState('active');
-    // Komandos kalendorius splits into two sub-tabs: the live calendar, then the calendar-change
-    // history (moved out of Kom. ataskaitos to sit beside the calendar it describes).
+    // Komandos kalendorius sub-tabs: the live calendar, the calendar-change history (moved out of
+    // Kom. ataskaitos to sit beside the calendar it describes), and Veiklos ataskaita (the
+    // work-hours report, also lifted out of the retired Kom. ataskaitos tab).
     const [teamCalendarSubTab, setTeamCalendarSubTab] = useState('calendar');
 
     // Use custom hooks
@@ -108,6 +112,29 @@ export default function ManagerView() {
         if (filterTag && !presentTags.includes(filterTag)) setFilterTag('');
     }, [filterTag, presentTags, setFilterTag]);
 
+    // Vykdytojai who actually have an ACTIVE task in the default list — the source for the immediate
+    // assignee pill filter (shown on BOTH mobile and desktop). Derived from the default-active set
+    // (excludes 'unapproved' + done), unlike the tag pills which mirror every non-deleted task: an
+    // assignee pill must never point at someone whose work has all left the list. Names resolve from
+    // the live team roster (fresh displayName → "Jonas K." via formatDisplayName), falling back to
+    // the denormalised assignedUserName stored on the task.
+    const presentAssignees = React.useMemo(() => {
+        const nameById = new Map((users || []).map((u) => [u.id, u.displayName || u.email || '']));
+        const seen = new Map();
+        for (const t of tasks) {
+            if (t.isDeleted || t.status === 'deleted') continue;
+            const isDone = t.completed || t.status === 'completed' || t.status === 'confirmed';
+            if (t.status === 'unapproved' || isDone) continue; // mirror the default active list
+            const id = t.assignedUserId;
+            if (!id || seen.has(id)) continue;
+            const fullName = nameById.get(id) || t.assignedUserName || '';
+            seen.set(id, formatDisplayName(fullName) || '—');
+        }
+        return [...seen.entries()]
+            .map(([value, label]) => ({ value, label }))
+            .sort((a, b) => a.label.localeCompare(b.label, 'lt'));
+    }, [tasks, users]);
+
     const handleMoveUp = React.useCallback((taskId) => {
         const currentList = [...sortedTasks];
         const index = currentList.findIndex(t => t.id === taskId);
@@ -149,9 +176,16 @@ export default function ManagerView() {
         };
         window.addEventListener('open-task-modal', handleOpenModalEvent);
 
+        // The session-correction notification (ManagerNotifications) navigates to the team calendar
+        // tab AND fires this so we land directly on its "Veiklos ataskaita" sub-tab — the work-hours
+        // report that hosts the session editor — instead of the default calendar sub-tab.
+        const handleOpenTeamReport = () => setTeamCalendarSubTab('report');
+        window.addEventListener('open-team-report', handleOpenTeamReport);
+
         return () => {
             window.removeEventListener('resize', handleResize);
             window.removeEventListener('open-task-modal', handleOpenModalEvent);
+            window.removeEventListener('open-team-report', handleOpenTeamReport);
         };
     }, []);
 
@@ -238,7 +272,7 @@ export default function ManagerView() {
     };
 
     return (
-        <div className="pt-1 sm:pt-4">
+        <div className="pt-1 sm:pt-2">
             {error && (
                 <div className="mb-6 bg-feedback-danger-soft border-l-4 border-feedback-danger p-4" role="alert">
                     <p className="text-body text-feedback-danger">{error}</p>
@@ -343,6 +377,40 @@ export default function ManagerView() {
                                 <span className="sm:hidden">Pasikartojančios</span>
                                 <span className="hidden sm:inline">Pasikartojančios užduotys</span>
                             </button>
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
+                                id="team-signoff-tab"
+                                aria-selected={teamTasksSubTab === 'signoff'}
+                                aria-controls="team-signoff-panel"
+                                onClick={() => setTeamTasksSubTab('signoff')}
+                                className={cn(
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'signoff' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <ClipboardCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span>Pridavimas</span>
+                            </button>
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
+                                id="team-signoff-history-tab"
+                                aria-selected={teamTasksSubTab === 'signoffHistory'}
+                                aria-controls="team-signoff-history-panel"
+                                onClick={() => setTeamTasksSubTab('signoffHistory')}
+                                className={cn(
+                                    'shrink-0 snap-start whitespace-nowrap inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamTasksSubTab === 'signoffHistory' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <History className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                <span>Istorija</span>
+                            </button>
                         </div>
                     </div>
 
@@ -405,17 +473,27 @@ export default function ManagerView() {
                     aria-labelledby="team-list-tab"
                     className={cn(teamTasksSubTab !== 'list' && 'hidden')}
                 >
-                {/* Filter controls.
-                    Mobile (<md): a clean stack — the tag pills (immediate, only the tags present on
-                    the team's tasks) sit ABOVE the search; the old per-classifier dropdowns
-                    (vykdytojas / rūšiavimas / prioritetas / žyma) are gone here. Desktop (md+):
+                {/* Assignee filter pills — immediate (no dropdown), single-select by VYKDYTOJAS, shown
+                    on BOTH mobile and desktop above the list. Only workers with an active task in this
+                    list get a pill; they share `filterUser` with the desktop table-header Vykdytojas
+                    dropdown, so the two stay in lockstep. (Tag filtering on desktop still lives on the
+                    table-header Žymos column; the mobile tag-pill row was replaced by this one.) */}
+                <FilterPills
+                    options={presentAssignees}
+                    value={filterUser}
+                    onChange={setFilterUser}
+                    allLabel="Visi"
+                    ariaLabel="Filtruoti pagal vykdytoją"
+                    className="mb-3"
+                />
+
+                {/* Mobile (<md): the search box + a clear button sit below the pills. Desktop (md+):
                     sort and per-column filters live ON the table headers (TaskTable `gridControls`),
                     with collapsed search + the "Daugiau rūšiavimo" launcher + clear on the tab row
                     above — the dense manager controls stay there (§9 dual density). A clear button
                     still appears on mobile when any filter is active (incl. one set from the desktop
                     headers) so a stale filter is never stranded with no way out. */}
                 <div className="mb-4 md:hidden">
-                    <TagFilterPills tags={presentTags} value={filterTag} onChange={setFilterTag} className="mb-3" />
                     <SearchBox
                         value={searchText}
                         onChange={setSearchText}
@@ -503,6 +581,34 @@ export default function ManagerView() {
                         </div>
                     )}
                 </div>
+
+                {/* Sub-tab 5 — Pridavimas: team-finished tasks awaiting THIS manager's acceptance
+                    (status 'completed'). Lifted out of the retired Kom. ataskaitos tab; rendered via
+                    the shared Reports component constrained to its single 'approval' view, so its
+                    internal switcher is suppressed. Conditionally MOUNTED (not display:none) so the
+                    listeners attach only on first visit, matching the calendar tabs' lazy intent. */}
+                {teamTasksSubTab === 'signoff' && (
+                    <div id="team-signoff-panel" role="tabpanel" aria-labelledby="team-signoff-tab">
+                        <ErrorBoundary boundaryName="manager:team-signoff">
+                            <React.Suspense fallback={<Spinner />}>
+                                <Reports users={reportRoster} canExport views={['approval']} />
+                            </React.Suspense>
+                        </ErrorBoundary>
+                    </div>
+                )}
+
+                {/* Sub-tab 6 — Istorija: tasks the manager has already accepted (status 'confirmed')
+                    plus the archived browser. Same single-view Reports trick as Pridavimas, with the
+                    'history' view. */}
+                {teamTasksSubTab === 'signoffHistory' && (
+                    <div id="team-signoff-history-panel" role="tabpanel" aria-labelledby="team-signoff-history-tab">
+                        <ErrorBoundary boundaryName="manager:team-signoff-history">
+                            <React.Suspense fallback={<Spinner />}>
+                                <Reports users={reportRoster} canExport views={['history']} />
+                            </React.Suspense>
+                        </ErrorBoundary>
+                    </div>
+                )}
             </div>
 
             <div className={activeTab === 'my-tasks' ? 'block' : 'hidden'}>
@@ -565,7 +671,7 @@ export default function ManagerView() {
             )}
 
             {activeTab === 'team-calendar' && (
-                <div className="space-y-6">
+                <div className="space-y-4">
                     {/* Two sub-tabs, same segmented control as the Kom. ataskaitos switcher:
                         Kalendorius (the live calendar) and Kalendoriaus istorija (the calendar-change
                         log, moved here from Kom. ataskaitos to sit beside the calendar it describes). */}
@@ -598,6 +704,21 @@ export default function ManagerView() {
                             >
                                 Kalendoriaus istorija
                             </button>
+                            <div className="w-px shrink-0 bg-line" aria-hidden="true" />
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={teamCalendarSubTab === 'report'}
+                                onClick={() => setTeamCalendarSubTab('report')}
+                                className={cn(
+                                    'flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-3 sm:px-4 py-2.5 min-h-touch text-body font-semibold text-center leading-tight transition-colors',
+                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
+                                    teamCalendarSubTab === 'report' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                )}
+                            >
+                                <BarChart3 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                                Veiklos ataskaita
+                            </button>
                         </div>
                     </div>
 
@@ -624,30 +745,35 @@ export default function ManagerView() {
                             </React.Suspense>
                         </ErrorBoundary>
                     )}
+
+                    {/* Veiklos ataskaita — the work-hours report, lifted out of the retired
+                        Kom. ataskaitos tab to sit beside the calendar whose planned hours it
+                        measures against. Shared Reports component constrained to its single
+                        'report' view (switcher suppressed); export stays with it (canExport). */}
+                    {teamCalendarSubTab === 'report' && (
+                        <ErrorBoundary boundaryName="manager:team-report">
+                            <React.Suspense fallback={<Spinner />}>
+                                <Reports users={reportRoster} canExport views={['report']} />
+                            </React.Suspense>
+                        </ErrorBoundary>
+                    )}
                 </div>
             )}
 
-            <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
-                <ErrorBoundary boundaryName="manager:reports" resetKeys={[activeTab]}>
-                    <React.Suspense fallback={<Spinner />}>
-                        {/* Team report is the only place export is allowed (Kom. ataskaitos).
-                            roster is team-scoped for a scoped manager. */}
-                        <Reports users={reportRoster} canExport />
-                    </React.Suspense>
-                </ErrorBoundary>
-            </div>
+            {/* The standalone "Kom. ataskaitos" tab was retired: its three sections were
+                redistributed as sub-tabs of Kom. veiklos (Pridavimas, Istorija) and Kom.
+                kalendorius (Veiklos ataskaita). The team work-hours export now lives with the
+                Veiklos ataskaita sub-tab there. */}
 
             <div className={activeTab === 'my-reports' ? 'block' : 'hidden'}>
-                <div className="space-y-6">
-                    <ErrorBoundary boundaryName="manager:my-reports" resetKeys={[activeTab]}>
-                        {/* A manager's own "Ataskaitos" is the full report, scoped to themselves
-                            (viewRole="worker": personal data only, no team aggregates/dropdown/export)
-                            so it is identical to a worker's "Ataskaitos". */}
-                        <React.Suspense fallback={<Spinner />}>
-                            <Reports users={[currentUser]} viewRole="worker" />
-                        </React.Suspense>
-                    </ErrorBoundary>
-                </div>
+                <ErrorBoundary boundaryName="manager:my-reports" resetKeys={[activeTab]}>
+                    {/* A manager's own "Ataskaitos" is the full report, scoped to themselves
+                        (viewRole="worker": personal data only, no team aggregates/dropdown/export)
+                        so it is identical to a worker's "Ataskaitos". */}
+                    <React.Suspense fallback={<Spinner />}>
+                        <Reports users={[currentUser]} viewRole="worker" />
+                    </React.Suspense>
+                </ErrorBoundary>
             </div>
 
             {userRole === 'admin' && (

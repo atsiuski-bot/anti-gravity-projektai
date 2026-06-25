@@ -9,7 +9,7 @@ import { addComment } from '../utils/commentActions';
 import { gatherReportData } from '../utils/reportData';
 import { buildReport } from '../utils/reportAggregate';
 import { confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
-import { Briefcase, MessageSquare, RotateCcw, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight } from 'lucide-react';
+import { Briefcase, RotateCcw, AlertTriangle, FileText, Users, TrendingUp, TrendingDown, Minus, ChevronRight, CheckCircle2, MessageSquare } from 'lucide-react';
 
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -17,12 +17,10 @@ import ConfirmDialog from './ui/ConfirmDialog';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
 import { Spinner } from './ui/Loading';
-import TaskStatusPill from './task/TaskStatusPill';
-import PriorityBadge from './task/PriorityBadge';
 import DeletedBadge from './task/DeletedBadge';
 import CompletedMarker from './task/CompletedMarker';
-import AssigneeChip from './task/AssigneeChip';
 import TaskRow from './task/TaskRow';
+import TaskCard from './TaskCard';
 
 import DailyStatistics from './DailyStatistics';
 import ReportExportModal from './ReportExportModal';
@@ -33,13 +31,19 @@ import { PeriodPicker } from './reports/PeriodPicker';
 import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 
 
-export default function Reports({ users, canExport = false, viewRole }) {
+export default function Reports({ users, canExport = false, viewRole, views = ['report', 'approval', 'history'] }) {
     const { currentUser, userRole: authUserRole, userData } = useAuth();
     // viewRole lets a caller scope the whole report to a role other than the signed-in one — a
     // manager opening their OWN "Ataskaitos" passes 'worker' so it shows only personal data
     // (no team aggregates, no user dropdown, no export), identical to a worker's view.
     const userRole = viewRole ?? authUserRole;
-    const [activeTab, setActiveTab] = useState('report');
+    // `views` selects which report sections this instance carries. The three manager sections
+    // (Veiklos ataskaita / Pridavimas / Istorija) were lifted OUT of a standalone "Kom. ataskaitos"
+    // tab and re-hosted as sub-tabs of other top-level tabs (report → Kom. kalendorius;
+    // approval + history → Kom. veiklos). Each host renders Reports with a single view, so the
+    // internal switcher is suppressed (views.length === 1) and the parent tab strip is the only
+    // tab affordance. Defaults to all three for any caller that still wants the full surface.
+    const [activeTab, setActiveTab] = useState(views[0]);
     const [loading, setLoading] = useState(false);
 
     // --- HOURS REPORT STATE ---
@@ -642,85 +646,54 @@ export default function Reports({ users, canExport = false, viewRole }) {
         return Object.entries(groups).sort((a, b) => b[0].localeCompare(a[0]));
     }, [filteredTasks]);
 
+    // Report-surface props for the shared TaskCard (mobile): the SAME card the active lists use,
+    // timer hidden, acting on report semantics — accept/un-accept (the old confirm checkbox, now a
+    // toggle button) and revert. The footer mirrors what the shared detail modal shows on tap.
+    const reportCardProps = (task) => {
+        const isManager = isManagerRole(userRole);
+        const isCompleter = task.completedBy === currentUser?.uid;
+        const canRevert = (isManager || isCompleter) && !task.isArchived;
+        const isConfirmed = task.status === 'confirmed';
+        const acts = [{
+            key: 'confirm',
+            label: isConfirmed ? 'Priimta' : 'Priimti',
+            icon: CheckCircle2,
+            variant: isConfirmed ? 'secondary' : 'success',
+            disabled: task.isArchived,
+            onClick: () => handleToggleConfirm(task),
+        }];
+        if (canRevert) acts.push({ key: 'revert', label: 'Grąžinti', icon: RotateCcw, variant: 'secondary', onClick: () => handleRevert(task) });
+        return {
+            actions: acts,
+            detailOverrides: {
+                canManage: isManager,
+                canDelete: false,
+                onConfirm: task.isArchived ? undefined : () => handleToggleConfirm(task),
+                onRevert: canRevert ? () => handleRevert(task) : undefined,
+            },
+        };
+    };
+
     // Helper to render table
     const TaskListTable = ({ tasks, title }) => (
         <div className="mb-6">
-            {/* Mobile / touch: one card per task — never a horizontally-scrolling table (§9).
-                Mirrors the desktop columns (confirm, status, priority, time, revert) as a card. */}
+            {/* Mobile / touch: one card per task — the SAME shared TaskCard the active lists use
+                (report surface: timer hidden, accept/revert buttons). Never a table (§9). */}
             <ul className="space-y-3 md:hidden">
                 <li className="px-1 pb-1">
                     <h3 className="text-body font-bold text-ink">{title} ({tasks.length})</h3>
                 </li>
                 {tasks.map((task) => {
-                    const dateStr = task.completedAt || task.archivedAt || task.updatedAt;
-                    const worker = users?.find(u => u.id === task.assignedUserId);
-                    const userName = worker ? (worker.displayName || worker.email) : (task.assignedUserName || '-');
-                    const isConfirmed = task.status === 'confirmed';
-                    const deleted = task.isDeleted || task.status === 'deleted';
-                    const isManager = isManagerRole(userRole);
-                    const isCompleter = task.completedBy === currentUser?.uid;
-                    const canRevert = (isManager || isCompleter) && !task.isArchived;
+                    const { actions, detailOverrides } = reportCardProps(task);
                     return (
-                        <li key={task.id} className="bg-surface-card rounded-card shadow-sm border border-line p-4 space-y-3">
-                            <div className="flex items-start justify-between gap-2">
-                                <div className={`min-w-0 flex-1 text-body-lg font-bold break-words ${deleted ? 'line-through text-ink-muted' : task.completed ? 'text-ink' : 'text-ink-strong'}`}>
-                                    {!deleted && <CompletedMarker task={task} className="mr-1.5" />}
-                                    {task.title}
-                                </div>
-                                <PriorityBadge priority={task.priority} />
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                                <AssigneeChip userId={task.assignedUserId} name={userName} firstNameOnly showIcon={false} />
-                                {deleted ? <DeletedBadge /> : <TaskStatusPill task={task} />}
-                                {dateStr && (
-                                    <span className="text-caption text-ink-muted">{new Date(dateStr).toLocaleString()}</span>
-                                )}
-                            </div>
-                            {task.description && (
-                                <div className="text-caption text-ink-muted flex items-start gap-1 break-words">
-                                    <Briefcase className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" aria-hidden="true" />
-                                    <span className="whitespace-pre-wrap">{task.description}</span>
-                                </div>
-                            )}
-                            <div className="flex items-center gap-2">
-                                <span className="text-caption text-ink-muted">Plan. / Tikras:</span>
-                                <span className="text-body-lg font-mono font-semibold text-ink-strong">
-                                    <span className="text-brand">{task.estimatedTime || '-'}</span>
-                                    <span className="text-ink-muted mx-1">/</span>
-                                    <span>{formatMinutesToTimeString(calculateCurrentTotalMinutes(task))}</span>
-                                </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-line">
-                                <label className={`flex items-center gap-2 min-h-touch ${task.isArchived ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
-                                    <input
-                                        type="checkbox"
-                                        checked={isConfirmed}
-                                        onChange={() => handleToggleConfirm(task)}
-                                        disabled={task.isArchived}
-                                        aria-label={isConfirmed ? `Pažymėti „${task.title}“ kaip nepriimtą` : `Priimti „${task.title}“`}
-                                        className="w-5 h-5 rounded border-line text-feedback-success focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-                                    />
-                                    <span className="text-caption text-ink">{isConfirmed ? 'Priimtas' : 'Laukia priėmimo'}</span>
-                                </label>
-                                <div className="flex items-center gap-1">
-                                    <IconButton
-                                        label="Peržiūrėti komentarus"
-                                        onClick={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
-                                    >
-                                        <MessageSquare className="w-4 h-4" aria-hidden="true" />
-                                        {task.comments?.length > 0 && (
-                                            <span className="ml-0.5 text-caption font-bold">{task.comments.length}</span>
-                                        )}
-                                    </IconButton>
-                                    {canRevert && (
-                                        <IconButton
-                                            icon={RotateCcw}
-                                            label="Grąžinti užduotį"
-                                            onClick={() => handleRevert(task)}
-                                        />
-                                    )}
-                                </div>
-                            </div>
+                        <li key={task.id}>
+                            <TaskCard
+                                task={task}
+                                role={isManagerRole(userRole) ? 'manager' : 'worker'}
+                                surface="report"
+                                actions={actions}
+                                detailOverrides={detailOverrides}
+                            />
                         </li>
                     );
                 })}
@@ -739,14 +712,12 @@ export default function Reports({ users, canExport = false, viewRole }) {
             <table className="min-w-full divide-y divide-line table-fixed">
                 <thead className="bg-surface-sunken">
                     <tr>
-                        <th scope="col" className="px-2 py-2 text-center w-8 text-caption font-bold text-ink-muted uppercase tracking-wider">OK</th>
                         <th scope="col" className="px-2 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">UŽDUOTIS</th>
                         <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-12">VYKD.</th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIOR.</th>
                         <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-24">LAIKAS</th>
-                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">PRIO</th>
-                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">BŪSENA</th>
-                        <th scope="col" className="px-1 py-2 text-center text-caption font-bold text-ink-muted uppercase tracking-wider w-10">KOM.</th>
-                        <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-16"></th>
+                        <th scope="col" className="px-1 py-2 text-left text-caption font-bold text-ink-muted uppercase tracking-wider w-16">ŽYMOS</th>
+                        <th scope="col" className="px-1 py-2 text-right text-caption font-bold text-ink-muted uppercase tracking-wider w-20"></th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -766,14 +737,7 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                 key={task.id}
                                 task={task}
                                 rowClassName={`border-b border-line last:border-0 hover:bg-opacity-80 transition-colors ${isConfirmed ? 'bg-surface-card' : 'bg-feedback-info-soft'}`}
-                                showConfirm
-                                confirmChecked={isConfirmed}
-                                confirmDisabled={task.isArchived}
-                                onToggleConfirm={handleToggleConfirm}
-                                confirmAriaLabel={isConfirmed ? `Pažymėti „${task.title}“ kaip nepriimtą` : `Priimti „${task.title}“`}
                                 assigneeName={userName}
-                                commentCount={task.comments?.length || 0}
-                                onOpenComments={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })}
                                 titleCell={
                                     <>
                                         <div className="flex items-center gap-2">
@@ -783,10 +747,12 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                             </div>
                                             {(task.isDeleted || task.status === 'deleted') && <DeletedBadge />}
                                         </div>
-                                        <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1">
-                                            <Briefcase className="w-3 h-3 text-ink-muted flex-shrink-0 mt-0.5" />
-                                            <span className="whitespace-normal break-words">{task.description || (task.tag ? `${task.tag}` : 'Užduotis')}</span>
-                                        </div>
+                                        {task.description && (
+                                            <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1">
+                                                <Briefcase className="w-3 h-3 text-ink-muted flex-shrink-0 mt-0.5" />
+                                                <span className="whitespace-normal break-words">{task.description}</span>
+                                            </div>
+                                        )}
                                         {dateStr && (
                                             <div className="text-caption text-ink-muted mt-1">
                                                 {new Date(dateStr).toLocaleString()}
@@ -802,16 +768,26 @@ export default function Reports({ users, canExport = false, viewRole }) {
                                     </>
                                 }
                                 actions={
-                                    canRevert && (
+                                    <div className="flex items-center justify-end gap-1">
                                         <IconButton
-                                            label="Grąžinti užduotį"
-                                            variant="primary"
-                                            onClick={() => handleRevert(task)}
-                                            className="ml-auto bg-transparent text-brand hover:bg-brand-soft"
-                                        >
-                                            <RotateCcw className="w-4 h-4" aria-hidden="true" />
-                                        </IconButton>
-                                    )
+                                            icon={CheckCircle2}
+                                            label={isConfirmed ? 'Atšaukti priėmimą' : 'Priimti'}
+                                            disabled={task.isArchived}
+                                            className={isConfirmed ? '' : 'text-feedback-success hover:bg-feedback-success/10'}
+                                            onClick={() => handleToggleConfirm(task)}
+                                        />
+                                        <span className="relative inline-flex">
+                                            <IconButton icon={MessageSquare} label="Komentarai" onClick={() => setActiveModal({ type: 'comments', taskId: task.id, task: task })} />
+                                            {task.comments?.length > 0 && (
+                                                <span className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 bg-brand text-white text-caption font-bold flex items-center justify-center rounded-full leading-none">
+                                                    {task.comments.length}
+                                                </span>
+                                            )}
+                                        </span>
+                                        {canRevert && (
+                                            <IconButton icon={RotateCcw} label="Grąžinti užduotį" onClick={() => handleRevert(task)} />
+                                        )}
+                                    </div>
                                 }
                             />
                         );
@@ -823,12 +799,12 @@ export default function Reports({ users, canExport = false, viewRole }) {
     );
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {/* TABS — Veiklos ataskaita / Pridavimas / Istorija. These are team/oversight surfaces,
                 so the switcher only appears in the manager team view. In a personal report (worker,
                 or a manager viewing their OWN data via viewRole="worker") there is just one view, so
                 the whole switcher is dropped. */}
-            {isManagerRole(userRole) && (
+            {isManagerRole(userRole) && views.length > 1 && (
                 <div role="tablist" aria-label="Ataskaitų skiltys">
                     {/* Segmented switcher — same control as the Komandos veiklos sub-tabs
                         (ManagerView). Labels wrap to multiple lines on a narrow screen
@@ -1294,9 +1270,9 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker }) {
             aria-label="Komandos laikotarpio suvestinė"
         >
             <div className="mb-3 flex items-center gap-2">
+                <span className="font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
                 <Users className="h-5 w-5 text-brand" aria-hidden="true" />
                 <h3 className="text-body font-bold text-ink-strong">Komandos suvestinė</h3>
-                <span className="ml-auto font-mono text-caption text-ink-muted">{startStr} – {endStr}</span>
             </div>
 
             {/* Time triplet — the period's worked / break / total hours to the minute, from the same
