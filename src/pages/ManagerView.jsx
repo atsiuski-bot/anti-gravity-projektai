@@ -13,7 +13,7 @@ import { Spinner } from '../components/ui/Loading';
 import Select from '../components/ui/Select';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
-import TagFilterPills from '../components/ui/TagFilterPills';
+import FilterPills from '../components/ui/FilterPills';
 import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
@@ -21,6 +21,7 @@ import { useNavigation } from '../context/NavigationContext';
 import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, TASK_TAGS } from '../utils/taskUtils';
 import { PRIORITIES, getPriorityLabel } from '../utils/priority';
 import { STATUS_LABELS } from '../utils/taskConstants';
+import { formatDisplayName } from '../utils/formatters';
 
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
@@ -107,6 +108,29 @@ export default function ManagerView() {
     React.useEffect(() => {
         if (filterTag && !presentTags.includes(filterTag)) setFilterTag('');
     }, [filterTag, presentTags, setFilterTag]);
+
+    // Vykdytojai who actually have an ACTIVE task in the default list — the source for the immediate
+    // assignee pill filter (shown on BOTH mobile and desktop). Derived from the default-active set
+    // (excludes 'unapproved' + done), unlike the tag pills which mirror every non-deleted task: an
+    // assignee pill must never point at someone whose work has all left the list. Names resolve from
+    // the live team roster (fresh displayName → "Jonas K." via formatDisplayName), falling back to
+    // the denormalised assignedUserName stored on the task.
+    const presentAssignees = React.useMemo(() => {
+        const nameById = new Map((users || []).map((u) => [u.id, u.displayName || u.email || '']));
+        const seen = new Map();
+        for (const t of tasks) {
+            if (t.isDeleted || t.status === 'deleted') continue;
+            const isDone = t.completed || t.status === 'completed' || t.status === 'confirmed';
+            if (t.status === 'unapproved' || isDone) continue; // mirror the default active list
+            const id = t.assignedUserId;
+            if (!id || seen.has(id)) continue;
+            const fullName = nameById.get(id) || t.assignedUserName || '';
+            seen.set(id, formatDisplayName(fullName) || '—');
+        }
+        return [...seen.entries()]
+            .map(([value, label]) => ({ value, label }))
+            .sort((a, b) => a.label.localeCompare(b.label, 'lt'));
+    }, [tasks, users]);
 
     const handleMoveUp = React.useCallback((taskId) => {
         const currentList = [...sortedTasks];
@@ -405,17 +429,27 @@ export default function ManagerView() {
                     aria-labelledby="team-list-tab"
                     className={cn(teamTasksSubTab !== 'list' && 'hidden')}
                 >
-                {/* Filter controls.
-                    Mobile (<md): a clean stack — the tag pills (immediate, only the tags present on
-                    the team's tasks) sit ABOVE the search; the old per-classifier dropdowns
-                    (vykdytojas / rūšiavimas / prioritetas / žyma) are gone here. Desktop (md+):
+                {/* Assignee filter pills — immediate (no dropdown), single-select by VYKDYTOJAS, shown
+                    on BOTH mobile and desktop above the list. Only workers with an active task in this
+                    list get a pill; they share `filterUser` with the desktop table-header Vykdytojas
+                    dropdown, so the two stay in lockstep. (Tag filtering on desktop still lives on the
+                    table-header Žymos column; the mobile tag-pill row was replaced by this one.) */}
+                <FilterPills
+                    options={presentAssignees}
+                    value={filterUser}
+                    onChange={setFilterUser}
+                    allLabel="Visi"
+                    ariaLabel="Filtruoti pagal vykdytoją"
+                    className="mb-3"
+                />
+
+                {/* Mobile (<md): the search box + a clear button sit below the pills. Desktop (md+):
                     sort and per-column filters live ON the table headers (TaskTable `gridControls`),
                     with collapsed search + the "Daugiau rūšiavimo" launcher + clear on the tab row
                     above — the dense manager controls stay there (§9 dual density). A clear button
                     still appears on mobile when any filter is active (incl. one set from the desktop
                     headers) so a stale filter is never stranded with no way out. */}
                 <div className="mb-4 md:hidden">
-                    <TagFilterPills tags={presentTags} value={filterTag} onChange={setFilterTag} className="mb-3" />
                     <SearchBox
                         value={searchText}
                         onChange={setSearchText}
