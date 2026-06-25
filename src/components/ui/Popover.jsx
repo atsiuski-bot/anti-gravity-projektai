@@ -35,7 +35,7 @@ const GAP = 8;       // px below the anchor
 const MARGIN = 8;    // px minimum viewport inset on every side
 const DEFAULT_WIDTH = 400;
 
-export default function Popover({ anchorRef, open, onClose, title, id = 'popover', width = DEFAULT_WIDTH, children }) {
+export default function Popover({ anchorRef, open, onClose, title, id = 'popover', width = DEFAULT_WIDTH, hideHeader = false, children }) {
     const panelRef = useRef(null);
     const [pos, setPos] = useState(null);
     const titleId = `${id}-title`;
@@ -117,15 +117,18 @@ export default function Popover({ anchorRef, open, onClose, title, id = 'popover
             id={id}
             role="dialog"
             aria-modal="false"
-            aria-labelledby={titleId}
+            aria-labelledby={hideHeader ? undefined : titleId}
+            aria-label={hideHeader ? title : undefined}
             tabIndex={-1}
             style={{ position: 'fixed', top: pos.top, left: pos.left, width, maxHeight: pos.maxHeight, transformOrigin: 'top right' }}
             className="z-nav flex flex-col overflow-hidden rounded-card border border-line bg-surface-card shadow-lg animate-in fade-in zoom-in-95 slide-in-from-top-2 focus:outline-none"
         >
-            <div className="flex flex-shrink-0 items-center justify-between border-b border-line px-4 py-3">
-                <h2 id={titleId} className="text-body font-semibold text-ink-strong">{title}</h2>
-                <IconButton icon={X} label="Uždaryti" onClick={closeAndRestore} className="-mr-1" />
-            </div>
+            {!hideHeader && (
+                <div className="flex flex-shrink-0 items-center justify-between border-b border-line px-4 py-3">
+                    <h2 id={titleId} className="text-body font-semibold text-ink-strong">{title}</h2>
+                    <IconButton icon={X} label="Uždaryti" onClick={closeAndRestore} className="-mr-1" />
+                </div>
+            )}
             <div className="flex-1 overflow-y-auto overscroll-contain px-4 py-3">
                 {children}
             </div>

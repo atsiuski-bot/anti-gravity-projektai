@@ -50,6 +50,8 @@ export default function Modal({
     level = 'modal',
     className,
     initialFocusRef,
+    align = 'center',
+    hideCloseButton = false,
 }) {
     const dialogRef = useRef(null);
 
@@ -59,14 +61,16 @@ export default function Modal({
     if (!open) return null;
 
     const labelledBy = title ? titleId : ariaLabelledby;
-    const showChrome = !bare && (title || (dismissible && onClose));
+    const showClose = dismissible && onClose && !hideCloseButton;
+    const showChrome = !bare && (title || showClose);
 
     // Portal to <body> so the fixed overlay is never trapped by a transformed ancestor
     // (e.g. a swipeable TaskCard applies translateX, which would otherwise contain `fixed`).
     return createPortal(
         <div
             className={cn(
-                'fixed inset-0 flex items-center justify-center bg-feedback-scrim p-4 animate-in fade-in',
+                'fixed inset-0 flex justify-center bg-feedback-scrim p-4 animate-in fade-in',
+                align === 'top' ? 'items-start' : 'items-center',
                 level === 'top' ? 'z-top' : 'z-backdrop'
             )}
             onMouseDown={(e) => {
@@ -98,7 +102,7 @@ export default function Modal({
                         ) : (
                             <span />
                         )}
-                        {dismissible && onClose && (
+                        {showClose && (
                             <IconButton icon={X} label="Uždaryti" onClick={onClose} className="-mr-2 -mt-2" />
                         )}
                     </div>

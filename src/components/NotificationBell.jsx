@@ -56,12 +56,19 @@ export default function NotificationBell() {
             </button>
 
             {isDesktop ? (
-                <Popover anchorRef={bellRef} open={open} onClose={close} title="Pranešimai" id={PANEL_ID}>
+                // Desktop: the anchored panel drops its own "Pranešimai" + X chrome — the
+                // Aktyvūs / Istorija tab bar inside is the panel's header (and outside-click /
+                // Escape already close a non-modal Popover, so no X is needed).
+                <Popover anchorRef={bellRef} open={open} onClose={close} title="Pranešimai" id={PANEL_ID} hideHeader>
                     <ManagerNotifications onClose={close} />
                 </Popover>
             ) : (
                 open && (
-                    <Modal open onClose={close} title="Pranešimai" size="md">
+                    // Phone: a top-anchored sheet (not a centred dialog) so the feed reads from the
+                    // top down and grows downward as the list (e.g. full history) gets longer. The
+                    // tab bar inside is sticky, so it stays pinned while the list scrolls; the
+                    // panel's own title/X chrome is dropped in favour of that tab bar.
+                    <Modal open onClose={close} ariaLabel="Pranešimai" size="md" align="top" hideCloseButton>
                         <ManagerNotifications onClose={close} />
                     </Modal>
                 )
