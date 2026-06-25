@@ -1,12 +1,20 @@
 import React, { useState, useEffect, useId } from 'react';
 import { X, Link as LinkIcon, MessageCircle, FileText, ChevronLeft, ChevronRight, AlertTriangle, Trash2, Clock, ZoomIn, ZoomOut, ListChecks, Plus, CheckSquare, Square, Pencil, Check } from 'lucide-react';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '../firebase';
 import { getChecklistProgress } from '../utils/checklistActions';
 import { getCommentKey } from '../utils/commentActions';
 import { preventEnterSubmit } from '../utils/formUtils';
+import { formatMinutesToTimeString } from '../utils/timeUtils';
+import { formatTime } from '../utils/formatters';
+import { logError } from '../utils/errorLog';
+import { useAuth } from '../context/AuthContext';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
+import Button from './ui/Button';
 import ConfirmDialog from './ui/ConfirmDialog';
 import UserChip from './UserChip';
+import SessionEditModal from './SessionEditModal';
 
 export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
     const titleId = useId();
@@ -343,41 +351,144 @@ export function DescriptionModal({ isOpen, onClose, description }) {
     );
 }
 
-// Read-only history of legacy manual time corrections (deltas). Adding/removing corrections was
-// retired in favour of the per-session start/end editor on the day timeline; the existing records
-// are kept and stay viewable here so past adjustments remain auditable.
+// Per-task time editor. The "Koreguoti laiką" button on the task review opens this. It edits
+// work_sessions — the single canonical record of logged time (every report sums it) — by listing
+// THIS task's recorded sessions and handing each to the canonical SessionEditModal (clamp,
+// original snapshot, audit stamp, worker notification). A missing session can be added. The legacy
+// per-task `timeAdjustments` deltas (retired in favour of session editing) are kept read-only at
+// the bottom so historical corrections stay auditable.
 export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
+    const { currentUser } = useAuth();
+    const [sessions, setSessions] = useState([]);
+    const [loading, setLoading] = useState(true);
+    // null = list view; { mode, session } = the SessionEditModal is open over the list.
+    const [editTarget, setEditTarget] = useState(null);
+
+    const taskId = task?.id;
+
+    // Live-load this task's logged sessions so an edit/delete/add refreshes the list without a
+    // manual reload. Soft-deleted rows (isDeleted) are dropped — they stay in Firestore for audit
+    // but must not show as editable. Sessions are keyed to the task by its real Firestore id.
+    useEffect(() => {
+        if (!isOpen || !taskId) return undefined;
+        setLoading(true);
+        const q = query(collection(db, 'work_sessions'), where('taskId', '==', taskId));
+        const unsub = onSnapshot(
+            q,
+            (snap) => {
+                const rows = snap.docs
+                    .map((d) => ({ id: d.id, ...d.data() }))
+                    .filter((s) => !s.isDeleted)
+                    .sort((a, b) => String(a.startTime || '').localeCompare(String(b.startTime || '')));
+                setSessions(rows);
+                setLoading(false);
+            },
+            (err) => {
+                logError(err, { source: 'snapshot:taskWorkSessions', taskId });
+                setLoading(false);
+            }
+        );
+        return unsub;
+    }, [isOpen, taskId]);
+
     if (!isOpen || !task) return null;
 
     const adjustments = task.timeAdjustments || [];
+    const targetUser = task.assignedUserId
+        ? { id: task.assignedUserId, name: task.assignedUserName }
+        : null;
 
     return (
-        <DetailsModal isOpen={isOpen} onClose={onClose} title="Papildomi laiko įrašai" icon={Clock}>
-            <div className="flex flex-col h-full max-h-[60vh]">
-                <div className="flex-1 overflow-y-auto space-y-3 pr-2">
-                    {adjustments.length > 0 ? (
-                        adjustments.map((adj, idx) => (
-                            <div key={idx} className="bg-surface-sunken p-4 rounded-lg">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className="font-semibold text-ink-strong">{adj.date}</span>
-                                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-feedback-danger-soft text-feedback-danger-text' : 'bg-feedback-success-soft text-feedback-success-text'}`}>
-                                        {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
-                                    </span>
-                                </div>
-                                <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
+        <>
+            <DetailsModal isOpen={isOpen} onClose={onClose} title="Koreguoti laiką" icon={Clock}>
+                <div className="flex flex-col h-full max-h-[60vh]">
+                    <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+                        {loading ? (
+                            <p className="text-ink-muted text-center py-4">Įkeliama…</p>
+                        ) : sessions.length > 0 ? (
+                            sessions.map((s) => {
+                                const minutes = typeof s.durationMinutes === 'number' ? s.durationMinutes : 0;
+                                return (
+                                    <div key={s.id} className="flex items-center justify-between gap-3 bg-surface-sunken p-3 rounded-lg">
+                                        <div className="min-w-0">
+                                            <div className="flex items-center gap-2">
+                                                <span className="font-semibold text-ink-strong">{s.date || '—'}</span>
+                                                {s.edited && (
+                                                    <span className="px-1.5 py-0.5 rounded text-xs font-medium bg-feedback-warning-soft text-feedback-warning-text">
+                                                        Koreguota
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-ink-muted text-sm">
+                                                {formatTime(s.startTime)} – {formatTime(s.endTime)} · <span className="font-medium text-brand">{formatMinutesToTimeString(minutes)}</span>
+                                            </p>
+                                        </div>
+                                        <Button
+                                            variant="secondary"
+                                            icon={Pencil}
+                                            className="shrink-0"
+                                            onClick={() => setEditTarget({ mode: 'edit', session: s })}
+                                        >
+                                            Redaguoti
+                                        </Button>
+                                    </div>
+                                );
+                            })
+                        ) : (
+                            <p className="text-ink-muted text-center py-4">Šiai užduočiai dar nėra įrašytų sesijų</p>
+                        )}
+
+                        {/* Legacy per-task adjustment deltas — read-only history, shown only if any exist. */}
+                        {adjustments.length > 0 && (
+                            <div className="pt-3 mt-3 border-t border-line space-y-2">
+                                <p className="text-xs font-medium text-ink-muted">Senesni laiko koregavimai (tik peržiūrai)</p>
+                                {adjustments.map((adj, idx) => (
+                                    <div key={idx} className="bg-surface-sunken p-3 rounded-lg">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="font-semibold text-ink-strong">{adj.date}</span>
+                                            <span className={`px-2 py-0.5 rounded text-xs font-bold ${adj.durationMinutes < 0 ? 'bg-feedback-danger-soft text-feedback-danger-text' : 'bg-feedback-success-soft text-feedback-success-text'}`}>
+                                                {adj.durationMinutes < 0 ? '-' : '+'}{Math.floor(Math.abs(adj.durationMinutes) / 60)}h {Math.abs(adj.durationMinutes) % 60}m
+                                            </span>
+                                        </div>
+                                        <p className="text-ink-muted text-sm">{adj.reason || 'Be priežasties'}</p>
+                                    </div>
+                                ))}
                             </div>
-                        ))
-                    ) : (
-                        <p className="text-ink-muted text-center py-4">Nėra papildomų laiko įrašų</p>
-                    )}
+                        )}
+                    </div>
+
+                    <div className="mt-4 pt-4 border-t border-line">
+                        <Button
+                            variant="primary"
+                            icon={Plus}
+                            onClick={() => setEditTarget({ mode: 'create', session: null })}
+                            disabled={!targetUser}
+                            fullWidth
+                        >
+                            Pridėti sesiją
+                        </Button>
+                        {!targetUser && (
+                            <p className="mt-2 text-xs text-ink-muted text-center">
+                                Sesijos pridėti negalima — užduotis neturi priskirto vykdytojo.
+                            </p>
+                        )}
+                    </div>
                 </div>
-                {/* Read-only: new corrections are made on the day timeline by editing the specific
-                    session's start/end, not as a task-total delta. */}
-                <p className="mt-4 pt-4 border-t border-line text-xs text-ink-muted">
-                    Šie įrašai – istorija (tik peržiūrai). Laiką koreguokite dienos laiko juostoje, redaguodami konkrečią sesiją.
-                </p>
-            </div>
-        </DetailsModal>
+            </DetailsModal>
+
+            {editTarget && (
+                <SessionEditModal
+                    open
+                    mode={editTarget.mode}
+                    session={editTarget.session}
+                    targetUser={targetUser}
+                    defaultDate={editTarget.session?.date || null}
+                    editor={currentUser}
+                    onClose={() => setEditTarget(null)}
+                    onSaved={() => setEditTarget(null)}
+                />
+            )}
+        </>
     );
 }
 
