@@ -329,7 +329,13 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
         // 2. CRITICAL: Update user doc immediately (this is what the UI waits for)
         await updateDoc(userRef, updates);
 
-        // 3. Non-critical logging — fire and forget, don't block the caller
+        // 3. Non-critical logging — fire and forget, don't block the caller.
+        // `discard` short-circuits ALL logging: the worker chose to annul this session, so its
+        // time must not land in `sessions` OR the legacy `work_sessions`/`sessions` mirror. The
+        // critical path above still ran — the session is closed and any paused session restored —
+        // so only the logging is skipped, never the state cleanup. (Used by the call "Anuliuoti"
+        // action; any partial segment already logged in startSession for an INTERRUPTED other
+        // session stays, as that is a different session's real time, not this discarded one.)
         const doLogging = async () => {
             try {
                 const logPromises = [];
@@ -357,7 +363,7 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
                 await Promise.all(logPromises);
             } catch (e) { logError(e, { source: 'writeFail:endSession.doLogging', userId }); }
         };
-        doLogging(); // Fire and forget — no await
+        if (!session.discard) doLogging(); // Fire and forget — no await (skipped on annul)
 
         // 4. Task Resumption Logic
         if (!skipResume) {
