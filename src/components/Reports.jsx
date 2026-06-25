@@ -1282,7 +1282,7 @@ function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod
                 />
                 {Number.isFinite(w.avgOnTimePct) && (
                     <SummaryStat
-                        label="Punktualus startas"
+                        label="Startas laiku"
                         value={`${w.avgOnTimePct}%`}
                         delta={p && Number.isFinite(p.avgOnTimePct) ? delta(w.avgOnTimePct, p.avgOnTimePct) : null}
                     />

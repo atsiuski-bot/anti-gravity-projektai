@@ -1371,7 +1371,7 @@ export default function ManagerNotifications({ onClose }) {
                             <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-ink-muted" aria-hidden="true" />
                             <div className="min-w-0 flex-1 text-sm text-ink">
                                 <p className="font-medium leading-relaxed">{fallbackTitle}</p>
-                                {fallbackBody && fallbackBody !== 'WORKZ' && (
+                                {fallbackBody && fallbackBody !== 'Gildija' && (
                                     <p className="mt-1 text-ink-muted">{fallbackBody}</p>
                                 )}
                                 {notif.commentText && fallbackBody !== notif.commentText && (

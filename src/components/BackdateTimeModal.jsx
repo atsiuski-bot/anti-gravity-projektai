@@ -22,7 +22,7 @@ const ERROR_COPY = {
     reason: 'Nurodykite, ką dirbote.',
     future: 'Negalima įrašyti laiko į ateitį — įrašykite jau dirbtą laiką.',
     tooOld: `Galima įrašyti tik iki ${MAX_BACKDATE_DAYS} d. atgal.`,
-    user: 'Nepavyko nustatyti vykdytojo.',
+    user: 'Nepavyko nustatyti meistro.',
     task: 'Nepavyko nustatyti užduoties.',
     write: 'Nepavyko išsaugoti. Bandykite dar kartą.',
 };
