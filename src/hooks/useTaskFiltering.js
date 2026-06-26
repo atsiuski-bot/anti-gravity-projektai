@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { getPriorityRank } from '../utils/priority';
+import { compareTasksCanonical } from '../utils/taskUtils';
 import {
     filterRankTasks,
     buildTaskSuggestions,
@@ -98,7 +99,7 @@ export const compareTaskTag = (a, b) => {
     return tagA.localeCompare(tagB);
 };
 
-export const useTaskFiltering = (tasks, manualTaskOrder) => {
+export const useTaskFiltering = (tasks) => {
     const [filterUser, setFilterUser] = useState('');
     const [filterPriority, setFilterPriority] = useState('');
     const [filterTag, setFilterTag] = useState('');
@@ -134,7 +135,13 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
             activeTasks = filterRankTasks(activeTasks, debouncedSearch, getTaskMatchFields);
         }
 
-        if (sortBy === 'none') return activeTasks;
+        // Default ('none') = the app-wide CANONICAL order (priority → manual boardRank → deadline
+        // → completion → createdAt). While a free-text search is active, keep the relevance ranking
+        // instead — a search wants best-match-first, not priority-first.
+        if (sortBy === 'none') {
+            if (debouncedSearch.trim()) return activeTasks;
+            return [...activeTasks].sort(compareTasksCanonical);
+        }
 
         const comparePriority = (a, b) => {
             const rankA = getPriorityRank(a.priority);
@@ -182,15 +189,6 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
                 const userDiff = compareUser(a, b);
                 if (userDiff !== 0) return userDiff;
                 return comparePriority(a, b);
-            });
-        } else if (sortBy === 'manual') {
-            const orderMap = new Map(manualTaskOrder.map((id, index) => [id, index]));
-            sorted.sort((a, b) => {
-                const idxA = orderMap.has(a.id) ? orderMap.get(a.id) : 999999;
-                const idxB = orderMap.has(b.id) ? orderMap.get(b.id) : 999999;
-
-                if (idxA !== idxB) return idxA - idxB;
-                return 0;
             });
         } else if (sortBy === 'status') {
             sorted.sort((a, b) => {
@@ -242,7 +240,7 @@ export const useTaskFiltering = (tasks, manualTaskOrder) => {
         }
 
         return sorted;
-    }, [tasks, sortBy, manualTaskOrder, filterUser, filterPriority, filterTag, filterStatus, debouncedSearch]);
+    }, [tasks, sortBy, filterUser, filterPriority, filterTag, filterStatus, debouncedSearch]);
 
     return {
         sortedTasks,

@@ -1,8 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ArrowUpDown, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3 } from 'lucide-react';
+import { ArrowUpDown, Activity, ListChecks, Repeat, BadgeCheck, ClipboardCheck, History, BarChart3, LayoutGrid } from 'lucide-react';
+import { doc, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
+import IconButton from '../components/ui/IconButton';
 import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
@@ -22,6 +25,7 @@ import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, TASK_
 import { PRIORITIES, getPriorityLabel } from '../utils/priority';
 import { STATUS_LABELS } from '../utils/taskConstants';
 import { formatDisplayName } from '../utils/formatters';
+import { logError } from '../utils/errorLog';
 
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
@@ -42,6 +46,9 @@ const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
 const Reports = React.lazy(() => import('../components/Reports'));
 const CalendarChangeHistory = React.lazy(() => import('../components/CalendarChangeHistory'));
 const AuditDashboard = React.lazy(() => import('../components/AuditDashboard'));
+// The priority board pulls in @dnd-kit; lazy-load it so that weight enters the bundle only when a
+// manager actually turns the board on (it never touches the worker bundle or the default list).
+const PriorityBoard = React.lazy(() => import('../components/board/PriorityBoard'));
 
 export default function ManagerView() {
     const { userRole, currentUser, userData } = useAuth();
@@ -59,7 +66,7 @@ export default function ManagerView() {
     const [teamCalendarSubTab, setTeamCalendarSubTab] = useState('calendar');
 
     // Use custom hooks
-    const { tasks, ownTasks, users, allUsers, manualTaskOrder, saveManualOrder, error } = useManagerData(currentUser);
+    const { tasks, ownTasks, users, allUsers, error } = useManagerData(currentUser);
     // A scoped manager's pickers/reports must only offer their own team; admins & unscoped
     // managers see everyone. (Data rows are already team-scoped by the listeners; this narrows
     // the people you can FILTER/SELECT so no one outside the team is even named.)
@@ -74,7 +81,20 @@ export default function ManagerView() {
         searchText, setSearchText,
         searchSuggestions,
         sortBy, setSortBy
-    } = useTaskFiltering(tasks, manualTaskOrder);
+    } = useTaskFiltering(tasks);
+
+    // Desktop-only priority board toggle. The choice is persisted on the user doc (teamBoardView),
+    // so it follows the manager across sessions and devices. Firestore latency-compensates the local
+    // snapshot, so reading userData directly flips the view as soon as the write is issued.
+    const boardView = !!userData?.teamBoardView;
+    const toggleBoardView = React.useCallback(async () => {
+        if (!currentUser?.uid) return;
+        try {
+            await updateDoc(doc(db, 'users', currentUser.uid), { teamBoardView: !boardView });
+        } catch (err) {
+            logError(err, { source: 'manager:toggleBoardView' });
+        }
+    }, [boardView, currentUser]);
 
     // Task time monitoring — 80% warning and 100% limit for manager's own tasks (ownTasks, so a
     // scoped manager whose team listener excludes their own rows is still monitored correctly).
@@ -134,30 +154,6 @@ export default function ManagerView() {
             .map(([value, label]) => ({ value, label }))
             .sort((a, b) => a.label.localeCompare(b.label, 'lt'));
     }, [tasks, users]);
-
-    const handleMoveUp = React.useCallback((taskId) => {
-        const currentList = [...sortedTasks];
-        const index = currentList.findIndex(t => t.id === taskId);
-        if (index > 0) {
-            const temp = currentList[index];
-            currentList[index] = currentList[index - 1];
-            currentList[index - 1] = temp;
-            const newOrder = currentList.map(t => t.id);
-            saveManualOrder(newOrder);
-        }
-    }, [sortedTasks, saveManualOrder]);
-
-    const handleMoveDown = React.useCallback((taskId) => {
-        const currentList = [...sortedTasks];
-        const index = currentList.findIndex(t => t.id === taskId);
-        if (index < currentList.length - 1) {
-            const temp = currentList[index];
-            currentList[index] = currentList[index + 1];
-            currentList[index + 1] = temp;
-            const newOrder = currentList.map(t => t.id);
-            saveManualOrder(newOrder);
-        }
-    }, [sortedTasks, saveManualOrder]);
 
     useEffect(() => {
         // Simple responsive check
@@ -236,14 +232,13 @@ export default function ManagerView() {
         { value: 'user', label: 'Pagal vartotoją' },
         { value: 'deadline-user', label: 'Pagal terminą-vartotoją' },
         { value: 'user-priority', label: 'Pagal vartotoją-prioritetą' },
-        { value: 'manual', label: 'Rankiniu būdu' },
     ];
 
     // Desktop data-grid wiring. The team list's headers carry single-axis sort (user/priority/
     // status) + per-column filters; the composite/manual sorts (no single column) stay in the
     // "Daugiau rūšiavimo" launcher. One `sortBy` is the single source of truth, so the launcher
     // binds to '' under a header sort (showing its placeholder, contradicting nothing).
-    const MORE_SORT_VALUES = ['none', 'deadline-user', 'user-priority', 'manual'];
+    const MORE_SORT_VALUES = ['none', 'deadline-user', 'user-priority'];
     const moreSortOptions = sortOptions.filter((o) => MORE_SORT_VALUES.includes(o.value));
     const activeAdvancedSortLabel = sortBy !== 'none' && MORE_SORT_VALUES.includes(sortBy)
         ? (moreSortOptions.find((o) => o.value === sortBy)?.label ?? null)
@@ -418,20 +413,36 @@ export default function ManagerView() {
                                 placeholder="Ieškoti užduočių…"
                                 label="Ieškoti užduočių"
                             />
-                            <Select
-                                value={MORE_SORT_VALUES.includes(sortBy) && sortBy !== 'none' ? sortBy : ''}
-                                onChange={setSortBy}
-                                options={moreSortOptions}
-                                label="Daugiau rūšiavimo"
-                                placeholder="Daugiau rūšiavimo"
-                                ariaLabel="Daugiau rūšiavimo"
-                                icon={ArrowUpDown}
-                                className="w-auto min-w-[12rem]"
+                            {/* Priority-board toggle (desktop-only — it lives in this md+ strip). Flips
+                                the list into four drag-and-drop priority columns; the choice persists per
+                                user. Primary tint + aria-pressed signal the active state. */}
+                            <IconButton
+                                icon={LayoutGrid}
+                                label={boardView ? 'Rodyti sąrašą' : 'Rodyti prioritetų lentą'}
+                                aria-pressed={boardView}
+                                variant={boardView ? 'primary' : 'default'}
+                                onClick={toggleBoardView}
                             />
-                            {activeAdvancedSortLabel && (
-                                <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-sunken px-2.5 py-1 text-caption text-ink-muted">
-                                    Rūšiuojama:&nbsp;<span className="font-medium text-ink">{activeAdvancedSortLabel}</span>
-                                </span>
+                            {/* Manual sort doesn't apply to the board (arrangement happens by dragging),
+                                so the "Daugiau rūšiavimo" launcher is hidden while the board is on. */}
+                            {!boardView && (
+                                <>
+                                    <Select
+                                        value={MORE_SORT_VALUES.includes(sortBy) && sortBy !== 'none' ? sortBy : ''}
+                                        onChange={setSortBy}
+                                        options={moreSortOptions}
+                                        label="Daugiau rūšiavimo"
+                                        placeholder="Daugiau rūšiavimo"
+                                        ariaLabel="Daugiau rūšiavimo"
+                                        icon={ArrowUpDown}
+                                        className="w-auto min-w-[12rem]"
+                                    />
+                                    {activeAdvancedSortLabel && (
+                                        <span className="inline-flex items-center gap-1 rounded-full border border-line bg-surface-sunken px-2.5 py-1 text-caption text-ink-muted">
+                                            Rūšiuojama:&nbsp;<span className="font-medium text-ink">{activeAdvancedSortLabel}</span>
+                                        </span>
+                                    )}
+                                </>
                             )}
                         </div>
                     )}
@@ -493,20 +504,21 @@ export default function ManagerView() {
                                 task={task}
                                 onEdit={() => handleEditTask(task)}
                                 role="manager"
-                                showReorderControls={sortBy === 'manual'}
-                                onMoveUp={handleMoveUp}
-                                onMoveDown={handleMoveDown}
                             />
                         ))}
                     </div>
+                ) : boardView ? (
+                    /* Desktop + board toggle on → the four-column drag-and-drop priority board. */
+                    <ErrorBoundary boundaryName="manager:priority-board">
+                        <React.Suspense fallback={<Spinner />}>
+                            <PriorityBoard tasks={sortedTasks} onEditTask={handleEditTask} />
+                        </React.Suspense>
+                    </ErrorBoundary>
                 ) : (
                     <TaskTable
                         tasks={sortedTasks}
                         onEdit={handleEditTask}
                         role="manager"
-                        showReorderControls={sortBy === 'manual'}
-                        onMoveUp={handleMoveUp}
-                        onMoveDown={handleMoveDown}
                         hideCheckboxes={true}
                         gridControls={teamGridControls}
                     />

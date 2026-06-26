@@ -1,4 +1,4 @@
-import { getCurrentWorkDayCutoff } from './timeUtils';
+import { getCurrentWorkDayCutoff, calculateCurrentTotalMinutes, parseTimeStringToMinutes } from './timeUtils';
 
 // Task tags configuration
 export const TASK_TAGS = ['Auto', 'Renginiams', 'Piro'];
@@ -53,22 +53,99 @@ export const filterTasksByVisibility = (tasks) => {
 
 import { getPriorityRank } from './priority';
 
-export const sortWorkerTasks = (tasksList) => {
-    return [...tasksList].sort((a, b) => {
-        // 1. Completed tasks last
-        if (a.completed !== b.completed) return a.completed ? 1 : -1;
-
-        // 2. Priority (Urgent first - Higher rank first)
-        const rankA = getPriorityRank(a.priority);
-        const rankB = getPriorityRank(b.priority);
-        if (rankA !== rankB) return rankB - rankA; // Descending order of rank
-
-        // 3. Deadline (soonest first, null/undefined last)
-        const deadlineA = a.deadline ? new Date(a.deadline).getTime() : Infinity;
-        const deadlineB = b.deadline ? new Date(b.deadline).getTime() : Infinity;
-        if (deadlineA !== deadlineB) return deadlineA - deadlineB;
-
-        // 4. CreatedAt (newest first)
-        return (new Date(b.createdAt || 0)) - (new Date(a.createdAt || 0));
-    });
+/**
+ * Time-progress completion fraction (0..1) of a task: spent vs estimated minutes — the card's
+ * primary "% done" glance signal (founder decision 2026-06-26). No (or zero) estimate, or no time
+ * spent yet, => 0; this also keeps a not-yet-measurable / not-started task BELOW a started one in
+ * the canonical order, since completion is a descending key there.
+ */
+export const taskCompletionFraction = (task) => {
+    if (!task) return 0;
+    const est = parseTimeStringToMinutes(task.estimatedTime || '0');
+    if (est <= 0) return 0;
+    const spent = calculateCurrentTotalMinutes(task);
+    if (spent <= 0) return 0;
+    return Math.min(1, spent / est);
 };
+
+/**
+ * Coerce a stored timestamp to epoch millis. createdAt is stored as an ISO string and deadline as
+ * a 'YYYY-MM-DD' string, but team data can carry legacy shapes (number / Firestore Timestamp), so
+ * this stays defensive. Returns null when there is nothing comparable.
+ */
+const toMillis = (value) => {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+        const t = new Date(value).getTime();
+        return Number.isNaN(t) ? null : t;
+    }
+    if (typeof value.toMillis === 'function') return value.toMillis();
+    if (typeof value.seconds === 'number') return value.seconds * 1000;
+    if (value instanceof Date) return value.getTime();
+    return null;
+};
+
+/**
+ * compareTasksCanonical — THE one ordering used everywhere a task list is shown (worker + manager,
+ * mobile + desktop, team list + personal list). Each key only breaks a tie left by the previous
+ * one (founder spec 2026-06-26):
+ *   0. finished (completed) tasks sink to the bottom — personal lists keep them for the work day.
+ *   1. PRIORITY, descending — Skubus > Aukštas > Vidutinis > Žemas.
+ *   2. MANUAL order within the priority — a per-task `boardRank` set by dragging in the desktop
+ *      priority board. A card WITH a rank sorts above one without; two ranked cards sort by rank
+ *      ascending. This is the SHARED manual override (stored on the task, so everyone sees the same
+ *      order); when a column has been arranged every card in it carries a rank, so the whole column
+ *      follows the manual order and keys 3–5 no longer reshuffle it.
+ *   3. DEADLINE, ascending — sooner first; no deadline last.
+ *   4. COMPLETION, descending — more of the planned time spent = more "done" = higher.
+ *   5. CREATED, ascending — older tasks first (stable final tie-break).
+ */
+export const compareTasksCanonical = (a, b) => {
+    // 0. finished last
+    const aDone = !!a.completed;
+    const bDone = !!b.completed;
+    if (aDone !== bDone) return aDone ? 1 : -1;
+
+    // 1. priority, descending
+    const rankDiff = getPriorityRank(b.priority) - getPriorityRank(a.priority);
+    if (rankDiff !== 0) return rankDiff;
+
+    // 2. manual boardRank within the priority (present before absent; ranked by rank asc)
+    const aHasRank = typeof a.boardRank === 'number';
+    const bHasRank = typeof b.boardRank === 'number';
+    if (aHasRank && bHasRank) {
+        if (a.boardRank !== b.boardRank) return a.boardRank - b.boardRank;
+    } else if (aHasRank !== bHasRank) {
+        return aHasRank ? -1 : 1;
+    }
+
+    // 3. deadline, ascending (none last)
+    const aDeadline = toMillis(a.deadline);
+    const bDeadline = toMillis(b.deadline);
+    const aD = aDeadline === null ? Infinity : aDeadline;
+    const bD = bDeadline === null ? Infinity : bDeadline;
+    if (aD !== bD) return aD - bD;
+
+    // 4. completion, descending
+    const compDiff = taskCompletionFraction(b) - taskCompletionFraction(a);
+    if (Math.abs(compDiff) > 1e-9) return compDiff > 0 ? 1 : -1;
+
+    // 5. createdAt, ascending (oldest first; missing last)
+    const aCreated = toMillis(a.createdAt);
+    const bCreated = toMillis(b.createdAt);
+    const aC = aCreated === null ? Infinity : aCreated;
+    const bC = bCreated === null ? Infinity : bCreated;
+    if (aC !== bC) return aC - bC;
+    return 0;
+};
+
+/** Stable, non-mutating canonical sort (see compareTasksCanonical). */
+export const sortTasksCanonical = (tasksList) => [...(tasksList || [])].sort(compareTasksCanonical);
+
+/**
+ * Canonical order for every personal/own-task list (worker "Mano užduotys", manager "Mano darbai",
+ * the pending-approval queue). Retained as a named alias so existing call sites keep reading, but it
+ * now IS the single app-wide order — no separate worker-only comparator survives.
+ */
+export const sortWorkerTasks = (tasksList) => sortTasksCanonical(tasksList);

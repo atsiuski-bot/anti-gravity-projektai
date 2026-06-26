@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, query, orderBy, where, doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import { useUsers } from '../context/UsersContext';
 import { useAuth } from '../context/AuthContext';
 import { isScopedOverseer } from '../utils/teamScope';
@@ -15,38 +15,8 @@ export const useManagerData = (currentUser) => {
     const uid = currentUser?.uid;
     const [tasks, setTasks] = useState([]);
     const [ownTasks, setOwnTasks] = useState([]);
-    const [manualTaskOrder, setManualTaskOrder] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
-
-    // Fetch manual task order
-    useEffect(() => {
-        if (!currentUser) return;
-        const fetchSettings = async () => {
-            try {
-                const docRef = doc(db, 'user_settings', currentUser.uid);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists() && docSnap.data().manualTaskOrder) {
-                    setManualTaskOrder(docSnap.data().manualTaskOrder);
-                }
-            } catch (err) {
-                console.error("Error fetching user settings:", err);
-            }
-        };
-        fetchSettings();
-    }, [currentUser]);
-
-    const saveManualOrder = async (newOrder) => {
-        setManualTaskOrder(newOrder);
-        if (!currentUser) return;
-        try {
-            await setDoc(doc(db, 'user_settings', currentUser.uid), {
-                manualTaskOrder: newOrder
-            }, { merge: true });
-        } catch (err) {
-            console.error("Error saving manual order:", err);
-        }
-    };
 
     // Fetch tasks
     useEffect(() => {
@@ -115,5 +85,5 @@ export const useManagerData = (currentUser) => {
     // Filter out disabled users for the UI
     const users = usersList.filter(u => !u.isDisabled);
 
-    return { tasks, ownTasks, users, allUsers: usersList, manualTaskOrder, saveManualOrder, error, loading };
+    return { tasks, ownTasks, users, allUsers: usersList, error, loading };
 };

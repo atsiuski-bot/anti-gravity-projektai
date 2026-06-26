@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Calendar, ArrowUp, ArrowDown, Undo2, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
+import { Clock, Calendar, Undo2, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -13,7 +13,6 @@ import { getChecklistProgress } from '../utils/checklistActions';
 import { isManagerRole } from '../utils/formatters';
 import { canEditTask } from '../utils/taskPermissions';
 import { canApproveTask, canConfirmTask, canRevertTask } from '../utils/taskActionVisibility';
-import IconButton from './ui/IconButton';
 import TaskActionRow from './task/TaskActionRow';
 import ConfirmDialog from './ui/ConfirmDialog';
 import PriorityBadge from './task/PriorityBadge';
@@ -55,7 +54,7 @@ const DEADLINE_TONE = {
  * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the edit
  * button opens the create/edit form directly, bypassing the preview.
  */
-const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDown, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null }) => {
+const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null }) => {
     const { currentUser, userRole, userData } = useAuth();
     const runUndoable = useUndoableAction();
     const [activeModal, setActiveModal] = useState(null); // 'checklist' | 'timeAdjustments'
@@ -345,23 +344,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
                 )}
             >
                 <div className="flex items-start gap-2">
-                    {showReorderControls && (
-                        <div className="flex flex-col gap-0.5 -ml-1" onClick={(e) => e.stopPropagation()}>
-                            <IconButton
-                                icon={ArrowUp}
-                                label="Perkelti aukštyn"
-                                variant="ghost"
-                                onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
-                            />
-                            <IconButton
-                                icon={ArrowDown}
-                                label="Perkelti žemyn"
-                                variant="ghost"
-                                onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
-                            />
-                        </div>
-                    )}
-
                     <div className="flex-1 min-w-0">
                         {/* Title row — a leading status glyph (the card's only status signal) sits to
                             the LEFT; the title takes the rest and wraps with a hanging indent, so a
@@ -609,7 +591,6 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
 
 export default React.memo(TaskCard, (prevProps, nextProps) => {
     if (prevProps.role !== nextProps.role) return false;
-    if (prevProps.showReorderControls !== nextProps.showReorderControls) return false;
     const prev = prevProps.task;
     const next = nextProps.task;
     if (!prev || !next) return prev === next;

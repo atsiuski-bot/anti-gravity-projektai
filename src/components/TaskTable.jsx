@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, ArrowUp, ArrowDown, ImageIcon, Undo2, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp, Eye } from 'lucide-react';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, ImageIcon, Undo2, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp, Eye } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
@@ -114,7 +114,7 @@ function HeaderCell({ label, sortMode, sort, filter, filterLabel }) {
     );
 }
 
-const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveDown, hideCheckboxes, gridControls }) => {
+const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls }) => {
     const { currentUser, userRole, userData } = useAuth();
     const runUndoable = useUndoableAction();
     // Data-grid header wiring (see helpers above). Derived once per render; harmless no-ops when
@@ -652,11 +652,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                 <table className="min-w-full divide-y divide-line table-fixed">
                     <thead className="bg-surface-sunken">
                         <tr>
-                            {showReorderControls && (
-                                <th className="px-2 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-10">
-                                    #
-                                </th>
-                            )}
                             {!hideCheckboxes && (
                                 <th className="px-2 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-10">
                                     ✓
@@ -712,24 +707,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
                                         getStatusStyle(task)
                                     )}
                                 >
-                                    {showReorderControls && (
-                                        <td className="px-2 py-3 text-center align-top">
-                                            <div className="flex flex-col items-center gap-1">
-                                                <IconButton
-                                                    icon={ArrowUp}
-                                                    label="Perkelti aukštyn"
-                                                    variant="ghost"
-                                                    onClick={(e) => { e.stopPropagation(); onMoveUp(task.id); }}
-                                                />
-                                                <IconButton
-                                                    icon={ArrowDown}
-                                                    label="Perkelti žemyn"
-                                                    variant="ghost"
-                                                    onClick={(e) => { e.stopPropagation(); onMoveDown(task.id); }}
-                                                />
-                                            </div>
-                                        </td>
-                                    )}
                                     {!hideCheckboxes && (
                                         <td className="px-1 py-3 text-center align-top">
                                             <input
@@ -1004,7 +981,6 @@ const TaskTable = ({ tasks, onEdit, role, showReorderControls, onMoveUp, onMoveD
 
 export default React.memo(TaskTable, (prevProps, nextProps) => {
     if (prevProps.role !== nextProps.role) return false;
-    if (prevProps.showReorderControls !== nextProps.showReorderControls) return false;
 
     // The data-grid headers (active sort caret + funnel "filtered" styling) are driven by
     // gridControls values, not by the task rows. Compare them explicitly, or a re-sort/re-filter
