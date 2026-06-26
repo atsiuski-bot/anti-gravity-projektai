@@ -24,7 +24,7 @@ export default function BadgeDetailModal({ badge, onClose }) {
 
     return (
         <Modal open onClose={onClose} ariaLabel={`${badge.name}: aprašymas`} size="sm">
-            <div className="flex flex-col items-center text-center">
+            <div className="flex flex-col items-center pt-2 text-center">
                 <Badge
                     tier={TIER_KEYS[earned - 1] || 'bronze'}
                     name={badge.name}

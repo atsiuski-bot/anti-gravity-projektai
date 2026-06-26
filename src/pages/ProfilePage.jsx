@@ -199,10 +199,6 @@ export default function ProfilePage() {
     // Screen — so enabling the preference there does nothing until the user installs.
     const iosNeedsInstall = isIOS && !isStandalone;
 
-    const memberSince = userData?.createdAt
-        ? new Date(userData.createdAt).toLocaleDateString('lt-LT', { year: 'numeric', month: 'long' })
-        : null;
-
     const handlePickPhoto = () => {
         setPhotoError('');
         fileInputRef.current?.click();
@@ -421,9 +417,6 @@ export default function ProfilePage() {
                 <div className="mt-3 flex justify-center">
                     <StatusPill tone={role.tone} icon={ROLE_GLYPHS[userRole]}>{role.label}</StatusPill>
                 </div>
-                {memberSince && (
-                    <p className="mt-3 text-caption text-ink-muted">Narys nuo {memberSince}</p>
-                )}
 
                 {photoError && (
                     <p role="alert" className="mt-3 text-caption font-medium text-feedback-danger">
