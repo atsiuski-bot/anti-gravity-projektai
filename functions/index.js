@@ -406,19 +406,27 @@ exports.cleanupAttachmentsOnArchivedDelete = onDocumentDeleted('archived_tasks/{
 
 const TIER_NAMES = { 1: 'Bronza', 2: 'Sidabras', 3: 'Auksas', 4: 'Platina' };
 
+// DECISION 2026-06-26: thresholds recalibrated against ~7 months of real production data (2670
+// tasks, 5255 sessions, ~10 active people). The old tiers were hit by a committed worker in weeks,
+// so the upper tiers carried no aspiration. The new ladders are scaled to a committed worker's
+// accrual rate so that, per the founder's "most people stay 2-5 years" framing: bronze = first
+// days, silver = first months, GOLD ≈ 1.5-2 years of steady work, PLATINUM ≈ 4-5 years / top
+// performer. follow_through is additionally scaled DOWN because it no longer counts auto quick-work
+// (see onTaskFinishedBadge). thorough/documented kept modest — no usable historical baseline yet
+// (checklists ~unused; the completion-photo field is days old) — revisit once adoption data exists.
 const BADGES = {
     // Reliability
-    follow_through: { name: 'Pabaigiu, ką pradedu', stat: 'completedTasks', thresholds: [1, 10, 40, 120] }, // R1
-    steady_rhythm: { name: 'Pastovus ritmas', stat: 'workDays', thresholds: [5, 25, 75, 200] },             // R2 (high-water days)
-    on_estimate: { name: 'Telpa į planą', stat: 'onEstimate', thresholds: [5, 20, 60, 150] },               // R3
-    plans_ahead: { name: 'Planuoja iš anksto', stat: 'planAheadWeeks', thresholds: [2, 8, 20, 40] },        // R4 (high-water weeks)
-    on_time_start: { name: 'Pradeda laiku', stat: 'punctualDays', thresholds: [5, 20, 50, 120] },      // R6 (planned vs actual start)
+    follow_through: { name: 'Pabaigiu, ką pradedu', stat: 'completedTasks', thresholds: [5, 60, 600, 1500] }, // R1 (EXCLUDES quick-work)
+    steady_rhythm: { name: 'Pastovus ritmas', stat: 'workDays', thresholds: [10, 60, 300, 750] },            // R2 (high-water days)
+    on_estimate: { name: 'Telpa į planą', stat: 'onEstimate', thresholds: [10, 80, 450, 1100] },             // R3
+    plans_ahead: { name: 'Planuoja iš anksto', stat: 'planAheadWeeks', thresholds: [3, 15, 60, 150] },       // R4 (high-water weeks, ~52/yr ceiling)
+    on_time_start: { name: 'Pradeda laiku', stat: 'punctualDays', thresholds: [10, 60, 280, 650] },     // R6 (planned vs actual start)
     // Quality
-    approved_craft: { name: 'Priimta veikla', stat: 'confirmedTasks', thresholds: [3, 15, 50, 120] },      // Q1
-    thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [3, 15, 40, 100] },                        // Q2
-    hard_tasks: { name: 'Imasi sunkių', stat: 'hardTasks', thresholds: [3, 12, 30, 75] },                   // Q4
+    approved_craft: { name: 'Priimta veikla', stat: 'confirmedTasks', thresholds: [5, 75, 600, 1800] },     // Q1
+    thorough: { name: 'Kruopštus', stat: 'thorough', thresholds: [2, 10, 40, 120] },                         // Q2 (no baseline — checklists ~unused)
+    hard_tasks: { name: 'Imasi sunkių', stat: 'hardTasks', thresholds: [5, 60, 300, 800] },                  // Q4
     // Accountability
-    documented: { name: 'Dokumentuoja darbą', stat: 'documentedTasks', thresholds: [3, 15, 40, 100] }       // A1 (work-end proof photo)
+    documented: { name: 'Dokumentuoja darbą', stat: 'documentedTasks', thresholds: [3, 25, 120, 350] }      // A1 (no baseline — feature is days old)
 };
 
 function tierForCount(count, thresholds) {
@@ -571,7 +579,7 @@ function photoCount(value) {
 }
 
 // Task-finish badges. Three independent edges on a task update:
-//   • completed false→true                 → R1 follow_through, R3 on_estimate, Q2 thorough, Q4 hard_tasks
+//   • completed false→true                 → R1 follow_through (NOT quick-work), R3 on_estimate, Q2 thorough, Q4 hard_tasks
 //   • status →'confirmed'                   → Q1 approved_craft (a manager accepted the worker's work)
 //   • completionPhotoUrls empty→non-empty   → A1 documented (the worker attached a work-end proof photo)
 // The edges are independent (a manager finishing sets completed+confirmed at once; the proof photo
@@ -596,7 +604,11 @@ exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
 
     try {
         if (justCompleted) {
-            await bumpAndGrant(uid, 'follow_through');
+            // R1 deliberately EXCLUDES auto quick-work timers: they are casual one-tap logs, not
+            // tasks the worker chose to see through, so they must not inflate "Pabaigiu, ką pradedu"
+            // (DECISION 2026-06-26; the other completion badges are immune already — quick-work has
+            // no estimate/checklist and is MEDIUM priority).
+            if (after.isQuickWork !== true) await bumpAndGrant(uid, 'follow_through');
             if (hasEstimate(after) && after.timeLimitReached !== true) await bumpAndGrant(uid, 'on_estimate');
             if (checklistAllDone(after.checklist)) await bumpAndGrant(uid, 'thorough');
             if (isHighPriority(after.priority)) await bumpAndGrant(uid, 'hard_tasks');

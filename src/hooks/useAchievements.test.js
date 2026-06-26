@@ -6,17 +6,18 @@ import { BADGE_CATALOG } from '../utils/badgeCatalog';
 // and purely testable is the tier-boundary maths in deriveProgress and the client<->server
 // _stats field bridge in STAT_FIELD_BY_KEY. Both are exercised directly.
 //
-// `follow_through` is the boundary fixture: thresholds [1, 10, 40, 120], counter `completedTasks`.
-// Picking concrete counts around those thresholds proves the off-by-one tier edges; the missing /
-// at-max cases prove the two ends of the ladder.
+// `follow_through` is the boundary fixture (counter `completedTasks`). The assertions are written
+// against FT_THRESHOLDS read from the catalog — NOT hard-coded numbers — so they stay green when the
+// ladder is recalibrated. Counts are picked relative to those thresholds to prove the off-by-one tier
+// edges; the missing / at-max cases prove the two ends of the ladder.
 
 const FT = 'follow_through';
 const FT_FIELD = STAT_FIELD_BY_KEY[FT]; // 'completedTasks'
-const FT_THRESHOLDS = BADGE_CATALOG.find((d) => d.key === FT).thresholds; // [1, 10, 40, 120]
+const FT_THRESHOLDS = BADGE_CATALOG.find((d) => d.key === FT).thresholds; // four ascending tier cutoffs
 
 const progressFor = (count) => deriveProgress({ [FT_FIELD]: count })[FT];
 
-describe('deriveProgress — tier boundaries (follow_through: [1, 10, 40, 120])', () => {
+describe('deriveProgress — tier boundaries (follow_through ladder)', () => {
     it('treats a missing counter as count 0, tier 0, aiming at the first threshold', () => {
         // No _stats at all (engine never fired) is the same honest empty start as an explicit 0.
         const fromNull = deriveProgress(null)[FT];
@@ -26,7 +27,7 @@ describe('deriveProgress — tier boundaries (follow_through: [1, 10, 40, 120])'
             count: 0,
             tier: 0,
             prevThreshold: 0,
-            nextThreshold: FT_THRESHOLDS[0], // 1
+            nextThreshold: FT_THRESHOLDS[0], // first threshold
             nextTier: 1,
             atMax: false,
         });
@@ -34,25 +35,26 @@ describe('deriveProgress — tier boundaries (follow_through: [1, 10, 40, 120])'
 
     it('crosses into tier 1 exactly AT the first threshold (>= boundary, not >)', () => {
         // Just below the first threshold is still tier 0...
-        expect(progressFor(0)).toMatchObject({ tier: 0, nextThreshold: 1 });
+        expect(progressFor(FT_THRESHOLDS[0] - 1)).toMatchObject({ tier: 0, nextThreshold: FT_THRESHOLDS[0] });
         // ...and landing exactly on it promotes to tier 1, now aiming at the second threshold.
         expect(progressFor(FT_THRESHOLDS[0])).toMatchObject({
-            count: 1,
+            count: FT_THRESHOLDS[0],
             tier: 1,
-            prevThreshold: FT_THRESHOLDS[0], // 1
-            nextThreshold: FT_THRESHOLDS[1], // 10
+            prevThreshold: FT_THRESHOLDS[0], // first threshold
+            nextThreshold: FT_THRESHOLDS[1], // second threshold
             nextTier: 2,
             atMax: false,
         });
     });
 
     it('reports the surrounding band for a mid-band count between two thresholds', () => {
-        // 25 sits inside the silver band [10, 40): tier 2, prev 10, aiming at 40 (tier 3).
-        expect(progressFor(25)).toMatchObject({
-            count: 25,
+        // A count inside the band [T2, T3): tier 2, prev = T2, aiming at T3 (tier 3).
+        const mid = Math.floor((FT_THRESHOLDS[1] + FT_THRESHOLDS[2]) / 2);
+        expect(progressFor(mid)).toMatchObject({
+            count: mid,
             tier: 2,
-            prevThreshold: FT_THRESHOLDS[1], // 10
-            nextThreshold: FT_THRESHOLDS[2], // 40
+            prevThreshold: FT_THRESHOLDS[1], // second threshold
+            nextThreshold: FT_THRESHOLDS[2], // third threshold
             nextTier: 3,
             atMax: false,
         });
@@ -62,8 +64,8 @@ describe('deriveProgress — tier boundaries (follow_through: [1, 10, 40, 120])'
         const top = FT_THRESHOLDS.length; // 4
         // Exactly on the final threshold is already maxed.
         expect(progressFor(FT_THRESHOLDS[top - 1])).toMatchObject({
-            count: FT_THRESHOLDS[top - 1], // 120
-            tier: top, // 4
+            count: FT_THRESHOLDS[top - 1], // final threshold
+            tier: top, // top tier
             nextTier: top, // does not advance past the top
             nextThreshold: FT_THRESHOLDS[top - 1], // stays the final threshold, never an unreachable target
             atMax: true,
