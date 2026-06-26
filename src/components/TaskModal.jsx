@@ -307,7 +307,11 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         return groups;
     }, [sortedTemplates]);
 
-    const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.role === 'seniorManager' || w.id === currentUser.uid);
+    // A Meistras (worker) may never coordinate their own task — the coordinator picker lists ONLY
+    // real coordinators (managers/admins/senior managers), never the worker themselves. A manager
+    // keeps self in the list because a manager legitimately self-coordinates.
+    const selfIsCoordinator = isManagerRole(userRole) || isManagerRole(role);
+    const managers = workers.filter(w => w.role === 'manager' || w.role === 'admin' || w.role === 'seniorManager' || (selfIsCoordinator && w.id === currentUser.uid));
 
     // The assignee picker is narrowed to a scoped manager's own team (plus themselves), so they
     // can only assign work to their people — mirrored by the server-side write rule. Admins and
@@ -458,6 +462,10 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             (async () => {
                 let defaultManagerId = currentUser.uid;
                 if (role === 'worker') {
+                    // A worker never self-coordinates: default to their main coordinator
+                    // (defaultManager); if none is set, leave empty so the picker shows the
+                    // placeholder rather than pre-selecting the worker themselves.
+                    defaultManagerId = '';
                     try {
                         const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
                         if (userDoc.exists() && userDoc.data().defaultManager) {
