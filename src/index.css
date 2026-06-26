@@ -101,12 +101,11 @@
 
   /* Priority ramp (theme-reactive; consumed via inline style in PriorityBadge / priority.js).
      Full colors, not channels — used directly as var() in `style`. Light: black(urgent) ->
-     near-white(very-low). */
+     light-grey(low). */
   --priority-urgent-bg: #000000;  --priority-urgent-text: #FFFFFF;
   --priority-high-bg: #666666;    --priority-high-text: #FFFFFF;
   --priority-medium-bg: #A3A3A3;  --priority-medium-text: #111111;
   --priority-low-bg: #E0E0E0;     --priority-low-text: #111111;
-  --priority-verylow-bg: #FAFAFA; --priority-verylow-text: #111111;
   --priority-hairline: rgba(0, 0, 0, 0.05);
 
   /* Session colors (ADR 0016) — the loud full-screen state identity (§4). LIGHT values are
@@ -182,13 +181,12 @@
 
   --fb-offline: 51 65 85;      /* slate-700 — lifts the offline banner off the dark canvas */
 
-  /* Dark inverts the ramp: bright(urgent) -> faint(very-low), so "more urgent = louder against
+  /* Dark inverts the ramp: bright(urgent) -> faint(low), so "more urgent = louder against
      the canvas" still holds and no chip glares. Each pair is AA-legible on its own bg. */
   --priority-urgent-bg: #E5E7EB;  --priority-urgent-text: #111111;
   --priority-high-bg: #9CA3AF;    --priority-high-text: #111111;
   --priority-medium-bg: #6B7280;  --priority-medium-text: #FFFFFF;
   --priority-low-bg: #3F4654;     --priority-low-text: #E5E7EB;
-  --priority-verylow-bg: #2A303C; --priority-verylow-text: #9AA3B2;
   --priority-hairline: rgba(255, 255, 255, 0.10);
 
   /* Session colors — DARK (ADR 0016). The light theme's pale tints (#DBEAFE/#FEF3C7/#BBF7D0)

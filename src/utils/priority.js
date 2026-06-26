@@ -7,21 +7,20 @@ export const PRIORITIES = {
     URGENT: 'URGENT',
     HIGH: 'HIGH',
     MEDIUM: 'MEDIUM',
-    LOW: 'LOW',
-    VERY_LOW: 'VERY_LOW'
+    LOW: 'LOW'
 };
 
 // The priority chip is a contrast-tuned ramp. It is THEME-REACTIVE: the bg/text colors live in
 // CSS variables (`--priority-<slug>-bg/-text`, defined per theme in index.css) and the getters
 // below return `var(...)` references, so the chip re-paints with the theme. In light the ramp
-// runs black(urgent) -> near-white(very-low); in dark it inverts (bright urgent -> faint
-// very-low) so "more urgent = louder against the canvas" holds and no chip glares on the dark
+// runs black(urgent) -> light-grey(low); in dark it inverts (bright urgent -> faint
+// low) so "more urgent = louder against the canvas" holds and no chip glares on the dark
 // surface. The literal `color` hexes are retained as the LIGHT source of truth + for the runtime
 // contrast helper; `slug` keys the CSS variable.
 const PRIORITY_CONFIG = {
     [PRIORITIES.URGENT]: {
         id: PRIORITIES.URGENT,
-        rank: 5,
+        rank: 4,
         slug: 'urgent',
         label: 'Skubus',
         color: '#000000', // Black
@@ -29,7 +28,7 @@ const PRIORITY_CONFIG = {
     },
     [PRIORITIES.HIGH]: {
         id: PRIORITIES.HIGH,
-        rank: 4,
+        rank: 3,
         slug: 'high',
         label: 'Aukštas',
         color: '#666666', // Lighter Dark Grey (was #4D4D4D)
@@ -37,7 +36,7 @@ const PRIORITY_CONFIG = {
     },
     [PRIORITIES.MEDIUM]: {
         id: PRIORITIES.MEDIUM,
-        rank: 3,
+        rank: 2,
         slug: 'medium',
         label: 'Vidutinis',
         color: '#A3A3A3', // Lighter Medium Grey (was #8C8C8C)
@@ -46,18 +45,10 @@ const PRIORITY_CONFIG = {
     },
     [PRIORITIES.LOW]: {
         id: PRIORITIES.LOW,
-        rank: 2,
+        rank: 1,
         slug: 'low',
         label: 'Žemas',
         color: '#E0E0E0', // Lighter Grey (was #BDBDBD)
-        textColor: '#111111',
-    },
-    [PRIORITIES.VERY_LOW]: {
-        id: PRIORITIES.VERY_LOW,
-        rank: 1,
-        slug: 'verylow',
-        label: 'Labai žemas',
-        color: '#FAFAFA', // Almost White (was #F5F5F5)
         textColor: '#111111',
     }
 };

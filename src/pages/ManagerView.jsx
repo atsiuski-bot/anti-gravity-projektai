@@ -215,7 +215,6 @@ export default function ManagerView() {
         { value: PRIORITIES.HIGH, label: getPriorityLabel(PRIORITIES.HIGH) },
         { value: PRIORITIES.MEDIUM, label: getPriorityLabel(PRIORITIES.MEDIUM) },
         { value: PRIORITIES.LOW, label: getPriorityLabel(PRIORITIES.LOW) },
-        { value: PRIORITIES.VERY_LOW, label: getPriorityLabel(PRIORITIES.VERY_LOW) },
     ];
     const tagOptions = [
         { value: '', label: 'Visi Tagai' },

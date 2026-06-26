@@ -42,7 +42,7 @@ admin.initializeApp();
 const db = admin.firestore();
 
 // --- Canonical priority — MIRROR of src/utils/priority.js normalizePriority. ---
-const PRIORITIES = ['URGENT', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW'];
+const PRIORITIES = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 function normalizePriority(p) {
     if (!p) return 'MEDIUM';
     const up = String(p).toUpperCase();

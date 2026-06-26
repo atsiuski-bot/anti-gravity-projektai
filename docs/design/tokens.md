@@ -145,7 +145,6 @@ a light gray.
 | HIGH | `#666666` | white | 5.74:1 ✓ |
 | **MEDIUM (default)** | `#A3A3A3` | **dark `#111111`** | **white was 2.52:1 FAIL → fixed; now uses dark** |
 | LOW | `#E0E0E0` | dark `#111111` | ✓ |
-| VERY_LOW | `#FAFAFA` | dark `#111111` | ✓ |
 
 > Concretely: remove the explicit `textColor: '#FFFFFF'` on `MEDIUM` so
 > `getContrastingTextColor` (which already returns dark for `#A3A3A3`) takes over; or raise the

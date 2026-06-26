@@ -1503,7 +1503,7 @@ exports.dailyIntegrityScan = onSchedule(
 // and the approval/timer/archival flows all work unchanged — this generator reuses, it doesn't fork.
 
 // Canonical UPPERCASE priority — MIRROR of src/utils/priority.js normalizePriority.
-const RECURRING_PRIORITIES = ['URGENT', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW'];
+const RECURRING_PRIORITIES = ['URGENT', 'HIGH', 'MEDIUM', 'LOW'];
 function normalizeRecurringPriority(p) {
     const up = String(p || '').toUpperCase();
     return RECURRING_PRIORITIES.includes(up) ? up : 'MEDIUM';
@@ -2000,7 +2000,7 @@ exports.parseTaskDraft = onCall(
             'Tu ištrauki VIENĄ darbo užduotį iš vadovo laisvo teksto (lietuvių kalba). Grąžink TIK ' +
             'JSON objektą su laukais: title (trumpas darbo pavadinimas BE vykdytojo/laiko/prioriteto ' +
             'žodžių), assigneeName (geriausiai atitinkantis vardas iš sąrašo arba ""), priority ' +
-            '(vienas iš: URGENT, HIGH, MEDIUM, LOW, VERY_LOW), estimate (laikas TIK jei AIŠKIAI ' +
+            '(vienas iš: URGENT, HIGH, MEDIUM, LOW), estimate (laikas TIK jei AIŠKIAI ' +
             'nurodytas tekste, pvz. "30min","1h","2h","1,5h"; kitaip ""), estimateGuess (jei laiko ' +
             'tekste NĖRA — tavo protingas spėjimas, kiek toks darbas užtruktų, VIENA reikšmė iš: ' +
             ESTIMATE_HINT + '; jei estimate užpildytas, palik ""), deadline (YYYY-MM-DD arba ""). ' +

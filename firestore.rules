@@ -196,7 +196,7 @@ service cloud.firestore {
     // to /tasks only (NOT /archived_tasks — the client archives legacy rows verbatim).
     function taskFieldsOk(data) {
       return (!('priority' in data) ||
-              data.priority in ['URGENT', 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW']) &&
+              data.priority in ['URGENT', 'HIGH', 'MEDIUM', 'LOW']) &&
              (!('estimatedTimeMinutes' in data) ||
               (data.estimatedTimeMinutes is number &&
                data.estimatedTimeMinutes >= 0 &&
