@@ -51,7 +51,10 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     // --- HOURS REPORT STATE ---
     // Free from/to range (YYYY-MM-DD) instead of a single month, so a manager can pull an
     // arbitrary span for payroll. Defaults to the current month so far (1st → today).
-    const [dateRange, setDateRange] = useState(() => resolvePresetRange('week'));
+    // Personal reports (worker role, or a manager viewing their own data via viewRole='worker')
+    // default to 'day' view; the team report keeps 'week' as its default.
+    const isPersonalView = userRole === 'worker';
+    const [dateRange, setDateRange] = useState(() => resolvePresetRange(isPersonalView ? 'day' : 'week'));
     const [, setWorkData] = useState([]); // populated by fetchWorkHours; read only in CSV export path
     // Test/founder accounts are excluded from the work report by default so payroll totals and
     // the leaderboard aren't skewed by non-production data; a manager can opt to show them.
@@ -60,7 +63,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
 
     // Unified report period. 'day' renders DailyStatistics (its own day navigation); any other
     // value renders the detailed summary for `dateRange`. `periodOpen` toggles the picker panel.
-    const [reportPeriod, setReportPeriod] = useState('week'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
+    const [reportPeriod, setReportPeriod] = useState(isPersonalView ? 'day' : 'week'); // 'day' | 'week' | 'month' | '3months' | 'year' | 'custom'
     const [periodOpen, setPeriodOpen] = useState(false);
 
     // The rich "Atsisiųsti ataskaitą" modal (Markdown / JSON / CSV summary + per-worker selection).
@@ -1251,8 +1254,8 @@ function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod
                 {onShiftPeriod && (
                     <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
                 )}
-                <User className="h-5 w-5 text-brand ml-auto" aria-hidden="true" />
-                <h3 className="text-body font-bold text-ink-strong">Mano suvestinė</h3>
+                <User className="h-5 w-5 text-brand ml-auto flex-shrink-0" aria-hidden="true" />
+                <h3 className="text-body font-bold text-ink-strong hidden sm:block">Mano suvestinė</h3>
             </div>
 
             <div className="grid grid-cols-3 divide-x divide-line">
@@ -1407,8 +1410,8 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
                 {onShiftPeriod && (
                     <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
                 )}
-                <Users className="h-5 w-5 text-brand ml-auto" aria-hidden="true" />
-                <h3 className="text-body font-bold text-ink-strong">Komandos suvestinė</h3>
+                <Users className="h-5 w-5 text-brand ml-auto flex-shrink-0" aria-hidden="true" />
+                <h3 className="text-body font-bold text-ink-strong hidden sm:block">Komandos suvestinė</h3>
             </div>
 
             {/* Time triplet — the period's worked / break / total hours to the minute, from the same

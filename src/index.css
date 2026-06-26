@@ -451,6 +451,15 @@
 .duration-300 { --wz-enter-duration: 300ms; }
 .duration-500 { --wz-enter-duration: 500ms; }
 
+/* Stagger helpers for an entrance CASCADE (e.g. the login hero: logo -> wordmark -> button).
+   Each only sets animation-delay; declared AFTER .animate-in so its shorthand (which resets delay
+   to 0) can't clobber them. The `both` fill on .animate-in holds the hidden from-state through the
+   delay, so a staggered element stays invisible until its turn. Neutralised by reduced-motion. */
+.wz-delay-1 { animation-delay: 70ms; }
+.wz-delay-2 { animation-delay: 140ms; }
+.wz-delay-3 { animation-delay: 210ms; }
+.wz-delay-4 { animation-delay: 280ms; }
+
 /* Live "alive" breathing — gentle opacity pulse on the active-session indicator
    while a timer runs. Far softer than Tailwind's animate-pulse (which dips to .5). */
 @keyframes wz-pulse-soft {

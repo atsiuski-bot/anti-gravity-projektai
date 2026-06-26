@@ -9,7 +9,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
-      includeAssets: ['logo.jpg', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-192x192-maskable.png', 'pwa-512x512-maskable.png'],
+      includeAssets: ['logo-mark.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-192x192-maskable.png', 'pwa-512x512-maskable.png'],
       workbox: {
         // The FCM service worker is a SEPARATE worker (registered by the messaging SDK at its own
         // scope). Keep Workbox from precaching/serving it so the two never collide. Also skip the
