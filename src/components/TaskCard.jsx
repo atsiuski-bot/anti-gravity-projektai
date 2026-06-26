@@ -316,7 +316,10 @@ const TaskCard = ({ task, onEdit, role, showReorderControls, onMoveUp, onMoveDow
     // collection). Checklist / time-adjust stay internal — they already key off task.isArchived.
     const detail = detailOverrides || {
         canManage: isManager,
-        canDelete: isManager,
+        // Delete mirrors the edit window: a worker may delete their OWN task only while it is
+        // still unapproved (canEdit), then it locks; managers may always delete. The Firestore
+        // rule already permits the assignee to delete (`ownsAssignedUser`), so this is the UI gate.
+        canDelete: canEdit,
         onEdit: onEdit && canEdit ? onEdit : undefined,
         onDelete: () => handleDeleteTask(),
         onRevert: () => { setRevertError(''); setConfirmRevert(true); },
