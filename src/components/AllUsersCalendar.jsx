@@ -362,7 +362,13 @@ export default function AllUsersCalendar() {
                 ONE line (name first, hours immediately after, packed left). The left colour stripe
                 still ties the row to its worker, so colour is never the sole signal (§4/§16). */}
             <div className="md:hidden flex-1 overflow-y-auto p-4 space-y-2.5">
-                {usersWithEvents.length === 0 ? (
+                {(() => {
+                    // Shared "now" marker for the mobile bars — same time→percent math as the
+                    // desktop red line, but drawn inside each worker's shift track (no shared axis).
+                    const nowHour = now.getHours() + now.getMinutes() / 60;
+                    const nowVisible = isSameDay(now, currentDate) && nowHour >= START_HOUR && nowHour <= END_HOUR;
+                    const nowLeft = ((nowHour - START_HOUR) / TOTAL_HOURS) * 100;
+                    return usersWithEvents.length === 0 ? (
                     <EmptyState
                         icon={CalendarOff}
                         title="Nėra suplanuotų veiklų"
@@ -413,6 +419,15 @@ export default function AllUsersCalendar() {
                                                     className="absolute inset-y-0 rounded-full"
                                                     style={{ ...barStyle, backgroundColor: barColor }}
                                                 />
+                                                {/* Real-time "now" marker — overlays the track at the
+                                                    current time, matching the desktop red line (§4: paired
+                                                    with the shared header date, so colour isn't the sole cue). */}
+                                                {nowVisible && (
+                                                    <div
+                                                        className="absolute top-0 bottom-0 w-0.5 bg-feedback-danger z-20 pointer-events-none transition-all duration-1000"
+                                                        style={{ left: `${nowLeft}%` }}
+                                                    />
+                                                )}
                                             </div>
                                         )}
                                     </>
@@ -441,7 +456,8 @@ export default function AllUsersCalendar() {
                             })}
                         </ul>
                     ))
-                )}
+                    );
+                })()}
             </div>
 
             {/* Manager drill-down — the clicked worker's day report, identical to the table the
