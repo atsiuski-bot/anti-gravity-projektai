@@ -1251,8 +1251,8 @@ function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod
                 {onShiftPeriod && (
                     <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
                 )}
-                <User className="h-5 w-5 text-brand ml-auto" aria-hidden="true" />
-                <h3 className="text-body font-bold text-ink-strong">Mano suvestinė</h3>
+                <User className="h-5 w-5 text-brand ml-auto flex-shrink-0" aria-hidden="true" />
+                <h3 className="text-body font-bold text-ink-strong hidden sm:block">Mano suvestinė</h3>
             </div>
 
             <div className="grid grid-cols-3 divide-x divide-line">
@@ -1407,8 +1407,8 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
                 {onShiftPeriod && (
                     <IconButton icon={ChevronRight} label="Kitas laikotarpis" onClick={() => onShiftPeriod(1)} disabled={atToday} />
                 )}
-                <Users className="h-5 w-5 text-brand ml-auto" aria-hidden="true" />
-                <h3 className="text-body font-bold text-ink-strong">Komandos suvestinė</h3>
+                <Users className="h-5 w-5 text-brand ml-auto flex-shrink-0" aria-hidden="true" />
+                <h3 className="text-body font-bold text-ink-strong hidden sm:block">Komandos suvestinė</h3>
             </div>
 
             {/* Time triplet — the period's worked / break / total hours to the minute, from the same
