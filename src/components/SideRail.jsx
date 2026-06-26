@@ -7,6 +7,7 @@ import { getNavSections } from '../config/navTabs';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import BrandMark from './ui/BrandMark';
 import QuickWorkTimer from './QuickWorkTimer';
 import CallTimer from './CallTimer';
 import BreakTimer from './BreakTimer';
@@ -80,13 +81,17 @@ function SideRail() {
             {/* Fixed top: brand + collapse toggle + primary create action (never scrolls away). */}
             <div className={cn('shrink-0 pt-3 pb-1.5', collapsed ? 'px-2' : 'px-2.5')}>
                 {collapsed ? (
-                    <div className="flex justify-center pb-1.5">
+                    <div className="flex flex-col items-center gap-1.5 pb-1.5">
+                        <BrandMark size="sm" />
                         <IconButton icon={PanelLeftOpen} label="Išplėsti meniu" onClick={toggleCollapsed} />
                     </div>
                 ) : (
                     <>
                         <div className="flex items-center justify-between px-1">
-                            <span className="text-h3 font-extrabold tracking-tight text-ink-strong">Gildija</span>
+                            <span className="flex items-center gap-2">
+                                <BrandMark size="sm" />
+                                <span className="text-h3 font-extrabold tracking-tight text-ink-strong">Gildija</span>
+                            </span>
                             <IconButton icon={PanelLeftClose} label="Sutraukti meniu" onClick={toggleCollapsed} />
                         </div>
                         <div className="px-1 pb-1.5">

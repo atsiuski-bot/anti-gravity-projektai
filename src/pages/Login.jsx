@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
+import BrandMark from '../components/ui/BrandMark';
 import { auth } from '../firebase';
 
 /** The Google "G" mark. Monochrome (currentColor) so it sits cleanly on the brand button. */
@@ -102,14 +103,19 @@ export default function Login() {
     return (
         <div className="min-h-screen flex items-center justify-center bg-surface-base px-4">
             <Card className="w-full max-w-md p-8 text-center">
-                <div className="mb-1">
-                    <span className="text-5xl font-extrabold tracking-tight text-ink-strong">WORK</span>
-                    <span className="text-5xl font-extrabold tracking-tight text-brand">Z</span>
+                {/* Brand lockup: logo + wordmark. The hero pieces fade-and-rise in a short stagger
+                    on mount (login screen); the logo keeps a barely-there idle float and switches
+                    to a soft breathing pulse while signing in (login metu). All reduced-motion-safe. */}
+                <div className="animate-in fade-in zoom-in-95 duration-500 mb-4 flex justify-center">
+                    <BrandMark size="lg" animated loading={loading} />
                 </div>
-                <p className="mb-8 text-body text-ink-muted">Veiklos laiko apskaita</p>
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 wz-delay-1 mb-1">
+                    <span className="text-5xl font-extrabold tracking-tight text-ink-strong">Gildija</span>
+                </div>
+                <p className="animate-in fade-in slide-in-from-bottom-2 duration-500 wz-delay-2 mb-8 text-body text-ink-muted">Veiklos laiko apskaita</p>
 
-                <h1 className="mb-1 text-h2 text-ink-strong">Sveiki sugrįžę</h1>
-                <p className="mb-6 text-body text-ink-muted">Prisijunkite, kad matytumėte savo užduotis</p>
+                <h1 className="animate-in fade-in slide-in-from-bottom-2 duration-500 wz-delay-2 mb-1 text-h2 text-ink-strong">Sveiki sugrįžę</h1>
+                <p className="animate-in fade-in slide-in-from-bottom-2 duration-500 wz-delay-3 mb-6 text-body text-ink-muted">Prisijunkite, kad matytumėte savo užduotis</p>
 
                 {error && (
                     <div role="alert" className="mb-4 rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">
@@ -117,9 +123,11 @@ export default function Login() {
                     </div>
                 )}
 
-                <Button size="lg" fullWidth loading={loading} onClick={handleLogin} icon={GoogleIcon}>
-                    {loading ? 'Jungiamasi…' : 'Prisijungti su Google'}
-                </Button>
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-500 wz-delay-4">
+                    <Button size="lg" fullWidth loading={loading} onClick={handleLogin} icon={GoogleIcon}>
+                        {loading ? 'Jungiamasi…' : 'Prisijungti su Google'}
+                    </Button>
+                </div>
 
                 {/* DEV-only test login — stripped from production builds (see handler comment). */}
                 {import.meta.env.DEV && (

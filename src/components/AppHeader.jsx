@@ -3,6 +3,7 @@ import { useNavigation } from '../context/NavigationContext';
 import ActiveSessionReadout from './ActiveSessionReadout';
 import NotificationBell from './NotificationBell';
 import Avatar from './ui/Avatar';
+import BrandMark from './ui/BrandMark';
 import { cn } from '../utils/cn';
 
 /**
@@ -36,9 +37,10 @@ function SessionPill({ sessionType, session, taskTitle }) {
 }
 
 /**
- * AppHeader — the calm top bar (DESIGN_SYSTEM §9). Left: the active-session pill. Right: the
- * notification bell (+ unread badge) and the avatar (profile entry). No brand/role here — those
- * stay in the desktop side rail; on mobile the brand was never shown.
+ * AppHeader — the calm top bar (DESIGN_SYSTEM §9). Left: the brand mark when idle, swapped for the
+ * active-session pill the moment a session runs (the pill can carry a task title, so it claims the
+ * scarce mobile width and the logo steps aside). Right: the notification bell (+ unread badge) and
+ * the avatar (profile entry).
  *
  * `surface-card` keeps it quiet so the whole-screen session colour below still dominates the
  * canvas. Sticky so the bell and active session are always reachable from any tab.
@@ -50,7 +52,11 @@ export default function AppHeader({ sessionType, session }) {
     return (
         <header className="sticky top-0 z-nav flex h-12 items-center justify-between gap-2 border-b border-line bg-surface-card/95 px-3 backdrop-blur-sm sm:px-4">
             <div className="flex min-w-0 flex-1 items-center">
-                <SessionPill sessionType={sessionType} session={session} taskTitle={userData?.activeSession?.taskTitle} />
+                {sessionType ? (
+                    <SessionPill sessionType={sessionType} session={session} taskTitle={userData?.activeSession?.taskTitle} />
+                ) : (
+                    <BrandMark size="sm" />
+                )}
             </div>
 
             <div className="flex items-center gap-1">
