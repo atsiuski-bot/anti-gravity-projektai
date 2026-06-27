@@ -34,6 +34,7 @@ import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import { useManagerData } from '../hooks/useManagerData';
 import { useTaskFiltering } from '../hooks/useTaskFiltering';
+import useFullBleed from '../hooks/useFullBleed';
 import { scopeRoster } from '../utils/teamScope';
 import { cn } from '../utils/cn';
 
@@ -56,6 +57,10 @@ export default function ManagerView() {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     const [viewMode, setViewMode] = useState('desktop');
+    // The meistras filter pills break out of the centered max-w-7xl box to fill the whole content
+    // column on desktop (so the widest possible single-line roster fits, matching the full-bleed
+    // board below); gated off on mobile, where that would only cancel the comfortable side padding.
+    const [assigneeFilterBleedRef, assigneeFilterBleedStyle] = useFullBleed(viewMode !== 'mobile');
     // Komandos veiklos sub-tabs: live activity, task list, approvals queue, recurring — plus the
     // two oversight sections lifted out of the retired Kom. ataskaitos tab: Pridavimas (tasks
     // awaiting acceptance) and Istorija (already-accepted tasks).
@@ -470,14 +475,19 @@ export default function ManagerView() {
                     list get a pill; they share `filterUser` with the desktop table-header Vykdytojas
                     dropdown, so the two stay in lockstep. (Tag filtering on desktop still lives on the
                     table-header Žymos column; the mobile tag-pill row was replaced by this one.) */}
-                <FilterPills
-                    options={presentAssignees}
-                    value={filterUser}
-                    onChange={setFilterUser}
-                    allLabel="Visi"
-                    ariaLabel="Filtruoti pagal meistrą"
-                    className="mb-3"
-                />
+                {/* The bleed wrapper widens this row to the full content column on desktop; the pills
+                    are centered within it so a short roster sits in the middle (not stranded at the
+                    left edge) while a long one spreads as wide as possible before wrapping. */}
+                <div ref={assigneeFilterBleedRef} style={assigneeFilterBleedStyle}>
+                    <FilterPills
+                        options={presentAssignees}
+                        value={filterUser}
+                        onChange={setFilterUser}
+                        allLabel="Visi"
+                        ariaLabel="Filtruoti pagal meistrą"
+                        className="mb-3 justify-center"
+                    />
+                </div>
 
                 {/* Mobile (<md): the search box + a clear button sit below the pills. Desktop (md+):
                     sort and per-column filters live ON the table headers (TaskTable `gridControls`),
