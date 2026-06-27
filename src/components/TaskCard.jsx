@@ -54,7 +54,7 @@ const DEADLINE_TONE = {
  * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the edit
  * button opens the create/edit form directly, bypassing the preview.
  */
-const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null }) => {
+const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null, leadingHandle = null }) => {
     const { currentUser, userRole, userData } = useAuth();
     const runUndoable = useUndoableAction();
     const [activeModal, setActiveModal] = useState(null); // 'checklist' | 'timeAdjustments'
@@ -344,6 +344,11 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                 )}
             >
                 <div className="flex items-start gap-2">
+                    {/* Optional drag affordance (priority board only) — rendered as the card's first
+                        column so the grab rail is part of the card itself, not a separate gutter beside
+                        it. It spans the content row's height for a comfortable pickup area; the footer
+                        buttons below stay outside it and fully clickable. */}
+                    {leadingHandle}
                     <div className="flex-1 min-w-0">
                         {/* Title row — a leading status glyph (the card's only status signal) sits to
                             the LEFT; the title takes the rest and wraps with a hanging indent, so a
@@ -591,6 +596,10 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
 
 export default React.memo(TaskCard, (prevProps, nextProps) => {
     if (prevProps.role !== nextProps.role) return false;
+    // The board passes a fresh drag-handle node each render (it carries live dnd-kit listeners);
+    // never skip a re-render while one is present, or the handle would keep stale drag state.
+    // In every other surface this is undefined === undefined, so the memo is unaffected.
+    if (prevProps.leadingHandle !== nextProps.leadingHandle) return false;
     const prev = prevProps.task;
     const next = nextProps.task;
     if (!prev || !next) return prev === next;

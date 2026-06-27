@@ -114,7 +114,13 @@ export default function Layout({ children }) {
                     safe-area insets real. Padding the CONTENT wrapper (not the session-shell root)
                     keeps the bold whole-screen shell colour bleeding edge-to-edge while the header +
                     main content stay clear of the notch. env() = 0 in portrait/desktop → no-op there. */}
+                {/* data-content-column marks THIS element as the full available content width
+                    (everything except the desktop SideRail). It is an explicit, greppable anchor so a
+                    full-bleed surface (PriorityBoard's useFullBleed) can break out of `main`'s centered
+                    max-width and fill this column WITHOUT hard-coding "main's parent" — keep this
+                    attribute on whatever wraps `main` if this shell is ever restructured. */}
                 <div
+                    data-content-column
                     className={cn('min-w-0', isDesktop && 'flex-1')}
                     style={{ paddingLeft: 'env(safe-area-inset-left)', paddingRight: 'env(safe-area-inset-right)' }}
                 >
