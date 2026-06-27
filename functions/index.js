@@ -1533,6 +1533,13 @@ function recurringIsoWeekday(dateStr) {
 function recurringDaysInMonth(year, month) {
     return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
+// MIRROR of src/utils/recurrence.js weekIndex — Monday-aligned absolute week index.
+function recurringWeekIndex(dateStr) {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    if (!y || !m || !d) return null;
+    const dayNum = Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+    return Math.floor((dayNum + 3) / 7);
+}
 // MIRROR of src/utils/recurrence.js recurrenceFiresOn — keep both copies identical.
 function recurringFiresOn(recurrence, dateStr) {
     if (!recurrence || recurrence.active === false) return false;
@@ -1542,8 +1549,15 @@ function recurringFiresOn(recurrence, dateStr) {
     switch (recurrence.freq) {
         case 'daily':
             return true;
-        case 'weekly':
-            return Array.isArray(recurrence.byWeekday) && recurrence.byWeekday.includes(wd);
+        case 'weekly': {
+            if (!Array.isArray(recurrence.byWeekday) || !recurrence.byWeekday.includes(wd)) return false;
+            const interval = Math.floor(Number(recurrence.interval) || 1);
+            if (interval <= 1 || !recurrence.anchorDate) return true;
+            const wi = recurringWeekIndex(dateStr);
+            const ai = recurringWeekIndex(recurrence.anchorDate);
+            if (wi == null || ai == null) return true;
+            return (((wi - ai) % interval) + interval) % interval === 0;
+        }
         case 'monthly': {
             const [y, m, d] = dateStr.split('-').map(Number);
             const target = Math.min(recurrence.byMonthDay || 1, recurringDaysInMonth(y, m));
