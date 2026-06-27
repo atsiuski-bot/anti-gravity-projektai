@@ -81,8 +81,10 @@ function SideRail() {
             {/* Fixed top: brand + collapse toggle + primary create action (never scrolls away). */}
             <div className={cn('shrink-0 pt-3 pb-1.5', collapsed ? 'px-2' : 'px-2.5')}>
                 {collapsed ? (
-                    <div className="flex flex-col items-center gap-1.5 pb-1.5">
-                        <BrandMark size="sm" />
+                    // Collapsed: the brand mark is dropped here — the top bar (AppHeader) already
+                    // carries one, and two logos stacked looked duplicated. The expand toggle rises
+                    // to the top in its place.
+                    <div className="flex flex-col items-center pb-1.5">
                         <IconButton icon={PanelLeftOpen} label="Išplėsti meniu" onClick={toggleCollapsed} />
                     </div>
                 ) : (
