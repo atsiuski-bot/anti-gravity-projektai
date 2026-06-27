@@ -13,18 +13,22 @@ import { scopeRoster } from '../utils/teamScope';
 import { formatDisplayName } from '../utils/formatters';
 import {
     RECURRENCE_FREQS,
+    RECURRENCE_INTERVALS,
     WEEKDAYS,
     defaultRecurrence,
     describeRecurrence,
     nextOccurrence,
 } from '../utils/recurrence';
+import { getLithuanianDateString } from '../utils/timeUtils';
 import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import Select from './ui/Select';
+import DatePicker from './ui/DatePicker';
 import { Spinner } from './ui/Loading';
 import TaskModal from './TaskModal';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} d.` }));
+const INTERVAL_OPTIONS = RECURRENCE_INTERVALS.map((o) => ({ value: String(o.value), label: o.label }));
 
 // One template's recurrence editor + quick actions. Kept as a child so each row's draft/expander
 // state is local and editing one row never re-renders the others.
@@ -244,28 +248,64 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                     </div>
 
                     {draft.freq === 'weekly' && (
-                        <div>
-                            <span className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">Savaitės dienos</span>
-                            <div className="flex flex-wrap gap-2" role="group" aria-label="Savaitės dienos">
-                                {WEEKDAYS.map((w) => {
-                                    const on = Array.isArray(draft.byWeekday) && draft.byWeekday.includes(w.iso);
-                                    return (
-                                        <button
-                                            key={w.iso}
-                                            type="button"
-                                            aria-pressed={on}
-                                            onClick={() => toggleWeekday(w.iso)}
-                                            className={cn(
-                                                'inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border px-3 text-body font-medium transition-colors',
-                                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
-                                                on ? 'border-brand bg-brand/10 text-ink-strong' : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
-                                            )}
-                                        >
-                                            {w.short}
-                                        </button>
-                                    );
-                                })}
+                        <div className="space-y-4">
+                            <div className="max-w-[14rem]">
+                                <span className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">Pasikartojimas</span>
+                                <Select
+                                    value={String(draft.interval || 1)}
+                                    onChange={(val) => setDraft((d) => {
+                                        const interval = Number(val) || 1;
+                                        // A multi-week cycle needs a phase: seed the anchor week to today the first
+                                        // time the manager leaves "every week", so the cycle is well-defined on save.
+                                        const anchorDate = interval > 1 ? (d.anchorDate || getLithuanianDateString()) : d.anchorDate;
+                                        return { ...d, interval, anchorDate };
+                                    })}
+                                    options={INTERVAL_OPTIONS}
+                                    label="Pasikartojimas"
+                                    alwaysSheet
+                                />
                             </div>
+
+                            <div>
+                                <span className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">Savaitės dienos</span>
+                                <div className="flex flex-wrap gap-2" role="group" aria-label="Savaitės dienos">
+                                    {WEEKDAYS.map((w) => {
+                                        const on = Array.isArray(draft.byWeekday) && draft.byWeekday.includes(w.iso);
+                                        return (
+                                            <button
+                                                key={w.iso}
+                                                type="button"
+                                                aria-pressed={on}
+                                                onClick={() => toggleWeekday(w.iso)}
+                                                className={cn(
+                                                    'inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border px-3 text-body font-medium transition-colors',
+                                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                                    on ? 'border-brand bg-brand/10 text-ink-strong' : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
+                                                )}
+                                            >
+                                                {w.short}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {Number(draft.interval || 1) > 1 && (
+                                <div className="max-w-[16rem]">
+                                    <label htmlFor={`anchor-${template.id}`} className="mb-1 block text-caption font-bold uppercase tracking-wide text-ink-muted">
+                                        Ciklo atskaitos savaitė
+                                    </label>
+                                    <DatePicker
+                                        id={`anchor-${template.id}`}
+                                        value={draft.anchorDate || getLithuanianDateString()}
+                                        onChange={(val) => setDraft((d) => ({ ...d, anchorDate: val }))}
+                                        aria-label="Ciklo atskaitos savaitė"
+                                    />
+                                    <p className="mt-1 text-caption text-ink-muted">
+                                        Ciklas skaičiuojamas nuo šios savaitės; veikla kuriama pažymėtomis dienomis kas {Number(draft.interval)} sav.
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     )}
 

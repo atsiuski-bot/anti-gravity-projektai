@@ -13,6 +13,15 @@ export const RECURRENCE_FREQS = [
     { value: 'monthly', label: 'Kas mėnesį' },
 ];
 
+// Multi-week cadence for the weekly frequency: fire on the chosen weekdays every N weeks. A 2- or
+// 4-week rotation needs a phase (which weeks are "on"), so the rule also carries an `anchorDate`
+// whose week defines week 0 of the cycle. interval=1 is plain "every week" and ignores the anchor.
+export const RECURRENCE_INTERVALS = [
+    { value: 1, label: 'Kas savaitę' },
+    { value: 2, label: 'Kas 2 savaites' },
+    { value: 4, label: 'Kas 4 savaites' },
+];
+
 // ISO weekday convention: 1=Mon … 7=Sun. The recurring roster is overwhelmingly "weekly on
 // Monday", so weekday selection is the core of the model.
 export const WEEKDAYS = [
@@ -41,12 +50,26 @@ export function daysInMonth(year, month) {
     return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-// A fresh recurrence object for a new recurring template — weekly on Monday, active.
+// Monday-aligned absolute week index of a YYYY-MM-DD (UTC calendar arithmetic, so DST-independent
+// and identical on every device — same discipline as isoWeekday). 1970-01-01 is a Thursday, so
+// +3 shifts the boundary onto Monday: each Monday increments the index by one. Two dates share an
+// index iff they fall in the same Mon–Sun week. Used to phase an "every N weeks" cadence against a
+// rule's anchor week.
+export function weekIndex(dateStr) {
+    const [y, m, d] = String(dateStr).split('-').map(Number);
+    if (!y || !m || !d) return null;
+    const dayNum = Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+    return Math.floor((dayNum + 3) / 7);
+}
+
+// A fresh recurrence object for a new recurring template — weekly on Monday, every week, active.
 export function defaultRecurrence() {
     return {
         active: true,
         freq: 'weekly',
         byWeekday: [1],
+        interval: 1,        // weeks between firings (weekly freq only); 1 = every week
+        anchorDate: null,   // YYYY-MM-DD whose week is cycle week 0 — only used when interval > 1
         byMonthDay: 1,
         skipDates: [],
         lastGeneratedDate: null,
@@ -71,7 +94,16 @@ export function recurrenceFiresOn(recurrence, dateStr) {
             return true;
         case 'weekly': {
             const days = Array.isArray(recurrence.byWeekday) ? recurrence.byWeekday : [];
-            return days.includes(wd);
+            if (!days.includes(wd)) return false;
+            // Multi-week cadence: only fire in weeks that are a whole multiple of `interval` away
+            // from the anchor week. interval≤1 (or a missing/legacy interval) means every week, so
+            // pre-interval rules behave exactly as before. A missing anchor also degrades to weekly.
+            const interval = Math.floor(Number(recurrence.interval) || 1);
+            if (interval <= 1 || !recurrence.anchorDate) return true;
+            const wi = weekIndex(dateStr);
+            const ai = weekIndex(recurrence.anchorDate);
+            if (wi == null || ai == null) return true;
+            return (((wi - ai) % interval) + interval) % interval === 0;
         }
         case 'monthly': {
             const [y, m, d] = dateStr.split('-').map(Number);
@@ -106,9 +138,11 @@ export function describeRecurrence(recurrence) {
             return 'Kasdien';
         case 'weekly': {
             const days = Array.isArray(recurrence.byWeekday) ? recurrence.byWeekday : [];
-            if (!days.length) return 'Kas savaitę';
+            const interval = Math.floor(Number(recurrence.interval) || 1);
+            const cadence = interval > 1 ? `Kas ${interval} sav.` : 'Kas savaitę';
+            if (!days.length) return cadence;
             const names = WEEKDAYS.filter((w) => days.includes(w.iso)).map((w) => w.short);
-            return `Kas savaitę: ${names.join(', ')}`;
+            return `${cadence}: ${names.join(', ')}`;
         }
         case 'monthly':
             return `Kas mėnesį, ${recurrence.byMonthDay || 1} d.`;
