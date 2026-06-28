@@ -21,7 +21,8 @@ export default defineConfig({
       manifest: {
         name: 'Gildija',
         short_name: 'Gildija',
-        description: 'Productivity App',
+        description: 'Darbo laiko apskaitos programa',
+        lang: 'lt',
         // Pin install identity + scope explicitly (these previously defaulted). `id` keeps the
         // installed app stable across any future start_url change so browsers treat updates as the
         // same app, not a second install; scope/start_url anchor the standalone window to the root.

@@ -623,7 +623,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 updateDoc(doc(db, 'work_sessions', session.partialDocId), {
                     taskTitle: callTitle,
                     contactType
-                }).catch(e => console.warn('Failed to rename partial call session:', e))
+                }).catch(e => logError(e, { source: 'sessionActions.renamePartialCallSession' }))
             );
         }
 
@@ -730,7 +730,7 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
             logPromises.push(
                 updateDoc(doc(db, 'work_sessions', session.partialDocId), {
                     taskTitle: session.customTitle
-                }).catch(e => console.warn('Failed to rename partial session:', e))
+                }).catch(e => logError(e, { source: 'sessionActions.renamePartialQuickWorkSession' }))
             );
         }
 

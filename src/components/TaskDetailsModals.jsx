@@ -180,7 +180,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                                                 onChange={(e) => setEditText(e.target.value)}
                                                 rows={2}
                                                 aria-label="Redaguoti komentarą"
-                                                className="w-full px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm resize-y"
+                                                className="w-full px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-sm resize-y"
                                                 autoFocus
                                             />
                                             <div className="mt-2 flex justify-end gap-2">
@@ -206,16 +206,17 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                         placeholder="Rašyti komentarą..."
                         aria-label="Rašyti komentarą"
                         rows={2}
-                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus:ring-2 focus:ring-brand text-sm resize-y"
+                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-sm resize-y"
                         disabled={isSubmitting}
                     />
-                    <button
+                    <Button
                         type="submit"
-                        disabled={!newComment.trim() || isSubmitting}
-                        className="min-h-touch bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-hover transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        variant="primary"
+                        loading={isSubmitting}
+                        disabled={!newComment.trim()}
                     >
                         {isSubmitting ? 'Saugoma...' : 'Skelbti'}
-                    </button>
+                    </Button>
                 </form>
             </div>
         </DetailsModal>
@@ -317,7 +318,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, ca
                             value={newItem}
                             onChange={(e) => setNewItem(e.target.value)}
                             placeholder="Pridėti punktą..."
-                            className="flex-1 rounded-lg border border-line px-3 py-2 text-sm focus:ring-2 focus:ring-brand"
+                            className="flex-1 rounded-lg border border-line px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-brand"
                             disabled={isSubmitting}
                         />
                         <IconButton icon={Plus} label="Pridėti punktą" variant="primary" type="submit" disabled={!newItem.trim() || isSubmitting} />

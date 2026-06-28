@@ -1,6 +1,7 @@
 import { addDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
 import { NOTIFICATIONS, notificationCategory } from '../notifications/registry';
+import { logError } from './errorLog';
 
 /**
  * Single funnel for in-app notifications — the `request_notifications` collection, which is the
@@ -58,6 +59,8 @@ export async function notify({ recipientId, type, actorUid, actorName, ...rest }
         await addDoc(collection(db, 'request_notifications'), data);
     } catch (err) {
         console.error('notify failed', type, err);
+        // Also route to the durable log so a systematic notification-write failure is visible.
+        logError(err, { source: `notify:${type}` });
     }
 }
 

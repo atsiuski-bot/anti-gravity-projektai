@@ -384,20 +384,44 @@ service cloud.firestore {
       // Team-wide read (the team calendar / AllUsersCalendar listens to all hours by
       // date and maps every userId into a whole-team view).
       allow read:          if isUserActive();
-      // Workers plan their own hours; managers write approved entries for workers. The shape guard
-      // rejects a malformed start/end (non-string) so a bug can't poison the planner/reports feed.
-      allow create:        if isUserActive() && (createOwnsUserId() || isManagerOrAdmin())
-                           && workHoursShapeOk(request.resource.data);
+      // Workers plan their own hours; whole-team viewers write approved entries for anyone; a
+      // scoped overseer (scoped manager / senior manager) only for their people. This scopes the
+      // scoped-overseer the way work_sessions/break_sessions/tasks do, so a SCOPED manager cannot
+      // write OUTSIDE their subtree here while being correctly scoped everywhere else (ADR 0005/0007)
+      // — isManagerOrAdmin() would have let any scoped manager write ANY user's hours.
+      //
+      // NOTE — why overseesUser() and NOT inCallerTeam(): the sessions/tasks scoped branches lean on
+      // each row's denormalized `teamManagerIds` stamp, but work_hours is the ONE owned collection a
+      // Cloud Function never stamps (it is absent from functions OWNED_COLLECTIONS and has no
+      // stampTeamOn… trigger). inCallerTeam() would therefore always read [] here and silently deny
+      // every scoped-overseer write. overseesUser() instead reads the TARGET USER doc's overseerIds
+      // closure (one get(), write path only) — the same user-doc check the tasks/sessions CREATE
+      // branch uses — so it is correct without any row denormalization. On update/delete it is keyed
+      // on the EXISTING owner (resource.data.userId); the create branch keys on the incoming owner.
+      // The shape guard rejects a malformed start/end (non-string) so a bug can't poison reports.
+      allow create:        if isUserActive() && (
+                             createOwnsUserId() ||
+                             canSeeWholeTeam() ||
+                             (isScopedOverseer() && overseesUser(request.resource.data.userId))
+                           ) && workHoursShapeOk(request.resource.data);
       // Update may NOT re-point the record's owner. ownsUserId() only checks the EXISTING
       // owner, so without this pin an owner (or manager) could rewrite userId to a colleague
       // and graft their planned/logged hours onto someone else's record (polluting that
       // person's calendar + reports). Splitting update from delete is required because a
       // delete carries no request.resource to compare. The .get() form tolerates any legacy
       // doc that predates a userId field, matching the defensive idiom used elsewhere here.
-      allow update:        if isUserActive() && (ownsUserId() || isManagerOrAdmin())
+      allow update:        if isUserActive() && (
+                             ownsUserId() ||
+                             canSeeWholeTeam() ||
+                             (isScopedOverseer() && overseesUser(resource.data.userId))
+                           )
                            && request.resource.data.get('userId', '') == resource.data.get('userId', '')
                            && workHoursShapeOk(request.resource.data);
-      allow delete:        if isUserActive() && (ownsUserId() || isManagerOrAdmin());
+      allow delete:        if isUserActive() && (
+                             ownsUserId() ||
+                             canSeeWholeTeam() ||
+                             (isScopedOverseer() && overseesUser(resource.data.userId))
+                           );
     }
 
     // ---- ARCHIVED TASKS -----------------------------------------------------
@@ -468,8 +492,14 @@ service cloud.firestore {
       // managerId — both are collection-wide. Write stays owner/manager-scoped.
       allow read:   if isUserActive();
       allow create: if isUserActive() && createOwnsUserId();
-      // Worker edits its own request; managers approve/decline.
-      allow update: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
+      // Worker edits its own request; managers approve/decline. Update may NOT re-point the
+      // record's owner: ownsUserId() only checks the EXISTING owner, so without this pin an owner
+      // (or manager) could rewrite userId to a colleague and graft a request onto someone else's
+      // calendar history (which the Reports tab queries by userId). The .get() form tolerates a
+      // legacy doc predating the userId field, matching the pin on work_sessions/break_sessions/
+      // work_hours. Split from delete because a delete carries no request.resource to compare.
+      allow update: if isUserActive() && (ownsUserId() || isManagerOrAdmin())
+                    && request.resource.data.get('userId', '') == resource.data.get('userId', '');
       allow delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
     }
 

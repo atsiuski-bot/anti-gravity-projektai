@@ -1402,7 +1402,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     onChange={(e) => setTemplateName(e.target.value)}
                                     placeholder="Šablono pavadinimas"
                                     aria-label="Šablono pavadinimas"
-                                    className="w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand"
+                                    className="w-full px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand"
                                 />
                             </div>
                             <div>
@@ -1577,7 +1577,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                         }}
                                         aria-label="Atlikti iki"
                                         disabled={fieldsLocked}
-                                        className={`w-full px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base ${formData.deadline ? '' : 'text-transparent'}`}
+                                        className={`w-full px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand disabled:bg-surface-sunken text-base ${formData.deadline ? '' : 'text-transparent'}`}
                                     />
                                     {!formData.deadline && (
                                         <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base text-ink-muted">
@@ -1768,7 +1768,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     disabled={fieldsLocked}
                                     placeholder="Užduoties aprašymas..."
                                     aria-label="Aprašymas"
-                                    className="w-full min-h-[6rem] resize-none overflow-hidden px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand disabled:bg-surface-sunken text-base"
+                                    className="w-full min-h-[6rem] resize-none overflow-hidden px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand disabled:bg-surface-sunken text-base"
                                 />
                             </div>
 
@@ -1885,7 +1885,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             value={newChecklistItem}
                                             onChange={(e) => setNewChecklistItem(e.target.value)}
                                             placeholder="Pridėti punktą..."
-                                            className="flex-1 px-3 py-3 border border-line rounded-lg focus:ring-2 focus:ring-brand text-base"
+                                            className="flex-1 px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-base"
                                         />
                                         <IconButton icon={Plus} label="Pridėti punktą" variant="primary" onClick={addChecklistItemLocal} />
                                     </div>

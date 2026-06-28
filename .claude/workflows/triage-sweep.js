@@ -8,11 +8,11 @@ export const meta = {
 }
 
 // Dimensions worth agent REASONING. Deterministic checks (lint, build, deps
-// audit, firestore/storage rules diff) stay sequential in the /full-debug-sweep
-// deterministic track — no LLM value there. WORKZ has NO TypeScript (no tsc),
-// NO test runner, NO Cloud Functions, NO RTDB, and NO firestore.indexes.json —
-// so callable/type/test dimensions are intentionally absent and the missing
-// index file becomes a coupling risk the firebase-coupling dimension hunts.
+// audit, vitest, firestore/storage rules diff, firestore.indexes.json diff,
+// functions lint) stay sequential in the /full-debug-sweep deterministic track
+// — no LLM value there. WORKZ has NO TypeScript (no tsc) and NO RTDB, so the
+// type and RTDB dimensions are intentionally absent; the firestore.indexes.json
+// ↔ live-index drift is a coupling risk the firebase-coupling dimension hunts.
 // /full-debug-sweep delegates its REASONING phases to this workflow (all
 // dimensions); ad-hoc callers scope via args.dimensions + findOnly to cap cost.
 const ALL_DIMENSIONS = [

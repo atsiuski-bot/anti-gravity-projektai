@@ -21,6 +21,7 @@ import { getLithuanianWeekId } from '../utils/timeUtils';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
+import Card from './ui/Card';
 import EmptyState from './ui/EmptyState';
 import { TimeUpGlyph, TimeGrantedGlyph, TimeDeniedGlyph } from './icons/timeGlyphs';
 
@@ -75,7 +76,7 @@ function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDelet
     }, [taskId]);
 
     if (loading) {
-        return <div className="h-28 max-w-xl animate-pulse rounded-card border border-line bg-surface-card shadow-sm" />;
+        return <Card className="h-28 max-w-xl animate-pulse" />;
     }
     // Task already gone (deleted/archived): the completion notice is stale — render nothing.
     if (!task) return null;
@@ -926,11 +927,11 @@ export default function ManagerNotifications({ onClose }) {
                             default: break;
                         }
                         return (
-                            <div key={notif.id} className="flex items-start gap-3 rounded-card border border-line bg-surface-card p-3 shadow-sm animate-in fade-in slide-in-from-top-2">
+                            <Card key={notif.id} className="flex items-start gap-3 p-3 animate-in fade-in slide-in-from-top-2">
                                 <Icon className={`mt-0.5 h-5 w-5 flex-shrink-0 ${tone}`} aria-hidden="true" />
                                 <p className="min-w-0 flex-1 text-body text-ink">{text}</p>
                                 {!readOnly && <IconButton icon={X} label="Pažymėti skaitytu" variant="ghost" onClick={() => handleDismissTask(notif.id)} className="-mr-1 -mt-1" />}
-                            </div>
+                            </Card>
                         );
                     }
 
@@ -1357,7 +1358,7 @@ export default function ManagerNotifications({ onClose }) {
                 // missing taskId), only a dismiss, so a new type degrades to a readable info row.
                 const { title: fallbackTitle, body: fallbackBody } = notificationCopy(notif);
                 return (
-                    <div key={notif.id} className="rounded-card border border-line bg-surface-card p-4 shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl relative">
+                    <Card key={notif.id} className="p-4 animate-in fade-in slide-in-from-top-2 max-w-xl relative">
                         {!readOnly && (
                             <IconButton
                                 icon={X}
@@ -1381,7 +1382,7 @@ export default function ManagerNotifications({ onClose }) {
                                 )}
                             </div>
                         </div>
-                    </div>
+                    </Card>
                 );
             }
 

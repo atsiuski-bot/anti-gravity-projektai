@@ -185,13 +185,20 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                                 {photos.map((p, idx) => (
                                     <div key={p.url} className="relative h-16 w-16 overflow-hidden rounded-control border border-line">
                                         <img src={p.url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-cover" />
+                                        {/* Tap target is the full ≥44px button (WCAG 2.5.5); it
+                                            sits inside the corner so the tile's overflow-hidden
+                                            doesn't clip it, and the visible ~20px circle is pinned
+                                            to the top-right via justify-end/items-start so the glyph
+                                            stays in the corner while the hit area spans inward. */}
                                         <button
                                             type="button"
                                             onClick={() => removePhoto(idx)}
                                             aria-label="Pašalinti nuotrauką"
-                                            className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white"
+                                            className="absolute right-0 top-0 inline-flex min-h-touch min-w-touch items-start justify-end p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
                                         >
-                                            <X className="h-3 w-3" aria-hidden="true" />
+                                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
+                                                <X className="h-3 w-3" aria-hidden="true" />
+                                            </span>
                                         </button>
                                     </div>
                                 ))}

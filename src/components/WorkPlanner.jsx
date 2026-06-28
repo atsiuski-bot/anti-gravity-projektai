@@ -304,9 +304,25 @@ export default function WorkPlanner() {
     };
 
     const isApprovalFeatureActive = () => {
+        // Weekday + hour MUST be read in Europe/Vilnius, not browser-local: an off-Vilnius device
+        // (worker travelling, or a clock set to the wrong timezone) would otherwise compute a
+        // different day/hour and mis-route approvals — e.g. saving a retroactive edit free on a
+        // weekday that is still Friday-after-13:00 in Vilnius. Both parts come from ONE Vilnius
+        // formatting pass so the day and the hour describe the same instant.
         const now = new Date();
-        const day = now.getDay(); // 0 is Sunday, 5 is Friday
-        const hour = now.getHours();
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'Europe/Vilnius',
+            weekday: 'short',
+            hour: 'numeric',
+            hour12: false,
+        }).formatToParts(now);
+        const weekdayShort = parts.find(p => p.type === 'weekday')?.value;
+        // Some engines render midnight as "24" under hour12:false; normalize it to 0 so the
+        // hour stays in 0..23 and the boundary comparisons below behave at midnight.
+        const hour = parseInt(parts.find(p => p.type === 'hour')?.value, 10) % 24;
+        // 0 is Sunday, 5 is Friday — matched from the Vilnius weekday name.
+        const weekdayToNum = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+        const day = weekdayToNum[weekdayShort];
 
         // Disable from Friday 13:00 to Sunday 21:00 inclusive
         if (day === 5 && hour >= 13) return false; // Friday after 13:00
@@ -1053,7 +1069,7 @@ export default function WorkPlanner() {
                                         type="time"
                                         value={manualStart}
                                         onChange={(e) => setManualStart(e.target.value)}
-                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
+                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand outline-none transition-all"
                                     />
                                 </div>
                                 <div>
@@ -1063,7 +1079,7 @@ export default function WorkPlanner() {
                                         type="time"
                                         value={manualEnd}
                                         onChange={(e) => setManualEnd(e.target.value)}
-                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus:ring-2 focus:ring-brand outline-none transition-all"
+                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand outline-none transition-all"
                                     />
                                 </div>
                             </>
@@ -1368,7 +1384,7 @@ export default function WorkPlanner() {
                             value={reasonValue}
                             onChange={(e) => setReasonValue(e.target.value)}
                             placeholder="Pvz.: Keičiamas veiklos laikas dėl vizito pas gydytoją..."
-                            className="w-full h-32 px-4 py-3 border border-line rounded-input focus:ring-2 focus:ring-brand outline-none resize-none text-body-lg transition-all"
+                            className="w-full h-32 px-4 py-3 border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand outline-none resize-none text-body-lg transition-all"
                             autoFocus
                         />
 

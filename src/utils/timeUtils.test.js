@@ -5,6 +5,7 @@ import {
     parseTimeStringToMinutes,
     getLithuanianDateString,
     getLithuanian3AMCutoff,
+    getCurrentWorkDayCutoff,
     addDaysToDateString,
     calculateCurrentTotalMinutes,
     formatMinutesToHHMM,
@@ -130,6 +131,24 @@ describe('addDaysToDateString (UTC calendar arithmetic, DST-independent)', () =>
 
     it('defaults to +1 day', () => {
         expect(addDaysToDateString('2026-06-15')).toBe('2026-06-16');
+    });
+});
+
+describe('getCurrentWorkDayCutoff (work-day flips at 03:00 Vilnius, device-tz-independent)', () => {
+    it('keeps TODAY when the instant is past 03:00 Vilnius even if the device-local hour is < 3', () => {
+        // 01:30 UTC on a winter day is 03:30 Vilnius (UTC+2) — i.e. just AFTER today's 03:00
+        // cutoff, so the work day is TODAY (2026-01-15). The old getHours() < 3 test read the
+        // DEVICE-local hour, which is < 3 on UTC-1..UTC+1 devices for this instant and wrongly
+        // rolled the cutoff back to yesterday. The DST-safe Vilnius comparison must not.
+        const now = new Date('2026-01-15T01:30:00Z');
+        expect(getCurrentWorkDayCutoff(now).toISOString()).toBe('2026-01-15T01:00:00.000Z');
+    });
+
+    it('rolls back to YESTERDAY when the instant is before today\'s 03:00 Vilnius', () => {
+        // 00:30 UTC on a winter day is 02:30 Vilnius — still BEFORE 03:00, so the work day is
+        // the previous calendar day (2026-01-14), whose 03:00 cutoff is 2026-01-14T01:00 UTC.
+        const now = new Date('2026-01-15T00:30:00Z');
+        expect(getCurrentWorkDayCutoff(now).toISOString()).toBe('2026-01-14T01:00:00.000Z');
     });
 });
 

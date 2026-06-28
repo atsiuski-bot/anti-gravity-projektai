@@ -399,8 +399,12 @@ export const getLithuanian3AMCutoff = (dateStr) => {
  */
 export const getCurrentWorkDayCutoff = (now = getLithuanianNow()) => {
     let cutoffDate = getLithuanianDateString(now);
-    // If it's before 3AM, the work day started at 03:00 the previous calendar day.
-    if (now.getHours() < 3) {
+    // If it's before today's 03:00 Vilnius cutoff, the work day started at 03:00 the previous
+    // calendar day. Compare the instant against the DST-safe Vilnius cutoff (the same technique
+    // automationUtils uses) rather than now.getHours() < 3 — the latter reads the DEVICE-local
+    // hour, which disagrees with the Vilnius date above on off-Vilnius devices and flips the
+    // work day at the wrong moment for ~2-3h each night.
+    if (now < getLithuanian3AMCutoff(cutoffDate)) {
         cutoffDate = addDaysToDateString(cutoffDate, -1);
     }
     return getLithuanian3AMCutoff(cutoffDate);

@@ -441,7 +441,7 @@ const ActiveSessionRow = React.memo(({ session, canEnd = false, onEnd }) => {
                             </span>
                         )}
                     </div>
-                    <div className="text-xs truncate">
+                    <div className="text-caption truncate">
                         {session.label}
                         {startLabel && <span> · nuo {startLabel}</span>}
                         {hasBudget && <span> · planas {plannedTime}</span>}
@@ -505,7 +505,7 @@ const IdlePlannedRow = React.memo(({ row }) => {
                     name={row.userName}
                     className="min-w-0"
                 />
-                <div className="text-xs">
+                <div className="text-caption">
                     Suplanuota, bet nepradėta
                     {shiftStartLabel && <span className="opacity-80"> · veiklos laikas nuo {shiftStartLabel}</span>}
                     {lastActiveLabel && <span className="opacity-80"> · paskutinį kartą aktyvus {lastActiveLabel}</span>}

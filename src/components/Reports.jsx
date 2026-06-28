@@ -13,6 +13,7 @@ import { Briefcase, AlertTriangle, FileText, Users, User, TrendingUp, TrendingDo
 
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import Card from './ui/Card';
 import ConfirmDialog from './ui/ConfirmDialog';
 import Select from './ui/Select';
 import DatePicker from './ui/DatePicker';
@@ -1231,9 +1232,9 @@ function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod
 
     if (state.loading) {
         return (
-            <div className="mb-4 rounded-card border border-line bg-surface-card p-4 shadow-sm">
+            <Card className="mb-4 p-4">
                 <Spinner label="Kraunama asmeninė suvestinė…" />
-            </div>
+            </Card>
         );
     }
     if (state.error || !state.current) return null;
@@ -1242,8 +1243,9 @@ function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod
     const p = state.previous;
 
     return (
-        <section
-            className="mb-4 rounded-card border border-line bg-surface-card p-4 shadow-sm"
+        <Card
+            as="section"
+            className="mb-4 p-4"
             aria-label="Asmeninė laikotarpio suvestinė"
         >
             <div className="mb-3 flex items-center gap-2">
@@ -1291,7 +1293,7 @@ function PersonalPeriodSummary({ range, currentUser, users, scope, onShiftPeriod
                     />
                 )}
             </div>
-        </section>
+        </Card>
     );
 }
 
@@ -1386,9 +1388,9 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
 
     if (state.loading) {
         return (
-            <div className="mb-4 rounded-card border border-line bg-surface-card p-4 shadow-sm">
+            <Card className="mb-4 p-4">
                 <Spinner label="Kraunama komandos suvestinė…" />
-            </div>
+            </Card>
         );
     }
     // Silent when there is nothing to summarise or the build failed — the report below still stands.
@@ -1398,8 +1400,9 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
     const p = state.prevTeam;
 
     return (
-        <section
-            className="mb-4 rounded-card border border-line bg-surface-card p-4 shadow-sm"
+        <Card
+            as="section"
+            className="mb-4 p-4"
             aria-label="Komandos laikotarpio suvestinė"
         >
             <div className="mb-3 flex items-center gap-2">
@@ -1483,6 +1486,6 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
                     </ul>
                 </div>
             )}
-        </section>
+        </Card>
     );
 }

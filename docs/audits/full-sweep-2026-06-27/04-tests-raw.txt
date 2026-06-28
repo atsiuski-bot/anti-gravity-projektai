@@ -1,0 +1,13 @@
+
+> workz@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.9 C:/Users/karol/Desktop/WORKZ/.claude/worktrees/stupefied-bell-8b343e
+
+
+ Test Files  52 passed (52)
+      Tests  631 passed (631)
+   Start at  10:06:41
+   Duration  4.50s (transform 3.03s, setup 0ms, import 11.69s, tests 772ms, environment 5ms)
+

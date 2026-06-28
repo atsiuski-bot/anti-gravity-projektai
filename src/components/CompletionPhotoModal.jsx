@@ -131,7 +131,9 @@ export default function CompletionPhotoModal({ task, onClose }) {
                                     type="button"
                                     onClick={() => removePhoto(idx)}
                                     aria-label={`Pašalinti nuotrauką ${idx + 1}`}
-                                    className="absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                    // Visible badge stays small so it doesn't smother the 80px thumb, but a
+                                    // centred pseudo-element (±10px) gives it a ≥44px tap area (DESIGN_SYSTEM §7).
+                                    className="absolute right-0.5 top-0.5 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand before:absolute before:-inset-[10px] before:content-['']"
                                 >
                                     <X className="h-3.5 w-3.5" aria-hidden="true" />
                                 </button>

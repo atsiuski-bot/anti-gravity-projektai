@@ -314,8 +314,10 @@ export const pauseOtherTasks = async (userId, currentTaskId) => {
             await Promise.allSettled(pausePromises);
         }
     } catch (err) {
-        // Explicitly catch everything in pauseOtherTasks so it NEVER blocks startTask
-        console.error("Error in pauseOtherTasks (non-fatal):", err);
+        // Explicitly catch everything in pauseOtherTasks so it NEVER blocks startTask.
+        // Still record it durably: a failure here leaves OTHER tasks running (ghost time /
+        // concurrent-running state), so an admin must be able to see it remotely.
+        logError(err, { source: 'taskActions.pauseOtherTasks' });
     }
 };
 /**

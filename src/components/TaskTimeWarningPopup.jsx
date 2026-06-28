@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import Modal from './ui/Modal';
+import Button from './ui/Button';
 
 /**
  * Heads-up shown to the worker when ~70% of the estimated time is used.
@@ -42,15 +43,14 @@ export default function TaskTimeWarningPopup({ task, remaining, onDismiss }) {
                 </p>
             </div>
 
-            {/* Footer */}
+            {/* Footer — canonical Button (the lone dismiss is the dominant action → `primary`).
+                There is no `warning` variant: a solid amber-500/600 fill fails WCAG with white text,
+                which is why the design system omits it; the loud amber stays in the header only,
+                exactly as the red twin (TaskTimeLimitPopup) confines its danger red to its header. */}
             <div className="flex flex-shrink-0 justify-end px-6 pb-5">
-                <button
-                    ref={okButtonRef}
-                    onClick={onDismiss}
-                    className="min-h-touch rounded-control bg-amber-700 px-6 text-body font-semibold text-white shadow-sm transition-colors hover:bg-amber-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-700 focus-visible:ring-offset-2"
-                >
+                <Button ref={okButtonRef} variant="primary" onClick={onDismiss}>
                     Gerai
-                </button>
+                </Button>
             </div>
         </Modal>
     );

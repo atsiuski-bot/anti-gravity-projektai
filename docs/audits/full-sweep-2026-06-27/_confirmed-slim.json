@@ -1,0 +1,166 @@
+{
+  "counts": {
+    "raw": 90,
+    "deduped": 90,
+    "verified": 40,
+    "confirmed": 15
+  },
+  "tokens": {
+    "find": 204699,
+    "verify": 356146,
+    "total": 560845
+  },
+  "confirmed": [
+    {
+      "dimension": "timetracking",
+      "severity": "high",
+      "title": "getCurrentWorkDayCutoff uses browser-local getHours() instead of Vilnius hour",
+      "file": "src/utils/timeUtils.js",
+      "line": "403",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The 03:00 work-day boundary check at line 403 calls `now.getHours()`, which returns the hour in the device's local timezone, not in Europe/Vilnius. A device running in UTC (or any TZ west of Vilnius) sees a different hour than Vilnius: at 01:30 UTC / 03:30 Vilnius (winter), `getHours()` returns 1, which is < 3, so the function rolls the cutoff back to the PREVIOUS calendar day's 03:00. This makes tasks completed after the real 03:00 Vilnius boundary (but before 03:00 local) invisible in the personal day window (scopePersonalDayWindow) and the shared team list (scopeActiveTasks). The bug lasts up to two hours per day in winter (UTC+2 offset). The fix already exists in automationUtils.js (which compares `now < getLithuanian3AMCutoff(todayStr)`) and in getLithuanian3AMCutoff itself (noon-reference trick). getCurrentWorkDayCutoff should mirror that pattern instead of using getHours()."
+    },
+    {
+      "dimension": "ux-a11y",
+      "severity": "high",
+      "title": "Photo-delete button in TaskTimeLimitPopup is 20×20 px — well below 44 px floor",
+      "file": "src/components/TaskTimeLimitPopup.jsx",
+      "line": "192",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The 'Pašalinti nuotrauką' button has `h-5 w-5` (20×20 px) with no invisible padding extension. DESIGN_SYSTEM §7 mandates ≥44×44 px for every interactive control. No `min-h-touch`/`min-w-touch` is applied. Compare with CompletionPhotoModal line 134 which uses `h-6 w-6` (24 px) — still short. The same pattern appears in TaskTimeLimitPopup at line 192. A worker completing a task or requesting extension on a phone cannot reliably tap the close button."
+    },
+    {
+      "dimension": "discipline",
+      "severity": "medium",
+      "title": "Bespoke action button in TaskTimeWarningPopup instead of <Button>",
+      "file": "src/components/TaskTimeWarningPopup.jsx",
+      "line": "47-53",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The 'Gerai' dismiss button is a raw <button> with hand-rolled bg-amber-700 / hover:bg-amber-800 / focus ring styles. The canonical Button component (ui/Button) is not imported here. There is no amber variant in Button's VARIANTS map, so the correct approach is to add a 'warning' variant or use the existing 'danger' / 'secondary' variant, not hand-roll it. The rest of the modal correctly uses the canonical <Modal> shell."
+    },
+    {
+      "dimension": "discipline",
+      "severity": "medium",
+      "title": "Raw <button> with bg-brand instead of <Button> in CommentsModal",
+      "file": "src/components/TaskDetailsModals.jsx",
+      "line": "212-218",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The 'Skelbti' (Post) submit button in CommentsModal is a raw <button type='submit'> that manually duplicates Button's bg-brand / hover:bg-brand-hover / focus ring / disabled styling. Button is already imported at line 14 of the same file and is used elsewhere in TaskDetailsModals. The button should be <Button type='submit' variant='primary'>."
+    },
+    {
+      "dimension": "timetracking",
+      "severity": "medium",
+      "title": "WorkPlanner.isApprovalFeatureActive uses local getDay()/getHours() for Vilnius business hours gate",
+      "file": "src/components/WorkPlanner.jsx",
+      "line": "307-314",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The weekly planning-window gate (Fri 13:00 – Sun 21:00 free-edit window) reads `now.getDay()` and `now.getHours()` (browser-local time). On a device running in UTC the gate is off by 2 hours in winter and 3 hours in summer: a manager in UTC trying to edit on Friday at 12:00 UTC (= 14:00 Vilnius) is correctly inside the free window by Vilnius clock, but `getHours()` returns 12 < 13 so the code routes them to the approval flow. Conversely, after 10:00 UTC on Friday (= 12:00 Vilnius, still gated), `getHours()` returns 10 < 13 but it's still blocked — the asymmetry means this could either demand unnecessary approvals or silently skip them, depending on direction. The day boundary (Sunday 21:00) has the same issue. Since this gates calendar writes that feed planned-hours data used in report Skirtumas calculations, a mis-routed or silently-bypassed approval can let unapproved backdated time affect payroll totals."
+    },
+    {
+      "dimension": "crashsafety",
+      "severity": "medium",
+      "title": "pauseOtherTasks swallows network/permission failures without logError",
+      "file": "src/utils/taskActions.js",
+      "line": "293-320",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "pauseOtherTasks is called inside startTask and resumeTask to stop all other running timers before starting the new one. Its outer catch (line 316-319) only calls console.error — never logError — so a failure at the getDocsWithCacheFallback layer is completely invisible to the localStorage ring buffer and the Firestore error_logs collection. If getDocs fails (network outage, Firestore permission error), the function returns silently with {docs:[]} (line 282), zero tasks are paused, and the caller continues. The result is that the previously-running task stays in timerStatus:'running' with its original timerStartedAt while the new task is also set to 'running'. This ghost-time window persists until the next app reload when useOrphanedTaskRecovery catches it — but the root failure that caused the concurrent-running state leaves no trace in any crash log."
+    },
+    {
+      "dimension": "session-color",
+      "severity": "medium",
+      "title": "Rule B drift — TaskTimeWarningPopup uses raw amber-700/orange-700 instead of session or feedback tokens",
+      "file": "src/components/TaskTimeWarningPopup.jsx",
+      "line": "31-50",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "The modal header uses `bg-gradient-to-r from-amber-700 to-orange-700` and the dismiss button uses `bg-amber-700` / `hover:bg-amber-800` / `focus-visible:ring-amber-700`. These are raw Tailwind palette classes, not the `session-break-*` tokens from SESSION_COLORS nor the `feedback-warning*` token. Rule B requires every session-related color to read from the one SESSION_COLORS map; using an out-of-map amber shade means the amber hue here cannot be updated by theming (ADR 0016) and will stay literal in dark mode while every other amber indicator shifts correctly. The amber tone is also visually close to the `session-break` amber shell, creating a second uncoordinated amber source."
+    },
+    {
+      "dimension": "security",
+      "severity": "medium",
+      "title": "Scoped manager (scopedManager=true) can create/update/delete work_hours for any user outside their team",
+      "file": "firestore.rules",
+      "line": "328-339",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "The work_hours create, update, and delete rules use isManagerOrAdmin() (line 328, 336, 339) which returns true for any manager — including a scoped manager whose visibility is supposed to be limited to their subtree (ADR 0005). The tasks, work_sessions, and break_sessions collections correctly apply isScopedOverseer() + inCallerTeam() / overseesUser() checks for scoped managers, but work_hours applies no such scoping. A scoped manager can therefore create, update, or delete planned/approved hours for any worker in the company, not only their own team. This breaks the confidentiality and write-isolation guarantee of the scoped-manager model."
+    },
+    {
+      "dimension": "security",
+      "severity": "medium",
+      "title": "calendar_requests update has no userId pin — owner can re-point record to another user",
+      "file": "firestore.rules",
+      "line": "409",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The calendar_requests update rule (line 409) is: if isUserActive() && (ownsUserId() || isManagerOrAdmin()). There is no equivalent of the userId-pin guard that was explicitly added to work_sessions (line 285), break_sessions (line 308), and work_hours (line 337). A worker who owns a calendar_request document can update it to set userId to a colleague's uid. This graft causes the colleague's calendar and reports to reflect the attacker's requested hours, and it re-routes the ownsUserId() gate on future reads/updates to the victim's account. The same scoped-manager bypass applies: isManagerOrAdmin() on update/delete is not scoped, so a scoped manager can approve/deny calendar requests for any worker outside their team."
+    },
+    {
+      "dimension": "ux-a11y",
+      "severity": "medium",
+      "title": "CommentsModal (TaskDetailsModals) uses focus:ring-2 instead of focus-visible:ring-2 — focus ring always visible, even on mouse click",
+      "file": "src/components/TaskDetailsModals.jsx",
+      "line": "183-209",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The comment edit textarea (line 183), the new-comment textarea (line 209), and the checklist add-input (line 320) all use `focus:ring-2 focus:ring-brand` with no `focus-visible` guard. This means the ring fires on every mouse click too, not just keyboard focus, contrary to the project's consistent use of `focus-visible:ring-2` everywhere else (DESIGN_SYSTEM §7 'visible focus ring'). The design system requires the ring to appear on keyboard navigation so mouse users do not see it, which requires `focus-visible:` not `focus:`. The same issue exists in TaskModal lines 1405, 1580, 1771, 1888 and WorkPlanner lines 1056, 1066, 1371."
+    },
+    {
+      "dimension": "discipline",
+      "severity": "low",
+      "title": "ManagerNotifications notification cards bypass <Card>",
+      "file": "src/components/ManagerNotifications.jsx",
+      "line": "78, 929, 1360",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "Multiple notification row wrappers use the inline class combo 'rounded-card border border-line bg-surface-card shadow-sm' (the literal token set that <Card> encapsulates) instead of the canonical <Card> component. Card is not imported in this file. Lines 929 and 1360 are repeated notification cards; line 78 is a skeleton placeholder."
+    },
+    {
+      "dimension": "discipline",
+      "severity": "low",
+      "title": "Reports.jsx summary panels bypass <Card>",
+      "file": "src/components/Reports.jsx",
+      "line": "1234, 1246, 1389, 1402",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "PersonalSummaryPanel and TeamSummaryPanel render section wrappers with inline 'rounded-card border border-line bg-surface-card p-4 shadow-sm' instead of <Card>. Button and IconButton are both already imported in this file but Card is not. All four occurrences are standalone content panels, not popover chrome."
+    },
+    {
+      "dimension": "crashsafety",
+      "severity": "low",
+      "title": "notify() Firestore write failures are only console.error — never routed to logError",
+      "file": "src/utils/notify.js",
+      "line": "57-61",
+      "votesReal": 3,
+      "votesTotal": 3,
+      "detail": "The single notification-write funnel used across the entire codebase (task completion, assignment change, time-extension request, session auto-close, etc.) catches all Firestore addDoc failures and logs them only to console.error (line 60). Failures never reach the localStorage ring buffer (workz_error_log) or the Firestore error_logs collection. In production on a field worker's phone, devtools are not open. If notify() fails systematically (Firestore rules regression, quota, network outage during a specific operation), there is no durable trace of the failure and no way for an admin to diagnose why workers are not receiving notifications from the remote error_logs view. This does not cause session time data loss (sessions and work_sessions are logged separately), but it means a rule-break or quota event in request_notifications is completely invisible."
+    },
+    {
+      "dimension": "crashsafety",
+      "severity": "low",
+      "title": "Partial-session rename failures swallowed with console.warn, not logError",
+      "file": "src/utils/sessionActions.js",
+      "line": "621-627, 728-734",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "Inside handleLegacyLogging, when a call or quickWork session ends, the code retroactively renames the partial work_sessions entry that was logged when that session was interrupted (the 'isPartial: true' row). The updateDoc for this rename (line 623-626 for calls, line 730-733 for quickWork) has .catch(e => console.warn(...)) — not logError. A Firestore permission error or network failure for these rename writes is completely invisible in the crash ring buffer and remote error_logs. While the rename is cosmetic (the primary session records and credits are already committed), a systematic failure here means partial work_session rows permanently display the generic placeholder title ('Skambutis' / 'Greita veikla') in the timeline and reports, with no diagnostic trail explaining why the rename did not apply."
+    },
+    {
+      "dimension": "session-color",
+      "severity": "low",
+      "title": "Rule B drift — ActiveWorkSessions session-label line uses bare text-xs token instead of text-caption",
+      "file": "src/components/ActiveWorkSessions.jsx",
+      "line": "444",
+      "votesReal": 2,
+      "votesTotal": 3,
+      "detail": "The `ActiveSessionRow` label line (`session.label`, start time, and plan info) uses `text-xs` — a raw Tailwind default class — rather than the `text-caption` design token. Both resolve to 12px/16px today, but `text-xs` is outside the token system (DESIGN_SYSTEM §2 Principle 4: 'Tokens, not magic numbers'). If the `text-caption` token is ever updated in tailwind.config.js (e.g. bumped to 13px to comply with a future a11y bar), this line would silently remain at 12px. The same issue appears at line 508 in the `IdlePlannedRow`. This is on session-surface-colored cards so the 12px floor (§5) is technically met, but the non-token class is a drift from the system."
+    }
+  ],
+  "rejectedCount": 25
+}

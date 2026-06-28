@@ -10,8 +10,9 @@
 > reasoning phases here. Changing the plan ≡ changing behaviour — edit it here, not ad hoc.
 
 > **Status:** Ported from the GODSGLOOM `/full-debug-sweep` (2026-06-21), adapted to the
-> WORKZ stack (React 18 + Vite + Tailwind + Firebase PWA, JavaScript, no TypeScript, no
-> test runner, no Cloud Functions). First execution pending a user trigger.
+> WORKZ stack (React 18 + Vite + Tailwind + Firebase PWA, JavaScript, no TypeScript;
+> a Vitest suite, a `functions/` Cloud Functions subtree, and `firestore.indexes.json`
+> are all present). First execution pending a user trigger.
 
 ---
 
@@ -83,7 +84,7 @@
             │                   Bash(npm run build)  → 05-build.md
             │                   Bash(npm outdated)   → 19-deps.md
             │                   rules diff           → 06-firebase.md
-            │                   (no test runner)     → 04-tests.md (coverage-gap note)
+            │                   Bash(npm test)       → 04-tests.md (vitest run)
             │
             └─ Reasoning  ─→ Workflow({name:'triage-sweep'})
                               ├─ Find:  one Explore finder per dimension (Sonnet)
@@ -97,11 +98,11 @@ Deterministic gates (lint, build, deps, rules diff) have no LLM value — run an
 The reasoning dimensions need judgement, so they go through `triage-sweep`, whose
 adversarial-verify stage filters false positives and runs in parallel.
 
-### Why WORKZ's track list is shorter than a TypeScript repo's
-WORKZ has **no TypeScript** (no `tsc` phase), **no test runner** (no test phase — the
-*absence* of tests is itself a finding), **no Cloud Functions** (no per-callable phase),
-**no RTDB**, and **no `firestore.indexes.json`** (the missing index file becomes a
-coupling risk the `firebase-coupling` dimension hunts).
+### Why WORKZ's track list differs from a TypeScript repo's
+WORKZ has **no TypeScript** (no `tsc` phase) and **no RTDB**. It *does* have a **Vitest
+suite** (the `04-tests` phase runs it), a **`functions/` Cloud Functions subtree** (lint +
+deploy-state checks), and a **`firestore.indexes.json`** (its drift against the live
+indexes is a coupling risk the `firebase-coupling` dimension hunts).
 
 ---
 
