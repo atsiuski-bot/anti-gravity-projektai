@@ -50,6 +50,11 @@ const AuditDashboard = React.lazy(() => import('../components/AuditDashboard'));
 // The priority board pulls in @dnd-kit; lazy-load it so that weight enters the bundle only when a
 // manager actually turns the board on (it never touches the worker bundle or the default list).
 const PriorityBoard = React.lazy(() => import('../components/board/PriorityBoard'));
+// Drag-to-reorder for the flat list (mobile cards + desktop table) ALSO pulls in @dnd-kit, so it is
+// lazy-loaded the same way: it enters the bundle only when a manager views the canonical team list,
+// never the worker bundle. Both reuse the board's shared manual order (utils/boardOrder).
+const SortableTaskCardList = React.lazy(() => import('../components/task/SortableTaskCardList'));
+const ReorderableTaskTable = React.lazy(() => import('../components/task/ReorderableTaskTable'));
 
 export default function ManagerView() {
     const { userRole, currentUser, userData } = useAuth();
@@ -100,6 +105,14 @@ export default function ManagerView() {
             logError(err, { source: 'manager:toggleBoardView' });
         }
     }, [boardView, currentUser]);
+
+    // Drag-to-reorder is offered only while the list shows its app-wide CANONICAL order (sortBy
+    // 'none'): an advanced "Daugiau rūšiavimo" choice or a free-text search reorders the list
+    // independently of the manual rank, so a drag there would be silently ignored. `reorderActive`
+    // decides whether the (lazy) reorder components mount at all; `dragEnabled` toggles the handles
+    // within them — off while a search narrows the list to relevance order.
+    const reorderActive = sortBy === 'none';
+    const dragEnabled = reorderActive && !searchText.trim();
 
     // Task time monitoring — 80% warning and 100% limit for manager's own tasks (ownTasks, so a
     // scoped manager whose team listener excludes their own rows is still monitored correctly).
@@ -507,21 +520,50 @@ export default function ManagerView() {
                 </div>
 
                 {viewMode === 'mobile' ? (
-                    <div className="space-y-4">
-                        {sortedTasks.map(task => (
-                            <TaskCard
-                                key={task.id}
-                                task={task}
-                                onEdit={() => handleEditTask(task)}
-                                role="manager"
-                            />
-                        ))}
-                    </div>
+                    reorderActive ? (
+                        /* Mobile → press-and-hold (long-press) a card to reorder it. The drag engine
+                           is lazy-loaded, so @dnd-kit only loads here, never in the worker bundle. */
+                        <ErrorBoundary boundaryName="manager:reorder-cards">
+                            <React.Suspense fallback={<Spinner />}>
+                                <SortableTaskCardList
+                                    tasks={sortedTasks}
+                                    onEditTask={handleEditTask}
+                                    role="manager"
+                                    dragEnabled={dragEnabled}
+                                />
+                            </React.Suspense>
+                        </ErrorBoundary>
+                    ) : (
+                        <div className="space-y-4">
+                            {sortedTasks.map(task => (
+                                <TaskCard
+                                    key={task.id}
+                                    task={task}
+                                    onEdit={() => handleEditTask(task)}
+                                    role="manager"
+                                />
+                            ))}
+                        </div>
+                    )
                 ) : boardView ? (
                     /* Desktop + board toggle on → the four-column drag-and-drop priority board. */
                     <ErrorBoundary boundaryName="manager:priority-board">
                         <React.Suspense fallback={<Spinner />}>
                             <PriorityBoard tasks={sortedTasks} onEditTask={handleEditTask} />
+                        </React.Suspense>
+                    </ErrorBoundary>
+                ) : reorderActive ? (
+                    /* Desktop list → a leading drag handle per row reorders it (engine lazy-loaded). */
+                    <ErrorBoundary boundaryName="manager:reorder-table">
+                        <React.Suspense fallback={<Spinner />}>
+                            <ReorderableTaskTable
+                                tasks={sortedTasks}
+                                onEdit={handleEditTask}
+                                role="manager"
+                                hideCheckboxes={true}
+                                gridControls={teamGridControls}
+                                dragEnabled={dragEnabled}
+                            />
                         </React.Suspense>
                     </ErrorBoundary>
                 ) : (
