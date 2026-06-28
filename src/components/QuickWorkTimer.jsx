@@ -304,19 +304,22 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState('');
+    // Guards a start/stop action while its Firestore round-trip is in flight, so a rapid
+    // double-tap on a slow connection cannot fire startSession/endSession twice (a second start
+    // would read the first's committed write and nest quick-work inside quick-work; a second stop
+    // could end one session too many). Mirrors TaskTimerControls' actionInFlightRef.
+    const actionInFlightRef = useRef(false);
 
-    // Listen for external stop requests is still good,
-    // but session actions handle this via endSession usually. 
-    // However, for the MODAL, we need local state.
-    // If the session is stopped remotely (e.g. by starting a task), isQuickWorking becomes false.
-    // The previous logic used an event listener 'stop-quick-work'.
-    // We should maintain that if we want to prompt for title.
-    // BUT if the user starts a task elsewhere, we might just auto-save or discard.
-    // Let's keep it simple: if session ends remotely, we might miss the title prompt.
-    // That's acceptable for now (auto-save generic title).
+    // Note: if a quick-work session is ended remotely (e.g. the worker starts a task elsewhere),
+    // isQuickWorking flips to false on the next snapshot and this component simply stops showing the
+    // timer — the "what did you do?" prompt is intentionally skipped cross-device (the work is logged
+    // with a placeholder title + autoStopped:true, surfaced later by the "describe later" banner).
+    // There is deliberately NO cross-component event for this.
 
     const handleStartQuickWork = async () => {
         if (!currentUser || isDisabled) return;
+        if (actionInFlightRef.current) return;
+        actionInFlightRef.current = true;
         setError('');
         try {
             // Optimistic UI Update: Instantly assume Quick Work started, clear other sessions.
@@ -341,34 +344,42 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             console.error("Error starting quick work:", err);
             setOptimisticUserData(null); // Revert on error
             setError("Nepavyko pradėti greitos veiklos. Bandykite dar kartą.");
+        } finally {
+            actionInFlightRef.current = false;
         }
     };
 
     const handleStopQuickWork = async () => {
-        // Here we just check duration and decide whether to show modal or stop immediately
-        const now = getLithuanianNow();
-        let sessionDuration = 0;
-        if (startTime) {
-            // Clamp so a backward clock skew can't make a real session read as negative.
-            sessionDuration = clampSessionMinutes((now - startTime) / (1000 * 60));
-        }
-
-        // Discard an accidental sub-minute tap rather than prompting to name/log it.
-        if (sessionDuration <= MIN_LOGGED_SESSION_MINUTES) {
-            try {
-                await endSession(currentUser.uid); // Auto discard/stop
-            } catch (err) {
-                // endSession now rethrows a failed critical write (so the described/finish paths can
-                // revert their optimistic overlay). This discard path sets no optimistic state, but
-                // still needs to handle the rejection rather than leave it unhandled.
-                console.error('Error stopping quick work:', err);
-                setError('Nepavyko sustabdyti greitos veiklos. Bandykite dar kartą.');
+        if (actionInFlightRef.current) return;
+        actionInFlightRef.current = true;
+        try {
+            // Here we just check duration and decide whether to show modal or stop immediately
+            const now = getLithuanianNow();
+            let sessionDuration = 0;
+            if (startTime) {
+                // Clamp so a backward clock skew can't make a real session read as negative.
+                sessionDuration = clampSessionMinutes((now - startTime) / (1000 * 60));
             }
-            return;
-        }
 
-        SoundManager.playQuickTaskSound();
-        setShowTitleModal(true);
+            // Discard an accidental sub-minute tap rather than prompting to name/log it.
+            if (sessionDuration <= MIN_LOGGED_SESSION_MINUTES) {
+                try {
+                    await endSession(currentUser.uid); // Auto discard/stop
+                } catch (err) {
+                    // endSession now rethrows a failed critical write (so the described/finish paths can
+                    // revert their optimistic overlay). This discard path sets no optimistic state, but
+                    // still needs to handle the rejection rather than leave it unhandled.
+                    console.error('Error stopping quick work:', err);
+                    setError('Nepavyko sustabdyti greitos veiklos. Bandykite dar kartą.');
+                }
+                return;
+            }
+
+            SoundManager.playQuickTaskSound();
+            setShowTitleModal(true);
+        } finally {
+            actionInFlightRef.current = false;
+        }
     };
 
     // Shared end-of-quick-work flow. `taskTitle` carries the worker's description on the
@@ -500,7 +511,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                 disabled={isDisabled}
                 aria-label={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti greitą veiklą")}
                 className={clsx(
-                    "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition-all shadow-sm active:scale-95 border min-w-[140px]",
+                    "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition shadow-sm active:scale-95 border min-w-[140px]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isQuickWorking
