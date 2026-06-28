@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
@@ -19,9 +19,15 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
     const isDisabled = isSecondarySessionActive && !isTakingBreak && activeSessionType !== 'quickWork';
 
     const [error, setError] = useState('');
+    // Guards the toggle while its Firestore round-trip is in flight, so a rapid double-tap on a slow
+    // connection cannot fire startSession/endSession twice (a second start would nest a break inside
+    // a break; a second end could close one session too many). Mirrors TaskTimerControls.
+    const actionInFlightRef = useRef(false);
 
     const handleToggleBreak = async () => {
         if (!currentUser || isDisabled) return;
+        if (actionInFlightRef.current) return;
+        actionInFlightRef.current = true;
 
         setError('');
         try {
@@ -89,6 +95,8 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             // Revert optimistic update on failure (it will naturally happen on next snapshot, but we can clear it immediately)
             setOptimisticUserData(null);
             setError("Nepavyko pakeisti pertraukos būsenos. Bandykite dar kartą.");
+        } finally {
+            actionInFlightRef.current = false;
         }
     };
 

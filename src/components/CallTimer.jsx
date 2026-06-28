@@ -65,7 +65,7 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                                     aria-checked={selected}
                                     onClick={() => setContactType(id)}
                                     className={clsx(
-                                        'inline-flex items-center gap-2 min-h-touch px-3 py-2 rounded-control border-2 text-left transition-all active:scale-95',
+                                        'inline-flex items-center gap-2 min-h-touch px-3 py-2 rounded-control border-2 text-left transition active:scale-95',
                                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
                                         selected
                                             ? 'bg-session-call-surface border-session-call-accent text-session-call-accent font-semibold'
@@ -181,6 +181,11 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isDiscarding, setIsDiscarding] = useState(false);
     const [error, setError] = useState('');
+    // Guards the start toggle while its Firestore round-trip is in flight, so a rapid double-tap on
+    // a slow connection cannot fire startSession twice (the second would read the first's committed
+    // write and nest a call inside a call). The end path is already guarded by the modal's
+    // isSubmitting/isDiscarding flags. Mirrors TaskTimerControls' actionInFlightRef.
+    const actionInFlightRef = useRef(false);
 
     const handleStartCall = async () => {
         if (!currentUser || isDisabled) return;
@@ -288,6 +293,8 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
 
     const handleToggleCall = async () => {
         if (!currentUser || isDisabled) return;
+        if (actionInFlightRef.current) return;
+        actionInFlightRef.current = true;
 
         setError('');
         try {
@@ -299,6 +306,8 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         } catch (err) {
             console.error("Error toggling call:", err);
             setError("Nepavyko pakeisti skambučio būsenos. Bandykite dar kartą.");
+        } finally {
+            actionInFlightRef.current = false;
         }
     };
 
@@ -365,7 +374,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
                 disabled={isDisabled}
                 aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
                 className={clsx(
-                    "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition-all shadow-sm active:scale-95 border min-w-[140px]",
+                    "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition shadow-sm active:scale-95 border min-w-[140px]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isCalling

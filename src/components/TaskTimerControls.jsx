@@ -154,11 +154,12 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         setActionError('');
         try {
             if (!currentUser) return;
-            // Check if Quick Work is running - if so, prompt to stop it first
-            if (userData?.quickWorkState?.isQuickWorking) {
-                window.dispatchEvent(new CustomEvent('stop-quick-work'));
-                return;
-            }
+            // A genuinely-active quick work already disables this control (isSecondarySessionActive,
+            // checked above). If only the LEGACY quickWorkState.isQuickWorking flag lingers (stale,
+            // with activeSession not representing quick work), we must NOT block the start: startTask
+            // clears that flag itself, so proceeding HEALS the corrupted state. The old code instead
+            // dispatched a 'stop-quick-work' event that nothing listens for and returned early,
+            // silently no-opping the tap — a dead trap. Removed.
 
             await runConfirmedTimerWrite(
                 async () => {
@@ -216,11 +217,9 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         setActionError('');
         try {
             if (!currentUser) return;
-            // Check if Quick Work is running
-            if (userData?.quickWorkState?.isQuickWorking) {
-                window.dispatchEvent(new CustomEvent('stop-quick-work'));
-                return;
-            }
+            // See handleStart: a stale legacy quickWorkState.isQuickWorking flag must not block the
+            // resume. resumeTask clears it, so proceeding heals the corrupted state; the old
+            // dead-event dispatch (no listener) only no-opped the tap. Removed.
 
             await runConfirmedTimerWrite(
                 async () => {
