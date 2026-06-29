@@ -26,7 +26,11 @@ export function useTaskTimeMonitor(tasks) {
 
     // Track which tasks have already triggered warnings/limits (by task id)
     const warned70Ref = useRef(new Set());
-    const limitReachedRef = useRef(new Set());
+    // taskId -> the timerStartedAt we last STOPPED at. Keying the limit latch by the running
+    // stretch's start (not just the task id) is what lets a RESUME after the limit re-arm the stop
+    // — a fresh resume mints a new timerStartedAt, so the key no longer matches and the hard stop
+    // fires again. See the 100% block.
+    const limitReachedRef = useRef(new Map());
     // Track the task's estimatedTimeMinutes at the time we triggered, so extensions reset it
     const lastEstimatedRef = useRef(new Map()); // taskId -> estimatedMinutes when triggered
 
@@ -109,42 +113,47 @@ export function useTaskTimeMonitor(tasks) {
                 }
             }
 
-            // 100% limit
-            if (percentage >= 100 && !limitReachedRef.current.has(taskId)) {
-                if (!task.timeLimitReached) {
-                    limitReachedRef.current.add(taskId);
+            // 100% limit — auto-pause and FORCE the decision. The latch is keyed by the running
+            // stretch's timerStartedAt (not just the task id), which makes it do two jobs at once:
+            //   • A RESUME after the limit mints a new timerStartedAt → the key no longer matches →
+            //     the stop re-fires. So a worker can't press "Tęsti" and quietly work past the
+            //     limit: every resume re-pauses and re-shows the popup until the manager grants more
+            //     time (extendTaskTime clears the latch via the estimate-changed reset above).
+            //   • The stale tick right after we pause (the snapshot hasn't flipped timerStatus yet)
+            //     still carries the SAME timerStartedAt → it matches → no double pause / double
+            //     work_sessions log. `task` here is always running (the activeTask filter requires
+            //     it), so a paused limit-reached task is simply never evaluated.
+            if (percentage >= 100 && limitReachedRef.current.get(taskId) !== task.timerStartedAt) {
+                limitReachedRef.current.set(taskId, task.timerStartedAt);
 
-                    // 1. Auto-pause the task
-                    try {
-                        await pauseTask(task);
-                    } catch (e) {
-                        console.error('Failed to auto-pause task at time limit:', e);
-                    }
-
-                    // 2. Mark on Firestore
-                    try {
-                        await updateDoc(doc(db, 'tasks', taskId), {
-                            timeLimitReached: true,
-                            updatedAt: new Date().toISOString()
-                        });
-                    } catch (e) {
-                        console.warn('Failed to mark time limit reached:', e);
-                    }
-
-                    // 3. Show popup — the worker decides from here (request more time OR finish).
-                    //    The extension request is no longer auto-sent; it is a choice in the popup.
-                    const actualTime = Math.round(currentMinutes);
-                    setLimitPopup({
-                        task,
-                        estimatedTime: task.estimatedTime,
-                        actualMinutes: actualTime
-                    });
-
-                    // 4. Start repeating alarm
-                    SoundManager.startTimeLimitRepeat();
-                } else {
-                    limitReachedRef.current.add(taskId); // Already reached, just track
+                // 1. Auto-pause the task (stops the clock + logs the session). No-op if not running.
+                try {
+                    await pauseTask(task);
+                } catch (e) {
+                    console.error('Failed to auto-pause task at time limit:', e);
                 }
+
+                // 2. Mark on Firestore (idempotent — survives reload, gates the on_estimate badge).
+                try {
+                    await updateDoc(doc(db, 'tasks', taskId), {
+                        timeLimitReached: true,
+                        updatedAt: new Date().toISOString()
+                    });
+                } catch (e) {
+                    console.warn('Failed to mark time limit reached:', e);
+                }
+
+                // 3. Force the decision popup — request more time OR finish (never auto-sent). Skip
+                //    if one is already open for this task so a re-tick can't stack popups.
+                const actualTime = Math.round(currentMinutes);
+                setLimitPopup((prev) => (prev?.task?.id === taskId ? prev : {
+                    task,
+                    estimatedTime: task.estimatedTime,
+                    actualMinutes: actualTime
+                }));
+
+                // 4. Start repeating alarm
+                SoundManager.startTimeLimitRepeat();
             }
         };
 

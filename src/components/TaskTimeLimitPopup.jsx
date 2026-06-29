@@ -39,9 +39,14 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
 
     if (!task) return null;
 
-    // Whether there is anyone to send an extension request to. With no manager the worker can only
-    // finish — we hide the request path rather than offer a button that would fail.
-    const hasManager = !!(task.managerId || task.taskAuditor);
+    // Who, if anyone, an extension request would go to — mirrors requestTimeExtension's recipient
+    // resolution (managerId || taskAuditor). A manager running their OWN task is their own manager,
+    // so the request would be self-addressed — asking yourself for permission, which is pointless.
+    // In that case, and when there is no manager at all, we hide the request path and offer only
+    // "finish"; a self-managing manager extends their own task through the task editor instead.
+    const extensionRecipientId = task.managerId || task.taskAuditor;
+    const isSelfManaged = !!extensionRecipientId && extensionRecipientId === uid;
+    const canRequestExtension = !!extensionRecipientId && extensionRecipientId !== uid;
 
     const handleMute = () => {
         SoundManager.stopTimeLimitRepeat();
@@ -160,9 +165,11 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
 
                 {mode === 'choice' ? (
                     <p className="text-body text-ink-muted">
-                        {hasManager
+                        {canRequestExtension
                             ? 'Pasirinkite: prašyti koordinatoriaus pratęsti laiką ar užbaigti užduotį.'
-                            : 'Šiai užduočiai nepriskirtas koordinatorius — galite užbaigti užduotį.'}
+                            : isSelfManaged
+                                ? 'Jūs pats prižiūrite šią užduotį — užbaikite ją arba pratęskite numatytą laiką ją redaguodami.'
+                                : 'Šiai užduočiai nepriskirtas koordinatorius — galite užbaigti užduotį.'}
                     </p>
                 ) : (
                     <div className="space-y-3">
@@ -237,7 +244,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
             {/* Footer — actions depend on the mode. */}
             {mode === 'choice' ? (
                 <div className="flex flex-shrink-0 flex-col gap-2 px-6 pb-5">
-                    {hasManager && (
+                    {canRequestExtension && (
                         <Button
                             ref={primaryRef}
                             variant="primary"
@@ -250,8 +257,8 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                         </Button>
                     )}
                     <Button
-                        ref={hasManager ? undefined : primaryRef}
-                        variant={hasManager ? 'secondary' : 'primary'}
+                        ref={canRequestExtension ? undefined : primaryRef}
+                        variant={canRequestExtension ? 'secondary' : 'primary'}
                         icon={CheckCircle2}
                         className="w-full"
                         loading={finishing}
