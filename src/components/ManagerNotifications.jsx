@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc, addDoc, deleteDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { format, parseISO } from 'date-fns';
@@ -16,7 +16,7 @@ import TaskActionRow from './task/TaskActionRow';
 import { deleteTask, extendTaskTime } from '../utils/taskActions';
 import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
-import { logCalendarChange } from '../utils/calendarNotifications';
+import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import IconButton from './ui/IconButton';
@@ -259,47 +259,15 @@ export default function ManagerNotifications({ onClose }) {
         setActionNotice(null);
     };
 
+    // Both calendar-approval handlers delegate to the shared writer (src/utils/calendarApproval.js)
+    // so the bell and the "Kalendoriaus istorija" tab can never drift in what they commit. Each keeps
+    // its own try/catch to surface this panel's localized banner.
+    const calendarActor = () => ({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+
     const handleApproveCalendarRequest = async (request) => {
         try {
             clearActionFeedback();
-            const { type, requestedEvent, userId, userName } = request;
-            const now = new Date().toISOString();
-            
-            if (type === 'add') {
-                // requestedEvent carries a synthetic id:null for adds (a real id only exists for
-                // edit/delete); strip it so it never lands on the work_hours doc and can't clobber
-                // doc.id for a future reader doing {id: doc.id, ...data}.
-                const addData = { ...requestedEvent, userId, type: 'planned' };
-                delete addData.id;
-                await addDoc(collection(db, 'work_hours'), addData);
-            } else if (type === 'edit') {
-                await updateDoc(doc(db, 'work_hours', requestedEvent.id), {
-                    start: requestedEvent.start,
-                    end: requestedEvent.end,
-                    title: requestedEvent.title,
-                    isWorkFromHome: requestedEvent.isWorkFromHome,
-                    isVacation: requestedEvent.isVacation,
-                    absenceType: requestedEvent.absenceType ?? null
-                });
-            } else if (type === 'delete') {
-                await deleteDoc(doc(db, 'work_hours', requestedEvent.id));
-            }
-
-            await updateDoc(doc(db, 'calendar_requests', request.id), {
-                status: 'approved',
-                approvedAt: now,
-                approvedBy: currentUser.uid
-            });
-
-            await logCalendarChange(
-                { uid: userId, displayName: userName, email: '' },
-                type === 'edit' ? 'edit' : type,
-                new Date(requestedEvent.start),
-                new Date(requestedEvent.end)
-            );
-
-            // Tell the worker their calendar request was approved (replaces the standalone banner).
-            await notify({ recipientId: userId, type: 'calendar_decision', decision: 'approved', reason: request.reason || null, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+            await approveCalendarRequest(request, calendarActor());
         } catch (err) {
             console.error("Error approving calendar request:", err);
             setActionError("Nepavyko patvirtinti užklausos. Bandykite dar kartą.");
@@ -309,13 +277,7 @@ export default function ManagerNotifications({ onClose }) {
     const handleDeclineCalendarRequest = async (request) => {
         try {
             clearActionFeedback();
-            await updateDoc(doc(db, 'calendar_requests', request.id), {
-                status: 'declined',
-                declinedAt: new Date().toISOString(),
-                declinedBy: currentUser.uid
-            });
-            // Tell the worker their calendar request was declined.
-            await notify({ recipientId: request.userId, type: 'calendar_decision', decision: 'declined', reason: request.reason || null, actorUid: currentUser.uid, actorName: currentUser.displayName || currentUser.email });
+            await declineCalendarRequest(request, calendarActor());
         } catch (err) {
             console.error("Error declining calendar request:", err);
             setActionError("Nepavyko atmesti užklausos. Bandykite dar kartą.");

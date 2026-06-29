@@ -4,10 +4,13 @@ import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 import { getLithuanianDateString } from '../utils/timeUtils';
 import { isManagerRole } from '../utils/formatters';
 import { absenceLabel } from '../utils/absence';
+import { canSeeWholeTeam, isScopedOverseer, isOverseenBy } from '../utils/teamScope';
+import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
 import { useAuth } from '../context/AuthContext';
-import { Briefcase, AlertTriangle } from 'lucide-react';
+import { Briefcase, AlertTriangle, Check, X } from 'lucide-react';
 import { Spinner } from './ui/Loading';
 import DatePicker from './ui/DatePicker';
+import TaskActionRow from './task/TaskActionRow';
 import { PeriodPicker } from './reports/PeriodPicker';
 import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 
@@ -17,7 +20,7 @@ import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 // describes — a calendar-oversight feature, not a work-hours report. Manager/admin team surface;
 // workers only ever see their own rows (the role filter below), matching the old in-Reports gate.
 export default function CalendarChangeHistory({ users = [] }) {
-    const { currentUser, userRole } = useAuth();
+    const { currentUser, userRole, userData } = useAuth();
 
     // Same from/to range model as the work report (defaults to the current month so far), driven by
     // the identical collapsible period picker. `historyPeriod` tracks the active preset for the
@@ -31,6 +34,9 @@ export default function CalendarChangeHistory({ users = [] }) {
     const [calendarHistory, setCalendarHistory] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
+    // Per-row action state for the inline approve/decline controls (pending rows only).
+    const [actionError, setActionError] = useState('');
+    const [busyId, setBusyId] = useState(null);
 
     const fetchCalendarHistory = async () => {
         setLoading(true);
@@ -76,6 +82,72 @@ export default function CalendarChangeHistory({ users = [] }) {
         setHistoryPeriodOpen(false);
         const range = resolvePresetRange(period);
         if (range) setHistoryRange(range);
+    };
+
+    // Who may act on a pending request from this view. This MIRRORS the work_hours write rules an
+    // approval must satisfy (firestore.rules): a whole-team viewer (admin / unscoped koordinatorius)
+    // may act on anyone; a scoped overseer (scoped koordinatorius OR vyr. koordinatorius) only on a
+    // worker inside their oversight closure. Keying on the worker's overseer set — not the request's
+    // `managerIds` — is deliberate: managerIds holds only the worker's DIRECT koordinatoriai, so a
+    // vyr. koordinatorius (never listed there) would be wrongly excluded even though the rules grant
+    // them the write. If the gate ever passed someone the rules would deny, the status flip would
+    // succeed while the work_hours write failed — an inconsistent half-approval; this keeps them aligned.
+    const canActOnRequest = (item) => {
+        if (item.status !== 'pending') return false;
+        if (canSeeWholeTeam(userData)) return true;
+        if (!isScopedOverseer(userData)) return false;
+        const worker = users.find((u) => u.id === item.userId);
+        return isOverseenBy(worker, currentUser?.uid);
+    };
+
+    const actor = () => ({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email });
+
+    // Apply the decision through the shared writer (same path as the manager bell), then optimistically
+    // flip the local row so its badge updates and the buttons drop — no full refetch needed. On failure
+    // nothing is mutated locally and a friendly banner appears (never raw err.message — §10).
+    const handleApprove = async (item) => {
+        setActionError('');
+        setBusyId(item.id);
+        try {
+            await approveCalendarRequest(item, actor());
+            setCalendarHistory((prev) => prev.map((r) =>
+                r.id === item.id ? { ...r, status: 'approved', approvedBy: currentUser.uid, approvedAt: new Date().toISOString() } : r));
+        } catch (err) {
+            console.error('Error approving calendar request:', err);
+            setActionError('Nepavyko patvirtinti užklausos. Bandykite dar kartą.');
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    const handleDecline = async (item) => {
+        setActionError('');
+        setBusyId(item.id);
+        try {
+            await declineCalendarRequest(item, actor());
+            setCalendarHistory((prev) => prev.map((r) =>
+                r.id === item.id ? { ...r, status: 'declined', declinedBy: currentUser.uid, declinedAt: new Date().toISOString() } : r));
+        } catch (err) {
+            console.error('Error declining calendar request:', err);
+            setActionError('Nepavyko atmesti užklausos. Bandykite dar kartą.');
+        } finally {
+            setBusyId(null);
+        }
+    };
+
+    // The two-button decision row, shown only on a pending row the viewer may resolve. Shared by the
+    // mobile card and the desktop table so both surfaces behave identically.
+    const renderDecision = (item) => {
+        if (!canActOnRequest(item)) return null;
+        const busy = busyId === item.id;
+        return (
+            <TaskActionRow
+                actions={[
+                    { key: 'approve', label: 'Patvirtinti', icon: Check, variant: 'success', onClick: () => handleApprove(item), disabled: busy, loading: busy },
+                    { key: 'decline', label: 'Atmesti', icon: X, variant: 'danger', onClick: () => handleDecline(item), disabled: busy },
+                ]}
+            />
+        );
     };
 
     // Derive the display fields for one calendar-history entry. Computed once and shared by the
@@ -198,6 +270,26 @@ export default function CalendarChangeHistory({ users = [] }) {
                 </div>
             )}
 
+            {/* Action-failure banner — kept separate from the fetch error so a failed approve/decline
+                never wipes the loaded list (§8 banned window.alert; §10 never raw err.message). */}
+            {actionError && (
+                <div
+                    role="alert"
+                    className="flex items-start gap-3 rounded-control border-l-4 border-feedback-danger bg-feedback-danger-soft p-4"
+                >
+                    <AlertTriangle className="h-5 w-5 shrink-0 text-feedback-danger" aria-hidden="true" />
+                    <p className="text-body text-feedback-danger-text">{actionError}</p>
+                    <button
+                        type="button"
+                        onClick={() => setActionError('')}
+                        aria-label="Uždaryti pranešimą"
+                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    >
+                        Uždaryti
+                    </button>
+                </div>
+            )}
+
             {loading && (
                 <div className="bg-surface-card rounded-card shadow-sm">
                     <Spinner label="Kraunami duomenys…" />
@@ -254,6 +346,7 @@ export default function CalendarChangeHistory({ users = [] }) {
                                             </div>
                                         )}
                                     </dl>
+                                    {renderDecision(item)}
                                 </li>
                             );
                         })}
@@ -270,6 +363,7 @@ export default function CalendarChangeHistory({ users = [] }) {
                                     <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Keitimo laikas</th>
                                     <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Patvirtino / būsena</th>
                                     <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Priežastis</th>
+                                    <th scope="col" className="px-4 py-3 text-left text-caption font-bold text-ink-muted uppercase tracking-wider">Sprendimas</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-surface-card divide-y divide-line">
@@ -310,6 +404,9 @@ export default function CalendarChangeHistory({ users = [] }) {
                                             </td>
                                             <td className="px-4 py-3 text-body text-ink italic max-w-xs break-words">
                                                 {e.reasonLabel}
+                                            </td>
+                                            <td className="px-4 py-3 w-52">
+                                                {renderDecision(item)}
                                             </td>
                                         </tr>
                                     );
