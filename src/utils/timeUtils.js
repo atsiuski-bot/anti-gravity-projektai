@@ -107,6 +107,24 @@ export const MAX_MANUAL_TASK_MINUTES = 1000 * 60;
 // fat-fingered toggle on a phone (gloved hands, outdoors) cannot mint a micro-session.
 export const MIN_LOGGED_SESSION_MINUTES = 1;
 
+// --- Timer heartbeat (crash/reload-survivable running timer) ---------------------------------
+// A live task timer is just a stored start instant; the elapsed is `now − timerStartedAt`. To
+// tell a brief reload-while-working apart from a truly abandoned timer on the next app load, a
+// running timer stamps `timerLastHeartbeat` on its task doc this often — a per-minute "still
+// alive" proof. It is a single-field, last-write-wins update (no activeSession touch, so no user
+// lock), and offline it queues in the local cache stamped with the client clock, so a
+// no-signal-but-app-alive stretch is preserved and replays on reconnect.
+export const TIMER_HEARTBEAT_INTERVAL_MS = 60 * 1000;
+
+// On the next app load, orphan recovery reads the last beat as the "last proof of work" instant.
+// If the unproven tail (load time − last beat) is within this window, the reload is treated as a
+// brief interruption WHILE WORKING: the timer is credited up to the last beat and RE-ANCHORED to
+// keep running (the worker never has to restart, losing only the sub-tail). A larger tail means
+// the app was genuinely closed: credit stops at the last beat and the timer is paused. Must be
+// comfortably larger than the heartbeat interval so a single skipped beat (slow field connection)
+// never mis-classifies live work as abandonment.
+export const TIMER_HEARTBEAT_CONTINUE_MS = 3 * 60 * 1000;
+
 // Read-side plausibility guard for report AGGREGATION. Already-persisted session docs can be
 // corrupt — a pre-clamp orphaned timer, or a manual edit entered before bounds existed — and
 // no write-time fix reaches data already in Firestore, so every report aggregator funnels each

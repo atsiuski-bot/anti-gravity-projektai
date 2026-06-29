@@ -34,6 +34,7 @@ import {
     createWorkSession,
     validateBackdateWindow,
     logBackdatedWorkerSession,
+    claimRecoveredGap,
 } from './sessionEditActions';
 import { MAX_SESSION_MINUTES, MAX_BACKDATE_DAYS } from './timeUtils';
 
@@ -46,6 +47,49 @@ describe('MAX_EDIT_SESSION_MINUTES', () => {
         expect(MAX_EDIT_SESSION_MINUTES).toBe(MAX_SESSION_MINUTES);
         expect(MAX_EDIT_SESSION_MINUTES).toBe(16 * 60);
         expect(MAX_EDIT_SESSION_MINUTES).toBe(960);
+    });
+});
+
+describe('claimRecoveredGap (worker claims an offline untracked gap from the recovery banner)', () => {
+    const worker = { uid: 'u1', displayName: 'Simona' };
+    const task = { id: 't1', title: 'Kostiumai' };
+
+    it('writes a worker-authored work_session with the real taskId and recovered-gap provenance', async () => {
+        const res = await claimRecoveredGap({
+            task,
+            worker,
+            startTime: '2026-06-23T11:00:00.000Z',
+            endTime: '2026-06-23T11:20:00.000Z', // 20 min
+        });
+        expect(res.ok).toBe(true);
+        expect(res.durationMinutes).toBe(20);
+
+        expect(addDoc).toHaveBeenCalledTimes(1);
+        const payload = addDoc.mock.calls[0][1];
+        expect(payload.taskId).toBe('t1'); // real id → aggregates like timer time
+        expect(payload.userId).toBe('u1');
+        expect(payload.durationMinutes).toBe(20);
+        expect(payload.isManualSession).toBe(true);
+        expect(payload.isRecoveredGap).toBe(true);
+        expect(payload.createdBy).toBe('u1');
+        expect(typeof payload.editReason).toBe('string');
+    });
+
+    it('rejects an implausible (>16h) gap via the shared ceiling, writing nothing', async () => {
+        const res = await claimRecoveredGap({
+            task,
+            worker,
+            startTime: '2026-06-23T00:00:00.000Z',
+            endTime: '2026-06-24T00:01:00.000Z', // > 16h
+        });
+        expect(res.ok).toBe(false);
+        expect(res.error).toBe('tooLong');
+        expect(addDoc).not.toHaveBeenCalled();
+    });
+
+    it('requires both a worker and a task', async () => {
+        expect((await claimRecoveredGap({ task, startTime: 'a', endTime: 'b' })).error).toBe('user');
+        expect((await claimRecoveredGap({ worker, startTime: 'a', endTime: 'b' })).error).toBe('task');
     });
 });
 

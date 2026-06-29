@@ -60,6 +60,10 @@ const startTaskImpl = async (task, userId) => {
             updateDoc(doc(db, 'tasks', task.id), {
                 timerStatus: 'running',
                 timerStartedAt: now,
+                // Seed the heartbeat at start so a reload seconds later already has a proof
+                // anchor (orphan recovery's "no heartbeat → legacy clamp" path is then only
+                // ever reached by pre-heartbeat data, never a freshly-started timer).
+                timerLastHeartbeat: now,
                 startedAt: task.startedAt || now,
                 status: 'in-progress',
                 updatedAt: now
@@ -108,23 +112,26 @@ const pauseInFlight = new Set();
  * @param {Object} task - The task object to pause.
  * @returns {Promise<void>}
  */
-export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => {
+export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = null } = {}) => {
     if (!task.timerStartedAt || task.timerStatus !== 'running') return null;
     if (pauseInFlight.has(task.id)) return null; // a concurrent pause for this task is already running
     pauseInFlight.add(task.id);
 
     try {
-        const now = getLithuanianNow();
+        // The instant the credited stretch ENDS. Defaults to now (a normal pause), but the
+        // heartbeat recovery passes the last-heartbeat instant so an abandoned timer is credited
+        // only up to its last proof of life — not up to the (possibly much later) reopen.
+        const endMoment = endTime != null ? new Date(endTime) : getLithuanianNow();
         const start = new Date(task.timerStartedAt);
         // Raw (unclamped) wall-clock delta, kept ONLY so the caller can tell whether the clamp
         // below actually had to cut the credited time down — that is what the crash-recovery
         // notice reports as "the 16h cap fired". It is never used as a credited or logged value.
-        const rawMinutes = (now - start) / (1000 * 60);
+        const rawMinutes = (endMoment - start) / (1000 * 60);
         // Sanitize the elapsed delta through the shared clamp: a future/invalid start
         // (clock skew) collapses to 0, and an implausibly large value — e.g. a timer
         // left running across a crash/reload before this pause — is capped to
         // MAX_SESSION_MINUTES so an orphaned interval cannot credit hours of ghost time.
-        const elapsedMinutes = clampSessionMinutes((now - start) / (1000 * 60)); // minutes, float for precision
+        const elapsedMinutes = clampSessionMinutes((endMoment - start) / (1000 * 60)); // minutes, float for precision
 
         // 1. Get current Timer Minutes
         const currentTimerMinutes = task.timerMinutes || 0;
@@ -163,10 +170,10 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
 
         // Log Work Session (fire alongside task update)
         if (elapsedMinutes > MIN_LOGGED_SESSION_MINUTES) {
-            // Attribute the session to the date the work ENDED (now), matching every
+            // Attribute the session to the date the work ENDED (endMoment), matching every
             // other work_sessions writer (sessionActions, time-correction). Using the
             // start date previously mis-bucketed sessions that ran across midnight.
-            const sessionDate = getLithuanianDateString(now);
+            const sessionDate = getLithuanianDateString(endMoment);
             parallelOps.push(
                 addDoc(collection(db, 'work_sessions'), {
                     taskId: task.id,
@@ -174,7 +181,7 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false } = {}) => 
                     userId: task.assignedUserId,
                     userName: task.assignedUserName || null,
                     startTime: start.toISOString(),
-                    endTime: now.toISOString(),
+                    endTime: endMoment.toISOString(),
                     durationMinutes: elapsedMinutes,
                     date: sessionDate,
                     createdAt: new Date().toISOString()
@@ -230,6 +237,8 @@ const resumeTaskImpl = async (task, userId) => {
             updateDoc(doc(db, 'tasks', task.id), {
                 timerStatus: 'running',
                 timerStartedAt: now,
+                // Seed the heartbeat on resume too (same rationale as startTask).
+                timerLastHeartbeat: now,
                 startedAt: task.startedAt || now,
                 status: 'in-progress',
                 updatedAt: now
@@ -261,6 +270,32 @@ const resumeTaskImpl = async (task, userId) => {
         logError(err, { source: 'taskActions.resumeTask' });
         throw err;
     }
+};
+
+/**
+ * Recover a briefly-orphaned running task WITHOUT stopping its timer.
+ *
+ * Used by the crash/reload recovery hook when a timer that was left "running" across an app
+ * restart has a recent heartbeat — i.e. the worker was actively working and the app merely
+ * reloaded (backgrounded tab killed, PWA update, memory eviction). Instead of pausing and
+ * forcing a manual restart (which silently dropped the rest of the shift in the original
+ * incident), we:
+ *   1. credit the proven stretch [timerStartedAt → endTimeMs] as one session (pauseTask with an
+ *      explicit end — so nothing past the last heartbeat is credited), then
+ *   2. re-anchor a fresh running interval from now (startTask) so the timer simply continues.
+ *
+ * Both steps already serialize per user (pauseTask via its in-flight guard, startTask via the
+ * user lock), so the user's activeSession ends correct and the worker never has to notice.
+ *
+ * @param {Object} task   - the orphaned running task (needs id, timerStartedAt, assignedUserId).
+ * @param {number} endTimeMs - epoch ms of the last heartbeat (the credited stretch's end).
+ */
+export const creditAndResumeTask = async (task, endTimeMs) => {
+    // Credit + log the proven segment, then resume. skipUserStatusUpdate is intentionally NOT
+    // set: pauseTask's user-doc write is harmless here because startTask immediately overwrites
+    // it back to 'running' with a fresh activeSession.
+    await pauseTask(task, { endTime: endTimeMs });
+    await startTask(task, task.assignedUserId);
 };
 
 /**

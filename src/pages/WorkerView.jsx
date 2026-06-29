@@ -28,6 +28,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
+import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import EarningsModal from '../components/EarningsModal';
@@ -62,8 +63,12 @@ export default function WorkerView() {
     // Task time monitoring — 80% warning and 100% limit
     const { warningPopup, limitPopup, dismissWarning, requestExtension, finishFromLimit } = useTaskTimeMonitor(tasks);
 
-    // Crash/reload recovery — auto-pause any task left "running" across a restart so
-    // it cannot credit hours of ghost time on the next pause.
+    // Keep the running task's timer "alive" with a per-minute heartbeat so a reload mid-shift can
+    // be recovered as continuous work (see useOrphanedTaskRecovery) instead of silently stopping.
+    useTaskHeartbeat(tasks, currentUser);
+
+    // Crash/reload recovery — heartbeat-aware: continue a briefly-reloaded timer, but pause (and
+    // offer to claim the gap) a genuinely abandoned one so it cannot credit hours of ghost time.
     useOrphanedTaskRecovery(tasks);
 
     // Same crash/reload recovery for an orphaned break/call/quick-work session — ends it

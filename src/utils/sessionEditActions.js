@@ -284,3 +284,53 @@ export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTi
         return { ok: false, error: 'write' };
     }
 };
+
+// A worker claims the untracked GAP that the crash/reload recovery surfaced — the stretch between
+// their timer's last heartbeat and the app reopening, when the app was closed (no signal in the
+// field, phone killed the tab) but they kept working. The recovery already credited up to the last
+// beat and paused; this credits the proven-by-the-worker remainder as one self-authored session.
+//
+// Shape mirrors logBackdatedWorkerSession (real taskId so reports aggregate it like timer time;
+// worker-authored provenance), with an `isRecoveredGap` flag for audit. It is gated to the same
+// 16h ceiling via deriveSessionFields. Unlike the backdate path it carries NO approval-window
+// check: by construction the gap is recent and in the past (the recovery hook only offers gaps
+// ≤16h that end at the reopen instant), and it is the worker confirming their OWN just-worked
+// time, so the base work_sessions create rule (createOwnsUserId + durationInRange) already covers
+// it — no canBackdateTime privilege required. Returns { ok, error, ... }.
+export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reason } = {}) => {
+    if (!worker?.uid) return { ok: false, error: 'user' };
+    if (!task?.id) return { ok: false, error: 'task' };
+
+    const derived = deriveSessionFields(startTime, endTime);
+    if (!derived.ok) return { ok: false, error: derived.error };
+
+    const nowIso = new Date().toISOString();
+    const workerName = worker.displayName || worker.email || null;
+    const payload = {
+        taskId: task.id,
+        taskTitle: (task.title || '').trim() || 'Užduotis',
+        userId: worker.uid,
+        userName: workerName,
+        startTime,
+        endTime,
+        durationMinutes: derived.durationMinutes,
+        date: derived.date,
+        createdAt: nowIso,
+        // Provenance: hand-confirmed by the WORKER from the recovery banner (not a live timer),
+        // for an offline stretch the timer could not record. isManualSession keeps it out of the
+        // task-assignment double-count guard like the other manual paths; isRecoveredGap marks the
+        // origin so reports/admins can tell apart auto-claimed offline time.
+        isManualSession: true,
+        isRecoveredGap: true,
+        createdBy: worker.uid,
+        createdByName: workerName || 'Nežinomas',
+        editReason: (reason || '').trim() || 'Atkurtas neužfiksuotas darbo laikas (be ryšio)',
+    };
+    try {
+        const ref = await addDoc(collection(db, 'work_sessions'), payload);
+        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
+    } catch (err) {
+        logError(err, { source: 'writeFail:claimRecoveredGap' });
+        return { ok: false, error: 'write' };
+    }
+};
