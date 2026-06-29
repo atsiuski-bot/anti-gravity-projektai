@@ -1087,6 +1087,12 @@ async function scanSessionAnomalies(name) {
 // MAX_SESSION_MINUTES (16h). No real continuous session approaches this; a larger elapsed can only
 // be a timer left running after the app was closed.
 const MAX_RUNNING_TIMER_MINUTES = 16 * 60;
+// A heartbeat (timerLastHeartbeat) older than this proves the app is no longer alive on the task —
+// the worker closed it and never reopened, so the proven stretch [start → last beat] is real work
+// to credit. A RECENT beat instead means the app is still open RIGHT NOW with the timer running
+// (an idle "left it open" timer): crediting that would pay for non-work, so it is discarded exactly
+// as before. Comfortably beyond a couple of missed beats from a slow field connection.
+const HEARTBEAT_STALE_GAP_MS = 5 * 60 * 1000;
 const STALE_TASK_DAYS = 30;                                   // non-terminal age that warrants review
 const STALE_STATUSES = ['pending', 'in-progress', 'approved', 'unapproved'];
 
@@ -1112,6 +1118,7 @@ async function autoStopForgottenTimers() {
     const samples = [];
     const audits = [];
     const writer = db.bulkWriter();
+    const creditWrites = [];
     snap.forEach((docSnap) => {
         const t = docSnap.data();
         if (!t.timerStartedAt) return;
@@ -1119,21 +1126,72 @@ async function autoStopForgottenTimers() {
         if (Number.isNaN(startMs)) return;
         const elapsedMin = (nowMs - startMs) / 60000;
         if (elapsedMin <= MAX_RUNNING_TIMER_MINUTES) return;
-        writer.update(docSnap.ref, {
+
+        // Heartbeat-aware credit: a timer left running >16h is forgotten, but the per-minute client
+        // heartbeat (timerLastHeartbeat) marks the last instant the app was actually alive on it.
+        // Credit the PROVEN stretch [start → last beat] (clamped ≤16h) instead of discarding the
+        // whole interval, so a worker who closed the app and never reopened still gets their real
+        // work — while the unproven tail past the last beat is dropped (never credit phantom hours).
+        // No beat (pre-heartbeat data, or a timer killed before its first beat) or no assignee →
+        // discard, exactly as before.
+        const beatMs = t.timerLastHeartbeat ? new Date(t.timerLastHeartbeat).getTime() : NaN;
+        // Require the beat to be STALE (app demonstrably gone), not just present: a still-beating
+        // >16h timer is an idle "left the app open" timer, not offline work — crediting it would pay
+        // for non-work, so it is discarded as before. Pre-heartbeat data (no beat) also discards.
+        const hasBeat = Number.isFinite(beatMs) && beatMs >= startMs && beatMs <= nowMs;
+        const appLongGone = hasBeat && (nowMs - beatMs) > HEARTBEAT_STALE_GAP_MS;
+        const creditedMin = appLongGone ? Math.min((beatMs - startMs) / 60000, MAX_RUNNING_TIMER_MINUTES) : 0;
+        const credited = creditedMin > MIN_LOGGED_SECONDARY_MINUTES && !!t.assignedUserId;
+
+        const update = {
             timerStatus: 'paused',
             timerStartedAt: null,
             autoStopped: true,
-            autoStopReason: 'forgotten-timer-16h',
+            autoStopReason: credited ? 'forgotten-timer-16h-credited-to-heartbeat' : 'forgotten-timer-16h',
             autoStoppedAt: nowIso,
             updatedAt: nowIso,
-        });
+        };
+        if (credited) update.timerMinutes = (t.timerMinutes || 0) + creditedMin;
+        writer.update(docSnap.ref, update);
+
+        if (credited) {
+            // Deterministic id (taskId + its start) so a re-fired scan hits ALREADY_EXISTS via
+            // createIfAbsent rather than double-crediting. The onCreate stamp trigger denormalizes
+            // teamManagerIds, so reports scope it like any timer-logged session.
+            creditWrites.push({
+                ref: db.collection('work_sessions').doc(`sess_autostop_ws_${docSnap.id}_${startMs}`),
+                data: {
+                    taskId: docSnap.id,
+                    taskTitle: t.title || 'Nežinoma užduotis',
+                    userId: t.assignedUserId,
+                    userName: t.assignedUserName || null,
+                    startTime: new Date(startMs).toISOString(),
+                    endTime: new Date(beatMs).toISOString(),
+                    durationMinutes: creditedMin,
+                    date: lithuanianDay(new Date(beatMs)),
+                    createdAt: nowIso,
+                    autoStopped: true,
+                },
+            });
+        }
+
         stopped += 1;
-        if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, elapsedMin: Math.round(elapsedMin) });
+        if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, elapsedMin: Math.round(elapsedMin), creditedMin: Math.round(creditedMin) });
         // Key on the stopped running interval (taskId + its start) so a retry recomputes the SAME
         // idempotency key — the create() in appendSystemDecision then dedups the audit, not the effect.
-        audits.push({ taskId: docSnap.id, startIso: t.timerStartedAt, elapsedMin: Math.round(elapsedMin) });
+        audits.push({ taskId: docSnap.id, startIso: t.timerStartedAt, elapsedMin: Math.round(elapsedMin), creditedMin: Math.round(creditedMin) });
     });
     await writer.close();
+
+    // Persist the credited work_sessions AFTER the task writes land. Deterministic ids → a retried
+    // scan dedups via createIfAbsent. Best-effort: a credit-write failure never undoes the stop.
+    for (const w of creditWrites) {
+        try {
+            await createIfAbsent(w.ref, w.data);
+        } catch (err) {
+            logger.warn('autoStopForgottenTimers credit write failed', { id: w.ref.id, err: err.message });
+        }
+    }
 
     // Audit each auto-stop under the SYSTEM actor (ADR 0015), AFTER the writes land. Best-effort:
     // an audit failure never undoes a stop that already happened.
@@ -1144,9 +1202,11 @@ async function autoStopForgottenTimers() {
             source: 'dailyIntegrityScan',
             targetType: 'task',
             targetId: a.taskId,
-            reason: `Auto-stopped a timer left running ${a.elapsedMin} min (>16h); phantom interval discarded`,
+            reason: a.creditedMin > 0
+                ? `Auto-stopped a timer left running ${a.elapsedMin} min (>16h); credited ${a.creditedMin} min up to the last heartbeat, dropped the unproven tail`
+                : `Auto-stopped a timer left running ${a.elapsedMin} min (>16h); no heartbeat — phantom interval discarded`,
             before: { timerStatus: 'running', timerStartedAt: a.startIso },
-            after: { timerStatus: 'paused', timerStartedAt: null, autoStopped: true, autoStopReason: 'forgotten-timer-16h' },
+            after: { timerStatus: 'paused', timerStartedAt: null, autoStopped: true, creditedMinutes: a.creditedMin },
         });
     }
     return { scanned: snap.size, stopped, samples };

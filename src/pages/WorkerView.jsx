@@ -29,6 +29,7 @@ import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
 import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
+import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import EarningsModal from '../components/EarningsModal';
@@ -71,8 +72,13 @@ export default function WorkerView() {
     // offer to claim the gap) a genuinely abandoned one so it cannot credit hours of ghost time.
     useOrphanedTaskRecovery(tasks);
 
-    // Same crash/reload recovery for an orphaned break/call/quick-work session — ends it
-    // (clamped to 16h) so a forgotten secondary timer can't credit a multi-day "ghost" gap.
+    // Heartbeat for the running secondary session (break/call/quick-work) — lets the recovery below
+    // finalize a genuinely abandoned session at its last proof of life, not the reopen instant.
+    useSessionHeartbeat(currentUser);
+
+    // Same crash/reload recovery for an orphaned break/call/quick-work session — ends it (clamped to
+    // 16h, now at the last heartbeat when available) so a forgotten secondary timer can't credit a
+    // multi-day "ghost" gap.
     useOrphanedSessionRecovery(currentUser);
 
 

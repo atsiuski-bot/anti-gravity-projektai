@@ -217,6 +217,27 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
         expect(breaks[0].date).toBe('2026-06-23');
     });
 
+    it('credits only up to endAt (heartbeat) when given, not up to now', async () => {
+        const userData = {
+            displayName: 'Worker',
+            activeSession: { type: 'break', startTime: '2026-06-23T11:00:00.000Z' }, // 60 min to NOW
+            breakState: { dailyAccumulatedMinutes: 15 },
+        };
+        // Last proof of life was 11:40 (40 min), even though the app reopened at NOW (12:00).
+        const lastBeat = new Date('2026-06-23T11:40:00.000Z').getTime();
+
+        await endSession('u1', userData, { endAt: lastBeat }, true);
+        await flush();
+
+        const u = userUpdate('u1');
+        expect(u['breakState.dailyAccumulatedMinutes']).toBe(55); // 15 + 40, NOT 75
+
+        const breaks = setsTo('break_sessions');
+        expect(breaks).toHaveLength(1);
+        expect(breaks[0].durationMinutes).toBe(40);            // cut at the beat, not 60
+        expect(breaks[0].endTime).toBe('2026-06-23T11:40:00.000Z');
+    });
+
     it('caps an orphaned multi-day break at the 16h ceiling (the "190-day break" failure mode)', async () => {
         const userData = {
             activeSession: { type: 'break', startTime: '2026-06-20T12:00:00.000Z' }, // 72h

@@ -117,7 +117,18 @@ export function useOrphanedSessionRecovery(currentUser) {
         if (!isAbandonedSession(session.startTime)) return;
 
         const uid = currentUser.uid;
-        endSession(uid, userData, {}, true)
+        // Credit the abandoned session only up to its last proof of life (the per-minute heartbeat,
+        // see useSessionHeartbeat), not up to the arbitrary reopen instant — so a session whose app
+        // was closed for hours/days does not credit that dead gap as break/work. No usable beat (none
+        // written yet, stale from an earlier session, or after this boot) → fall back to end-at-now,
+        // the prior clamped behaviour.
+        const beatMs = userData.activeSessionLastHeartbeat
+            ? new Date(userData.activeSessionLastHeartbeat).getTime()
+            : NaN;
+        const overrides = (Number.isFinite(beatMs) && beatMs >= startedAt && beatMs <= APP_LOAD_TIME)
+            ? { endAt: beatMs }
+            : {};
+        endSession(uid, userData, overrides, true)
             .then((result) => {
                 // Stamp a one-time notice so the worker is told their forgotten timer was
                 // auto-closed and HOW MUCH was credited — recovery was previously silent, which

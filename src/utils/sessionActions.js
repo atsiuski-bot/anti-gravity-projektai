@@ -259,18 +259,24 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
         if (!session.type && !userData?.activeSession) return; // Should not happen if logic is correct
 
         const now = getLithuanianNow();
+        // The instant the credited stretch ENDS. Defaults to now, but the heartbeat-aware orphan
+        // recovery passes `endAt` (the session's last heartbeat) so a genuinely ABANDONED session is
+        // credited only up to its last proof of life — not up to the arbitrary reopen instant. We
+        // strip it off `session` so it never lands in the persisted `sessions` metadata blob.
+        const endMoment = session.endAt ? new Date(session.endAt) : now;
+        delete session.endAt;
         const start = new Date(session.startTime);
         // Raw (unclamped) delta, kept ONLY so the caller can tell whether the clamp below
         // actually reduced the credited time — that drives the "16h cap fired" wording in the
         // crash-recovery notice. Never logged or accumulated.
-        const rawMinutes = (now - start) / (1000 * 60);
+        const rawMinutes = (endMoment - start) / (1000 * 60);
         // Sanitize through the shared clamp before this value is logged AND accumulated
         // into breakState.dailyAccumulatedMinutes: a backward device clock would otherwise
         // write a NEGATIVE duration into the permanent work_sessions/sessions log and
         // SUBTRACT from the running break total. pauseTask already guards this way; endSession
         // did not. (Also caps an implausibly large value, matching the timer paths.)
-        const durationMinutes = clampSessionMinutes((now - start) / (1000 * 60));
-        const sessionDate = getLithuanianDateString(now);
+        const durationMinutes = clampSessionMinutes((endMoment - start) / (1000 * 60));
+        const sessionDate = getLithuanianDateString(endMoment);
 
         // 1. Prepare User State Update (CRITICAL PATH - must be fast)
         const updates = {};
@@ -349,7 +355,7 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
                             userName: userData.displayName || 'Nežinomas',
                             type: session.type,
                             startTime: session.startTime,
-                            endTime: now.toISOString(),
+                            endTime: endMoment.toISOString(),
                             durationMinutes,
                             date: sessionDate,
                             metadata: session
@@ -357,7 +363,7 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
                     );
                 }
                 logPromises.push(
-                    handleLegacyLogging(userId, userData, session, now, durationMinutes)
+                    handleLegacyLogging(userId, userData, session, endMoment, durationMinutes)
                         .catch(e => logError(e, { source: 'writeFail:endSession.legacyLog' }))
                 );
                 await Promise.all(logPromises);
