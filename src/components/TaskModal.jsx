@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useLayoutEffect, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useLayoutEffect, Fragment, lazy, Suspense } from 'react';
 import { db, storage } from '../firebase';
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
@@ -34,6 +34,10 @@ import TaskStatusPill from './task/TaskStatusPill';
 import DeletedBadge from './task/DeletedBadge';
 import TitleSuggestInput from './task/TitleSuggestInput';
 import TimeEstimatePicker from './TimeEstimatePicker';
+
+// Drag-to-reorder editor for the "Eigos sąrašas" — lazy so @dnd-kit's weight enters the bundle only
+// when a manager actually authors/edits a task, not for every modal viewer (mirrors PriorityBoard).
+const ChecklistEditorList = lazy(() => import('./task/ChecklistEditorList'));
 
 // The four one-tap time chips on the form spine: the most common quick durations. Everything else
 // (and a free-text custom value) lives one tap away behind the "+" button → TimeEstimatePicker.
@@ -1191,6 +1195,11 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         setFormData(prev => ({ ...prev, checklist: (prev.checklist || []).filter(item => item.id !== id) }));
     };
 
+    // Drag-reorder commits the new array order; reconcileChecklist preserves authored order on save.
+    const reorderChecklistLocal = (nextChecklist) => {
+        setFormData(prev => ({ ...prev, checklist: nextChecklist }));
+    };
+
     // A pick from the title type-ahead. A template applies its full preset; a history title sets
     // the name and, only if no time is chosen yet, its typical time (an explicit time is kept).
     const handleSuggestionSelect = (item) => {
@@ -1891,21 +1900,43 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     </div>
                                 )}
                                 {formData.checklist && formData.checklist.length > 0 && (
-                                    <ul className="mt-2 space-y-2">
-                                        {formData.checklist.map((item) => (
-                                            <li key={item.id} className="flex items-center justify-between gap-2 bg-surface-sunken p-2 rounded-lg">
-                                                <span className="flex items-center gap-2 min-w-0 flex-1">
-                                                    {item.done
-                                                        ? <CheckSquare className="w-4 h-4 flex-shrink-0 text-brand" aria-hidden="true" />
-                                                        : <Square className="w-4 h-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
-                                                    <span className={`truncate text-sm ${item.done ? 'text-ink-muted line-through' : 'text-ink'}`}>{item.text}</span>
-                                                </span>
-                                                {(isManager || !task) && (
-                                                    <IconButton icon={Trash2} label="Pašalinti punktą" variant="danger" onClick={() => removeChecklistItemLocal(item.id)} />
-                                                )}
-                                            </li>
-                                        ))}
-                                    </ul>
+                                    (isManager || !task) ? (
+                                        // Editable: drag-to-reorder list (lazy — pulls @dnd-kit on demand).
+                                        <Suspense fallback={
+                                            <ul className="mt-2 space-y-2">
+                                                {formData.checklist.map((item) => (
+                                                    <li key={item.id} className="flex items-center gap-2 rounded-lg bg-surface-sunken p-2">
+                                                        <span className="flex min-w-0 flex-1 items-center gap-2">
+                                                            {item.done
+                                                                ? <CheckSquare className="w-4 h-4 flex-shrink-0 text-brand" aria-hidden="true" />
+                                                                : <Square className="w-4 h-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
+                                                            <span className={`truncate text-sm ${item.done ? 'text-ink-muted line-through' : 'text-ink'}`}>{item.text}</span>
+                                                        </span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        }>
+                                            <ChecklistEditorList
+                                                items={formData.checklist}
+                                                onReorder={reorderChecklistLocal}
+                                                onRemove={removeChecklistItemLocal}
+                                            />
+                                        </Suspense>
+                                    ) : (
+                                        // Read-only viewer: no drag, no delete.
+                                        <ul className="mt-2 space-y-2">
+                                            {formData.checklist.map((item) => (
+                                                <li key={item.id} className="flex items-center justify-between gap-2 bg-surface-sunken p-2 rounded-lg">
+                                                    <span className="flex items-center gap-2 min-w-0 flex-1">
+                                                        {item.done
+                                                            ? <CheckSquare className="w-4 h-4 flex-shrink-0 text-brand" aria-hidden="true" />
+                                                            : <Square className="w-4 h-4 flex-shrink-0 text-ink-muted" aria-hidden="true" />}
+                                                        <span className={`truncate text-sm ${item.done ? 'text-ink-muted line-through' : 'text-ink'}`}>{item.text}</span>
+                                                    </span>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )
                                 )}
                             </div>
 

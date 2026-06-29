@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/core';
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { useAuth } from '../context/AuthContext';
-import { normalizePriority } from '../utils/priority';
+import { resolveReorderDrop } from '../utils/reorderDrop';
 import { persistColumnOrder, moveTaskToColumn } from '../utils/boardOrder';
 import { logError } from '../utils/errorLog';
 
@@ -123,28 +123,11 @@ export default function useReorderableTasks(tasks, { enabled = true } = {}) {
         const newOrder = arrayMove(current, from, to);
         setOrder(newOrder);
 
-        const draggedTask = tasksById[active.id];
-        if (!draggedTask) return;
-        const sourcePriority = normalizePriority(draggedTask.priority);
-
-        // The dropped priority is inferred from the nearest NON-dragged neighbour: the predecessor
-        // first (you dropped the card INTO that block), else the successor (dropped at the very top).
-        // In a canonical list this is unambiguous — the groups are contiguous, so the neighbour above
-        // names the group the card now belongs to.
-        const idx = newOrder.indexOf(active.id);
-        let targetPriority = sourcePriority;
-        const predId = idx > 0 ? newOrder[idx - 1] : null;
-        const succId = idx < newOrder.length - 1 ? newOrder[idx + 1] : null;
-        if (predId && tasksById[predId]) targetPriority = normalizePriority(tasksById[predId].priority);
-        else if (succId && tasksById[succId]) targetPriority = normalizePriority(tasksById[succId].priority);
-
-        // The target group's FULL new order (the dragged card counted under its NEW priority), in the
-        // dropped sequence — exactly the shape boardOrder needs to rewrite ranks. Filtered against the
-        // VISIBLE list, mirroring the board: a hidden same-priority task keeps its place by index.
-        const groupTasks = newOrder
-            .map((id) => tasksById[id])
-            .filter(Boolean)
-            .filter((t) => (t.id === active.id ? targetPriority : normalizePriority(t.priority)) === targetPriority);
+        // Pure resolution of the drop (neighbour-inferred target priority + the target group's new
+        // order); unit-tested in utils/reorderDrop.test.js.
+        const resolution = resolveReorderDrop({ newOrder, draggedId: active.id, tasksById });
+        if (!resolution) return;
+        const { targetPriority, groupTasks, isReprioritize } = resolution;
 
         const revert = (err) => {
             logError(err, { source: 'useReorderableTasks.persist' });
@@ -152,14 +135,14 @@ export default function useReorderableTasks(tasks, { enabled = true } = {}) {
             setOrder(baseIds); // back to the last confirmed snapshot
         };
 
-        if (targetPriority === sourcePriority) {
+        if (!isReprioritize) {
             // Reorder within the same priority — only `boardRank` changes (a no-op write if the rank
             // sequence is unchanged, so a drag that lands back in place costs nothing).
             persistColumnOrder(groupTasks).catch(revert);
         } else {
             // Crossed a priority boundary — an AUDITED reprioritize plus the new rank, identical to
             // dragging between the board's columns.
-            moveTaskToColumn(draggedTask, targetPriority, groupTasks, {
+            moveTaskToColumn(tasksById[active.id], targetPriority, groupTasks, {
                 uid: currentUser?.uid,
                 displayName: currentUser?.displayName,
                 email: currentUser?.email,
