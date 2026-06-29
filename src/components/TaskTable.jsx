@@ -114,7 +114,7 @@ function HeaderCell({ label, sortMode, sort, filter, filterLabel }) {
     );
 }
 
-const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls }) => {
+const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderSlots = null }) => {
     const { currentUser, userRole, userData } = useAuth();
     const runUndoable = useUndoableAction();
     // Data-grid header wiring (see helpers above). Derived once per render; harmless no-ops when
@@ -433,6 +433,11 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls }) => {
     const approveFromDetail = (taskId) => { closeDetail(); handleApproveTask(taskId); };
     const openSubModalFromDetail = (type) => (task) => { closeDetail(); setActiveModal({ type, taskId: task.id }); };
 
+    // Drag-to-reorder is injected from a lazy module (see ReorderableTaskTable) so this component never
+    // pulls in @dnd-kit itself. When present, `reorderSlots` supplies the SortableContext body wrapper
+    // and the sortable-<tr> row wrapper; without it the table renders exactly as before.
+    const DesktopBody = reorderSlots ? reorderSlots.BodyWrapper : React.Fragment;
+
     return (
         <div className="bg-surface-card rounded-card shadow-sm border border-line overflow-hidden">
             {/* Friendly error banner — replaces the banned window.alert with mapped LT copy (§8/§10) */}
@@ -652,6 +657,11 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls }) => {
                 <table className="min-w-full divide-y divide-line table-fixed">
                     <thead className="bg-surface-sunken">
                         <tr>
+                            {reorderSlots && (
+                                <th scope="col" className="w-8 px-1 py-3">
+                                    <span className="sr-only">Pertvarkymas</span>
+                                </th>
+                            )}
                             {!hideCheckboxes && (
                                 <th className="px-2 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-10">
                                     ✓
@@ -673,6 +683,7 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls }) => {
                         </tr>
                     </thead>
                     <tbody className="bg-surface-card divide-y divide-line">
+                        <DesktopBody>
                         {tasks.map((task) => {
                             const isAssignedToMe = currentUser?.uid === task.assignedUserId;
                             const totalMinutes = calculateCurrentTotalMinutes(task);
@@ -698,15 +709,12 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls }) => {
                             const hasImage = (task.attachmentUrls && task.attachmentUrls.length > 0) || task.attachmentUrl;
                             const commentCount = task.comments?.length || 0;
                             const checklist = task.checklist && task.checklist.length > 0 ? getChecklistProgress(task.checklist) : null;
-                            return (
-                                <tr
-                                    key={task.id}
-                                    onClick={() => openDetail(task)}
-                                    className={clsx(
-                                        "cursor-pointer transition hover:brightness-[0.97]",
-                                        getStatusStyle(task)
-                                    )}
-                                >
+                            const rowClassName = clsx(
+                                "cursor-pointer transition hover:brightness-[0.97]",
+                                getStatusStyle(task)
+                            );
+                            const cells = (
+                                <>
                                     {!hideCheckboxes && (
                                         <td className="px-1 py-3 text-center align-top">
                                             <input
@@ -858,9 +866,25 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls }) => {
                                             <TaskTimerControls task={task} role={role} />
                                         </div>
                                     </td>
+                                </>
+                            );
+                            return reorderSlots ? (
+                                <reorderSlots.RowWrapper
+                                    key={task.id}
+                                    task={task}
+                                    draggable={reorderSlots.isDraggableTask(task)}
+                                    rowClassName={rowClassName}
+                                    onRowClick={() => openDetail(task)}
+                                >
+                                    {cells}
+                                </reorderSlots.RowWrapper>
+                            ) : (
+                                <tr key={task.id} onClick={() => openDetail(task)} className={rowClassName}>
+                                    {cells}
                                 </tr>
                             );
                         })}
+                        </DesktopBody>
                     </tbody>
                 </table>
             </div>
@@ -981,6 +1005,9 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls }) => {
 
 export default React.memo(TaskTable, (prevProps, nextProps) => {
     if (prevProps.role !== nextProps.role) return false;
+    // Reorder slots toggle the handle column + sortable rows on/off; their identity changes each
+    // render of the lazy wrapper, but only their PRESENCE changes the table's structure.
+    if (!!prevProps.reorderSlots !== !!nextProps.reorderSlots) return false;
 
     // The data-grid headers (active sort caret + funnel "filtered" styling) are driven by
     // gridControls values, not by the task rows. Compare them explicitly, or a re-sort/re-filter
