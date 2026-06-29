@@ -93,7 +93,12 @@ export default function Modal({
                     'relative z-modal flex w-full flex-col overflow-hidden rounded-modal bg-surface-card shadow-xl',
                     // Cap height to the space ABOVE the reserved nav clearance so a tall card
                     // (e.g. the task detail modal) cannot overflow back down onto the bottom nav.
-                    'max-h-[calc(100vh-9rem)] sm:max-h-[calc(100vh-10rem)] lg:max-h-[90vh] focus:outline-none',
+                    // Use DYNAMIC viewport units (dvh): on mobile, `vh` resolves to the LARGEST
+                    // viewport (URL bar hidden), so a `vh`-capped card can grow taller than the
+                    // actually-visible area — centred, that pushes the sticky footer off-screen
+                    // onto the bottom nav and the body stops scrolling. `dvh` tracks the real
+                    // visible viewport, so the cap always matches what the user can see.
+                    'max-h-[calc(100dvh-9rem)] sm:max-h-[calc(100dvh-10rem)] lg:max-h-[90dvh] focus:outline-none',
                     // Card settles in (fade + slight zoom) as the scrim fades behind it.
                     'animate-in fade-in zoom-in-95',
                     SIZES[size] || SIZES.md,
