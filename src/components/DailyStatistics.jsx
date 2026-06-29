@@ -146,10 +146,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         : null;
     const [workerDetail, setWorkerDetail] = useState(forcedWorker); // { userId, name } | null
 
-    // Clicking a work card inside that drill-down opens the full task. We swap modals rather
-    // than stack them (two focus-trapped dialogs fight) — the worker modal closes, the task
-    // opens; closing the task returns to the day statistics.
-    const [openTaskDetail, setOpenTaskDetail] = useState(null); // task | null
+    // Clicking a work card inside that drill-down opens the task READ-ONLY first (a preview),
+    // never straight into the editor — the row is for inspecting, not accidentally re-saving.
+    // From that preview the "Redaguoti" action hands off to the full create/edit form. We swap
+    // modals rather than stack them (two focus-trapped dialogs fight): the worker modal closes,
+    // the preview opens; the preview closes, the editor opens; closing the editor returns to the
+    // preview, and closing the preview returns to the day statistics.
+    const [openTaskDetail, setOpenTaskDetail] = useState(null); // task being previewed | null
+    const [openTaskEdit, setOpenTaskEdit] = useState(null);     // task being edited | null
 
     // Calculate previous/next day
     const handleDateChange = (offset) => {
@@ -1069,11 +1073,21 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     />
                 )}
                 {openTaskDetail && (
+                    <TaskDetailModal
+                        isOpen
+                        task={{ ...openTaskDetail, isArchived: !!openTaskDetail.archivedAt }}
+                        canManage={isManagerRole(userRole)}
+                        allowPhotoAdd={false}
+                        onEdit={isManagerRole(userRole) ? (t) => { setOpenTaskDetail(null); setOpenTaskEdit(t); } : undefined}
+                        onClose={() => { setOpenTaskDetail(null); setWorkerDetail(forcedWorker); }}
+                    />
+                )}
+                {openTaskEdit && (
                     <TaskModal
                         isOpen
-                        task={openTaskDetail}
+                        task={openTaskEdit}
                         role={userRole}
-                        onClose={() => { setOpenTaskDetail(null); setWorkerDetail(forcedWorker); }}
+                        onClose={() => { setOpenTaskEdit(null); setOpenTaskDetail(openTaskEdit); }}
                     />
                 )}
                 {sessionEditTarget && (
@@ -1737,13 +1751,27 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 />
             )}
 
-            {/* Full task window opened from a worker's day-detail card. */}
+            {/* Read-only task preview opened from a worker's day-detail card. "Redaguoti" inside
+                hands off to the full editor below — the row never opens the editor directly. */}
             {openTaskDetail && (
+                <TaskDetailModal
+                    isOpen
+                    task={{ ...openTaskDetail, isArchived: !!openTaskDetail.archivedAt }}
+                    canManage={isManagerRole(userRole)}
+                    allowPhotoAdd={false}
+                    onEdit={isManagerRole(userRole) ? (t) => { setOpenTaskDetail(null); setOpenTaskEdit(t); } : undefined}
+                    onClose={() => setOpenTaskDetail(null)}
+                />
+            )}
+
+            {/* Full task editor — reached only via the preview's "Redaguoti"; closing it returns
+                to the preview so the manager lands back where they were. */}
+            {openTaskEdit && (
                 <TaskModal
                     isOpen
-                    task={openTaskDetail}
+                    task={openTaskEdit}
                     role={userRole}
-                    onClose={() => setOpenTaskDetail(null)}
+                    onClose={() => { setOpenTaskEdit(null); setOpenTaskDetail(openTaskEdit); }}
                 />
             )}
 
