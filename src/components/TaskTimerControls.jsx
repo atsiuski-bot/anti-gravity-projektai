@@ -319,8 +319,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             // firestore.rules (changesApprovalFields), so their finish lands 'completed' and waits for
             // a real manager's priėmimas; writing 'confirmed' here only produced a silent
             // permission-denied that failed the whole finish.
-            const finishStatus = resolveCompletionStatus(userRole);
-            const isConfirmed = finishStatus === 'confirmed';
+            let finishStatus = resolveCompletionStatus(userRole);
+            let isConfirmed = finishStatus === 'confirmed';
             const totalMinutes = finalTimerMinutes + currentManualMinutes;
             const formattedTime = formatMinutesToTimeString(totalMinutes);
 
@@ -371,7 +371,26 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 }
             }
 
-            const promises = [updateDoc(doc(db, 'tasks', task.id), taskData)];
+            // Write the task completion first. A manager-ROLE finish auto-confirms (status
+            // 'confirmed'), but the deployed rules only let a manager flip the approval fields on a
+            // task they actually OVERSEE (a whole-team viewer, the task's named vadovas/auditor, or a
+            // scoped manager acting within their own team). A scoped/senior manager finishing their
+            // OWN task that SOMEONE ELSE oversees therefore had its 'confirmed' write denied — and the
+            // whole finish failed with "Nepavyko užbaigti". When that exact denial happens we fall
+            // back to 'completed' (a write the assignee is always permitted): the task is still
+            // finished, and simply waits for its proper overseer's priėmimas instead of breaking.
+            try {
+                await updateDoc(doc(db, 'tasks', task.id), taskData);
+            } catch (writeErr) {
+                if (isConfirmed && writeErr?.code === 'permission-denied') {
+                    isConfirmed = false;
+                    finishStatus = 'completed';
+                    Object.assign(taskData, { status: 'completed', confirmedBy: null, confirmedAt: null });
+                    await updateDoc(doc(db, 'tasks', task.id), taskData);
+                } else {
+                    throw writeErr;
+                }
+            }
 
             if (task.assignedUserId === currentUser.uid) {
                 // Determine if this task was the user's active one based on stale closure
@@ -403,21 +422,17 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 }
 
                 if (shouldClearUserSession) {
-                    promises.push(
-                        updateDoc(doc(db, 'users', currentUser.uid), {
-                            workStatus: {
-                                isWorking: false,
-                                status: 'idle',
-                                activeTaskId: null,
-                                lastUpdated: new Date().toISOString()
-                            },
-                            activeSession: null
-                        })
-                    );
+                    await updateDoc(doc(db, 'users', currentUser.uid), {
+                        workStatus: {
+                            isWorking: false,
+                            status: 'idle',
+                            activeTaskId: null,
+                            lastUpdated: new Date().toISOString()
+                        },
+                        activeSession: null
+                    });
                 }
             }
-
-            await Promise.all(promises);
 
             // Send task_completion notification to manager (only when the task lands 'completed' and
             // still needs a real manager's priėmimas — a role-manager's own finish auto-confirms).
@@ -478,6 +493,9 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             }
         } catch (err) {
             console.error("Error finishing task:", err);
+            // Capture server-side so a recurring finish failure is diagnosable (the dialog only ever
+            // showed a generic Lithuanian message, leaving no trace of the real Firestore error code).
+            logError(err, { source: 'finishTask', taskId: task.id, code: err?.code });
             // Surface the failure inside the dialog (never raw err.message, never window.alert).
             setFinishError('Nepavyko užbaigti užduoties. Bandykite dar kartą.');
         } finally {
