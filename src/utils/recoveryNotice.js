@@ -37,17 +37,20 @@ function safeParse(raw) {
  * courtesy, never worth failing the recovery it describes.
  *
  * @param {string} uid
- * @param {Object} notice - { kind: 'session'|'task', minutes, wasCapped, sessionType?, taskId?, taskTitle? }
+ * @param {Object} notice - { kind: 'session'|'task'|'task-gap', minutes?, wasCapped?, sessionType?,
+ *                            taskId?, taskTitle?, gapMinutes?, fromIso?, toIso? }
  */
 export function addRecoveryNotice(uid, notice) {
     if (!uid || !notice || typeof window === 'undefined' || !window.localStorage) return;
     try {
         const existing = safeParse(window.localStorage.getItem(keyFor(uid)));
-        // Skip a duplicate task notice (the task hook can re-fire across snapshots before the
-        // handled-set entry lands). Sessions carry no stable id, so they are not deduped here —
-        // the hook's handledRef already guarantees one stamp per app session.
-        if (notice.kind === 'task' && notice.taskId &&
-            existing.some((n) => n.kind === 'task' && n.taskId === notice.taskId)) {
+        // Skip a duplicate task-keyed notice (the task hook can re-fire across snapshots before the
+        // handled-set entry lands). Deduped per (kind, taskId) so a 'task' recovered notice and a
+        // 'task-gap' claim offer for the same task can coexist, but neither stacks twice. Sessions
+        // carry no stable id, so they are not deduped here — the hook's handledRef already
+        // guarantees one stamp per app session.
+        if (notice.taskId &&
+            existing.some((n) => n.kind === notice.kind && n.taskId === notice.taskId)) {
             return;
         }
         existing.push({ ...notice, at: new Date().toISOString() });
@@ -81,6 +84,29 @@ export function getRecoveryNotices(uid) {
         return fresh;
     } catch (e) {
         logError(e, { source: 'recoveryNotice.get', userId: uid });
+        return [];
+    }
+}
+
+/**
+ * Remove a single task-keyed notice (identified by kind + taskId), leaving the rest intact.
+ * Used when the worker acts on ONE gap-claim offer without dismissing the whole banner. Returns
+ * the remaining notices so the caller can sync its state without a re-read.
+ *
+ * @param {string} uid
+ * @param {Object} match - { kind, taskId }
+ * @returns {Array} the remaining notices
+ */
+export function removeRecoveryNotice(uid, { kind, taskId } = {}) {
+    if (!uid || !taskId || typeof window === 'undefined' || !window.localStorage) return [];
+    try {
+        const existing = safeParse(window.localStorage.getItem(keyFor(uid)));
+        const remaining = existing.filter((n) => !(n.kind === kind && n.taskId === taskId));
+        if (remaining.length === 0) window.localStorage.removeItem(keyFor(uid));
+        else window.localStorage.setItem(keyFor(uid), JSON.stringify(remaining));
+        return remaining;
+    } catch (e) {
+        logError(e, { source: 'recoveryNotice.remove', userId: uid });
         return [];
     }
 }

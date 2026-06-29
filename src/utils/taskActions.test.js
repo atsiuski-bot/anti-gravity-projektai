@@ -37,7 +37,7 @@ import { updateDoc, addDoc, getDocs } from 'firebase/firestore';
 import { logError } from './errorLog';
 import { getLithuanianNow } from './timeUtils';
 import { MAX_SESSION_MINUTES } from './timeUtils';
-import { startTask, pauseTask, resumeTask } from './taskActions';
+import { startTask, pauseTask, resumeTask, creditAndResumeTask } from './taskActions';
 
 // Fixed "now" so the credit math (now - timerStartedAt) is exact. June -> Vilnius is a
 // stable UTC+3, so the session date buckets to 2026-06-23 with no DST ambiguity.
@@ -228,6 +228,65 @@ describe('pauseTask — recovery return contract (drives the RecoveryNotice bann
     it('returns null for a no-op pause (already paused) so the hook stamps nothing', async () => {
         const result = await pauseTask({ id: 'r3', timerStatus: 'paused', timerStartedAt: null });
         expect(result).toBeNull();
+    });
+});
+
+describe('pauseTask — explicit endTime (heartbeat recovery)', () => {
+    it('credits only up to endTime, not up to now', async () => {
+        const task = {
+            id: 'tEnd',
+            title: 'Field work',
+            timerStatus: 'running',
+            timerStartedAt: '2026-06-23T11:00:00.000Z',
+            timerMinutes: 0,
+            assignedUserId: 'u1',
+        };
+        // NOW is 12:00 (60 min), but the last proof of life was 11:45 (45 min).
+        const lastBeat = new Date('2026-06-23T11:45:00.000Z').getTime();
+        await pauseTask(task, { endTime: lastBeat });
+
+        const upd = taskUpdateFor('tEnd');
+        expect(upd.timerStatus).toBe('paused');
+        expect(upd.timerMinutes).toBe(45); // 45, NOT the 60 wall-clock to now
+
+        const sessions = workSessionWrites();
+        expect(sessions).toHaveLength(1);
+        expect(sessions[0].durationMinutes).toBe(45);
+        expect(sessions[0].endTime).toBe('2026-06-23T11:45:00.000Z'); // the beat, not NOW
+    });
+});
+
+describe('creditAndResumeTask — continue a briefly-reloaded timer', () => {
+    it('credits up to the last beat AND leaves the task running with a fresh start', async () => {
+        const task = {
+            id: 'tCont',
+            title: 'Dig',
+            timerStatus: 'running',
+            timerStartedAt: '2026-06-23T11:00:00.000Z',
+            timerMinutes: 5,
+            assignedUserId: 'u1',
+        };
+        const lastBeat = new Date('2026-06-23T11:30:00.000Z').getTime(); // 30 min proven
+
+        await creditAndResumeTask(task, lastBeat);
+
+        const updates = updateDoc.mock.calls
+            .filter(([ref]) => ref?._path === 'tasks/tCont')
+            .map((c) => c[1]);
+        // Two task writes: pause-at-beat, then resume.
+        expect(updates).toHaveLength(2);
+        expect(updates[0].timerStatus).toBe('paused');
+        expect(updates[0].timerMinutes).toBe(35); // 5 prior + 30 proven
+        const resumed = updates[updates.length - 1];
+        expect(resumed.timerStatus).toBe('running');
+        expect(typeof resumed.timerStartedAt).toBe('string');
+        expect(typeof resumed.timerLastHeartbeat).toBe('string'); // re-seeded on resume
+
+        // The proven stretch is logged exactly once.
+        const sessions = workSessionWrites();
+        expect(sessions).toHaveLength(1);
+        expect(sessions[0].durationMinutes).toBe(30);
+        expect(sessions[0].endTime).toBe('2026-06-23T11:30:00.000Z');
     });
 });
 
