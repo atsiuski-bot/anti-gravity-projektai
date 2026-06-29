@@ -69,7 +69,12 @@ export default function Modal({
     return createPortal(
         <div
             className={cn(
-                'fixed inset-0 flex justify-center bg-feedback-scrim p-4 animate-in fade-in',
+                'fixed inset-0 flex justify-center bg-feedback-scrim animate-in fade-in',
+                // Reserve the bottom-nav footprint so a centred card never overlaps the fixed
+                // bottom navigation + floating work pill (which sit a z-step BELOW the scrim and
+                // show THROUGH it). Mirrors Layout's `pb-navclear` content clearance and tracks the
+                // same `lg` breakpoint where the bottom bar gives way to the desktop side rail.
+                'px-4 pt-4 pb-navclear sm:pb-navclear-lg lg:pb-4',
                 align === 'top' ? 'items-start' : 'items-center',
                 level === 'top' ? 'z-top' : 'z-backdrop'
             )}
@@ -86,7 +91,9 @@ export default function Modal({
                 tabIndex={-1}
                 className={cn(
                     'relative z-modal flex w-full flex-col overflow-hidden rounded-modal bg-surface-card shadow-xl',
-                    'max-h-[90vh] focus:outline-none',
+                    // Cap height to the space ABOVE the reserved nav clearance so a tall card
+                    // (e.g. the task detail modal) cannot overflow back down onto the bottom nav.
+                    'max-h-[calc(100vh-9rem)] sm:max-h-[calc(100vh-10rem)] lg:max-h-[90vh] focus:outline-none',
                     // Card settles in (fade + slight zoom) as the scrim fades behind it.
                     'animate-in fade-in zoom-in-95',
                     SIZES[size] || SIZES.md,
