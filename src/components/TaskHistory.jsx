@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, getDocs } from 'firebase/firestore';
 import { FileText, Download, RotateCcw, Calendar, UserCheck, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
@@ -19,6 +19,8 @@ import { addComment } from '../utils/commentActions';
 import IconButton from './ui/IconButton';
 import InfoPopover from './ui/InfoPopover';
 import Select from './ui/Select';
+import SearchBox from './ui/SearchBox';
+import { filterRankTasks, buildTaskSuggestions, getTaskMatchFields, getTaskSuggestionSources } from '../utils/taskSearch';
 import ConfirmDialog from './ui/ConfirmDialog';
 import DatePicker from './ui/DatePicker';
 import TimeChangedWarning from './task/TimeChangedWarning';
@@ -67,7 +69,20 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     const [dateTo, setDateTo] = useState('');
     const [filterUser, setFilterUser] = useState('all');
     const [filterTag, setFilterTag] = useState('all');
+    const [filterStatus, setFilterStatus] = useState('all'); // 'all' | 'completed' | 'confirmed' | 'deleted'
     const [sortBy, setSortBy] = useState('date'); // 'date' | 'status'
+
+    // Free-text search over the already-fetched archive, debounced so the list doesn't re-rank on
+    // every keystroke. Uses the SAME shared fuzzy core as the active lists (diacritic-insensitive,
+    // typo-tolerant, relevance-ranked) so searching the history feels identical to searching the
+    // live lists. Date/user/tag/status narrow the server+client result set first; search reorders
+    // and filters what remains.
+    const [searchText, setSearchText] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    useEffect(() => {
+        const handle = setTimeout(() => setDebouncedSearch(searchText), 200);
+        return () => clearTimeout(handle);
+    }, [searchText]);
 
     const [historyOpen, setHistoryOpen] = useState(false);
     // Date range lives behind a single field; tapping it opens the from/to pickers in a popover.
@@ -259,9 +274,38 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag; depending on the whole object would re-subscribe on each live-session user-doc update
     }, [dateFrom, dateTo, filterUser, userId, filterTag, sortBy, scoped, currentUser, approvalManagerUid]);
 
+    // Status narrowing runs on the client over the fetched archive — the same three buckets the
+    // status sort already recognises (Atlikta / Priimta / Ištrinta). 'all' is a pass-through so the
+    // server-sorted order is preserved untouched.
+    const statusFilteredTasks = useMemo(() => {
+        if (filterStatus === 'all') return tasks;
+        return tasks.filter((t) => {
+            const deleted = t.isDeleted || t.status === 'deleted';
+            if (filterStatus === 'deleted') return deleted;
+            if (deleted) return false;
+            if (filterStatus === 'confirmed') return t.status === 'confirmed';
+            return t.status !== 'confirmed'; // 'completed' / unconfirmed
+        });
+    }, [tasks, filterStatus]);
+
+    // Search reorders to best-match-first when active (relevance ranking), and is a pass-through
+    // otherwise so the chosen date/status sort stands. This is what the count badge, the lists, and
+    // the export all read from, so the on-screen result and the downloaded file always agree.
+    const displayedTasks = useMemo(() => {
+        if (!debouncedSearch.trim()) return statusFilteredTasks;
+        return filterRankTasks(statusFilteredTasks, debouncedSearch, getTaskMatchFields);
+    }, [statusFilteredTasks, debouncedSearch]);
+
+    // Type-ahead completions drawn from what is actually in view (after status narrowing), so the
+    // dropdown only ever offers titles / meistras / žyma that exist in the current archive window.
+    const searchSuggestions = useMemo(() => {
+        if (!searchText.trim()) return [];
+        return buildTaskSuggestions(statusFilteredTasks, searchText, getTaskSuggestionSources);
+    }, [statusFilteredTasks, searchText]);
+
     const handleExport = async () => {
         try {
-            const exportDataPromises = tasks.map(async (task) => {
+            const exportDataPromises = displayedTasks.map(async (task) => {
                 const realTimeMinutes = calculateCurrentTotalMinutes(task);
                 
                 // Fetch work sessions to get session times
@@ -356,7 +400,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             "Archyvavimo data"
         ];
 
-        const rows = tasks.map(task => {
+        const rows = displayedTasks.map(task => {
             const realTimeMinutes = calculateCurrentTotalMinutes(task);
             const realTimeFormatted = realTimeMinutes !== 0 ? formatMinutesToHHMM(realTimeMinutes) : '00:00';
             const commentsText = task.comments ? task.comments.map(c => `${c.user}: ${c.text}`).join('; ') : '';
@@ -492,13 +536,17 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         setDateTo(getLithuanianDateString(now));
         setFilterUser('all');
         setFilterTag('all');
+        setFilterStatus('all');
+        setSearchText('');
     };
 
     const hasNonDefaultFilters =
         dateFrom !== defaultDates.current.from ||
         dateTo !== defaultDates.current.to ||
         filterUser !== 'all' ||
-        filterTag !== 'all';
+        filterTag !== 'all' ||
+        filterStatus !== 'all' ||
+        searchText.trim() !== '';
 
 
     // Archive-surface props for the shared TaskCard (mobile): the SAME card the active lists use,
@@ -558,7 +606,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             ? <ChevronUp className="w-5 h-5 text-ink-muted shrink-0" aria-hidden="true" />
                             : <ChevronDown className="w-5 h-5 text-ink-muted shrink-0" aria-hidden="true" />}
                         <h2 className="text-h3 font-semibold text-ink-strong flex items-center gap-2">
-                            Užduočių istorija <span className="text-ink-muted text-body font-normal">({tasks.length})</span>
+                            Užduočių istorija <span className="text-ink-muted text-body font-normal">({displayedTasks.length})</span>
                         </h2>
                     </button>
                     {/* Scope clarity (audit #3): this panel is the ARCHIVE only. Just-finished tasks
@@ -612,6 +660,22 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
             {/* Filters — shown directly without an accordion wrapper. */}
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+
+                {/* Free-text search — team report only (the personal history stays pared down to the
+                    date range). Reuses the canonical type-ahead SearchBox so it matches the active
+                    lists; matching/ranking runs client-side over the fetched archive. */}
+                {!isPersonal && (
+                <div className="flex flex-col gap-1 min-w-[200px] flex-1 sm:max-w-xs">
+                    <label className={FILTER_LABEL_CLASS}>Paieška</label>
+                    <SearchBox
+                        value={searchText}
+                        onChange={setSearchText}
+                        suggestions={searchSuggestions}
+                        placeholder="Ieškoti istorijoje…"
+                        ariaLabel="Ieškoti užduočių istorijoje"
+                    />
+                </div>
+                )}
 
                 {/* Date range with inline reset button */}
                 <div className="relative flex flex-col gap-1 min-w-[200px]" ref={dateRangeRef}>
@@ -699,6 +763,26 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 </div>
                 )}
 
+                {/* Status filter — team report only. Mirrors the three buckets the status sort and
+                    the CSV/AI export already use (Atlikta / Priimta / Ištrinta). */}
+                {!isPersonal && (
+                <div className="flex flex-col gap-1 min-w-[140px]">
+                    <label className={FILTER_LABEL_CLASS}>Būsena</label>
+                    <Select
+                        value={filterStatus}
+                        onChange={setFilterStatus}
+                        options={[
+                            { value: 'all', label: 'Visos' },
+                            { value: 'completed', label: 'Atlikta' },
+                            { value: 'confirmed', label: 'Priimta' },
+                            { value: 'deleted', label: 'Ištrinta' },
+                        ]}
+                        label="Būsena"
+                        ariaLabel="Filtruoti pagal būseną"
+                    />
+                </div>
+                )}
+
                 {/* Sort — a segmented switch (Pagal datą / Pagal būseną) rather than a dropdown,
                     so both choices are visible at once and it reads at a glance. Team report only. */}
                 {!isPersonal && (
@@ -743,7 +827,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
             {/* Mobile / touch: one card per task — the SAME shared TaskCard the active lists use
                 (archive surface: timer hidden, archive-semantics buttons). Never a table (§9). */}
             <ul className="space-y-3 md:hidden">
-                {tasks.map((task) => {
+                {displayedTasks.map((task) => {
                     const { actions, detailOverrides } = archiveCardProps(task);
                     return (
                         <li key={task.id}>
@@ -757,7 +841,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         </li>
                     );
                 })}
-                {tasks.length === 0 && (
+                {displayedTasks.length === 0 && (
                     <li className="bg-surface-card rounded-card border border-line px-6 py-12 text-center text-body text-ink-muted">
                         Istorija tuščia pagal pasirinktus filtrus.
                     </li>
@@ -779,7 +863,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             </tr>
                         </thead>
                         <tbody className="bg-surface-card divide-y divide-line">
-                            {tasks.map((task) => {
+                            {displayedTasks.map((task) => {
                                 const deleted = task.isDeleted || task.status === 'deleted';
                                 // The SAME action set the mobile archive card shows (accept / restore /
                                 // delete — no comment/edit), on one adaptive single-line row.
@@ -844,7 +928,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                                     />
                                 );
                             })}
-                            {tasks.length === 0 && (
+                            {displayedTasks.length === 0 && (
                                 <tr>
                                     <td colSpan="6" className="px-6 py-12 text-center text-ink-muted text-body">
                                         <span>Istorija tuščia pagal pasirinktus filtrus.</span>
