@@ -156,6 +156,15 @@ Full procedure (one-time setup, per-session loop, security model, teardown when 
 `isTest: true` (excluded from reports) and is kept **disabled at rest**; `.env.local` is gitignored
 (this repo is public — never commit the credentials).
 
+### Security review — the threat lens before a rules/functions change
+
+Security in WORKZ is the **rules**, not the client. Before any `firestore.rules` /
+`storage.rules` / `functions` change (and as the lens for `/security-review`), run the
+Firebase-shaped STRIDE pass + 10-item checklist in
+[`docs/security/threat-model-checklist.md`](./docs/security/threat-model-checklist.md). It is
+the gate that runs *before* the irreversible, human-only deploy — owner pins, self-escalation,
+scoped-manager write boundaries, shape/range validation, and session-race/double-credit traps.
+
 ## Folder structure
 
 ```

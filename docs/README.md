@@ -12,6 +12,7 @@ how the product should look and how the repo is run.
 | [`adr/`](./adr/) | Architecture Decision Records — the *why* behind major choices. |
 | [`decisions-log.md`](./decisions-log.md) | Chronological index of ADRs + notable inline decisions. **Read first for orientation.** |
 | [`guides/`](./guides/) | How-to procedures for recurring tasks — e.g. [`adding-a-notification.md`](./guides/adding-a-notification.md) (the step-by-step to add a new alert + its trigger). |
+| [`security/threat-model-checklist.md`](./security/threat-model-checklist.md) | Firebase-shaped STRIDE threat model + 10-item security-test checklist. **Run before any rules/Storage/Functions change** and as the `/security-review` lens. |
 
 ## Conventions
 

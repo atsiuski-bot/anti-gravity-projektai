@@ -29,6 +29,18 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-06-30** — **Firebase-shaped threat model + security-test checklist.** Added
+  [`docs/security/threat-model-checklist.md`](./security/threat-model-checklist.md): a STRIDE
+  pass and a 10-item pre-change checklist retargeted to how WORKZ actually enforces security —
+  Firebase Auth identity, `firestore.rules`/`storage.rules` as the boundary, "reads broad,
+  writes scoped", and the one-shared-project deploy reality. Grounded in recurring WORKZ pain
+  (userId/actorId owner pins, self-escalation of `role`/`payRate`/`overseerIds`, scoped-manager
+  out-of-scope writes, the `isDisabled` `.get()` trap, session-toggle races/double-credit). It
+  is the security lens for `/security-review` and the gate to run **before** any human-only
+  rules/functions deploy. Cherry-picked from the `agency-agents` security-architect agent and
+  rewritten for Firestore — **adopted as a doc, not a standing agent** (curated-setup ethos).
+  Docs-only; no code/rules/functions change.
+
 - **2026-06-24** — **Undo affordance + guard-matches-reversibility rule.** Reworked the app's
   control logic so the *guard* fits the *cost of being wrong*, not how consequential an action feels:
   irreversible/destructive → confirm before (`ConfirmDialog`); cleanly reversible one-tap state
