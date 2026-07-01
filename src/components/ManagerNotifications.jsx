@@ -563,6 +563,19 @@ export default function ManagerNotifications({ onClose }) {
         setDecidingAccount(notif.id);
         clearActionFeedback();
         try {
+            // The pending account can be DELETED out from under this request — an admin clears the
+            // sign-up from User Management, leaving this notification dangling. updateDoc on a missing
+            // doc is rejected by the rules as permission-denied (resource is null), which surfaces as
+            // the misleading "Neturite teisių atlikti šį veiksmą" even though the real cause is a gone
+            // account. Detect the orphan, clear the stale request, and say so — mirroring the
+            // task-approval orphan self-heal (handleApproveTask). The person can sign in again to
+            // create a fresh, approvable pending entry.
+            const snap = await getDoc(doc(db, 'users', targetUid));
+            if (!snap.exists()) {
+                await handleDismissTask(notif.id);
+                setActionNotice('Šio vartotojo paskyra jau ištrinta — pasenęs prašymas pašalintas. Jei žmogus turi prisijungti, tegul jungiasi iš naujo.');
+                return;
+            }
             await updateDoc(doc(db, 'users', targetUid), approve
                 ? { isDisabled: false, status: 'active' }
                 : { isDisabled: true, status: 'blocked' });
