@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import {
     Pencil, Trash2, Undo2, CheckCircle2, Check, Clock, MessageSquare, ListChecks,
     Link as LinkIcon, ImageIcon, ImagePlus, Camera, Send, X, ChevronDown,
-    Calendar, Timer, Hourglass, UserCog,
+    Calendar, Timer, Hourglass, UserCog, Square, CheckSquare,
 } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -437,12 +437,40 @@ export default function TaskDetailModal({
                         </div>
                     )}
 
-                    {/* Row 5 — checklist launcher (the rich editor stays its own modal) */}
-                    {checklist && onOpenChecklist && (
+                    {/* Row 5 — progress checklist ("Eigos sąrašas"). Rendered inline read-only on
+                        EVERY surface that opens the task (list, approval/Pridavimas, history,
+                        statistics) so the plan is always visible to anyone who can see the task.
+                        Where an interactive editor is wired (onOpenChecklist — the active card /
+                        list), a launcher button also opens the rich modal for ticking items. */}
+                    {checklist && (
                         <div>
-                            <Button variant="secondary" size="md" icon={ListChecks} onClick={() => onOpenChecklist(task)}>
-                                Sąrašas {checklist.done}/{checklist.total}
-                            </Button>
+                            <div className="mb-2 flex items-center gap-1.5 text-caption font-medium uppercase tracking-wide text-ink-muted">
+                                <ListChecks className="h-4 w-4" aria-hidden="true" /> Eigos sąrašas · {checklist.done}/{checklist.total}
+                            </div>
+                            <ul className="space-y-1">
+                                {task.checklist.map((item) => {
+                                    const ItemIcon = item.done ? CheckSquare : Square;
+                                    return (
+                                        <li key={item.id} className="flex items-start gap-2 text-body">
+                                            <ItemIcon
+                                                className={clsx(
+                                                    'mt-0.5 h-4 w-4 flex-shrink-0',
+                                                    item.done ? 'text-feedback-success-text' : 'text-ink-muted',
+                                                )}
+                                                aria-hidden="true"
+                                            />
+                                            <span className={clsx('leading-snug', item.done ? 'text-ink-muted line-through' : 'text-ink')}>
+                                                {item.text}
+                                            </span>
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+                            {onOpenChecklist && (
+                                <Button variant="secondary" size="md" icon={ListChecks} className="mt-2" onClick={() => onOpenChecklist(task)}>
+                                    Atidaryti sąrašą
+                                </Button>
+                            )}
                         </div>
                     )}
 
