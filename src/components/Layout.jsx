@@ -5,6 +5,7 @@ import AppHeader from './AppHeader';
 import BottomNavigation from './BottomNavigation';
 import SideRail from './SideRail';
 import InstallPrompt from './InstallPrompt';
+import BatteryOptimizationNudge from './BatteryOptimizationNudge';
 import { runDailyAutomation } from '../utils/automationUtils';
 import { canSeeWholeTeam } from '../utils/teamScope';
 import { useSessionNotification } from '../hooks/useSessionNotification';
@@ -134,6 +135,11 @@ export default function Layout({ children }) {
                         an install (or on iOS, manual steps). Mobile-only: it self-suppresses on
                         desktop (lg+), where the nudge is noise. */}
                     <InstallPrompt />
+
+                    {/* Push delivery heads-up — a one-time, mobile-only reminder to lift the phone's
+                        battery optimisation off the app once notifications are granted, so background
+                        push is not silently frozen. Self-suppresses on desktop / iOS / when snoozed. */}
+                    <BatteryOptimizationNudge />
 
                     <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-2 pb-8 relative">
                         <div className="relative z-10">
