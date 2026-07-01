@@ -118,11 +118,12 @@ export const TIMER_HEARTBEAT_INTERVAL_MS = 60 * 1000;
 
 // On the next app load, orphan recovery reads the last beat as the "last proof of work" instant.
 // If the unproven tail (load time − last beat) is within this window, the reload is treated as a
-// brief interruption WHILE WORKING: the timer is credited up to the last beat and RE-ANCHORED to
-// keep running (the worker never has to restart, losing only the sub-tail). A larger tail means
-// the app was genuinely closed: credit stops at the last beat and the timer is paused. Must be
-// comfortably larger than the heartbeat interval so a single skipped beat (slow field connection)
-// never mis-classifies live work as abandonment.
+// brief interruption WHILE WORKING: the timer is credited up to the RELOAD INSTANT (the bounded
+// tail is real continuous work by a worker who is demonstrably back in the app) and RE-ANCHORED to
+// keep running, so the worker never has to restart and nothing leaks per reload. A larger tail
+// means the app was genuinely closed: credit stops at the last beat and the timer is paused. Must
+// be comfortably larger than the heartbeat interval so a single skipped beat (slow field
+// connection) never mis-classifies live work as abandonment.
 export const TIMER_HEARTBEAT_CONTINUE_MS = 3 * 60 * 1000;
 
 // Read-side plausibility guard for report AGGREGATION. Already-persisted session docs can be

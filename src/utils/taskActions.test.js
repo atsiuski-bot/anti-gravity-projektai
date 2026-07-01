@@ -254,6 +254,29 @@ describe('pauseTask — explicit endTime (heartbeat recovery)', () => {
         expect(sessions[0].durationMinutes).toBe(45);
         expect(sessions[0].endTime).toBe('2026-06-23T11:45:00.000Z'); // the beat, not NOW
     });
+
+    it('CREDITS a sub-minute recovery segment (unlike a manual tap) — a reload loop must not shred time', async () => {
+        // Under a rapid crash/reload loop each proven segment can be sub-minute. A recovery pause
+        // (endTime set) must accrue it; the MIN_LOGGED mis-tap guard applies only to MANUAL pauses.
+        const task = {
+            id: 'tMicro',
+            title: 'Field work',
+            timerStatus: 'running',
+            timerStartedAt: '2026-06-23T11:59:20.000Z', // 40s before the beat below
+            timerMinutes: 30,
+            assignedUserId: 'u1',
+            assignedUserName: 'Worker',
+        };
+        const lastBeat = new Date('2026-06-23T12:00:00.000Z').getTime(); // 40s segment (< 1 min)
+        await pauseTask(task, { endTime: lastBeat });
+
+        const upd = taskUpdateFor('tMicro');
+        // 30 prior + ~0.667 min credited — NOT dropped as it would be on a manual pause.
+        expect(upd.timerMinutes).toBeGreaterThan(30);
+        expect(upd.timerMinutes).toBeCloseTo(30.6667, 3);
+        // And the work_session mirror is written too, so the total and the sessions stay in sync.
+        expect(workSessionWrites()).toHaveLength(1);
+    });
 });
 
 describe('creditAndResumeTask — continue a briefly-reloaded timer', () => {

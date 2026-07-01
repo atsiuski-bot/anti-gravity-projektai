@@ -133,9 +133,21 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
         // MAX_SESSION_MINUTES so an orphaned interval cannot credit hours of ghost time.
         const elapsedMinutes = clampSessionMinutes((endMoment - start) / (1000 * 60)); // minutes, float for precision
 
+        // A recovery-driven pause (crash/reload) always passes an explicit endTime. Its every
+        // segment is PROVEN worked time (bounded start→last-heartbeat), so the sub-minute
+        // MIN_LOGGED gate — which exists only to swallow an accidental start-then-immediately-stop
+        // tap on a MANUAL pause — must NOT apply here. Under a rapid reload loop each surviving
+        // segment can be sub-minute; dropping them silently shreds hours of real work (the reported
+        // incident). For recovery we credit any positive interval; for a manual pause we keep the
+        // original mis-tap guard. Either way clampSessionMinutes has already zeroed clock-skew.
+        const isRecovery = endTime != null;
+        const shouldCredit = isRecovery
+            ? elapsedMinutes > 0
+            : elapsedMinutes > MIN_LOGGED_SESSION_MINUTES;
+
         // 1. Get current Timer Minutes
         const currentTimerMinutes = task.timerMinutes || 0;
-        const newTimerMinutes = (elapsedMinutes > MIN_LOGGED_SESSION_MINUTES)
+        const newTimerMinutes = shouldCredit
             ? currentTimerMinutes + elapsedMinutes
             : currentTimerMinutes;
 
@@ -168,8 +180,10 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
             }
         }
 
-        // Log Work Session (fire alongside task update)
-        if (elapsedMinutes > MIN_LOGGED_SESSION_MINUTES) {
+        // Log Work Session (fire alongside task update) — gated identically to the timerMinutes
+        // accrual above so the task total and the summed work_sessions never diverge (a recovery
+        // pause that credits a sub-minute segment also logs its matching session).
+        if (shouldCredit) {
             // Attribute the session to the date the work ENDED (endMoment), matching every
             // other work_sessions writer (sessionActions, time-correction). Using the
             // start date previously mis-bucketed sessions that ran across midnight.

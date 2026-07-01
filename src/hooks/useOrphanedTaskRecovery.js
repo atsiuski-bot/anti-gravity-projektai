@@ -11,6 +11,37 @@ import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES } from '../utils/timeU
 // app session has timerStartedAt >= APP_LOAD_TIME and is left untouched.)
 const APP_LOAD_TIME = Date.now();
 
+// Decide what a pre-boot running task's crash-recovery should do — pure + exported so the
+// credit-instant policy is unit-testable without a React renderer (mirrors isAbandonedSession in
+// useOrphanedSessionRecovery). Returns one of:
+//   { mode: 'skip' }                              — not an orphan (unparseable start, or started this session)
+//   { mode: 'pause-now' }                         — no heartbeat: pause crediting up to now (clamped downstream)
+//   { mode: 'resume', creditTo }                  — brief reload while working: credit + re-anchor, no banner
+//   { mode: 'pause-at-beat', creditTo, gapFrom, gapTo } — genuinely closed: credit to last beat, pause, offer gap
+//
+// The key policy fix: in the RESUME case we credit up to the reload instant (appLoadTime), NOT the
+// last heartbeat. A gap short enough to resume (≤ TIMER_HEARTBEAT_CONTINUE_MS) with the worker
+// demonstrably back in the app is real continuous work; crediting only to the last beat leaked up
+// to that bound on EVERY reload, which compounds to hours under a reload loop (the reported bug).
+export function decideOrphanTaskRecovery(task, appLoadTime = Date.now()) {
+    const startedAt = new Date(task?.timerStartedAt).getTime();
+    if (!Number.isFinite(startedAt)) return { mode: 'skip' };
+    // A timer started during THIS app session is live, not orphaned.
+    if (startedAt >= appLoadTime) return { mode: 'skip' };
+
+    const beatMs = task?.timerLastHeartbeat ? new Date(task.timerLastHeartbeat).getTime() : NaN;
+    if (!Number.isFinite(beatMs)) return { mode: 'pause-now' };
+
+    // The last proven-alive instant can't precede the start (guard a stale beat).
+    const lastBeat = Math.max(beatMs, startedAt);
+    const tailMs = appLoadTime - lastBeat;
+
+    if (tailMs <= TIMER_HEARTBEAT_CONTINUE_MS) {
+        return { mode: 'resume', creditTo: appLoadTime };
+    }
+    return { mode: 'pause-at-beat', creditTo: lastBeat, gapFrom: lastBeat, gapTo: appLoadTime };
+}
+
 /**
  * Crash/reload recovery for orphaned running tasks — heartbeat-aware.
  *
@@ -45,41 +76,31 @@ export function useOrphanedTaskRecovery(tasks) {
             if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return;
             if (handledRef.current.has(task.id)) return;
 
-            const startedAt = new Date(task.timerStartedAt).getTime();
-            if (!Number.isFinite(startedAt)) return;
-
-            // Only recover a timer that began BEFORE this app session — it survived a
-            // restart and is therefore orphaned. A timer started in this session is live.
-            if (startedAt >= APP_LOAD_TIME) return;
+            const decision = decideOrphanTaskRecovery(task, APP_LOAD_TIME);
+            if (decision.mode === 'skip') return;
 
             handledRef.current.add(task.id);
 
-            const beatMs = task.timerLastHeartbeat ? new Date(task.timerLastHeartbeat).getTime() : NaN;
-            const hasBeat = Number.isFinite(beatMs);
-
             // (1) No proof of life — fall back to the original behaviour exactly: credit up to
             // now (clamped), pause, and tell the worker. We have nothing better to go on.
-            if (!hasBeat) {
+            if (decision.mode === 'pause-now') {
                 pauseTask(task)
                     .then((result) => stampRecoveredNotice(task, result))
                     .catch((e) => logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id }));
                 return;
             }
 
-            // The last proven-alive instant can't be before the timer started (guard a stale beat).
-            const lastBeat = Math.max(beatMs, startedAt);
-            const tailMs = APP_LOAD_TIME - lastBeat;
-
-            // (2) Brief reload while working — continue seamlessly, no banner.
-            if (tailMs <= TIMER_HEARTBEAT_CONTINUE_MS) {
-                creditAndResumeTask(task, lastBeat).catch((e) =>
+            // (2) Brief reload while working — credit up to the reload instant (real continuous
+            // work, not just up to the last beat) and re-anchor. Seamless, no banner.
+            if (decision.mode === 'resume') {
+                creditAndResumeTask(task, decision.creditTo).catch((e) =>
                     logError(e, { source: 'orphanRecovery:creditAndResume', taskId: task.id })
                 );
                 return;
             }
 
             // (3) Large tail — credit only up to the last beat, pause, then offer to claim the gap.
-            pauseTask(task, { endTime: lastBeat })
+            pauseTask(task, { endTime: decision.creditTo })
                 .then((result) => {
                     stampRecoveredNotice(task, result);
 
@@ -87,15 +108,15 @@ export function useOrphanedTaskRecovery(tasks) {
                     // when it is plausibly a single real stretch (≤16h). A longer gap is almost
                     // certainly a multi-day forgotten timer, not one offline shift — leave that to a
                     // manual correction rather than inviting a 1-tap credit of implausible time.
-                    const gapMinutes = Math.round(tailMs / 60000);
+                    const gapMinutes = Math.round((decision.gapTo - decision.gapFrom) / 60000);
                     if (gapMinutes >= 1 && gapMinutes <= MAX_SESSION_MINUTES && task.assignedUserId) {
                         addRecoveryNotice(task.assignedUserId, {
                             kind: 'task-gap',
                             taskId: task.id,
                             taskTitle: task.title || '',
                             gapMinutes,
-                            fromIso: new Date(lastBeat).toISOString(),
-                            toIso: new Date(APP_LOAD_TIME).toISOString(),
+                            fromIso: new Date(decision.gapFrom).toISOString(),
+                            toIso: new Date(decision.gapTo).toISOString(),
                         });
                     }
                 })
