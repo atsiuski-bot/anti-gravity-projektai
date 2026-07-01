@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor, BarChart3, Briefcase, Home, Zap, Plus, X } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor, BarChart3, Briefcase, Home, Zap, Plus, X, BatteryWarning } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
@@ -29,6 +29,7 @@ import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import { Spinner } from '../components/ui/Loading';
 import InstallInstructions from '../components/InstallInstructions';
+import NotificationDeliveryHelp from '../components/NotificationDeliveryHelp';
 import { ROLE_GLYPHS } from '../components/icons/roleInsigniaMap';
 
 // Role presentation — pair color with text so role is never color-only (DESIGN_SYSTEM §5).
@@ -161,6 +162,7 @@ export default function ProfilePage() {
     const [workLocError, setWorkLocError] = useState('');
     const [confirmLogout, setConfirmLogout] = useState(false);
     const [showInstall, setShowInstall] = useState(false);
+    const [showNotifHelp, setShowNotifHelp] = useState(false);
     const [selectedBadge, setSelectedBadge] = useState(null);
 
     // Personal quick-work templates (users/{uid}.quickWorkTemplates) — the worker's own one-tap
@@ -722,6 +724,25 @@ export default function ProfilePage() {
                     </p>
                 )}
 
+                {/* Push-delivery help — always findable, because the failure it addresses is silent:
+                    the phone's battery optimisation can freeze the app in the background so a granted
+                    permission still drops pushes. The app can't read or fix that setting, so this
+                    opens the OS-specific manual steps. */}
+                <button
+                    type="button"
+                    onClick={() => setShowNotifHelp(true)}
+                    className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                >
+                    <BatteryWarning className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                        <p className="text-body font-medium text-ink-strong">Negaunate pranešimų?</p>
+                        <p className="text-caption text-ink-muted">
+                            Kaip leisti programėlei veikti fone, kad pranešimai nedingtų
+                        </p>
+                    </div>
+                    <ChevronRight className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
+                </button>
+
                 {/* Install — a persistent, always-findable entry point (the banner above the
                     workspace is snoozable and race-prone; this is the reliable fallback). Hidden
                     once the app is already running standalone, since there is nothing to install. */}
@@ -766,6 +787,10 @@ export default function ProfilePage() {
 
             {showInstall && (
                 <InstallInstructions isIOS={isIOS} onClose={() => setShowInstall(false)} />
+            )}
+
+            {showNotifHelp && (
+                <NotificationDeliveryHelp isIOS={isIOS} onClose={() => setShowNotifHelp(false)} />
             )}
 
             {selectedBadge && (
