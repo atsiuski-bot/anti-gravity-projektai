@@ -12,6 +12,7 @@ import { WORKER_FALLBACK_COLOR } from '../utils/colors';
 import { cn } from '../utils/cn';
 import { MAX_BACKDATE_DAYS } from '../utils/timeUtils';
 import { scoreFields, tokenizeQuery } from '../utils/taskSearch';
+import { isReapprovalPending } from '../utils/accountStatus';
 import UserChip from './UserChip';
 import Card from './ui/Card';
 import Button from './ui/Button';
@@ -290,12 +291,15 @@ function isPendingUser(user) {
 }
 
 // Disabled-state pill: distinguishes "awaiting approval" from "blocked" so an admin can tell a
-// new sign-up apart from a deliberately disabled account.
+// new sign-up apart from a deliberately disabled account. A pending account that is a RETURNING
+// one (previously blocked, then re-flagged when it tried to sign in again — reapprovalRequestedAt)
+// reads as "awaiting RE-approval", so it is not mistaken for a first-time sign-up in the same band.
 function DisabledPill({ user }) {
     if (!user.isDisabled) return null;
-    return isPendingUser(user)
-        ? <StatusPill tone="pending" icon={Clock}>Laukia patvirtinimo</StatusPill>
-        : <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>;
+    if (!isPendingUser(user)) return <StatusPill tone="danger" icon={Trash2}>Užblokuotas</StatusPill>;
+    return isReapprovalPending(user)
+        ? <StatusPill tone="pending" icon={Clock}>Laukia pakartotinio patvirtinimo</StatusPill>
+        : <StatusPill tone="pending" icon={Clock}>Laukia patvirtinimo</StatusPill>;
 }
 
 // Days a worker may go silent before the roster flags them — lets a manager tell a churned

@@ -23,6 +23,8 @@ function loginErrorMessage(err) {
     switch (err?.code) {
         case 'app/pending-approval':
             return 'Jūsų paskyra sukurta ir laukia patvirtinimo. Kai administratorius ją patvirtins, galėsite prisijungti. Norėdami paspartinti — kreipkitės į savo koordinatorių.';
+        case 'app/reapproval-pending':
+            return 'Jūsų prisijungimas užregistruotas ir laukia pakartotinio administratoriaus patvirtinimo. Kai jį patvirtins, vėl galėsite prisijungti. Norėdami paspartinti — kreipkitės į savo koordinatorių.';
         case 'app/account-disabled':
             return 'Jūsų paskyra užblokuota. Susisiekite su administratoriumi.';
         case 'auth/popup-blocked':

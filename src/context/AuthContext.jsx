@@ -11,6 +11,7 @@ import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { logError } from '../utils/errorLog';
 import { removeFcmToken } from '../utils/messaging';
 import { setAgentsEnabled } from '../domain/agentControl';
+import { decideDisabledLogin } from '../utils/accountStatus';
 
 const AuthContext = createContext();
 
@@ -121,12 +122,34 @@ export function AuthProvider({ children }) {
             } else {
                 const data = userSnap.data();
                 if (data.isDisabled) {
+                    // A DISABLED account that signs in again is re-surfaced for approval instead of
+                    // hitting a silent dead end. Any account that is not already awaiting its first
+                    // approval (a previously-blocked one, or a legacy doc with no status) is re-flagged
+                    // to status:'pending' BEFORE we sign out, so it re-enters the admin's approval
+                    // queue — the nav badge + the roster's "Laukia" band both key on
+                    // isDisabled && status==='pending' — and can be re-approved. reapprovalRequestedAt
+                    // marks it as a RETURNING request (vs a brand-new sign-up) for the copy/pill.
+                    //
+                    // The write is permitted by firestore.rules: this self-update touches only
+                    // status/reapprovalRequestedAt and leaves role + isDisabled + every admin-only
+                    // field unchanged (the users UPDATE rule pins those, not these), so the account
+                    // gains NO access — it merely re-enters the queue. It MUST persist before signOut,
+                    // or invalidating the token mid-write rejects it (the same race the pending-doc
+                    // CREATE above avoids); the onSnapshot disabled-handler defers meanwhile
+                    // (isProvisioning is still set).
+                    const { reflagToPending, errorCode } = decideDisabledLogin(data);
+                    if (reflagToPending) {
+                        await setDoc(userRef, {
+                            status: 'pending',
+                            reapprovalRequestedAt: new Date().toISOString(),
+                        }, { merge: true });
+                    }
 
                     await signOut(auth);
-                    // Distinguish a not-yet-approved account from a manually blocked one so Login
-                    // can show the right message (coded, never a raw thrown string — §10).
-                    const disabledErr = new Error('Account disabled');
-                    disabledErr.code = data.status === 'pending' ? 'app/pending-approval' : 'app/account-disabled';
+                    // Coded reason (never a raw thrown string — §10) so Login shows the right message:
+                    // a first-time sign-up awaiting approval vs a returning account awaiting re-approval.
+                    const disabledErr = new Error('Account pending approval');
+                    disabledErr.code = errorCode;
                     throw disabledErr;
                 }
 
