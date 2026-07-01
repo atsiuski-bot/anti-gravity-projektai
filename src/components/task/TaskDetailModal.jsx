@@ -26,7 +26,7 @@ import SessionTypeIcon from '../SessionTypeIcon';
 import UserChip from '../UserChip';
 import { deriveTaskStatus } from '../../utils/taskStatus';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, relativeDeadline } from '../../utils/timeUtils';
-import { getChecklistProgress } from '../../utils/checklistActions';
+import { getChecklistProgress, toggleChecklistItem } from '../../utils/checklistActions';
 import { addComment, updateComment, deleteComment, getCommentKey } from '../../utils/commentActions';
 import { uploadAttachments, MAX_ATTACHMENTS } from '../../utils/attachmentUpload';
 import { notifyMany } from '../../utils/notify';
@@ -123,6 +123,10 @@ export default function TaskDetailModal({
     const [editText, setEditText] = useState('');
     const [deletingKey, setDeletingKey] = useState(null);
 
+    // Checklist inline ticking — while one item's write is in flight, only that item is disabled
+    // (keyed by id) so a slow network can't block ticking the rest.
+    const [togglingItemId, setTogglingItemId] = useState(null);
+
     // Fade-to-footer scroll hint: only render the fade while there is still content below the
     // fold, so it never lies that there is "more" once the reader has reached the bottom.
     const bodyRef = useRef(null);
@@ -187,6 +191,10 @@ export default function TaskDetailModal({
     // RESULT. (The gallery itself still shows whenever such photos exist, e.g. on an archived task.)
     const canAddCompletionPhoto = canAddPhoto && !!task.completed;
     const collectionName = task.isArchived ? 'archived_tasks' : 'tasks';
+    // Who may tick checklist items inline from this preview: the assignee or a manager, on a
+    // non-deleted task. Mirrors the Firestore update rule (assignee owns the row; a tick never
+    // flips the manager-only approval fields).
+    const canTickChecklist = (isAssignee || canManage) && !isDeleted;
 
     const canConfirm = canManage && task.status === 'completed';
     const canApprove = canManage && task.status === 'unapproved';
@@ -284,6 +292,24 @@ export default function TaskDetailModal({
             setError('Nepavyko įkelti nuotraukos. Bandykite vėliau.');
         } finally {
             setUploadingCompletion(false);
+        }
+    };
+
+    // Inline checklist ticking straight from the preview — same authority as the rich editor:
+    // the assignee (owns the task, and a tick never touches the manager-only approval fields) or a
+    // manager. Off on a removed task. Writes land in the right collection (tasks / archived_tasks),
+    // both of which the rules permit for this actor.
+    const onToggleChecklistItem = async (itemId) => {
+        if (!canTickChecklist || togglingItemId) return;
+        setTogglingItemId(itemId);
+        setError('');
+        try {
+            await toggleChecklistItem(task.id, itemId, currentUser, task.checklist, collectionName);
+        } catch (err) {
+            logError(err, { source: 'TaskDetailModal.toggleChecklistItem' });
+            setError('Nepavyko pažymėti punkto. Bandykite dar kartą.');
+        } finally {
+            setTogglingItemId(null);
         }
     };
 
@@ -450,18 +476,31 @@ export default function TaskDetailModal({
                             <ul className="space-y-1">
                                 {task.checklist.map((item) => {
                                     const ItemIcon = item.done ? CheckSquare : Square;
+                                    const iconCls = clsx(
+                                        'mt-0.5 h-4 w-4 flex-shrink-0',
+                                        item.done ? 'text-feedback-success-text' : 'text-ink-muted',
+                                    );
+                                    const textCls = clsx('leading-snug', item.done ? 'text-ink-muted line-through' : 'text-ink');
+                                    if (canTickChecklist) {
+                                        return (
+                                            <li key={item.id}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => onToggleChecklistItem(item.id)}
+                                                    disabled={togglingItemId === item.id}
+                                                    aria-pressed={!!item.done}
+                                                    className="flex w-full min-h-touch items-start gap-2 rounded-control py-1 text-left text-body hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-60"
+                                                >
+                                                    <ItemIcon className={iconCls} aria-hidden="true" />
+                                                    <span className={textCls}>{item.text}</span>
+                                                </button>
+                                            </li>
+                                        );
+                                    }
                                     return (
                                         <li key={item.id} className="flex items-start gap-2 text-body">
-                                            <ItemIcon
-                                                className={clsx(
-                                                    'mt-0.5 h-4 w-4 flex-shrink-0',
-                                                    item.done ? 'text-feedback-success-text' : 'text-ink-muted',
-                                                )}
-                                                aria-hidden="true"
-                                            />
-                                            <span className={clsx('leading-snug', item.done ? 'text-ink-muted line-through' : 'text-ink')}>
-                                                {item.text}
-                                            </span>
+                                            <ItemIcon className={iconCls} aria-hidden="true" />
+                                            <span className={textCls}>{item.text}</span>
                                         </li>
                                     );
                                 })}
