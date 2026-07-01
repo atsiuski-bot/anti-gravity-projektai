@@ -2,11 +2,12 @@ import { useState, useEffect, useMemo } from 'react';
 import { RotateCcw, AlertTriangle, X, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
-import { getRecoveryNotices, clearRecoveryNotices, removeRecoveryNotice } from '../utils/recoveryNotice';
+import { getRecoveryNotices, clearRecoveryNotices, removeRecoveryNotice, addRecoveryNotice } from '../utils/recoveryNotice';
 import { claimRecoveredGap } from '../utils/sessionEditActions';
 import { formatMinutesToHHMM } from '../utils/timeUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import Modal from './ui/Modal';
 
 /**
  * One-time recovery banner shown on the next app open after the crash/reload recovery ran.
@@ -20,9 +21,14 @@ import IconButton from './ui/IconButton';
  *    saved; this offers a one-tap claim for the remaining minutes so genuine offline work isn't
  *    silently lost — or a one-tap "I wasn't working" to discard it.
  *
- * It mirrors QuickWorkDescribePrompt's calm pattern: the bold whole-screen session colour is
- * reserved for an ACTIVE session, so a recovered/closed timer is a quiet card with a warning
- * accent strip + icon — never the red shell.
+ * The two kinds render DIFFERENTLY on purpose. Informational notices are a quiet warning-accent
+ * banner — FYI, dismissible, skippable. But the actionable gap is real, potentially-lost PAY: as
+ * an inline banner it was too easy to scroll past, so a worker kept working against a silently
+ * paused timer (the "rašo neaktyvus" reports). It is therefore raised to a BLOCKING, forced-
+ * acknowledge Modal (dismissible=false, no X / backdrop / Escape): the worker must decide
+ * "Užskaityti" or "Nedirbau" for each gap before continuing — the same loud, two-choice pattern the
+ * time-limit prompt uses. Neither surface uses the bold whole-screen session colour, which stays
+ * reserved for an ACTIVE session.
  */
 export default function RecoveryNotice() {
     const { currentUser } = useAuth();
@@ -48,16 +54,20 @@ export default function RecoveryNotice() {
 
     if (!uid || notices.length === 0) return null;
 
-    const dismissAll = () => {
+    // Dismiss only the INFORMATIONAL notices; never the actionable gaps (unresolved pay). We clear
+    // the store and re-persist the gaps (addRecoveryNotice dedups by kind+taskId, so this is a
+    // safe rewrite) so the blocking gap modal survives a dismiss of the FYI banner and a reload.
+    const dismissInfo = () => {
         clearRecoveryNotices(uid);
-        setNotices([]);
+        gapNotices.forEach((n) => addRecoveryNotice(uid, n));
+        setNotices(gapNotices);
     };
 
     // Tap-through: take the worker to where the recovered work is visible (their task list /
-    // daily total), scroll to top, and clear the notices — they have done their job once acted on.
+    // daily total), scroll to top, and clear the INFO notices — they have done their job once
+    // seen. Gaps stay (they still need an explicit claim/discard).
     const review = () => {
-        clearRecoveryNotices(uid);
-        setNotices([]);
+        dismissInfo();
         setActiveTab('tasks');
         window.scrollTo({ top: 0 });
     };
@@ -94,15 +104,15 @@ export default function RecoveryNotice() {
     const accent = anyCapped ? 'border-l-feedback-warning' : 'border-l-feedback-warning-border';
 
     return (
-        <section
-            aria-label="Pranešimas apie atkurtą laikmatį"
-            className={`mb-4 rounded-card border border-line border-l-4 ${accent} bg-feedback-warning-soft p-4 shadow-sm`}
-        >
-            <div className="flex items-start gap-3">
-                <Icon className="h-5 w-5 shrink-0 text-feedback-warning-text mt-0.5" aria-hidden="true" />
-                <div className="min-w-0 flex-1">
-                    {infoNotices.length > 0 && (
-                        <>
+        <>
+            {infoNotices.length > 0 && (
+                <section
+                    aria-label="Pranešimas apie atkurtą laikmatį"
+                    className={`mb-4 rounded-card border border-line border-l-4 ${accent} bg-feedback-warning-soft p-4 shadow-sm`}
+                >
+                    <div className="flex items-start gap-3">
+                        <Icon className="h-5 w-5 shrink-0 text-feedback-warning-text mt-0.5" aria-hidden="true" />
+                        <div className="min-w-0 flex-1">
                             <h2 className="text-body-lg font-bold text-ink-strong">
                                 {anyCapped ? 'Laikmatis atkurtas ir apribotas' : 'Laikmatis atkurtas'}
                             </h2>
@@ -131,75 +141,77 @@ export default function RecoveryNotice() {
                                     ? 'Laikmatis liko įjungtas po programos uždarymo, todėl užfiksuotas laikas buvo apribotas iki 16 val. Jei tai neteisinga, praneškite koordinatoriui.'
                                     : 'Laikmatis liko įjungtas po programos uždarymo ir buvo automatiškai sustabdytas. Jei užfiksuotas laikas neteisingas, praneškite koordinatoriui.'}
                             </p>
-                        </>
-                    )}
 
-                    {gapNotices.length > 0 && (
-                        <div className={infoNotices.length > 0 ? 'mt-4 border-t border-line pt-3' : ''}>
-                            <h2 className="flex items-center gap-2 text-body-lg font-bold text-ink-strong">
-                                <Clock className="h-4 w-4 text-feedback-warning-text" aria-hidden="true" />
-                                Neužfiksuotas darbo laikas
-                            </h2>
-                            <p className="mt-1 text-caption text-ink-muted">
-                                Po to, kai dingo ryšys ar programa užsidarė, laikmatis sustojo. Jei tuo
-                                metu dirbote, užskaitykite laiką; jei ne — atmeskite.
-                            </p>
-
-                            <ul className="mt-2 space-y-3">
-                                {gapNotices.map((n) => (
-                                    <li key={`gap-${n.taskId}`} className="text-body text-ink">
-                                        <div>
-                                            <span className="font-mono font-semibold text-ink-strong">
-                                                {formatMinutesToHHMM(n.gapMinutes)}
-                                            </span>
-                                            {n.taskTitle && (
-                                                <span className="text-ink-muted"> · {n.taskTitle}</span>
-                                            )}
-                                        </div>
-                                        {claimError === n.taskId && (
-                                            <p className="mt-1 text-caption text-feedback-danger-text">
-                                                Nepavyko užskaityti. Bandykite dar kartą.
-                                            </p>
-                                        )}
-                                        <div className="mt-2 flex flex-wrap gap-2">
-                                            <Button
-                                                variant="primary"
-                                                onClick={() => claimGap(n)}
-                                                disabled={claimingId === n.taskId}
-                                            >
-                                                {claimingId === n.taskId
-                                                    ? 'Užskaitoma…'
-                                                    : `Užskaityti ${formatMinutesToHHMM(n.gapMinutes)}`}
-                                            </Button>
-                                            <Button
-                                                variant="ghost"
-                                                onClick={() => dropGap(n.taskId)}
-                                                disabled={claimingId === n.taskId}
-                                            >
-                                                Nedirbau
-                                            </Button>
-                                        </div>
-                                    </li>
-                                ))}
-                            </ul>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                                <Button variant="secondary" onClick={review}>
+                                    Peržiūrėti
+                                </Button>
+                                <Button variant="ghost" onClick={dismissInfo}>
+                                    Supratau
+                                </Button>
+                            </div>
                         </div>
-                    )}
 
-                    {infoNotices.length > 0 && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                            <Button variant="secondary" onClick={review}>
-                                Peržiūrėti
-                            </Button>
-                            <Button variant="ghost" onClick={dismissAll}>
-                                Supratau
-                            </Button>
-                        </div>
-                    )}
-                </div>
+                        <IconButton icon={X} label="Uždaryti pranešimą" variant="ghost" onClick={dismissInfo} />
+                    </div>
+                </section>
+            )}
 
-                <IconButton icon={X} label="Uždaryti pranešimą" variant="ghost" onClick={dismissAll} />
-            </div>
-        </section>
+            {/* Actionable gaps → a BLOCKING, forced-acknowledge modal (no X / backdrop / Escape) so
+                real potentially-lost pay cannot be scrolled past. Each gap must be claimed or
+                discarded; the modal closes only once none remain. */}
+            <Modal
+                open={gapNotices.length > 0}
+                onClose={() => {}}
+                dismissible={false}
+                title="Neužfiksuotas darbo laikas"
+                size="md"
+            >
+                <p className="mb-3 flex items-start gap-2 text-body text-ink">
+                    <Clock className="mt-0.5 h-5 w-5 shrink-0 text-feedback-warning-text" aria-hidden="true" />
+                    <span>
+                        Po to, kai dingo ryšys ar užsidarė programa, laikmatis sustojo. Jei tuo metu
+                        dirbote — užskaitykite laiką; jei ne — atmeskite.
+                    </span>
+                </p>
+
+                <ul className="space-y-3">
+                    {gapNotices.map((n) => (
+                        <li key={`gap-${n.taskId}`} className="rounded-control border border-line bg-surface-sunken p-3 text-body text-ink">
+                            <div>
+                                <span className="font-mono font-semibold text-ink-strong">
+                                    {formatMinutesToHHMM(n.gapMinutes)}
+                                </span>
+                                {n.taskTitle && <span className="text-ink-muted"> · {n.taskTitle}</span>}
+                            </div>
+                            {claimError === n.taskId && (
+                                <p className="mt-1 text-caption text-feedback-danger-text">
+                                    Nepavyko užskaityti. Bandykite dar kartą.
+                                </p>
+                            )}
+                            <div className="mt-2 flex flex-wrap gap-2">
+                                <Button
+                                    variant="primary"
+                                    onClick={() => claimGap(n)}
+                                    disabled={claimingId === n.taskId}
+                                >
+                                    {claimingId === n.taskId
+                                        ? 'Užskaitoma…'
+                                        : `Užskaityti ${formatMinutesToHHMM(n.gapMinutes)}`}
+                                </Button>
+                                <Button
+                                    variant="ghost"
+                                    onClick={() => dropGap(n.taskId)}
+                                    disabled={claimingId === n.taskId}
+                                >
+                                    Nedirbau
+                                </Button>
+                            </div>
+                        </li>
+                    ))}
+                </ul>
+            </Modal>
+        </>
     );
 }
 
