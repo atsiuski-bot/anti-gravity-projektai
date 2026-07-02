@@ -55,12 +55,14 @@ const SESSION_ACTIONS_SRC = read('src/utils/sessionActions.js');
 
 // --- small extraction helpers ---------------------------------------------------------------
 
-// Every single/double-quoted token inside a chunk of source, in order.
+// Every single/double-quoted token inside a chunk of source, in order. Each alternative requires
+// the SAME quote character to close as opened it — a naive `['"]...['"]` would let an apostrophe
+// inside a "double-quoted" string act as a false closer and silently mis-tokenize the rest.
 function quotedTokens(chunk) {
   const out = [];
-  const re = /['"]([^'"]+)['"]/g;
+  const re = /'([^']*)'|"([^"]*)"/g;
   let m;
-  while ((m = re.exec(chunk)) !== null) out.push(m[1]);
+  while ((m = re.exec(chunk)) !== null) out.push(m[1] !== undefined ? m[1] : m[2]);
   return out;
 }
 
@@ -193,17 +195,25 @@ describe('priority enum lockstep (client ↔ functions ↔ rules)', () => {
   const client = Object.keys(PRIORITIES).sort();
   const functions = extractArrayLiteral(FUNCTIONS_SRC, 'RECURRING_PRIORITIES').sort();
 
-  // The rules array lives inside taskFieldsOk: `data.priority in ['URGENT', 'HIGH', ...]`.
-  const rulesMatch = RULES_SRC.match(/data\.priority in \[([^\]]*)\]/);
-  const rules = rulesMatch ? quotedTokens(rulesMatch[1]).sort() : null;
+  // The rules array lives inside taskFieldsOk: `data.priority in ['URGENT', 'HIGH', ...]`. Rules
+  // files can (and do) repeat this allow-list at more than one call site, so every occurrence is
+  // pulled out and checked — matching only the first would miss a second site drifting silently.
+  const rulesOccurrences = [...RULES_SRC.matchAll(/data\.priority in \[([^\]]*)\]/g)].map((m) =>
+    quotedTokens(m[1]).sort()
+  );
 
   it('client PRIORITIES === functions RECURRING_PRIORITIES', () => {
     expect(functions).toEqual(client);
   });
 
-  it('client PRIORITIES === rules taskFieldsOk allow-list', () => {
-    expect(rules, 'Could not find the priority allow-list inside firestore.rules taskFieldsOk').not.toBeNull();
-    expect(rules).toEqual(client);
+  it('found at least one priority allow-list in firestore.rules (extraction sanity)', () => {
+    expect(rulesOccurrences.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('client PRIORITIES === every rules taskFieldsOk allow-list occurrence', () => {
+    for (const occurrence of rulesOccurrences) {
+      expect(occurrence).toEqual(client);
+    }
   });
 });
 
@@ -472,6 +482,33 @@ describe('notification category lockstep (functions CATEGORY_BY_TYPE ↔ client 
 describe('secondary-session record-id lockstep (client sessionActions ↔ functions net)', () => {
   const ID_PREFIXES = ['sess_break_', 'sess_call_task_', 'sess_call_ws_', 'sess_qw_task_', 'sess_qw_ws_'];
 
+  // Both sides interpolate the same two positions with differently-named variables (client
+  // `userId`/server `uid`, both `startMs`). Normalize to a shared placeholder so the two known
+  // names compare as equal while anything unrecognized — a rename, or a stray third variable —
+  // fails loudly instead of being silently treated as a match.
+  const VAR_ALIASES = { userId: 'UID', uid: 'UID', startMs: 'STARTMS' };
+
+  function normalizeVar(name) {
+    const norm = VAR_ALIASES[name];
+    if (!norm) {
+      throw new Error(`Unrecognized interpolation variable "${name}" in a sess_* record id — update VAR_ALIASES or investigate the rename.`);
+    }
+    return norm;
+  }
+
+  // The full `<prefix>${var1}_${var2}` template-literal shape for one prefix, with both
+  // interpolated variable names normalized. Throws if the template literal is missing or shaped
+  // differently, so structural drift (extra/missing segment, swapped order) fails loudly rather
+  // than being silently ignored by a substring check.
+  function extractRecordIdShape(src, prefix) {
+    const re = new RegExp('`' + prefix + '\\$\\{(\\w+)\\}_\\$\\{(\\w+)\\}`');
+    const m = src.match(re);
+    if (!m) {
+      throw new Error(`Could not find the "${prefix}\${...}_\${...}" record-id template literal — did the shape change?`);
+    }
+    return `${prefix}\${${normalizeVar(m[1])}}_\${${normalizeVar(m[2])}}`;
+  }
+
   it('both the client logger and the server net use the identical deterministic id prefixes', () => {
     const missingClient = ID_PREFIXES.filter((p) => !SESSION_ACTIONS_SRC.includes(p));
     const missingServer = ID_PREFIXES.filter((p) => !FUNCTIONS_SRC.includes(p));
@@ -479,6 +516,18 @@ describe('secondary-session record-id lockstep (client sessionActions ↔ functi
       .toEqual([]);
     expect(missingServer, `functions/index.js is missing record-id prefixes (dedup would break): ${missingServer.join(', ')}`)
       .toEqual([]);
+  });
+
+  it('both sides construct the identical <prefix><uid>_<startMs> id shape (order and segments match)', () => {
+    const mismatches = [];
+    for (const prefix of ID_PREFIXES) {
+      const clientShape = extractRecordIdShape(SESSION_ACTIONS_SRC, prefix);
+      const serverShape = extractRecordIdShape(FUNCTIONS_SRC, prefix);
+      if (clientShape !== serverShape) {
+        mismatches.push(`${prefix}: client=${clientShape} server=${serverShape}`);
+      }
+    }
+    expect(mismatches, `sess_* id shapes diverged:\n${mismatches.join('\n')}`).toEqual([]);
   });
 });
 

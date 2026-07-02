@@ -45,8 +45,9 @@ const ChecklistEditorList = lazy(() => import('./task/ChecklistEditorList'));
 const QUICK_TIME_CHIPS = ['15min', '30min', '1h', '2h'];
 
 // Canonical scale used only to VALIDATE history-driven suggestions (per-title guess) so legacy
-// free-text never leaks into the suggestion chip. The selectable scale itself lives in
-// TimeEstimatePicker (TIME_PICKER_OPTIONS). 30h/60h were dropped from the offered options.
+// free-text never leaks into the suggestion chip. It extends past 20h (25h..200h) to still
+// recognize old estimates from before the offered popup scale — TimeEstimatePicker
+// (TIME_PICKER_OPTIONS) — was capped at 20h.
 const ALL_TIMES = [
     '5min', '15min', '30min', '45min', '1h', '1,5h', '2h', '2,5h', '3h', '4h', '5h', '6h',
     '7,5h', '8h', '10h', '12,5h', '12h', '15h', '20h', '25h', '40h', '50h', '70h', '80h',
