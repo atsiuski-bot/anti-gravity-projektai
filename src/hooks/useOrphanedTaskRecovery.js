@@ -43,6 +43,50 @@ export function decideOrphanTaskRecovery(task, appLoadTime = Date.now()) {
     return { mode: 'pause-at-beat', creditTo: lastBeat, gapFrom: lastBeat, gapTo: appLoadTime };
 }
 
+// Decide + carry out what happens to the untracked gap [decision.gapFrom, decision.gapTo] after a
+// pause-at-beat recovery credited the proven part. Exported (not inlined in the effect) so this
+// ORCHESTRATION — auto-credit vs. fall back to the opt-in claim offer — is unit-testable without a
+// React renderer, mirroring decideOrphanTaskRecovery above.
+//
+// Only a plausibly-single real stretch (≥1 min, ≤16h) is auto-handled; a longer gap is almost
+// certainly a multi-day forgotten timer, not one offline shift. AUTO-credit only fires when the
+// running task is the CURRENT user's own (attribution/rules would be wrong otherwise) and the write
+// succeeds — any other case falls back to the opt-in claim offer so the time is never silently lost.
+export async function resolveUntrackedGap(task, currentUser, decision) {
+    const gapMinutes = Math.round((decision.gapTo - decision.gapFrom) / 60000);
+    if (gapMinutes < 1 || gapMinutes > MAX_SESSION_MINUTES || !task.assignedUserId) return;
+
+    const fromIso = new Date(decision.gapFrom).toISOString();
+    const toIso = new Date(decision.gapTo).toISOString();
+
+    const offerManualClaim = () =>
+        addRecoveryNotice(task.assignedUserId, {
+            kind: 'task-gap', taskId: task.id, taskTitle: task.title || '',
+            gapMinutes, fromIso, toIso,
+        });
+
+    const isOwnTask = currentUser?.uid && currentUser.uid === task.assignedUserId;
+    if (!isOwnTask) { offerManualClaim(); return; }
+
+    // AUTO-credit the gap as its own recovered-gap session (opt-out), attributed to and authored by
+    // the worker so the work_sessions rules accept it.
+    const claim = await claimRecoveredGap({
+        task: { id: task.id, title: task.title },
+        worker: currentUser,
+        startTime: fromIso,
+        endTime: toIso,
+    });
+
+    if (claim?.ok) {
+        addRecoveryNotice(task.assignedUserId, {
+            kind: 'task-gap-credited', taskId: task.id, taskTitle: task.title || '',
+            gapMinutes, sessionId: claim.id,
+        });
+    } else {
+        offerManualClaim();
+    }
+}
+
 /**
  * Crash/reload recovery for orphaned running tasks — heartbeat-aware.
  *
@@ -105,51 +149,12 @@ export function useOrphanedTaskRecovery(tasks, currentUser) {
                 return;
             }
 
-            // (3) Large tail — credit the proven part up to the last beat and pause, then decide
-            // what to do with the untracked gap [lastBeat → load time].
+            // (3) Large tail — credit the proven part up to the last beat and pause, then resolve
+            // the untracked gap [lastBeat → load time] (auto-credit or fall back to a claim offer).
             pauseTask(task, { endTime: decision.creditTo })
-                .then(async (result) => {
+                .then((result) => {
                     stampRecoveredNotice(task, result);
-
-                    // Only a plausibly-single real stretch (≥1 min, ≤16h) is auto-handled. A longer
-                    // gap is almost certainly a multi-day forgotten timer, not one offline shift —
-                    // leave that to a manual correction rather than crediting implausible time.
-                    const gapMinutes = Math.round((decision.gapTo - decision.gapFrom) / 60000);
-                    if (gapMinutes < 1 || gapMinutes > MAX_SESSION_MINUTES || !task.assignedUserId) return;
-
-                    const fromIso = new Date(decision.gapFrom).toISOString();
-                    const toIso = new Date(decision.gapTo).toISOString();
-
-                    // Fallback: the opt-in claim offer (a forced-choice modal). Used when we cannot
-                    // safely auto-credit — no signed-in identity, the running task is not the current
-                    // user's own (attribution/rules would be wrong), or the auto-credit write failed.
-                    // Either way the time stays recoverable by hand rather than lost.
-                    const offerManualClaim = () =>
-                        addRecoveryNotice(task.assignedUserId, {
-                            kind: 'task-gap', taskId: task.id, taskTitle: task.title || '',
-                            gapMinutes, fromIso, toIso,
-                        });
-
-                    const isOwnTask = currentUser?.uid && currentUser.uid === task.assignedUserId;
-                    if (!isOwnTask) { offerManualClaim(); return; }
-
-                    // AUTO-credit the gap as its own recovered-gap session (opt-out), attributed to
-                    // and authored by the worker so the work_sessions rules accept it.
-                    const claim = await claimRecoveredGap({
-                        task: { id: task.id, title: task.title },
-                        worker: currentUser,
-                        startTime: fromIso,
-                        endTime: toIso,
-                    });
-
-                    if (claim?.ok) {
-                        addRecoveryNotice(task.assignedUserId, {
-                            kind: 'task-gap-credited', taskId: task.id, taskTitle: task.title || '',
-                            gapMinutes, sessionId: claim.id,
-                        });
-                    } else {
-                        offerManualClaim();
-                    }
+                    return resolveUntrackedGap(task, currentUser, decision);
                 })
                 .catch((e) => logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id }));
         });

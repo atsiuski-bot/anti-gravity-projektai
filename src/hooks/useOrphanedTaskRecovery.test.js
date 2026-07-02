@@ -1,6 +1,15 @@
-import { describe, it, expect } from 'vitest';
-import { decideOrphanTaskRecovery } from './useOrphanedTaskRecovery';
-import { TIMER_HEARTBEAT_CONTINUE_MS } from '../utils/timeUtils';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// resolveUntrackedGap's collaborators are mocked so the AUTO-CREDIT vs. FALL-BACK orchestration is
+// exercised in isolation — no real Firestore write, no localStorage/DOM. Paths are relative to this
+// file (same as the hook's own imports), which is what vi.mock resolves against.
+vi.mock('../utils/sessionEditActions', () => ({ claimRecoveredGap: vi.fn() }));
+vi.mock('../utils/recoveryNotice', () => ({ addRecoveryNotice: vi.fn() }));
+
+import { decideOrphanTaskRecovery, resolveUntrackedGap } from './useOrphanedTaskRecovery';
+import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES } from '../utils/timeUtils';
+import { claimRecoveredGap } from '../utils/sessionEditActions';
+import { addRecoveryNotice } from '../utils/recoveryNotice';
 
 // The credit-instant POLICY for a pre-boot running task, isolated from React so the arithmetic
 // that decides how much worked time survives a crash/reload is provable directly. The bug this
@@ -72,5 +81,91 @@ describe('decideOrphanTaskRecovery — credit-instant policy', () => {
         // lastBeat := max(beat, start) = start → tail = 10min > window → pause at start.
         expect(d.mode).toBe('pause-at-beat');
         expect(d.creditTo).toBe(start);
+    });
+});
+
+describe('resolveUntrackedGap — what happens to the untracked gap after a pause-at-beat recovery', () => {
+    const task = { id: 't1', title: 'Garso komplektu patikrinimas', assignedUserId: 'worker-1' };
+    const worker = { uid: 'worker-1', displayName: 'Giedrius' };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('AUTO-credits a plausible gap on the worker\'s own task and stamps a "credited" notice', async () => {
+        claimRecoveredGap.mockResolvedValue({ ok: true, id: 'sess-1' });
+        const decision = { gapFrom: 1000, gapTo: 1000 + 125 * 60000 }; // 125 min
+
+        await resolveUntrackedGap(task, worker, decision);
+
+        expect(claimRecoveredGap).toHaveBeenCalledTimes(1);
+        expect(claimRecoveredGap).toHaveBeenCalledWith({
+            task: { id: 't1', title: 'Garso komplektu patikrinimas' },
+            worker,
+            startTime: new Date(1000).toISOString(),
+            endTime: new Date(1000 + 125 * 60000).toISOString(),
+        });
+        expect(addRecoveryNotice).toHaveBeenCalledTimes(1);
+        expect(addRecoveryNotice).toHaveBeenCalledWith('worker-1', {
+            kind: 'task-gap-credited', taskId: 't1', taskTitle: 'Garso komplektu patikrinimas',
+            gapMinutes: 125, sessionId: 'sess-1',
+        });
+    });
+
+    it('falls back to the opt-in claim offer when the auto-credit write fails', async () => {
+        claimRecoveredGap.mockResolvedValue({ ok: false, error: 'write' });
+        const decision = { gapFrom: 0, gapTo: 20 * 60000 };
+
+        await resolveUntrackedGap(task, worker, decision);
+
+        expect(claimRecoveredGap).toHaveBeenCalledTimes(1);
+        expect(addRecoveryNotice).toHaveBeenCalledTimes(1);
+        const notice = addRecoveryNotice.mock.calls[0][1];
+        expect(notice.kind).toBe('task-gap');
+        expect(notice.gapMinutes).toBe(20);
+        expect(notice).not.toHaveProperty('sessionId');
+    });
+
+    it('falls back to the claim offer WITHOUT ever calling claimRecoveredGap when the task is not the current user\'s own', async () => {
+        const otherWorker = { uid: 'someone-else' };
+        const decision = { gapFrom: 0, gapTo: 20 * 60000 };
+
+        await resolveUntrackedGap(task, otherWorker, decision);
+
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(addRecoveryNotice).toHaveBeenCalledTimes(1);
+        expect(addRecoveryNotice.mock.calls[0][1].kind).toBe('task-gap');
+    });
+
+    it('falls back to the claim offer without calling claimRecoveredGap when there is no signed-in identity', async () => {
+        const decision = { gapFrom: 0, gapTo: 20 * 60000 };
+
+        await resolveUntrackedGap(task, null, decision);
+
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(addRecoveryNotice).toHaveBeenCalledTimes(1);
+        expect(addRecoveryNotice.mock.calls[0][1].kind).toBe('task-gap');
+    });
+
+    it('does nothing for a sub-minute gap (rounds to 0) — no notice, no write', async () => {
+        const decision = { gapFrom: 0, gapTo: 20000 }; // 20s
+        await resolveUntrackedGap(task, worker, decision);
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(addRecoveryNotice).not.toHaveBeenCalled();
+    });
+
+    it('does nothing for an implausible (>16h) gap — a multi-day forgotten timer, not one shift', async () => {
+        const decision = { gapFrom: 0, gapTo: (MAX_SESSION_MINUTES + 1) * 60000 };
+        await resolveUntrackedGap(task, worker, decision);
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(addRecoveryNotice).not.toHaveBeenCalled();
+    });
+
+    it('does nothing when the task has no assignedUserId — nowhere to attribute or notify', async () => {
+        const unassigned = { id: 't2', title: 'x', assignedUserId: '' };
+        const decision = { gapFrom: 0, gapTo: 20 * 60000 };
+        await resolveUntrackedGap(unassigned, worker, decision);
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(addRecoveryNotice).not.toHaveBeenCalled();
     });
 });
