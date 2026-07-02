@@ -1227,7 +1227,7 @@ async function autoStopForgottenTimers() {
 // still-running same-day session is left untouched (the worker may resume it on their next open).
 //
 // Field shapes MIRROR src/utils/sessionActions.js handleLegacyLogging — keep the two in lockstep.
-const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greitas darbas (Automatiškai išsaugotas)'; // mirror sessionActions.js
+const AUTO_STOPPED_QUICK_WORK_TITLE = 'Greita veikla (Automatiškai išsaugota)'; // mirror sessionActions.js
 const DEFAULT_TASK_PRIORITY = 'MEDIUM';            // mirror src/utils/priority.js DEFAULT_PRIORITY
 const MIN_LOGGED_SECONDARY_MINUTES = 1;            // mirror src/utils/timeUtils.js MIN_LOGGED_SESSION_MINUTES
 const SECONDARY_MANAGER_ROLES = ['manager', 'admin', 'seniorManager', 'Administratorius']; // mirror isManagerRole (+ legacy)
