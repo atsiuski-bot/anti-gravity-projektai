@@ -1032,6 +1032,12 @@ exports.notifyAdminsOnPendingSignup = onDocumentCreated('users/{id}', async (eve
 //      durationMinutes, end<start, missing owner. work_hours has no createdAt, so it is covered by
 //      the volume canary only.
 //
+//   2b. ADDITIVE-CORRUPTION SCAN — duplicated/overlapping rows that (2) cannot see because each row
+//      is individually valid (the 2026-07-01 break_sessions incident: +917 duplicate rows, none of
+//      them anomalous on their own). Sums each user's work_sessions + break_sessions minutes per
+//      Vilnius calendar day over the same lookback window and flags a total exceeding 24h — a
+//      physically impossible number that catches duplicates/overlaps without interval-overlap math.
+//
 // Read-only over the data apart from its own report docs. Region inherits europe-west1.
 
 const MONITORED_COLLECTIONS = ['work_sessions', 'break_sessions', 'work_hours', 'tasks'];
@@ -1081,6 +1087,46 @@ async function scanSessionAnomalies(name) {
         }
     });
     return { scanned: snap.size, anomalies, samples };
+}
+
+// A calendar day only has 1440 minutes. Duplicated or overlapping session rows (the 2026-07-01
+// break_sessions incident: +917 duplicate rows accumulated undetected) each look individually
+// valid to scanSessionAnomalies above — no single row is out of range — so per-doc checks are
+// structurally blind to this class. Summing a user's work_sessions + break_sessions minutes for
+// one Vilnius calendar day and flagging anything over 24h catches duplicates/overlaps/double-
+// credits without needing interval-overlap math. Same LOOKBACK_DAYS window as the anomaly scan;
+// report-only, never mutates.
+const MINUTES_PER_DAY = 24 * 60;
+
+async function scanDailyOverdraft() {
+    const cutoff = lookbackCutoffIso();
+    const totals = new Map(); // `${userId}|${date}` -> { userId, date, minutes }
+    for (const name of ['work_sessions', 'break_sessions']) {
+        let snap;
+        try {
+            snap = await db.collection(name).where('createdAt', '>=', cutoff).get();
+        } catch (err) {
+            logger.warn('scanDailyOverdraft query failed', { name, err: err.message });
+            continue;
+        }
+        snap.forEach((docSnap) => {
+            const d = docSnap.data();
+            const dur = d.durationMinutes;
+            if (typeof dur !== 'number' || Number.isNaN(dur) || dur <= 0 || !d.userId) return;
+            const anchor = d.startTime || d.createdAt;
+            const parsed = anchor ? new Date(anchor) : null;
+            if (!parsed || Number.isNaN(parsed.getTime())) return;
+            const date = lithuanianDay(parsed);
+            const key = `${d.userId}|${date}`;
+            const entry = totals.get(key) || { userId: d.userId, date, minutes: 0 };
+            entry.minutes += dur;
+            totals.set(key, entry);
+        });
+    }
+    const offenders = [...totals.values()]
+        .filter((entry) => entry.minutes > MINUTES_PER_DAY)
+        .sort((a, b) => b.minutes - a.minutes);
+    return { checked: totals.size, offenders: offenders.length, samples: offenders.slice(0, SAMPLE_LIMIT) };
 }
 
 // Hard ceiling for a SINGLE continuous running timer — MIRROR of src/utils/timeUtils
@@ -1505,6 +1551,10 @@ exports.dailyIntegrityScan = onSchedule(
             totalAnomalies += r.anomalies;
         }
 
+        // (2b) Additive-corruption scan — same lookback window, catches duplicated/overlapping
+        //      rows that (2) cannot see because no single row is out of range.
+        const dailyOverdraft = await scanDailyOverdraft();
+
         // (3) Task timer integrity — stop forgotten running timers, and surface the stale backlog.
         const autoStoppedTimers = await autoStopForgottenTimers();
         // (3b) Secondary-session integrity — close abandoned break/call/quick-work sessions the
@@ -1513,7 +1563,8 @@ exports.dailyIntegrityScan = onSchedule(
         const staleBacklog = await scanStaleTasks();
 
         const critical = drops.length > 0;
-        const warning = totalAnomalies > 0 || autoStoppedTimers.stopped > 0 || autoClosedSessions.closed > 0;
+        const warning = totalAnomalies > 0 || dailyOverdraft.offenders > 0 ||
+            autoStoppedTimers.stopped > 0 || autoClosedSessions.closed > 0;
         const report = {
             day,
             ranAt: nowIso,
@@ -1522,6 +1573,7 @@ exports.dailyIntegrityScan = onSchedule(
             drops,
             anomalies: anomalyReport,
             totalAnomalies,
+            dailyOverdraft,
             autoStoppedTimers,
             autoClosedSessions,
             staleBacklog
@@ -1540,6 +1592,9 @@ exports.dailyIntegrityScan = onSchedule(
             logger.warn('INTEGRITY: anomalies / auto-stops detected', { totalAnomalies, anomalyReport, autoStoppedTimers });
         } else {
             logger.info('INTEGRITY: clean', { counts });
+        }
+        if (dailyOverdraft.offenders > 0) {
+            logger.warn('INTEGRITY: user-day overdraft (>24h combined session minutes) — possible duplicate rows', dailyOverdraft);
         }
         if (autoStoppedTimers.stopped > 0) logger.warn('INTEGRITY: auto-stopped forgotten timers', autoStoppedTimers);
         if (autoClosedSessions.closed > 0) logger.warn('INTEGRITY: auto-closed abandoned secondary sessions', autoClosedSessions);
