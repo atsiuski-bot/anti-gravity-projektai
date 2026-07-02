@@ -42,6 +42,7 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
                 snap.forEach((d) => {
                     const data = d.data();
                     if (data.userId !== currentUser.uid) return;       // this worker only
+                    if (data.isDeleted) return;                        // voided sessions don't count
                     if (task?.id && data.taskId === task.id) return;   // this task's own segments
                     sum += sanitizeReportMinutes(data.durationMinutes);
                 });
