@@ -87,6 +87,26 @@ export async function resolveUntrackedGap(task, currentUser, decision) {
     }
 }
 
+// Carry out a pause-at-beat recovery for one orphan: credit the proven stretch up to the last beat,
+// stamp the one-time "recovered" notice, then resolve the untracked gap [last beat → load]. Exported
+// (not inlined in the effect) so this pause→gap ORCHESTRATION is unit-testable without a React
+// renderer, mirroring resolveUntrackedGap / decideOrphanTaskRecovery.
+//
+// The gap is resolved ONLY when our own pause actually credited it — i.e. pauseTask returned a
+// non-null result. A null result means the pause was DEDUPED by pauseInFlight: the time-limit
+// monitor's checkTime auto-paused this same over-limit orphan one tick earlier, crediting ONE
+// session up to NOW — an instant strictly later than the last beat — so that single session already
+// covers the whole [last beat → now] gap. Auto-crediting the gap again here would write a SECOND
+// work_sessions row for the same interval; since reports sum work_sessions, the interval would
+// double-count and the summed sessions would diverge from task.timerMinutes (the very invariant
+// pauseTask maintains). Gating on the result closes that double-credit path.
+export async function pauseAtBeatAndResolveGap(task, currentUser, decision) {
+    const result = await pauseTask(task, { endTime: decision.creditTo });
+    stampRecoveredNotice(task, result);
+    if (result) await resolveUntrackedGap(task, currentUser, decision);
+    return result;
+}
+
 /**
  * Crash/reload recovery for orphaned running tasks — heartbeat-aware.
  *
@@ -149,13 +169,12 @@ export function useOrphanedTaskRecovery(tasks, currentUser) {
                 return;
             }
 
-            // (3) Large tail — credit the proven part up to the last beat and pause, then resolve
-            // the untracked gap [lastBeat → load time] (auto-credit or fall back to a claim offer).
-            pauseTask(task, { endTime: decision.creditTo })
-                .then((result) => {
-                    stampRecoveredNotice(task, result);
-                    return resolveUntrackedGap(task, currentUser, decision);
-                })
+            // (3) Large tail — credit the proven part up to the last beat and pause, then resolve the
+            // untracked gap [lastBeat → load time] (auto-credit or fall back to a claim offer) — but
+            // ONLY when our pause actually ran. A deduped (null) pause means the time-limit monitor
+            // already paused this over-limit orphan up to now, subsuming the gap; see
+            // pauseAtBeatAndResolveGap.
+            pauseAtBeatAndResolveGap(task, currentUser, decision)
                 .catch((e) => logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id }));
         });
         // currentUser is a dep so a task loaded before auth resolves is still auto-credited once the
