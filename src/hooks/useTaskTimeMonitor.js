@@ -5,6 +5,26 @@ import { calculateCurrentTotalMinutes, parseTimeStringToMinutes } from '../utils
 import { pauseTask, requestTimeExtension, completeTaskAtLimit } from '../utils/taskActions';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
+import { APP_LOAD_TIME } from './useOrphanedTaskRecovery';
+
+// True when `task`'s running stretch predates this app load — i.e. it is a pre-boot orphan that
+// useOrphanedTaskRecovery (mirroring the same APP_LOAD_TIME instant) will also visit on this same
+// mount. Exported — not inlined in checkTime — so this decision is unit-testable without a React
+// renderer (mirrors decideOrphanTaskRecovery in useOrphanedTaskRecovery.js).
+//
+// Why the monitor must yield rather than race it: on mount, this hook's effect runs BEFORE
+// useOrphanedTaskRecovery's (hook order in WorkerView.jsx), and its immediate checkTime() has no
+// heartbeat awareness — an unconditional pauseTask(task) here credits [timerStartedAt → now],
+// clamped to MAX_SESSION_MINUTES, as one ordinary session, silently swallowing the whole dead
+// offline gap with no "Nedirbau" opt-out. Recovery knows the last heartbeat and always processes
+// the same task (same `tasks` array), so skipping the 100% auto-pause for a pre-boot orphan just
+// leaves it to recovery's better-informed pause (or resume). Once recovery acts, the task is either
+// no longer running or carries a fresh post-boot timerStartedAt, and this function returns false —
+// so a task that is STILL over its limit after that is a genuinely live overrun, handled normally.
+export function isPreBootOrphanTask(task, appLoadTime = APP_LOAD_TIME) {
+    const startedAtMs = new Date(task?.timerStartedAt).getTime();
+    return Number.isFinite(startedAtMs) && startedAtMs < appLoadTime;
+}
 
 /**
  * Hook that monitors the active running task for time limit thresholds.
@@ -123,7 +143,11 @@ export function useTaskTimeMonitor(tasks) {
             //     still carries the SAME timerStartedAt → it matches → no double pause / double
             //     work_sessions log. `task` here is always running (the activeTask filter requires
             //     it), so a paused limit-reached task is simply never evaluated.
-            if (percentage >= 100 && limitReachedRef.current.get(taskId) !== task.timerStartedAt) {
+            //
+            // A pre-boot orphan is excluded here entirely — see isPreBootOrphanTask — and left to
+            // useOrphanedTaskRecovery, which pauses it at the correct instant (or resumes it) instead
+            // of this block crediting the whole dead gap as one ordinary session.
+            if (percentage >= 100 && !isPreBootOrphanTask(task) && limitReachedRef.current.get(taskId) !== task.timerStartedAt) {
                 limitReachedRef.current.set(taskId, task.timerStartedAt);
 
                 // 1. Auto-pause the task (stops the clock + logs the session). No-op if not running.

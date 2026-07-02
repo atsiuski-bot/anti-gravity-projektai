@@ -12,7 +12,11 @@ import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES } from '../utils/timeU
 // across an app restart, reload, or crash: the live timer that started it no longer
 // exists, so it is an ORPHAN, not a running session. (A timer started during this
 // app session has timerStartedAt >= APP_LOAD_TIME and is left untouched.)
-const APP_LOAD_TIME = Date.now();
+//
+// Exported so useTaskTimeMonitor can recognize the SAME pre-boot orphans from this one
+// canonical instant and yield to this hook instead of racing it — see
+// isPreBootOrphanTask in useTaskTimeMonitor.js.
+export const APP_LOAD_TIME = Date.now();
 
 // Decide what a pre-boot running task's crash-recovery should do — pure + exported so the
 // credit-instant policy is unit-testable without a React renderer (mirrors isAbandonedSession in
