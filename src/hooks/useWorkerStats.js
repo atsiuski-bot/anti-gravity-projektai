@@ -7,6 +7,9 @@ import { addDaysToDateString } from '../utils/timeUtils';
 import { resolveUserId } from '../utils/formatters';
 import { logError } from '../utils/errorLog';
 
+/** Drop soft-deleted (voided) session docs — mirrors Reports.jsx / reportData.js. */
+export const excludeDeleted = (docs) => docs.filter((x) => !x.isDeleted);
+
 /** Inclusive day count of a YYYY-MM-DD window (UTC calendar arithmetic, DST-independent). */
 const dayCount = (startStr, endStr) =>
     Math.round((Date.parse(`${endStr}T00:00:00Z`) - Date.parse(`${startStr}T00:00:00Z`)) / 86400000) + 1;
@@ -86,9 +89,10 @@ export function useWorkerStats({ userId, viewerData, viewerUid, viewerRole, expe
                 // Sessions are keyed through `resolveUserId` (not raw `x.userId`) so the oldest
                 // go-live rows — which carry the legacy `workerId` field and no `userId` — are not
                 // silently dropped from a viewer's whole-team totals. Mirrors Reports.jsx /
-                // reportData.js. Tasks stay on `assignedUserId`.
-                const workSessions = pick(wsS.docs, resolveUserId);
-                const breakSessions = pick(bsS.docs, resolveUserId);
+                // reportData.js, including the `isDeleted` (soft-delete) exclusion. Tasks stay on
+                // `assignedUserId`.
+                const workSessions = excludeDeleted(pick(wsS.docs, resolveUserId));
+                const breakSessions = excludeDeleted(pick(bsS.docs, resolveUserId));
                 const archivedTasks = pick(arcS.docs, (x) => x.assignedUserId);
                 const activeCompleted = pick(actS.docs, (x) => x.assignedUserId).filter(
                     (t) => t.completed || t.status === 'completed' || t.status === 'confirmed'
