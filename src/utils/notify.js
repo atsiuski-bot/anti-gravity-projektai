@@ -1,6 +1,6 @@
 import { addDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
-import { NOTIFICATIONS, notificationCategory } from '../notifications/registry';
+import { notificationCategory } from '../notifications/registry';
 import { logError } from './errorLog';
 
 /**
@@ -21,11 +21,6 @@ import { logError } from './errorLog';
  * — every write site (and the manager-facing decision sites) routes through {@link notify} here, so
  * there is no longer any inline write that can drift from those invariants.
  */
-
-// Re-exported from the registry so existing importers keep working; the registry is the source.
-export const NOTIFICATION_CATEGORY = Object.fromEntries(
-    Object.entries(NOTIFICATIONS).map(([type, entry]) => [type, entry.category]),
-);
 
 /** The bell tier for a notification type. Unknown/legacy types fall back to 'info'. */
 export const categoryOf = (type) => notificationCategory(type);

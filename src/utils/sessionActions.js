@@ -76,6 +76,9 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
         // 3. Pause current session if exists (collect promises, don't await yet)
         let newPausedSession = null;
         let pausePromise = Promise.resolve();
+        // Minutes banked from an interrupted BREAK's pre-interruption segment (see below), folded
+        // into the daily break counter when the new session's user update is assembled.
+        let bankedBreakMinutes = 0;
         if (userData?.activeSession?.type) {
             if (userData.activeSession.type === 'task' && userData.activeSession.taskId) {
                 // Fire pause in background — optimistic UI already shows it paused
@@ -121,6 +124,25 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                             newPausedSession = { ...newPausedSession, partialDocId: partialDocRef.id };
                         } catch (e) {
                             logError(e, { source: 'writeFail:startSession.partialLog', userId });
+                        }
+                    }
+                } else if (userData.activeSession.type === 'break' && userData.activeSession.startTime) {
+                    // Bank the interrupted BREAK's pre-interruption segment before it nests. A break
+                    // logs to break_sessions (not work_sessions) and folds into the daily break
+                    // counter. Without this, endSession later resets the restored break's startTime
+                    // to the resume instant on the assumption the earlier stretch "was already logged
+                    // in startSession" — true for quick-work/call, previously FALSE for break, so the
+                    // pre-interruption minutes vanished from both the report log and the daily total.
+                    const interruptNow = getLithuanianNow();
+                    const partialDuration = clampSessionMinutes((interruptNow - new Date(userData.activeSession.startTime)) / (1000 * 60));
+                    if (partialDuration > MIN_LOGGED_SESSION_MINUTES) {
+                        try {
+                            // Deterministic-id break_sessions row (same shape + dedup key the final
+                            // end uses), so the server net cannot double-write this segment.
+                            await handleLegacyLogging(userId, userData, { type: 'break', startTime: userData.activeSession.startTime }, interruptNow, partialDuration);
+                            bankedBreakMinutes = partialDuration;
+                        } catch (e) {
+                            logError(e, { source: 'writeFail:startSession.partialBreakLog', userId });
                         }
                     }
                 }
@@ -176,7 +198,8 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
             updates.breakState = {
                 isTakingBreak: true,
                 lastStartedAt: startTime,
-                dailyAccumulatedMinutes: userData?.breakState?.dailyAccumulatedMinutes || 0,
+                // + bankedBreakMinutes covers the (rare) break-interrupts-break case; 0 otherwise.
+                dailyAccumulatedMinutes: (userData?.breakState?.dailyAccumulatedMinutes || 0) + bankedBreakMinutes,
                 lastDate: getLithuanianDateString(),
                 resumableTaskIds: resumableTaskIds
             };
@@ -199,6 +222,13 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                 activeTaskId: metadata.taskId || null,
                 lastUpdated: startTime
             };
+        }
+
+        // If we banked an interrupted break's pre-interruption minutes above and the NEW session is
+        // not itself a break (a call/quick-work/task interrupting a break — the normal case), fold
+        // them into the daily counter here. (A new break object above already includes them.)
+        if (bankedBreakMinutes > 0 && type !== 'break') {
+            updates['breakState.dailyAccumulatedMinutes'] = (userData?.breakState?.dailyAccumulatedMinutes || 0) + bankedBreakMinutes;
         }
 
         // Run critical user doc update in parallel with task pause
@@ -285,8 +315,10 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
         if (session.pausedSession && !skipResume) {
             restoredSession = { ...session.pausedSession };
 
-            // Set start time to NOW (end of interruption) because the pre-interruption
-            // portion was already logged as a partial work_session in startSession.
+            // Set start time to NOW (end of interruption) because the pre-interruption portion was
+            // already banked in startSession — a partial work_session for quick-work/call, or a
+            // break_sessions row + daily-counter fold for a break. Resetting the start here credits
+            // only the post-resume stretch, so the interruption gap is never counted as session time.
             restoredSession.startTime = now.toISOString();
 
             updates.activeSession = restoredSession;

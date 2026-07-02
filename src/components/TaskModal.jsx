@@ -27,6 +27,7 @@ import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
 import Select from './ui/Select';
+import DatePicker from './ui/DatePicker';
 import PersonSelect from './ui/PersonSelect';
 import Avatar from './ui/Avatar';
 import ConfirmDialog from './ui/ConfirmDialog';
@@ -1569,30 +1570,19 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
 
                             {/* Deadline + tag — one row (deadline left, tag right). */}
                             <div className="grid grid-cols-2 gap-3">
-                                {/* Deadline — optional. The field is ALWAYS a native date control, so a single
-                                    click opens the calendar (showPicker) with no intermediate text-edit step.
-                                    An overlay carries the Lithuanian label while empty; the native empty value
-                                    (yyyy-mm-dd) is hidden by rendering the input text transparent until a date
-                                    is chosen. (Replaces the old text→date type swap that needed a second tap.) */}
-                                <div className="relative min-w-0">
-                                    <input
-                                        type="date"
+                                {/* Deadline — optional. Canonical DatePicker (DESIGN_SYSTEM §8): renders its own
+                                    calendar via date-fns + the lt locale, so month/weekday names are ALWAYS
+                                    Lithuanian regardless of the browser's UI language (a native <input type="date">
+                                    draws its drop-down in the browser language). Same yyyy-MM-dd value contract, and
+                                    the trigger opens the calendar in a single click. */}
+                                <div className="min-w-0">
+                                    <DatePicker
                                         value={formData.deadline}
-                                        onChange={(e) => setFormData({ ...formData, deadline: e.target.value })}
-                                        onClick={(e) => {
-                                            // showPicker needs a user gesture (this click) and isn't in every
-                                            // browser; ignore if unsupported/blocked — the field still works.
-                                            try { e.currentTarget.showPicker?.(); } catch { /* no-op */ }
-                                        }}
+                                        onChange={(val) => setFormData({ ...formData, deadline: val })}
+                                        placeholder="Atlikti iki…"
                                         aria-label="Atlikti iki"
                                         disabled={fieldsLocked}
-                                        className={`w-full px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand disabled:bg-surface-sunken text-base ${formData.deadline ? '' : 'text-transparent'}`}
                                     />
-                                    {!formData.deadline && (
-                                        <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-base text-ink-muted">
-                                            Atlikti iki…
-                                        </span>
-                                    )}
                                 </div>
                                 {/* Žyma — optional single tag from the canonical list. Opens a list panel
                                     (Select sheet) just like the other pickers; "Be žymos" clears it. */}

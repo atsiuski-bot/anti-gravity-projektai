@@ -1,0 +1,13 @@
+
+> workz@0.0.0 test
+> vitest run
+
+
+ RUN  v4.1.9 C:/Users/karol/Desktop/WORKZ/.claude/worktrees/adoring-swirles-db2d09
+
+
+ Test Files  60 passed (60)
+      Tests  745 passed (745)
+   Start at  15:42:03
+   Duration  9.01s (transform 13.21s, setup 0ms, import 29.14s, tests 1.20s, environment 8ms)
+

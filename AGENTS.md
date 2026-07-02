@@ -10,15 +10,17 @@ before changing anything.
 - **Language split:** all persisted artifacts — files, code, comments, commit messages — are
   **English**. User-facing **UI strings are Lithuanian** (formal "Jūs"). The only Lithuanian
   on disk is UI copy and Lithuanian proper nouns.
-- **Brand:** the product is **WORKZ** only. The legacy "Viduramžiai.LT" name is retired —
-  never reintroduce it in code, titles, manifests, or copy.
+- **Brand:** **WORKZ** is the repo / internal name; the **user-facing brand is Gildija** (app
+  title + PWA manifest). The legacy "Viduramžiai.LT" name is retired — never reintroduce it in
+  code, titles, manifests, or copy.
 - **Design system is binding:** any UI change conforms to
   [`docs/design/DESIGN_SYSTEM.md`](./docs/design/DESIGN_SYSTEM.md) and
   [`docs/design/tokens.md`](./docs/design/tokens.md). **WCAG 2.1 AA is a mandatory gate**
   (≥12 px text, ≥44 px touch targets, ≥4.5:1 contrast, visible focus, color never the sole
   signal).
 - **No secrets in git:** no API keys, tokens, or credentials.
-- **Don't deploy autonomously:** deploy (Netlify) is a human-initiated action.
+- **Don't deploy autonomously:** a push to `main` auto-deploys hosting (Cloudflare Pages +
+  Netlify); the human-initiated deploys are Firebase rules/functions.
 - **Deploy is post-ship, never pre-ship:** `firebase deploy` blindly overwrites the one shared
   project from the CWD's files (git-blind, last-write-wins, no version guard). **Never suggest
   deploying rules/functions from a worktree before the change is merged to main** — deploy only

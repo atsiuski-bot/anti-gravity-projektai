@@ -8,7 +8,7 @@ how the product should look and how the repo is run.
 | Path | What |
 |---|---|
 | [`design/DESIGN_SYSTEM.md`](./design/DESIGN_SYSTEM.md) | The design bible: principles, the signature color-state system, typography, color, accessibility (WCAG AA), components, layout/density, voice. **Read before any UI change.** |
-| [`design/tokens.md`](./design/tokens.md) | Canonical design tokens (color/type/space/radius/shadow/z-index) + the proposed `tailwind.config.js` block. |
+| [`design/tokens.md`](./design/tokens.md) | Canonical design tokens (color/type/space/radius/shadow/z-index) + the wired `tailwind.config.js` block. |
 | [`adr/`](./adr/) | Architecture Decision Records — the *why* behind major choices. |
 | [`decisions-log.md`](./decisions-log.md) | Chronological index of ADRs + notable inline decisions. **Read first for orientation.** |
 | [`guides/`](./guides/) | How-to procedures for recurring tasks — e.g. [`adding-a-notification.md`](./guides/adding-a-notification.md) (the step-by-step to add a new alert + its trigger). |

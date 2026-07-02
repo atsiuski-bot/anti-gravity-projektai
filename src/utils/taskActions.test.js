@@ -20,6 +20,9 @@ vi.mock('firebase/firestore', () => ({
     setDoc: vi.fn(() => Promise.resolve()),
     deleteDoc: vi.fn(() => Promise.resolve()),
     getDoc: vi.fn(() => Promise.resolve({ exists: () => false, data: () => ({}) })),
+    // resumeTask re-reads the user doc server-first inside its lock (the activeSession-supersede
+    // guard); beforeEach makes it delegate to getDoc so a test that arms getDoc arms both.
+    getDocFromServer: vi.fn(() => Promise.resolve({ exists: () => false, data: () => ({}) })),
     getDocs: vi.fn(() => Promise.resolve({ docs: [] })),
     query: vi.fn((...args) => args),
     where: vi.fn(() => 'where-clause'),
@@ -33,7 +36,7 @@ vi.mock('./timeUtils', async (importActual) => ({
     getLithuanianNow: vi.fn(),
 }));
 
-import { updateDoc, addDoc, getDocs } from 'firebase/firestore';
+import { updateDoc, addDoc, getDocs, getDoc, getDocFromServer } from 'firebase/firestore';
 import { logError } from './errorLog';
 import { getLithuanianNow } from './timeUtils';
 import { MAX_SESSION_MINUTES } from './timeUtils';
@@ -55,7 +58,14 @@ beforeEach(() => {
     updateDoc.mockResolvedValue(undefined);
     addDoc.mockResolvedValue({ id: 'generated-id' });
     getLithuanianNow.mockReturnValue(NOW);
+    // Default: no user doc → resumeTask's supersede guard sees no live session and proceeds. Re-armed
+    // here so a test that points getDoc at a live session cannot leak that into a later test.
+    getDoc.mockResolvedValue({ exists: () => false, data: () => ({}) });
     getDocs.mockResolvedValue({ docs: [] }); // pauseOtherTasks finds nothing to pause
+    // Server-first user read used by resumeTask's supersede guard; delegate to getDoc so the
+    // existing resume tests (which leave getDoc at its no-doc default) exercise the guard's
+    // "no live session → proceed" branch unchanged.
+    getDocFromServer.mockImplementation((ref) => getDoc(ref));
 });
 
 describe('pauseTask — credit math (now - timerStartedAt)', () => {
@@ -332,6 +342,26 @@ describe('startTask / resumeTask — running-state writes', () => {
         const upd = taskUpdateFor('t9');
         expect(upd.timerStatus).toBe('running');
         expect(typeof upd.timerStartedAt).toBe('string');
+    });
+
+    it('resumeTask ABORTS when a live secondary session is present (TOCTOU wipe guard)', async () => {
+        // Simulates the race: the worker started a fresh break AFTER doResume's outside-lock check,
+        // and its startSession committed on the same per-user lock. resumeTask must re-read inside
+        // the lock, see the live break, and abort — NOT overwrite activeSession (a silent wipe of a
+        // never-logged session). The paused task stays recoverable.
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ activeSession: { type: 'break', startTime: '2026-06-23T11:55:00.000Z' } }),
+        });
+
+        await resumeTask({ id: 't9', title: 'Resume me' }, 'u1');
+
+        expect(taskUpdateFor('t9')).toBeUndefined();        // task timer NOT re-armed
+        expect(userUpdatesFor('u1')).toHaveLength(0);       // activeSession NOT overwritten
+        expect(logError).toHaveBeenCalledWith(
+            expect.any(Error),
+            expect.objectContaining({ source: 'resumeTask:supersededByLiveSession', liveType: 'break' })
+        );
     });
 });
 

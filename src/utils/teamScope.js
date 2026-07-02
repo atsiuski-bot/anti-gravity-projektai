@@ -48,13 +48,6 @@ export const canSeeWholeTeam = (userData) =>
         (userData.role === 'manager' && userData.scopedManager !== true)
     );
 
-// The Firestore constraint that limits a private collection to the viewer's subtree, or `null`
-// when the viewer sees everything (admin / unscoped manager). Workers use their own owner-scoped
-// queries elsewhere; this is for the manager/admin surfaces. `uid` is the viewer's auth uid
-// (the user-doc data carries no id of its own).
-export const teamScopeConstraint = (userData, uid) =>
-    (isScopedOverseer(userData) && uid) ? where('teamManagerIds', 'array-contains', uid) : null;
-
 // Is the viewer in the target user's overseer set? Prefers the denormalized closure (`overseerIds`,
 // maintained by the Cloud Function) — that is what the security rules effectively grant. Falls back
 // to the union of the direct membership fields (`teamManagerIds` ∪ `seniorManagerIds`) for the

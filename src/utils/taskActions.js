@@ -1,4 +1,4 @@
-import { doc, updateDoc, collection, query, where, getDocs, getDoc, addDoc, setDoc, deleteDoc, orderBy, arrayUnion, arrayRemove } from 'firebase/firestore';
+import { doc, updateDoc, collection, query, where, getDocs, getDoc, getDocFromServer, addDoc, setDoc, deleteDoc, orderBy, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../firebase';
 import { parseTimeStringToMinutes, formatMinutesToTimeString, getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from './timeUtils';
 import { isManagerRole } from './formatters';
@@ -241,6 +241,30 @@ export const resumeTask = (task, userId) => withUserLock(userId, () => resumeTas
 
 const resumeTaskImpl = async (task, userId) => {
     try {
+        // Re-validate INSIDE the lock before overwriting activeSession. endSession's doResume calls
+        // this fire-and-forget AFTER its supersede check ran OUTSIDE any lock; during that check's
+        // round-trip the worker can tap a new break/call/quick-work, whose startSession commits on
+        // THIS same per-user lock. Re-reading here — inside the lock, so that commit is already
+        // visible — lets us abort rather than blindly overwrite activeSession, which was a silent,
+        // unrecoverable wipe of a session that had not yet been logged anywhere. Skipping the resume
+        // is the safe side: a non-resumed paused task stays recoverable (manual resume / orphan
+        // recovery). Server-first with a cache fallback so an offline worker still reads the
+        // latency-compensated local state (the same-device commit is already there).
+        try {
+            const snap = await getDocFromServer(doc(db, 'users', userId)).catch(() => getDoc(doc(db, 'users', userId)));
+            const live = snap?.exists?.() ? snap.data()?.activeSession : null;
+            if (live && live.type && live.type !== 'task' && live.startTime) {
+                logError(new Error('resumeTask skipped: live secondary session present'), {
+                    source: 'resumeTask:supersededByLiveSession', userId, taskId: task.id, liveType: live.type,
+                });
+                return;
+            }
+        } catch (guardErr) {
+            // Fail CLOSED: unproven safety → skip the resume rather than risk wiping a live session.
+            logError(guardErr, { source: 'resumeTask:guardRead', userId, taskId: task.id });
+            return;
+        }
+
         // 1. Pause others (must complete before resuming)
         await pauseOtherTasks(userId, task.id);
 

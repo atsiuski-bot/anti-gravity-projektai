@@ -28,8 +28,10 @@
 - **No-self-approval:** a worker may edit their own task but **cannot** flip the manager-only
   approval/confirmation fields (`status` → `confirmed`/`approved`, `confirmedBy`,
   `approvedBy`, `isApproved`); only managers/admins can.
-- **Unused collections** (`shift_logs`, `daily_stats`, `deleted_tasks`) are locked
-  (`if false`) — the client never touches them, so they should not be writable.
+- **Unused collections** (`shift_logs`, `daily_stats`) are fully locked (`read, write: if
+  false`) — the client never touches them. **`deleted_tasks` is read-only, not fully locked**:
+  its READ is team-scoped (the DailyStatistics listener still opens it) and only WRITE is
+  `if false`.
 - **`error_logs`:** any authenticated user may append a crash report; only managers/admins
   read; entries are immutable; only admins clear them.
 

@@ -95,26 +95,6 @@ export const toggleChecklistItem = async (taskId, itemId, currentUser, currentCh
 };
 
 /**
- * Rename an item, preserving its done state.
- */
-export const updateChecklistItem = async (taskId, itemId, newText, currentChecklist = [], collectionName = 'tasks') => {
-    const trimmed = (newText || '').trim();
-    if (!trimmed || !currentChecklist) return;
-    try {
-        const next = currentChecklist.map((item) =>
-            item.id === itemId ? { ...item, text: trimmed } : item
-        );
-        await updateDoc(doc(db, collectionName, taskId), {
-            checklist: next,
-            updatedAt: new Date().toISOString()
-        });
-    } catch (err) {
-        console.error('Error updating checklist item:', err);
-        throw err;
-    }
-};
-
-/**
  * Remove an item by id.
  */
 export const deleteChecklistItem = async (taskId, itemId, currentChecklist = [], collectionName = 'tasks') => {

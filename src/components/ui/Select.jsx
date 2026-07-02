@@ -24,7 +24,7 @@ import Modal from './Modal';
  *    ring, focus restored to the trigger on close.
  *
  * Stacking: the sheet renders through `Modal` with `level="top"`, and `useModalA11y`'s dialog
- * stack means a Select opened from inside `TaskModal`/`InlineEditModal` becomes the topmost
+ * stack means a Select opened from inside a parent modal (e.g. `TaskModal`) becomes the topmost
  * dialog (its Esc/Tab win, focus returns to the trigger on close) without fighting the parent.
  *
  * @param {string} value - the currently selected option value.

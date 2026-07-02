@@ -166,10 +166,3 @@ export const getContrastingTextColor = (bgHex) => {
     // Pick whichever candidate has the higher contrast ratio against the bg.
     return contrast(darkLum) >= contrast(lightLum) ? DARK : LIGHT;
 };
-
-export const UI_COLORS = {
-    DEFAULT_BORDER: '#D9D9D9',
-    DEFAULT_TEXT: '#111111',
-    SECONDARY_TEXT: '#444444',
-    BACKGROUND: '#FFFFFF'
-};

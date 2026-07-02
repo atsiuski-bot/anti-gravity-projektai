@@ -4,7 +4,7 @@ WORKZ is a mobile-first PWA for work-time tracking — tasks, work/break/call ti
 shift planning, and team oversight for workers and managers.
 
 - **Stack:** React 18 + Vite + Tailwind CSS, Firebase (Auth + Firestore + Storage), PWA.
-- **Hosting:** Netlify. **Backend:** Firebase.
+- **Hosting:** Cloudflare Pages (primary — auto-deploys on push to `main`) + Netlify in parallel. **Backend:** Firebase.
 - **UI language:** Lithuanian. **Repository artifacts** (docs, code, commit messages): English.
 
 ## Docs

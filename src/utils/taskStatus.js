@@ -91,19 +91,3 @@ export function resolveInitialTaskStatus({ isManagerOrAdmin, isSelfAssigned } = 
     return 'pending';
 }
 
-/**
- * Confirmation-only descriptor for finished-work surfaces (daily statistics, reports) that
- * track the manager-confirmation toggle rather than the full lifecycle. Mirrors the
- * completed/confirmed labels above so on-screen copy and exports never disagree.
- *
- * @param {Object} task
- * @returns {{ confirmed: boolean, tone: string, label: string }}
- */
-export function deriveConfirmation(task) {
-    const confirmed = task?.status === 'confirmed';
-    return {
-        confirmed,
-        tone: confirmed ? 'success' : 'pending',
-        label: confirmed ? STATUS_LABELS.confirmed : STATUS_LABELS.completed,
-    };
-}

@@ -13,15 +13,19 @@ A **mobile-first PWA for work-time tracking**, used by two roles:
 - **manager / admin** — oversight: team tasks, live sessions, approvals/notifications,
   reports, user management. Often on desktop.
 
-The product was originally framed as "Viduramžiai.LT"; it has since grown into a standalone
-tool named **WORKZ**. WORKZ is the only name — the old one is retired everywhere.
+The product was originally framed as "Viduramžiai.LT" (now fully retired). **WORKZ** is the
+repository / internal name used throughout this protocol and the codebase; the current
+**user-facing brand is Gildija** (the app `<title>` and PWA manifest name). Use *Gildija* in
+user-facing UI copy, *WORKZ* for the repo/protocol.
 
 ## Tech & architecture
 
 - **React 18 + Vite + Tailwind CSS**, PWA via `vite-plugin-pwa`.
 - **Firebase** backend: Auth (Google sign-in), Firestore (tasks, users, sessions, calendar),
   Storage (attachments). Rules in `firestore.rules` / `storage.rules`.
-- **Hosting: Netlify** (`netlify.toml`). Backend stays Firebase.
+- **Hosting: Cloudflare Pages** (primary — a push to `main` auto-deploys
+  `anti-gravity-projektai.pages.dev`), with **Netlify** (`netlify.toml`, `workztest1`)
+  deploying in parallel. Backend stays Firebase.
 - Routing: a single app route `/` with **tab-based navigation via context**
   (`NavigationContext`); only `/login` is a separate route.
 - Key source areas: `src/pages/` (Login, Dashboard, WorkerView, ManagerView),

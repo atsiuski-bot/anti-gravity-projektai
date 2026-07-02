@@ -133,6 +133,36 @@ describe('startSession — opening a secondary session', () => {
         expect(u.activeSession.pausedSession.pausedSession.taskId).toBe('tk1');
     });
 
+    it('banks an interrupted BREAK’s pre-interruption segment and folds it into the daily total', async () => {
+        // A break started 20 min ago is interrupted by a call. Its 20 elapsed minutes must be
+        // banked NOW as a break_sessions row AND added to the daily break counter — endSession
+        // later resets the restored break’s startTime to the resume instant, so without this the
+        // 11:40–12:00 stretch would be lost from both the report log and the daily total.
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({
+                displayName: 'Worker',
+                activeSession: { type: 'break', startTime: '2026-06-23T11:40:00.000Z' },
+                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 15 },
+            }),
+        });
+
+        await startSession('u1', 'call');
+
+        const u = userUpdate('u1');
+        expect(u.activeSession.type).toBe('call');
+        expect(u.activeSession.pausedSession.type).toBe('break'); // break nests under the call
+
+        // Pre-interruption segment banked as a deterministic-id break_sessions row.
+        const breaks = setsTo('break_sessions');
+        expect(breaks).toHaveLength(1);
+        expect(breaks[0].durationMinutes).toBe(20); // 11:40 -> 12:00
+        expect(breaks[0].isBreak).toBe(true);
+
+        // Daily counter folded forward: 15 prior + 20 banked.
+        expect(u['breakState.dailyAccumulatedMinutes']).toBe(35);
+    });
+
     it('pauses an active TASK session and nests it (delegates to pauseTask, skipping the user-status write)', async () => {
         getDoc.mockImplementation((ref) => {
             if (ref?._path?.startsWith('users/')) {
