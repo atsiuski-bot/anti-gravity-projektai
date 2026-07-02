@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { doc, getDocFromServer } from 'firebase/firestore';
+import { db } from '../firebase';
 import { pauseTask, creditAndResumeTask } from '../utils/taskActions';
 import { claimRecoveredGap } from '../utils/sessionEditActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
@@ -87,6 +89,63 @@ export async function resolveUntrackedGap(task, currentUser, decision) {
     }
 }
 
+// Confirm a suspected orphan against the SERVER (never the cache) before any recovery write. The
+// local snapshot that flagged the orphan can be arbitrarily stale — with the persistent cache, the
+// first emission after boot is simply the previous run's state — and every past double-credit in
+// this class came from acting on it: the server's autoStopForgottenTimers had already paused the
+// task and credited [start → beat], or a second device had already paused/finished the run, and a
+// recovery pause here logged the SAME interval again. Returns the FRESH task when the exact same
+// run (same timerStartedAt) is still running on the server, or null when another closer got there
+// first / a new run replaced it. Throws on a failed read (offline) — the caller must treat the
+// orphan as UNPROVEN and retry later rather than fall back to the cache.
+export async function confirmTaskOrphanOnServer(task) {
+    const snap = await getDocFromServer(doc(db, 'tasks', task.id));
+    if (!snap.exists()) return null;
+    const fresh = { id: snap.id, ...snap.data() };
+    if (fresh.timerStatus !== 'running' || !fresh.timerStartedAt) return null;
+    if (fresh.timerStartedAt !== task.timerStartedAt) return null;
+    return fresh;
+}
+
+// Recover ONE server-confirmed orphan end-to-end: confirm, re-decide on the FRESH doc, dispatch.
+// Exported so the confirm→decide→dispatch orchestration is unit-testable without a React renderer.
+//
+// Two deliberate choices:
+//   • The decision runs on the SERVER doc, not the snapshot that raised the suspicion — the fresh
+//     copy carries the true timerMinutes base (so a pause cannot overwrite a newer credit with a
+//     stale sum) and the true last beat.
+//   • It is anchored at nowMs (the confirm instant), not the boot instant: on an offline boot the
+//     confirm runs only when connectivity returns, and the untracked-gap window must extend to
+//     cover the app-open stretch worked in between, or that stretch would be silently dropped.
+// A confirm failure propagates to the caller (unlatch + retry); a failed WRITE after a successful
+// confirm is logged and stays latched, exactly as before.
+export async function recoverConfirmedOrphan(task, currentUser, nowMs = Date.now()) {
+    const fresh = await confirmTaskOrphanOnServer(task);
+    if (!fresh) return null; // another closer already finalized this run — nothing left to recover
+    const decision = decideOrphanTaskRecovery(fresh, nowMs);
+    if (decision.mode === 'skip') return null;
+    try {
+        // (1) No proof of life — fall back to the original behaviour exactly: credit up to
+        // now (clamped), pause, and tell the worker. We have nothing better to go on.
+        if (decision.mode === 'pause-now') {
+            stampRecoveredNotice(fresh, await pauseTask(fresh));
+            return null;
+        }
+        // (2) Brief reload while working — credit up to the reload instant (real continuous
+        // work, not just up to the last beat) and re-anchor. Seamless, no banner.
+        if (decision.mode === 'resume') {
+            await creditAndResumeTask(fresh, decision.creditTo);
+            return null;
+        }
+        // (3) Large tail — credit the proven part up to the last beat and pause, then resolve
+        // the untracked gap (auto-credit or claim offer); see pauseAtBeatAndResolveGap.
+        return await pauseAtBeatAndResolveGap(fresh, currentUser, decision);
+    } catch (e) {
+        logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id });
+        return null;
+    }
+}
+
 // Carry out a pause-at-beat recovery for one orphan: credit the proven stretch up to the last beat,
 // stamp the one-time "recovered" notice, then resolve the untracked gap [last beat → load]. Exported
 // (not inlined in the effect) so this pause→gap ORCHESTRATION is unit-testable without a React
@@ -131,7 +190,9 @@ export async function pauseAtBeatAndResolveGap(task, currentUser, decision) {
  *      gap, or no signed-in identity / a failed auto-credit write, falls back to the opt-in claim
  *      offer so the time is never silently lost.
  *
- * Each task is handled at most once per app session.
+ * Each task is handled at most once per app session — after a SERVER confirmation that the orphan
+ * is real (confirmTaskOrphanOnServer). A failed confirmation (offline boot) unlatches the task so
+ * a later snapshot retries; a cached, unconfirmed copy is never acted on.
  *
  * @param {Array} tasks - the live tasks list (already scoped to the current user).
  * @param {Object} currentUser - the authenticated user (attributes + authors the auto-credited gap).
@@ -146,36 +207,21 @@ export function useOrphanedTaskRecovery(tasks, currentUser) {
             if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return;
             if (handledRef.current.has(task.id)) return;
 
-            const decision = decideOrphanTaskRecovery(task, APP_LOAD_TIME);
-            if (decision.mode === 'skip') return;
+            // Cheap pre-filter on the (possibly cached) snapshot: only a pre-boot run is even a
+            // candidate. The REAL decision is re-made inside recoverConfirmedOrphan on the
+            // server-confirmed doc — never on this unconfirmed copy.
+            if (decideOrphanTaskRecovery(task, APP_LOAD_TIME).mode === 'skip') return;
 
             handledRef.current.add(task.id);
 
-            // (1) No proof of life — fall back to the original behaviour exactly: credit up to
-            // now (clamped), pause, and tell the worker. We have nothing better to go on.
-            if (decision.mode === 'pause-now') {
-                pauseTask(task)
-                    .then((result) => stampRecoveredNotice(task, result))
-                    .catch((e) => logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id }));
-                return;
-            }
-
-            // (2) Brief reload while working — credit up to the reload instant (real continuous
-            // work, not just up to the last beat) and re-anchor. Seamless, no banner.
-            if (decision.mode === 'resume') {
-                creditAndResumeTask(task, decision.creditTo).catch((e) =>
-                    logError(e, { source: 'orphanRecovery:creditAndResume', taskId: task.id })
-                );
-                return;
-            }
-
-            // (3) Large tail — credit the proven part up to the last beat and pause, then resolve the
-            // untracked gap [lastBeat → load time] (auto-credit or fall back to a claim offer) — but
-            // ONLY when our pause actually ran. A deduped (null) pause means the time-limit monitor
-            // already paused this over-limit orphan up to now, subsuming the gap; see
-            // pauseAtBeatAndResolveGap.
-            pauseAtBeatAndResolveGap(task, currentUser, decision)
-                .catch((e) => logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id }));
+            recoverConfirmedOrphan(task, currentUser).catch((e) => {
+                // The server re-read failed (offline boot, transient network): the orphan is
+                // UNPROVEN and nothing was written. Unlatch so a later snapshot — e.g. the one
+                // that fires on reconnect — retries; deciding from the unconfirmed cache is the
+                // exact staleness that used to double-credit / kill live timers.
+                handledRef.current.delete(task.id);
+                logError(e, { source: 'orphanRecovery:confirmTask', taskId: task.id });
+            });
         });
         // currentUser is a dep so a task loaded before auth resolves is still auto-credited once the
         // user arrives; handledRef makes the re-run a no-op for any task already processed.

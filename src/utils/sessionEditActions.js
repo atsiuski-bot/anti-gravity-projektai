@@ -1,4 +1,4 @@
-import { doc, updateDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
     getLithuanianDateString,
@@ -327,7 +327,12 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
         editReason: (reason || '').trim() || 'Atkurtas neužfiksuotas darbo laikas (be ryšio)',
     };
     try {
-        const ref = await addDoc(collection(db, 'work_sessions'), payload);
+        // Deterministic id keyed on (taskId, gap start): the same gap auto-claimed by two tabs or
+        // devices (each ran orphan recovery on its own snapshot) converges on ONE row — and the
+        // recovery notice's sessionId then points at THE row, so a "Nedirbau" opt-out removes all
+        // of the credited time, never leaving an invisible sibling duplicate behind.
+        const ref = doc(db, 'work_sessions', `sess_gap_${task.id}_${new Date(startTime).getTime()}`);
+        await setDoc(ref, payload, { merge: true });
         return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
     } catch (err) {
         logError(err, { source: 'writeFail:claimRecoveredGap' });

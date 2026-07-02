@@ -4,6 +4,25 @@ import { db } from '../firebase';
 import { logError } from '../utils/errorLog';
 import { TIMER_HEARTBEAT_INTERVAL_MS } from '../utils/timeUtils';
 
+// Captured once when this JS context boots (same convention as the recovery hooks). A running task
+// whose timerStartedAt predates this moment is a PRE-BOOT run this device merely OBSERVES — it is
+// orphan-recovery's to judge, and this hook must never beat it (see isBeatableRun).
+const APP_LOAD_TIME = Date.now();
+
+// Is this task a run THIS app session started (or re-anchored), i.e. one this device may beat?
+// Pre-boot runs are excluded on purpose: the beat is the "proof of life" orphan recovery uses to
+// tell a live timer from an abandoned one, and it now server-confirms that proof before acting.
+// The old unconditional immediate beat stamped a fresh beat onto every orphan at boot — blessing
+// an abandoned timer as alive and poisoning that confirmation. Every legitimate continuation of a
+// pre-boot run re-anchors timerStartedAt (creditAndResumeTask / resumeTask / startTask), so it
+// becomes beatable the instant recovery decides it really is live. Pure + exported for tests.
+export function isBeatableRun(task, uid, appLoadTime = APP_LOAD_TIME) {
+    if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return false;
+    if (!uid || task.assignedUserId !== uid) return false;
+    const startMs = new Date(task.timerStartedAt).getTime();
+    return Number.isFinite(startMs) && startMs >= appLoadTime;
+}
+
 /**
  * Keep a running task timer "alive" by stamping `timerLastHeartbeat` on its task doc every
  * {@link TIMER_HEARTBEAT_INTERVAL_MS}. This is the write side of the crash/reload-survivable
@@ -29,13 +48,10 @@ import { TIMER_HEARTBEAT_INTERVAL_MS } from '../utils/timeUtils';
 export function useTaskHeartbeat(tasks, currentUser) {
     const uid = currentUser?.uid;
 
-    // Derive the stable id of the user's own running task (if any). Recomputed each render but
-    // only its VALUE drives the effect below, so snapshot churn does not restart the interval.
-    const running = Array.isArray(tasks)
-        ? tasks.find(
-              (t) => t && t.timerStatus === 'running' && t.timerStartedAt && t.assignedUserId === uid
-          )
-        : null;
+    // Derive the stable id of the user's own beatable running task (if any) — a run THIS session
+    // started, never a pre-boot orphan (see isBeatableRun). Recomputed each render but only its
+    // VALUE drives the effect below, so snapshot churn does not restart the interval.
+    const running = Array.isArray(tasks) ? tasks.find((t) => isBeatableRun(t, uid)) : null;
     const runningId = running?.id || null;
 
     useEffect(() => {

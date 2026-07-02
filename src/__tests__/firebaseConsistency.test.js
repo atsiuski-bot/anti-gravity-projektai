@@ -450,3 +450,34 @@ describe('secondary-session record-id lockstep (client sessionActions ↔ functi
       .toEqual([]);
   });
 });
+
+// =============================================================================================
+// 8b. TASK-SESSION RECORD-ID LOCKSTEP — a task timer's work_sessions row is logged under the
+//     DETERMINISTIC id sess_task_<taskId>_<startMs> by EVERY closer of the same running stretch:
+//     client pauseTask (manual / monitor / recovery / manager force-end), the finish path in
+//     TaskTimerControls, and the server's autoStopForgottenTimers. That shared id is the whole
+//     double-credit defense for task timers — two independent closers converge on ONE row instead
+//     of each minting a random-id duplicate of the same paid interval. If either side renames the
+//     prefix, or a task-timer path regresses to a random-id addDoc, the defense silently breaks.
+// =============================================================================================
+
+describe('task-session record-id lockstep (client closers ↔ functions auto-stop)', () => {
+  const TASK_ACTIONS_SRC = read('src/utils/taskActions.js');
+  const TASK_TIMER_CONTROLS_SRC = read('src/components/TaskTimerControls.jsx');
+
+  it('client and server mint the identical deterministic prefix', () => {
+    expect(TASK_ACTIONS_SRC, 'taskActions.js lost the sess_task_ prefix (dedup would break)')
+      .toContain('sess_task_');
+    expect(FUNCTIONS_SRC, 'functions/index.js lost the sess_task_ prefix (dedup would break)')
+      .toContain('sess_task_');
+    // The pre-mirror server prefix must not come back — it would silently fork the id space.
+    expect(FUNCTIONS_SRC).not.toContain('sess_autostop_ws_');
+  });
+
+  it('the finish path shares the client id builder — no bespoke random-id session row', () => {
+    expect(TASK_TIMER_CONTROLS_SRC).toContain('taskSessionDocId');
+    // No task-timer path may regress to addDoc for work_sessions: a random id cannot dedup.
+    expect(TASK_ACTIONS_SRC).not.toContain("addDoc(collection(db, 'work_sessions')");
+    expect(TASK_TIMER_CONTROLS_SRC).not.toContain("addDoc(collection(db, 'work_sessions')");
+  });
+});

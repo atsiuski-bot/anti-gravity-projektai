@@ -56,7 +56,8 @@ const WORKER = { uid: 'w1', displayName: 'Worker', email: 'w@x.lt' };
 const taskUpdatesFor = (id) => updateDoc.mock.calls.filter(([ref]) => ref?._path === `tasks/${id}`).map((c) => c[1]);
 const taskUpdateFor = (id) => taskUpdatesFor(id)[0];
 const lastTaskUpdateFor = (id) => taskUpdatesFor(id).at(-1);
-const workSessionWrites = () => addDoc.mock.calls.filter(([col]) => col?._col === 'work_sessions').map((c) => c[1]);
+// Session rows are DETERMINISTIC-id setDoc writes (never addDoc) so concurrent closers converge.
+const workSessionWrites = () => setDoc.mock.calls.filter(([ref]) => ref?._col === 'work_sessions').map((c) => c[1]);
 const decisionWrites = () => setDoc.mock.calls.filter(([ref]) => ref?._col === 'decision_log').map((c) => c[1]);
 
 beforeEach(() => {
@@ -277,9 +278,9 @@ describe('toggleTaskCompletion — un-checking routes to reopenTask and never pa
 describe('toggleTaskCompletion — ordering: the timer is stopped BEFORE the status write', () => {
     it('the running-timer pause commits before the audited completion (pure status write invariant)', async () => {
         const order = [];
-        addDoc.mockImplementation((col) => {
-            if (col?._col === 'work_sessions') order.push('pause:work_session');
-            return Promise.resolve({ id: 'generated-id' });
+        setDoc.mockImplementation((ref) => {
+            if (ref?._col === 'work_sessions') order.push('pause:work_session');
+            return Promise.resolve();
         });
         updateDoc.mockImplementation((ref) => {
             if (ref?._path === 'tasks/t1') order.push('task:update');

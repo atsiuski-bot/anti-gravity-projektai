@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, Clock } from 'lucide-react';
-import { doc, updateDoc, collection, addDoc, getDoc, waitForPendingWrites } from 'firebase/firestore';
+import { doc, updateDoc, setDoc, getDoc, waitForPendingWrites } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
-import { startTask, pauseTask, resumeTask } from '../utils/taskActions';
+import { startTask, pauseTask, resumeTask, taskSessionDocId } from '../utils/taskActions';
 import { isManagerRole, resolveCompletionStatus } from '../utils/formatters';
 import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
@@ -355,8 +355,12 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     // Attribute to the end date (now), consistent with the other
                     // work_sessions writers - start-based mis-bucketed midnight-spanning work.
                     const sessionDate = getLithuanianDateString(now);
-                    // Capture the ref so an undo can soft-delete this exact segment.
-                    addDoc(collection(db, 'work_sessions'), {
+                    // Deterministic id — the SAME key pauseTask mints for this running stretch, so
+                    // a finish racing the time-limit monitor's (or recovery's) pause of the same
+                    // run converges on one row instead of logging the interval twice. The ref is
+                    // known synchronously, so an undo can void the row even mid-flight.
+                    sessionDocRef = doc(db, 'work_sessions', taskSessionDocId(task.id, start.getTime()));
+                    setDoc(sessionDocRef, {
                         taskId: task.id,
                         taskTitle: task.title || 'Nežinoma užduotis',
                         userId: task.assignedUserId,
@@ -366,7 +370,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         durationMinutes: elapsedMinutes,
                         date: sessionDate,
                         createdAt: new Date().toISOString()
-                    }).then(ref => { sessionDocRef = ref; })
+                    }, { merge: true })
                       .catch(logErr => logError(logErr, { source: 'writeFail:finishTask.workSession' }));
                 }
             }

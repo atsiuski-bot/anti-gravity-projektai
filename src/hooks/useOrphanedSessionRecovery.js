@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { doc, getDocFromServer } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { endSession } from '../utils/sessionActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
@@ -62,6 +64,37 @@ export const getSecondarySession = (userData) => {
     return null;
 };
 
+// Confirm a suspected abandoned secondary session against the SERVER (never the cache) before
+// finalizing it. The userData snapshot that raised the suspicion can be arbitrarily stale — with
+// the persistent cache, the first emission after boot is the previous run's state — and finalizing
+// from it is how a long-closed device could wipe a LIVE session started meanwhile on another
+// device (endSession writes activeSession:null blind) or re-derive an already-corrected history
+// row. Returns the FRESH user doc when the exact same session (same type + startTime) is still
+// live on the server, or null when another closer already ended it / a NEW session replaced it.
+// Throws on a failed read (offline) — the caller must treat the orphan as unproven and retry.
+export async function confirmSessionOrphanOnServer(uid, session) {
+    const snap = await getDocFromServer(doc(db, 'users', uid));
+    if (!snap.exists()) return null;
+    const fresh = snap.data();
+    const live = getSecondarySession(fresh);
+    if (!live || live.type !== session.type || live.startTime !== session.startTime) return null;
+    return fresh;
+}
+
+// Pick the freshest PRE-BOOT proof of life from the candidate heartbeat stamps (the cached and the
+// server-fresh activeSessionLastHeartbeat). Post-boot beats are excluded on purpose: this device's
+// own useSessionHeartbeat beats the session immediately at boot — BEFORE recovery decides — so a
+// post-boot stamp proves nothing about whether the worker was there during the offline stretch,
+// and using it as endAt would credit the whole dead gap. Pre-start stamps (stale, from an earlier
+// session) are equally unusable. Returns the max usable beat in epoch ms, or null (→ the caller
+// falls back to end-at-now, the prior clamped behaviour). Pure + exported for tests.
+export function resolvePreBootBeat(startMs, appLoadTime, ...beatIsos) {
+    const usable = beatIsos
+        .map((iso) => (iso ? new Date(iso).getTime() : NaN))
+        .filter((ms) => Number.isFinite(ms) && ms >= startMs && ms <= appLoadTime);
+    return usable.length ? Math.max(...usable) : null;
+}
+
 /**
  * Crash/reload recovery for an ABANDONED break / call / quick-work session.
  *
@@ -117,19 +150,37 @@ export function useOrphanedSessionRecovery(currentUser) {
         if (!isAbandonedSession(session.startTime)) return;
 
         const uid = currentUser.uid;
-        // Credit the abandoned session only up to its last proof of life (the per-minute heartbeat,
-        // see useSessionHeartbeat), not up to the arbitrary reopen instant — so a session whose app
-        // was closed for hours/days does not credit that dead gap as break/work. No usable beat (none
-        // written yet, stale from an earlier session, or after this boot) → fall back to end-at-now,
-        // the prior clamped behaviour.
-        const beatMs = userData.activeSessionLastHeartbeat
-            ? new Date(userData.activeSessionLastHeartbeat).getTime()
-            : NaN;
-        const overrides = (Number.isFinite(beatMs) && beatMs >= startedAt && beatMs <= APP_LOAD_TIME)
-            ? { endAt: beatMs }
-            : {};
-        endSession(uid, userData, overrides, true)
-            .then((result) => {
+        const cachedBeatIso = userData.activeSessionLastHeartbeat;
+        (async () => {
+            // Confirm against the SERVER before touching anything: the userData above may be a
+            // stale cache emission, and the session may already be closed — or replaced by a LIVE
+            // one — on the server. Finalizing from the cache is how a long-closed device could
+            // wipe a session another device is actively running.
+            let freshData;
+            try {
+                freshData = await confirmSessionOrphanOnServer(uid, session);
+            } catch (e) {
+                // Unproven (offline boot / transient network) and nothing written — unlatch so a
+                // later userData emission (e.g. on reconnect) retries.
+                handledRef.current = false;
+                logError(e, { source: 'orphanRecovery:confirmSession', userId: uid, sessionType: session.type });
+                return;
+            }
+            if (!freshData) return; // already closed / replaced by another closer — nothing to do
+
+            // Credit the abandoned session only up to its last PRE-BOOT proof of life (the
+            // per-minute heartbeat, see useSessionHeartbeat), not up to the arbitrary reopen
+            // instant — so a session whose app was closed for hours/days does not credit that
+            // dead gap as break/work. Both the cached and the server-fresh stamp are candidates
+            // (the freshest wins); no usable beat → fall back to end-at-now, the prior clamped
+            // behaviour. endSession receives the SERVER-fresh user doc, so its caller-supplied-
+            // snapshot fast path no longer bypasses the staleness defense.
+            const beatMs = resolvePreBootBeat(
+                startedAt, APP_LOAD_TIME, cachedBeatIso, freshData.activeSessionLastHeartbeat
+            );
+            const overrides = beatMs != null ? { endAt: beatMs } : {};
+            try {
+                const result = await endSession(uid, freshData, overrides, true);
                 // Stamp a one-time notice so the worker is told their forgotten timer was
                 // auto-closed and HOW MUCH was credited — recovery was previously silent, which
                 // is exactly why a capped/recovered session later read as "unexplained hours".
@@ -143,9 +194,9 @@ export function useOrphanedSessionRecovery(currentUser) {
                         wasCapped: !!result.wasCapped,
                     });
                 }
-            })
-            .catch((e) =>
-                logError(e, { source: 'orphanRecovery:endSession', userId: uid, sessionType: session.type })
-            );
+            } catch (e) {
+                logError(e, { source: 'orphanRecovery:endSession', userId: uid, sessionType: session.type });
+            }
+        })();
     }, [currentUser, userData]);
 }

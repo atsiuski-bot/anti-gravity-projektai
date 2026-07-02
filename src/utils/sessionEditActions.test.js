@@ -10,10 +10,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 vi.mock('../firebase', () => ({ db: {}, auth: {} }));
 
 vi.mock('firebase/firestore', () => ({
-    doc: vi.fn((_db, col, id) => ({ _path: `${col}/${id}` })),
+    doc: vi.fn((_db, col, id) => ({ _path: `${col}/${id}`, id })),
     collection: vi.fn((_db, name) => ({ _col: name })),
     updateDoc: vi.fn(() => Promise.resolve()),
     addDoc: vi.fn(() => Promise.resolve({ id: 'generated-id' })),
+    setDoc: vi.fn(() => Promise.resolve()),
     deleteDoc: vi.fn(() => Promise.resolve()),
 }));
 
@@ -25,7 +26,7 @@ vi.mock('./notify', () => ({
     notifyMany: vi.fn(() => Promise.resolve()),
 }));
 
-import { updateDoc, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import { updateDoc, addDoc, setDoc, deleteDoc, doc } from 'firebase/firestore';
 import { notify, notifyMany } from './notify';
 import {
     deriveSessionFields,
@@ -66,8 +67,15 @@ describe('claimRecoveredGap (worker claims an offline untracked gap from the rec
         expect(res.ok).toBe(true);
         expect(res.durationMinutes).toBe(20);
 
-        expect(addDoc).toHaveBeenCalledTimes(1);
-        const payload = addDoc.mock.calls[0][1];
+        // DETERMINISTIC id keyed on (taskId, gap start): two tabs/devices auto-claiming the same
+        // gap converge on ONE row, and the notice's sessionId points at THE row so a "Nedirbau"
+        // opt-out removes all of the credited time (no invisible sibling duplicate).
+        expect(setDoc).toHaveBeenCalledTimes(1);
+        const [ref, payload, opts] = setDoc.mock.calls[0];
+        const startMs = new Date('2026-06-23T11:00:00.000Z').getTime();
+        expect(ref._path).toBe(`work_sessions/sess_gap_t1_${startMs}`);
+        expect(res.id).toBe(`sess_gap_t1_${startMs}`);
+        expect(opts).toEqual({ merge: true });
         expect(payload.taskId).toBe('t1'); // real id → aggregates like timer time
         expect(payload.userId).toBe('u1');
         expect(payload.durationMinutes).toBe(20);
@@ -86,7 +94,7 @@ describe('claimRecoveredGap (worker claims an offline untracked gap from the rec
         });
         expect(res.ok).toBe(false);
         expect(res.error).toBe('tooLong');
-        expect(addDoc).not.toHaveBeenCalled();
+        expect(setDoc).not.toHaveBeenCalled();
     });
 
     it('requires both a worker and a task', async () => {

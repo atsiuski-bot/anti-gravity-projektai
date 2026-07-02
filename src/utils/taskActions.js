@@ -50,6 +50,30 @@ export const startTask = (task, userId) => withUserLock(userId, () => startTaskI
 
 const startTaskImpl = async (task, userId) => {
     try {
+        // 0. Re-validate INSIDE the lock before overwriting activeSession — the same guard
+        // resumeTaskImpl carries. startTask is reachable with a STALE gate: a live break/call/
+        // quick-work started on another device is not yet in this device's snapshot (so the UI's
+        // isSecondarySessionActive gate passes), or Pertrauka and Pradėti are tapped in one tick.
+        // Proceeding blindly overwrote activeSession and force-cleared the type flags below —
+        // wiping a live secondary session whose elapsed existed ONLY in activeSession (never
+        // banked, never logged). Fail CLOSED like resumeTask: an aborted start is a repeatable
+        // no-op after the session ends; a wiped session is unrecoverable. Server-first with a
+        // cache fallback so an offline worker still reads the latency-compensated local state.
+        try {
+            const snap = await getDocFromServer(doc(db, 'users', userId)).catch(() => getDoc(doc(db, 'users', userId)));
+            const live = snap?.exists?.() ? snap.data()?.activeSession : null;
+            if (live && live.type && live.type !== 'task' && live.startTime) {
+                logError(new Error('startTask skipped: live secondary session present'), {
+                    source: 'startTask:supersededByLiveSession', userId, taskId: task.id, liveType: live.type,
+                });
+                return;
+            }
+        } catch (guardErr) {
+            // Fail CLOSED: unproven safety → skip the start rather than risk wiping a live session.
+            logError(guardErr, { source: 'startTask:guardRead', userId, taskId: task.id });
+            return;
+        }
+
         // 1. Pause others (must complete before starting new task)
         await pauseOtherTasks(userId, task.id);
 
@@ -98,6 +122,14 @@ const startTaskImpl = async (task, userId) => {
         throw err;
     }
 };
+
+// Deterministic work_sessions doc id for ONE running stretch of a task timer, keyed on the run's
+// start instant. Every closer of that same stretch — pauseTask (manual, monitor, recovery, or the
+// manager's force-end), performFinish, and the server's autoStopForgottenTimers — mints this SAME
+// id, so two independent closers converge on ONE row instead of each logging a random-id duplicate
+// of the same interval (reports sum work_sessions, so a duplicate is double-paid time). The server
+// copy is a hand-mirror in functions/index.js; the firebaseConsistency gate locks the prefix.
+export const taskSessionDocId = (taskId, startMs) => `sess_task_${taskId}_${startMs}`;
 
 // Task ids with a pause currently in flight. Two code paths can race to pause the
 // SAME running task in one tick — e.g. the crash-recovery hook and the time-limit
@@ -188,8 +220,12 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
             // other work_sessions writer (sessionActions, time-correction). Using the
             // start date previously mis-bucketed sessions that ran across midnight.
             const sessionDate = getLithuanianDateString(endMoment);
+            // Deterministic id (taskSessionDocId): a concurrent closer of this SAME running
+            // stretch — a second device, the manager's force-end, the server auto-stop — lands on
+            // the same doc, so the interval can never be logged twice. merge:true keeps the
+            // trigger-stamped fields (teamManagerIds) intact when this write arrives second.
             parallelOps.push(
-                addDoc(collection(db, 'work_sessions'), {
+                setDoc(doc(db, 'work_sessions', taskSessionDocId(task.id, start.getTime())), {
                     taskId: task.id,
                     taskTitle: task.title || 'Nežinoma užduotis',
                     userId: task.assignedUserId,
@@ -199,7 +235,7 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
                     durationMinutes: elapsedMinutes,
                     date: sessionDate,
                     createdAt: new Date().toISOString()
-                }).catch(logErr => logError(logErr, { source: 'writeFail:pauseTask.workSession' }))
+                }, { merge: true }).catch(logErr => logError(logErr, { source: 'writeFail:pauseTask.workSession' }))
             );
         }
 

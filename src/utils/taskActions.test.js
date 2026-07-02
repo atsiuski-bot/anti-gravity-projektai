@@ -36,11 +36,11 @@ vi.mock('./timeUtils', async (importActual) => ({
     getLithuanianNow: vi.fn(),
 }));
 
-import { updateDoc, addDoc, getDocs, getDoc, getDocFromServer } from 'firebase/firestore';
+import { updateDoc, addDoc, setDoc, getDocs, getDoc, getDocFromServer } from 'firebase/firestore';
 import { logError } from './errorLog';
 import { getLithuanianNow } from './timeUtils';
 import { MAX_SESSION_MINUTES } from './timeUtils';
-import { startTask, pauseTask, resumeTask, creditAndResumeTask } from './taskActions';
+import { startTask, pauseTask, resumeTask, creditAndResumeTask, taskSessionDocId } from './taskActions';
 
 // Fixed "now" so the credit math (now - timerStartedAt) is exact. June -> Vilnius is a
 // stable UTC+3, so the session date buckets to 2026-06-23 with no DST ambiguity.
@@ -49,7 +49,9 @@ const NOW = new Date('2026-06-23T12:00:00.000Z');
 // Find the write payload for a specific Firestore doc / collection across all mock calls.
 const taskUpdateFor = (id) => updateDoc.mock.calls.find(([ref]) => ref?._path === `tasks/${id}`)?.[1];
 const userUpdatesFor = (id) => updateDoc.mock.calls.filter(([ref]) => ref?._path === `users/${id}`).map((c) => c[1]);
-const workSessionWrites = () => addDoc.mock.calls.filter(([col]) => col?._col === 'work_sessions').map((c) => c[1]);
+// Session rows are DETERMINISTIC-id setDoc writes (never addDoc) so concurrent closers converge.
+const workSessionWrites = () => setDoc.mock.calls.filter(([ref]) => ref?._col === 'work_sessions').map((c) => c[1]);
+const workSessionRefs = () => setDoc.mock.calls.filter(([ref]) => ref?._col === 'work_sessions').map((c) => c[0]);
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -57,6 +59,7 @@ beforeEach(() => {
     // defaults — otherwise a mockRejectedValue from a failure test leaks into the next one.
     updateDoc.mockResolvedValue(undefined);
     addDoc.mockResolvedValue({ id: 'generated-id' });
+    setDoc.mockResolvedValue(undefined);
     getLithuanianNow.mockReturnValue(NOW);
     // Default: no user doc → resumeTask's supersede guard sees no live session and proceeds. Re-armed
     // here so a test that points getDoc at a live session cannot leak that into a later test.
@@ -98,6 +101,14 @@ describe('pauseTask — credit math (now - timerStartedAt)', () => {
         expect(sessions[0].endTime).toBe(NOW.toISOString());
         // Session is attributed to the Vilnius day it ENDED.
         expect(sessions[0].date).toBe('2026-06-23');
+
+        // The row's id is DETERMINISTIC (taskId + run start): any concurrent closer of this same
+        // running stretch — second device, manager force-end, server auto-stop — computes the SAME
+        // id, so the interval can never be logged twice. merge keeps trigger-stamped fields.
+        const startMs = new Date('2026-06-23T11:00:00.000Z').getTime();
+        expect(workSessionRefs()[0]._id).toBe(taskSessionDocId('t1', startMs));
+        expect(workSessionRefs()[0]._id).toBe(`sess_task_t1_${startMs}`);
+        expect(setDoc.mock.calls[0][2]).toEqual({ merge: true });
     });
 
     it('derives manualMinutes from actualTime when the field is absent (backwards compat)', async () => {
@@ -160,14 +171,14 @@ describe('pauseTask — ghost-time guards (the payroll-corruption failure mode)'
         const paused = { id: 't1', timerStatus: 'paused', timerStartedAt: null, timerMinutes: 70 };
         await pauseTask(paused);
         expect(updateDoc).not.toHaveBeenCalled();
-        expect(addDoc).not.toHaveBeenCalled();
+        expect(setDoc).not.toHaveBeenCalled();
     });
 
     it('is a no-op when timerStatus is not running even if timerStartedAt lingers', async () => {
         const stale = { id: 't1', timerStatus: 'paused', timerStartedAt: '2026-06-23T11:00:00.000Z' };
         await pauseTask(stale);
         expect(updateDoc).not.toHaveBeenCalled();
-        expect(addDoc).not.toHaveBeenCalled();
+        expect(setDoc).not.toHaveBeenCalled();
     });
 
     it('caps an orphaned timer at the 16h ceiling instead of crediting the whole offline gap', async () => {
@@ -342,6 +353,39 @@ describe('startTask / resumeTask — running-state writes', () => {
         const upd = taskUpdateFor('t9');
         expect(upd.timerStatus).toBe('running');
         expect(typeof upd.timerStartedAt).toBe('string');
+    });
+
+    it('startTask ABORTS when a live secondary session is present (stale-gate wipe guard)', async () => {
+        // The UI's isSecondarySessionActive gate reads possibly-stale client state: a break started
+        // on another device (or in the same tick) is not yet in this device's snapshot, so Pradėti
+        // stays enabled. startTask must re-read inside the lock and abort — its unconditional
+        // activeSession overwrite + flag force-clear would wipe a live session whose elapsed exists
+        // ONLY in activeSession (never banked, never logged anywhere).
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ activeSession: { type: 'quickWork', startTime: '2026-06-23T11:55:00.000Z' } }),
+        });
+
+        await startTask({ id: 't1', title: 'Dig' }, 'u1');
+
+        expect(taskUpdateFor('t1')).toBeUndefined();        // task timer NOT started
+        expect(userUpdatesFor('u1')).toHaveLength(0);       // activeSession NOT overwritten
+        expect(logError).toHaveBeenCalledWith(
+            expect.any(Error),
+            expect.objectContaining({ source: 'startTask:supersededByLiveSession', liveType: 'quickWork' })
+        );
+    });
+
+    it('startTask proceeds when the live activeSession is a TASK (pauseOtherTasks owns that case)', async () => {
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ activeSession: { type: 'task', taskId: 'other', startTime: '2026-06-23T11:55:00.000Z' } }),
+        });
+
+        await startTask({ id: 't1', title: 'Dig' }, 'u1');
+
+        expect(taskUpdateFor('t1')).toBeDefined();
+        expect(userUpdatesFor('u1')[0].activeSession.taskId).toBe('t1');
     });
 
     it('resumeTask ABORTS when a live secondary session is present (TOCTOU wipe guard)', async () => {

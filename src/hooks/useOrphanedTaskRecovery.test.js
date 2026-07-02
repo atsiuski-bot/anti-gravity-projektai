@@ -9,12 +9,24 @@ vi.mock('../utils/recoveryNotice', () => ({ addRecoveryNotice: vi.fn() }));
 // whole point is to prove the gap is credited only when OUR pause ran (non-null) and skipped when it
 // was pre-empted/deduped (null). creditAndResumeTask is stubbed only because the hook imports it.
 vi.mock('../utils/taskActions', () => ({ pauseTask: vi.fn(), creditAndResumeTask: vi.fn() }));
+vi.mock('../utils/errorLog', () => ({ logError: vi.fn() }));
+// The confirm step reads the task doc straight from the SERVER; mocked so the confirm→decide→
+// dispatch orchestration is drivable with a controlled fresh doc and a controlled failure.
+vi.mock('../firebase', () => ({ db: {} }));
+vi.mock('firebase/firestore', () => ({
+    doc: vi.fn((_db, col, id) => ({ _path: `${col}/${id}`, _col: col, _id: id })),
+    getDocFromServer: vi.fn(),
+}));
 
-import { decideOrphanTaskRecovery, resolveUntrackedGap, pauseAtBeatAndResolveGap } from './useOrphanedTaskRecovery';
+import {
+    decideOrphanTaskRecovery, resolveUntrackedGap, pauseAtBeatAndResolveGap,
+    confirmTaskOrphanOnServer, recoverConfirmedOrphan,
+} from './useOrphanedTaskRecovery';
 import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES } from '../utils/timeUtils';
 import { claimRecoveredGap } from '../utils/sessionEditActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
-import { pauseTask } from '../utils/taskActions';
+import { pauseTask, creditAndResumeTask } from '../utils/taskActions';
+import { getDocFromServer } from 'firebase/firestore';
 
 // The credit-instant POLICY for a pre-boot running task, isolated from React so the arithmetic
 // that decides how much worked time survives a crash/reload is provable directly. The bug this
@@ -223,5 +235,116 @@ describe('pauseAtBeatAndResolveGap — the untracked gap is credited only when O
         // the monitor's already-committed session.
         expect(claimRecoveredGap).not.toHaveBeenCalled();
         expect(addRecoveryNotice).not.toHaveBeenCalled();
+    });
+});
+
+// The server-confirmation gate: a suspected orphan comes off a possibly-stale cached snapshot, and
+// every cross-writer double-credit in this class (server auto-stop × client recovery, two devices)
+// started with a recovery that ACTED on that stale copy. These lock the rule: no recovery write
+// without a server read proving the same run is still live.
+describe('confirmTaskOrphanOnServer — no recovery without server proof', () => {
+    const START = iso(LOAD - 60 * 60 * 1000);
+    const suspect = { id: 't1', timerStatus: 'running', timerStartedAt: START };
+    const serverDoc = (data) => ({ exists: () => true, id: 't1', data: () => data });
+
+    beforeEach(() => vi.clearAllMocks());
+
+    it('returns the FRESH doc when the same run is still running on the server', async () => {
+        getDocFromServer.mockResolvedValue(serverDoc({
+            timerStatus: 'running', timerStartedAt: START, timerMinutes: 42,
+        }));
+        const fresh = await confirmTaskOrphanOnServer(suspect);
+        // The fresh copy (true timerMinutes base, true beat) is what recovery must act on.
+        expect(fresh).toMatchObject({ id: 't1', timerMinutes: 42 });
+    });
+
+    it('returns null when the server says the run was already finalized (auto-stop / other device)', async () => {
+        getDocFromServer.mockResolvedValue(serverDoc({ timerStatus: 'paused', timerStartedAt: null }));
+        expect(await confirmTaskOrphanOnServer(suspect)).toBeNull();
+    });
+
+    it('returns null when a NEW run replaced the suspected one (different timerStartedAt)', async () => {
+        getDocFromServer.mockResolvedValue(serverDoc({
+            timerStatus: 'running', timerStartedAt: iso(LOAD + 5000),
+        }));
+        expect(await confirmTaskOrphanOnServer(suspect)).toBeNull();
+    });
+
+    it('returns null when the task no longer exists', async () => {
+        getDocFromServer.mockResolvedValue({ exists: () => false });
+        expect(await confirmTaskOrphanOnServer(suspect)).toBeNull();
+    });
+
+    it('PROPAGATES a failed server read (offline) — the caller must retry, never fall back to cache', async () => {
+        getDocFromServer.mockRejectedValue(new Error('unavailable'));
+        await expect(confirmTaskOrphanOnServer(suspect)).rejects.toThrow('unavailable');
+    });
+});
+
+describe('recoverConfirmedOrphan — confirm → re-decide on the fresh doc → dispatch', () => {
+    const START = iso(LOAD - 8 * 60 * 60 * 1000); // pre-boot, 8h before LOAD
+    const worker = { uid: 'worker-1', displayName: 'Giedrius' };
+    const serverDoc = (data) => ({ exists: () => true, id: 't1', data: () => data });
+
+    beforeEach(() => vi.clearAllMocks());
+
+    it('writes NOTHING when the server refutes the orphan (the stale-cache double-credit path)', async () => {
+        // The cached snapshot still says "running", but the server auto-stop already paused it and
+        // credited [start → beat]. Acting anyway used to log the SAME interval a second time.
+        getDocFromServer.mockResolvedValue(serverDoc({ timerStatus: 'paused', timerStartedAt: null }));
+        const stale = { id: 't1', timerStatus: 'running', timerStartedAt: START, assignedUserId: 'worker-1' };
+
+        await recoverConfirmedOrphan(stale, worker, LOAD);
+
+        expect(pauseTask).not.toHaveBeenCalled();
+        expect(creditAndResumeTask).not.toHaveBeenCalled();
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(addRecoveryNotice).not.toHaveBeenCalled();
+    });
+
+    it('dispatches pause-at-beat on the FRESH doc (fresh minutes base, fresh beat), not the stale copy', async () => {
+        const beat = LOAD - 30 * 60 * 1000; // 30-min tail → pause-at-beat
+        const fresh = {
+            timerStatus: 'running', timerStartedAt: START, timerLastHeartbeat: iso(beat),
+            timerMinutes: 55, assignedUserId: 'worker-1', title: 'X',
+        };
+        getDocFromServer.mockResolvedValue(serverDoc(fresh));
+        pauseTask.mockResolvedValue({ creditedMinutes: 30, rawMinutes: 30, wasCapped: false });
+        claimRecoveredGap.mockResolvedValue({ ok: true, id: 'sess-gap' });
+        // The stale trigger copy carries an OLD minutes base — it must not reach pauseTask.
+        const stale = { id: 't1', timerStatus: 'running', timerStartedAt: START, timerMinutes: 10, assignedUserId: 'worker-1' };
+
+        await recoverConfirmedOrphan(stale, worker, LOAD);
+
+        expect(pauseTask).toHaveBeenCalledTimes(1);
+        const [pausedTask, opts] = pauseTask.mock.calls[0];
+        expect(pausedTask.timerMinutes).toBe(55); // the SERVER doc, not the stale snapshot copy
+        expect(opts).toEqual({ endTime: beat });
+        expect(claimRecoveredGap).toHaveBeenCalledTimes(1); // the [beat → LOAD] gap auto-credit
+    });
+
+    it('dispatches resume (credit + re-anchor) for a brief-reload orphan', async () => {
+        const fresh = {
+            timerStatus: 'running', timerStartedAt: START,
+            timerLastHeartbeat: iso(LOAD - 60 * 1000), // 1-min tail → resume
+            assignedUserId: 'worker-1',
+        };
+        getDocFromServer.mockResolvedValue(serverDoc(fresh));
+        const stale = { id: 't1', timerStatus: 'running', timerStartedAt: START, assignedUserId: 'worker-1' };
+
+        await recoverConfirmedOrphan(stale, worker, LOAD);
+
+        expect(creditAndResumeTask).toHaveBeenCalledTimes(1);
+        expect(creditAndResumeTask.mock.calls[0][1]).toBe(LOAD); // credit up to the (injected) confirm instant
+        expect(pauseTask).not.toHaveBeenCalled();
+    });
+
+    it('rethrows a confirm failure so the hook unlatches and a later snapshot retries', async () => {
+        getDocFromServer.mockRejectedValue(new Error('unavailable'));
+        const stale = { id: 't1', timerStatus: 'running', timerStartedAt: START, assignedUserId: 'worker-1' };
+
+        await expect(recoverConfirmedOrphan(stale, worker, LOAD)).rejects.toThrow('unavailable');
+        expect(pauseTask).not.toHaveBeenCalled();
+        expect(creditAndResumeTask).not.toHaveBeenCalled();
     });
 });

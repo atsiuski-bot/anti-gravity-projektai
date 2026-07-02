@@ -1156,10 +1156,13 @@ async function autoStopForgottenTimers() {
 
         if (credited) {
             // Deterministic id (taskId + its start) so a re-fired scan hits ALREADY_EXISTS via
-            // createIfAbsent rather than double-crediting. The onCreate stamp trigger denormalizes
-            // teamManagerIds, so reports scope it like any timer-logged session.
+            // createIfAbsent rather than double-crediting. The prefix MIRRORS the client's
+            // taskSessionDocId (src/utils/taskActions.js) so a client pause of the same running
+            // stretch and this auto-stop converge on ONE row (locked by firebaseConsistency.test.js).
+            // The onCreate stamp trigger denormalizes teamManagerIds, so reports scope it like any
+            // timer-logged session.
             creditWrites.push({
-                ref: db.collection('work_sessions').doc(`sess_autostop_ws_${docSnap.id}_${startMs}`),
+                ref: db.collection('work_sessions').doc(`sess_task_${docSnap.id}_${startMs}`),
                 data: {
                     taskId: docSnap.id,
                     taskTitle: t.title || 'Nežinoma užduotis',
