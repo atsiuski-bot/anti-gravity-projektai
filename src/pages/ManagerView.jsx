@@ -30,6 +30,8 @@ import { logError } from '../utils/errorLog';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
+import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
+import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
 import TaskTimeLimitPopup from '../components/TaskTimeLimitPopup';
 import { useManagerData } from '../hooks/useManagerData';
@@ -118,11 +120,19 @@ export default function ManagerView() {
     // scoped manager whose team listener excludes their own rows is still monitored correctly).
     const { warningPopup, limitPopup, dismissWarning, requestExtension, finishFromLimit } = useTaskTimeMonitor(ownTasks);
 
+    // Keep the running task's timer "alive" with a per-minute heartbeat so a reload mid-shift can
+    // be recovered as continuous work, same as WorkerView. Scoped to the manager's OWN tasks.
+    useTaskHeartbeat(ownTasks, currentUser);
+
     // Crash/reload recovery — managers also start own-task timers and break/call/quick-work
     // sessions (the work-controls pill is role-agnostic), so they need the same orphan recovery
     // WorkerView has, or a manager crash credits ghost time with no notice. Scope task recovery to
     // the manager's OWN tasks (ownTasks), never the team list. (Full-sweep C2, 2026-06-24.)
     useOrphanedTaskRecovery(ownTasks, currentUser);
+
+    // Heartbeat for the running secondary session (break/call/quick-work) — lets the recovery
+    // below finalize a genuinely abandoned session at its last proof of life, not the reopen instant.
+    useSessionHeartbeat(currentUser);
     useOrphanedSessionRecovery(currentUser);
 
     // Worker-created tasks still awaiting THIS manager's approval (status 'unapproved' — the same
