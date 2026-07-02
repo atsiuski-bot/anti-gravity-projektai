@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { pauseTask, creditAndResumeTask } from '../utils/taskActions';
+import { claimRecoveredGap } from '../utils/sessionEditActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES } from '../utils/timeUtils';
@@ -58,15 +59,20 @@ export function decideOrphanTaskRecovery(task, appLoadTime = Date.now()) {
  *   2. Small tail (load time − last beat ≤ {@link TIMER_HEARTBEAT_CONTINUE_MS}) → a brief reload
  *      WHILE WORKING: credit up to the last beat and RE-ANCHOR the timer to keep running. Seamless,
  *      no banner — the worker never has to restart.
- *   3. Large tail → the app was genuinely closed: credit only up to the last beat (never the dead
- *      gap), pause, and surface (a) the usual "timer recovered" notice and (b) a one-tap offer to
- *      claim the untracked gap as work, so a real no-signal stretch isn't silently lost.
+ *   3. Large tail → the app was genuinely closed: credit up to the last beat (never the dead gap)
+ *      and pause, then AUTO-credit the untracked gap [last beat → load] as work and show a notice
+ *      with a one-tap "Nedirbau" to remove it. This is an OPT-OUT, not an opt-in: offline field
+ *      work with a pocketed phone (which freezes the heartbeat) is the norm, so silently requiring
+ *      the worker to claim it lost real pay. Bounded to a plausible single shift (≤16h); a longer
+ *      gap, or no signed-in identity / a failed auto-credit write, falls back to the opt-in claim
+ *      offer so the time is never silently lost.
  *
  * Each task is handled at most once per app session.
  *
  * @param {Array} tasks - the live tasks list (already scoped to the current user).
+ * @param {Object} currentUser - the authenticated user (attributes + authors the auto-credited gap).
  */
-export function useOrphanedTaskRecovery(tasks) {
+export function useOrphanedTaskRecovery(tasks, currentUser) {
     const handledRef = useRef(new Set());
 
     useEffect(() => {
@@ -99,30 +105,57 @@ export function useOrphanedTaskRecovery(tasks) {
                 return;
             }
 
-            // (3) Large tail — credit only up to the last beat, pause, then offer to claim the gap.
+            // (3) Large tail — credit the proven part up to the last beat and pause, then decide
+            // what to do with the untracked gap [lastBeat → load time].
             pauseTask(task, { endTime: decision.creditTo })
-                .then((result) => {
+                .then(async (result) => {
                     stampRecoveredNotice(task, result);
 
-                    // Offer a one-tap claim for the untracked gap [lastBeat → load time], but only
-                    // when it is plausibly a single real stretch (≤16h). A longer gap is almost
-                    // certainly a multi-day forgotten timer, not one offline shift — leave that to a
-                    // manual correction rather than inviting a 1-tap credit of implausible time.
+                    // Only a plausibly-single real stretch (≥1 min, ≤16h) is auto-handled. A longer
+                    // gap is almost certainly a multi-day forgotten timer, not one offline shift —
+                    // leave that to a manual correction rather than crediting implausible time.
                     const gapMinutes = Math.round((decision.gapTo - decision.gapFrom) / 60000);
-                    if (gapMinutes >= 1 && gapMinutes <= MAX_SESSION_MINUTES && task.assignedUserId) {
+                    if (gapMinutes < 1 || gapMinutes > MAX_SESSION_MINUTES || !task.assignedUserId) return;
+
+                    const fromIso = new Date(decision.gapFrom).toISOString();
+                    const toIso = new Date(decision.gapTo).toISOString();
+
+                    // Fallback: the opt-in claim offer (a forced-choice modal). Used when we cannot
+                    // safely auto-credit — no signed-in identity, the running task is not the current
+                    // user's own (attribution/rules would be wrong), or the auto-credit write failed.
+                    // Either way the time stays recoverable by hand rather than lost.
+                    const offerManualClaim = () =>
                         addRecoveryNotice(task.assignedUserId, {
-                            kind: 'task-gap',
-                            taskId: task.id,
-                            taskTitle: task.title || '',
-                            gapMinutes,
-                            fromIso: new Date(decision.gapFrom).toISOString(),
-                            toIso: new Date(decision.gapTo).toISOString(),
+                            kind: 'task-gap', taskId: task.id, taskTitle: task.title || '',
+                            gapMinutes, fromIso, toIso,
                         });
+
+                    const isOwnTask = currentUser?.uid && currentUser.uid === task.assignedUserId;
+                    if (!isOwnTask) { offerManualClaim(); return; }
+
+                    // AUTO-credit the gap as its own recovered-gap session (opt-out), attributed to
+                    // and authored by the worker so the work_sessions rules accept it.
+                    const claim = await claimRecoveredGap({
+                        task: { id: task.id, title: task.title },
+                        worker: currentUser,
+                        startTime: fromIso,
+                        endTime: toIso,
+                    });
+
+                    if (claim?.ok) {
+                        addRecoveryNotice(task.assignedUserId, {
+                            kind: 'task-gap-credited', taskId: task.id, taskTitle: task.title || '',
+                            gapMinutes, sessionId: claim.id,
+                        });
+                    } else {
+                        offerManualClaim();
                     }
                 })
                 .catch((e) => logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id }));
         });
-    }, [tasks]);
+        // currentUser is a dep so a task loaded before auth resolves is still auto-credited once the
+        // user arrives; handledRef makes the re-run a no-op for any task already processed.
+    }, [tasks, currentUser]);
 }
 
 // Stamp the one-time "timer recovered" notice when a pause actually credited time. Keyed to the

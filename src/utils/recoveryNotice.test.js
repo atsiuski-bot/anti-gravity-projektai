@@ -11,6 +11,7 @@ import {
     getRecoveryNotices,
     removeRecoveryNotice,
     clearRecoveryNotices,
+    RECOVERY_NOTICE_EVENT,
 } from './recoveryNotice';
 
 const UID = 'u1';
@@ -68,6 +69,33 @@ describe('removeRecoveryNotice — drop one, keep the rest', () => {
         addRecoveryNotice(UID, { kind: 'task-gap', taskId: 't1', gapMinutes: 20 });
         removeRecoveryNotice(UID, { kind: 'task-gap', taskId: 't1' });
         expect(getRecoveryNotices(UID)).toHaveLength(0);
+    });
+});
+
+describe('addRecoveryNotice — same-tab re-read signal', () => {
+    it('dispatches RECOVERY_NOTICE_EVENT AFTER persisting, so a mounted banner re-reads the late gap notice', () => {
+        const dispatchEvent = vi.fn();
+        // Give the stub the DOM APIs the guard checks for. Persistence must still have happened
+        // by the time the event fires — assert both.
+        globalThis.CustomEvent = class {
+            constructor(type, init) { this.type = type; this.detail = init?.detail; }
+        };
+        globalThis.window = { localStorage: localStorageStub, dispatchEvent };
+
+        addRecoveryNotice(UID, { kind: 'task-gap', taskId: 't1', gapMinutes: 20 });
+
+        expect(dispatchEvent).toHaveBeenCalledTimes(1);
+        const evt = dispatchEvent.mock.calls[0][0];
+        expect(evt.type).toBe(RECOVERY_NOTICE_EVENT);
+        // The write is durable regardless of the dispatch (dispatch fires only after setItem).
+        expect(getRecoveryNotices(UID)).toHaveLength(1);
+        delete globalThis.CustomEvent;
+    });
+
+    it('never throws when the environment has no DOM event APIs (write still lands)', () => {
+        // The default beforeEach window stub has neither dispatchEvent nor CustomEvent.
+        expect(() => addRecoveryNotice(UID, { kind: 'task-gap', taskId: 't2', gapMinutes: 5 })).not.toThrow();
+        expect(getRecoveryNotices(UID)).toHaveLength(1);
     });
 });
 

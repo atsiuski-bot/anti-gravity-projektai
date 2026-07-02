@@ -1,4 +1,4 @@
-import { doc, updateDoc, addDoc, collection } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
     getLithuanianDateString,
@@ -331,6 +331,27 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
         return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
     } catch (err) {
         logError(err, { source: 'writeFail:claimRecoveredGap' });
+        return { ok: false, error: 'write' };
+    }
+};
+
+/**
+ * Undo an auto-credited recovered gap — the "Nedirbau" opt-out on the recovery banner. Recovery now
+ * AUTO-credits a plausible offline gap (the worker was almost certainly working with the phone
+ * pocketed); this hard-deletes that one recovered-gap session if the worker says they were not. A
+ * hard delete (not the admin soft-delete) is correct here: the session was auto-created seconds ago
+ * and never seen by anyone, so there is nothing to preserve an audit trail against.
+ *
+ * @param {Object} args - { sessionId } the work_sessions id returned by claimRecoveredGap.
+ * @returns {Promise<{ok:boolean, error?:string}>}
+ */
+export const discardRecoveredGap = async ({ sessionId } = {}) => {
+    if (!sessionId) return { ok: false, error: 'session' };
+    try {
+        await deleteDoc(doc(db, 'work_sessions', sessionId));
+        return { ok: true };
+    } catch (err) {
+        logError(err, { source: 'writeFail:discardRecoveredGap' });
         return { ok: false, error: 'write' };
     }
 };

@@ -13,6 +13,14 @@ import { logError } from './errorLog';
 
 const KEY_PREFIX = 'wz_recoveryNotice_';
 
+// Same-tab signal that a notice was just written. RecoveryNotice reads the store once on mount,
+// but the actionable 'task-gap' notice is written ASYNCHRONOUSLY (after the recovery pause's
+// Firestore round-trip resolves) — i.e. AFTER that one-shot read. Without a nudge to re-read, the
+// blocking gap modal misses the notice in the session where recovery ran and only surfaces on the
+// next app open, detached from context (the reported "neskaičiavo laiko" incident). A CustomEvent,
+// not the cross-tab 'storage' event, is the right carrier because writer and reader share one tab.
+export const RECOVERY_NOTICE_EVENT = 'wz:recovery-notice';
+
 const keyFor = (uid) => `${KEY_PREFIX}${uid}`;
 
 // A notice is meaningful for at most a short window — if the worker did not open the app for
@@ -55,6 +63,11 @@ export function addRecoveryNotice(uid, notice) {
         }
         existing.push({ ...notice, at: new Date().toISOString() });
         window.localStorage.setItem(keyFor(uid), JSON.stringify(existing));
+        // Signal any mounted banner to re-read — AFTER the write, so a dispatch failure can never
+        // lose the persisted notice. Guarded for the storage-only unit env (no DOM APIs).
+        if (typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+            window.dispatchEvent(new CustomEvent(RECOVERY_NOTICE_EVENT, { detail: { uid } }));
+        }
     } catch (e) {
         logError(e, { source: 'recoveryNotice.add', userId: uid });
     }

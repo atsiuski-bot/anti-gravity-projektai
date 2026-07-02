@@ -68,9 +68,10 @@ export default function WorkerView() {
     // be recovered as continuous work (see useOrphanedTaskRecovery) instead of silently stopping.
     useTaskHeartbeat(tasks, currentUser);
 
-    // Crash/reload recovery — heartbeat-aware: continue a briefly-reloaded timer, but pause (and
-    // offer to claim the gap) a genuinely abandoned one so it cannot credit hours of ghost time.
-    useOrphanedTaskRecovery(tasks);
+    // Crash/reload recovery — heartbeat-aware: continue a briefly-reloaded timer, but pause a
+    // genuinely abandoned one (auto-crediting the untracked gap, opt-out) so it neither credits
+    // hours of ghost time nor silently drops real offline work.
+    useOrphanedTaskRecovery(tasks, currentUser);
 
     // Heartbeat for the running secondary session (break/call/quick-work) — lets the recovery below
     // finalize a genuinely abandoned session at its last proof of life, not the reopen instant.

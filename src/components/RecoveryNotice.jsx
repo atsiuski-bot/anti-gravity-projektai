@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { RotateCcw, AlertTriangle, X, Clock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
-import { getRecoveryNotices, clearRecoveryNotices, removeRecoveryNotice, addRecoveryNotice } from '../utils/recoveryNotice';
-import { claimRecoveredGap } from '../utils/sessionEditActions';
+import { getRecoveryNotices, clearRecoveryNotices, removeRecoveryNotice, addRecoveryNotice, RECOVERY_NOTICE_EVENT } from '../utils/recoveryNotice';
+import { claimRecoveredGap, discardRecoveredGap } from '../utils/sessionEditActions';
 import { formatMinutesToHHMM } from '../utils/timeUtils';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
@@ -35,18 +35,29 @@ export default function RecoveryNotice() {
     const { setActiveTab } = useNavigation();
     const uid = currentUser?.uid;
 
-    // Read once per mount (the store is written before this renders). State, not a live read, so
-    // acting on a notice removes it without depending on a storage event.
+    // State, not a live read, so acting on a notice removes it without depending on a storage event.
     const [notices, setNotices] = useState([]);
     const [claimingId, setClaimingId] = useState(null); // taskId of an in-flight gap claim
     const [claimError, setClaimError] = useState(null); // taskId whose claim just failed
+    // Read on mount, then RE-READ whenever a notice is written. The actionable gap notice is written
+    // asynchronously (after the recovery pause resolves) — i.e. after this mount read — so a one-shot
+    // read would miss it and the blocking modal would never appear this session. RECOVERY_NOTICE_EVENT
+    // (fired same-tab by addRecoveryNotice) closes that race.
     useEffect(() => {
-        if (!uid) { setNotices([]); return; }
-        setNotices(getRecoveryNotices(uid));
+        if (!uid) { setNotices([]); return undefined; }
+        const reread = () => setNotices(getRecoveryNotices(uid));
+        reread();
+        window.addEventListener(RECOVERY_NOTICE_EVENT, reread);
+        return () => window.removeEventListener(RECOVERY_NOTICE_EVENT, reread);
     }, [uid]);
 
-    const infoNotices = useMemo(() => notices.filter((n) => n.kind !== 'task-gap'), [notices]);
+    const infoNotices = useMemo(
+        () => notices.filter((n) => n.kind !== 'task-gap' && n.kind !== 'task-gap-credited'),
+        [notices]
+    );
     const gapNotices = useMemo(() => notices.filter((n) => n.kind === 'task-gap'), [notices]);
+    // Auto-credited offline gaps (opt-out): already saved, shown once with a one-tap "Nedirbau".
+    const creditedGaps = useMemo(() => notices.filter((n) => n.kind === 'task-gap-credited'), [notices]);
 
     // Whether the 16h clamp reduced ANY recovered interval — drives the louder "check with your
     // manager" copy and the warning-triangle glyph. A plain recovery (no cap) reads calmer.
@@ -58,9 +69,38 @@ export default function RecoveryNotice() {
     // the store and re-persist the gaps (addRecoveryNotice dedups by kind+taskId, so this is a
     // safe rewrite) so the blocking gap modal survives a dismiss of the FYI banner and a reload.
     const dismissInfo = () => {
+        const keep = [...gapNotices, ...creditedGaps];
         clearRecoveryNotices(uid);
-        gapNotices.forEach((n) => addRecoveryNotice(uid, n));
-        setNotices(gapNotices);
+        keep.forEach((n) => addRecoveryNotice(uid, n));
+        setNotices(keep);
+    };
+
+    // Acknowledge the auto-credited gaps ("Gerai") — drop them but keep info + any blocking gaps.
+    const dismissCredited = () => {
+        const keep = [...infoNotices, ...gapNotices];
+        clearRecoveryNotices(uid);
+        keep.forEach((n) => addRecoveryNotice(uid, n));
+        setNotices(keep);
+    };
+
+    // "Nedirbau" — the worker was NOT working during this auto-credited gap: hard-delete the
+    // recovered session and drop its notice, leaving the rest intact.
+    const discardCredited = async (n) => {
+        if (!n?.sessionId || claimingId) return;
+        setClaimError(null);
+        setClaimingId(n.taskId);
+        try {
+            const res = await discardRecoveredGap({ sessionId: n.sessionId });
+            if (res?.ok) {
+                setNotices(removeRecoveryNotice(uid, { kind: 'task-gap-credited', taskId: n.taskId }));
+            } else {
+                setClaimError(n.taskId);
+            }
+        } catch {
+            setClaimError(n.taskId);
+        } finally {
+            setClaimingId(null);
+        }
     };
 
     // Tap-through: take the worker to where the recovered work is visible (their task list /
@@ -153,6 +193,64 @@ export default function RecoveryNotice() {
                         </div>
 
                         <IconButton icon={X} label="Uždaryti pranešimą" variant="ghost" onClick={dismissInfo} />
+                    </div>
+                </section>
+            )}
+
+            {/* Auto-credited offline gaps (opt-out): the time is ALREADY saved, so this is a calm,
+                dismissible banner — NOT the blocking modal — with a one-tap "Nedirbau" to remove a
+                gap the worker was not actually working. */}
+            {creditedGaps.length > 0 && (
+                <section
+                    aria-label="Užskaitytas neužfiksuotas darbo laikas"
+                    className="mb-4 rounded-card border border-line border-l-4 border-l-feedback-warning-border bg-feedback-warning-soft p-4 shadow-sm"
+                >
+                    <div className="flex items-start gap-3">
+                        <Clock className="h-5 w-5 shrink-0 text-feedback-warning-text mt-0.5" aria-hidden="true" />
+                        <div className="min-w-0 flex-1">
+                            <h2 className="text-body-lg font-bold text-ink-strong">
+                                Užskaitytas neužfiksuotas darbo laikas
+                            </h2>
+                            <p className="mt-1 text-caption text-ink-muted">
+                                Kol nebuvo ryšio arba programa buvo užverta, laikmatis sustojo. Šį laiką
+                                užskaitėme automatiškai. Jei tuo metu nedirbote — pašalinkite.
+                            </p>
+
+                            <ul className="mt-2 space-y-2">
+                                {creditedGaps.map((n) => (
+                                    <li key={`credited-${n.taskId}`} className="text-body text-ink">
+                                        <div>
+                                            <span className="font-mono font-semibold text-ink-strong">
+                                                {formatMinutesToHHMM(n.gapMinutes)}
+                                            </span>
+                                            {n.taskTitle && <span className="text-ink-muted"> · {n.taskTitle}</span>}
+                                        </div>
+                                        {claimError === n.taskId && (
+                                            <p className="mt-1 text-caption text-feedback-danger-text">
+                                                Nepavyko pašalinti. Bandykite dar kartą.
+                                            </p>
+                                        )}
+                                        <div className="mt-1">
+                                            <Button
+                                                variant="ghost"
+                                                onClick={() => discardCredited(n)}
+                                                disabled={claimingId === n.taskId}
+                                            >
+                                                {claimingId === n.taskId ? 'Šalinama…' : 'Nedirbau — pašalinti'}
+                                            </Button>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+
+                            <div className="mt-3">
+                                <Button variant="secondary" onClick={dismissCredited}>
+                                    Gerai
+                                </Button>
+                            </div>
+                        </div>
+
+                        <IconButton icon={X} label="Uždaryti pranešimą" variant="ghost" onClick={dismissCredited} />
                     </div>
                 </section>
             )}

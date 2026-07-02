@@ -14,6 +14,7 @@ vi.mock('firebase/firestore', () => ({
     collection: vi.fn((_db, name) => ({ _col: name })),
     updateDoc: vi.fn(() => Promise.resolve()),
     addDoc: vi.fn(() => Promise.resolve({ id: 'generated-id' })),
+    deleteDoc: vi.fn(() => Promise.resolve()),
 }));
 
 // notify()/notifyMany() are exercised in their own surface; here we only assert the action layer
@@ -24,7 +25,7 @@ vi.mock('./notify', () => ({
     notifyMany: vi.fn(() => Promise.resolve()),
 }));
 
-import { updateDoc, addDoc } from 'firebase/firestore';
+import { updateDoc, addDoc, deleteDoc, doc } from 'firebase/firestore';
 import { notify, notifyMany } from './notify';
 import {
     deriveSessionFields,
@@ -35,6 +36,7 @@ import {
     validateBackdateWindow,
     logBackdatedWorkerSession,
     claimRecoveredGap,
+    discardRecoveredGap,
 } from './sessionEditActions';
 import { MAX_SESSION_MINUTES, MAX_BACKDATE_DAYS } from './timeUtils';
 
@@ -90,6 +92,27 @@ describe('claimRecoveredGap (worker claims an offline untracked gap from the rec
     it('requires both a worker and a task', async () => {
         expect((await claimRecoveredGap({ task, startTime: 'a', endTime: 'b' })).error).toBe('user');
         expect((await claimRecoveredGap({ worker, startTime: 'a', endTime: 'b' })).error).toBe('task');
+    });
+});
+
+describe('discardRecoveredGap (opt-out "Nedirbau" — hard-delete an auto-credited gap)', () => {
+    it('hard-deletes the recovered-gap work_session by id', async () => {
+        const res = await discardRecoveredGap({ sessionId: 'sess-9' });
+        expect(res).toEqual({ ok: true });
+        expect(deleteDoc).toHaveBeenCalledTimes(1);
+        // Deletes the exact work_sessions doc the auto-credit created.
+        expect(doc).toHaveBeenCalledWith(expect.anything(), 'work_sessions', 'sess-9');
+    });
+
+    it('refuses without a sessionId and deletes nothing', async () => {
+        expect(await discardRecoveredGap({})).toEqual({ ok: false, error: 'session' });
+        expect(await discardRecoveredGap()).toEqual({ ok: false, error: 'session' });
+        expect(deleteDoc).not.toHaveBeenCalled();
+    });
+
+    it('reports a write failure instead of throwing', async () => {
+        deleteDoc.mockRejectedValueOnce(new Error('boom'));
+        expect(await discardRecoveredGap({ sessionId: 's1' })).toEqual({ ok: false, error: 'write' });
     });
 });
 

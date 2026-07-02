@@ -122,7 +122,7 @@ export default function ManagerView() {
     // sessions (the work-controls pill is role-agnostic), so they need the same orphan recovery
     // WorkerView has, or a manager crash credits ghost time with no notice. Scope task recovery to
     // the manager's OWN tasks (ownTasks), never the team list. (Full-sweep C2, 2026-06-24.)
-    useOrphanedTaskRecovery(ownTasks);
+    useOrphanedTaskRecovery(ownTasks, currentUser);
     useOrphanedSessionRecovery(currentUser);
 
     // Worker-created tasks still awaiting THIS manager's approval (status 'unapproved' — the same
