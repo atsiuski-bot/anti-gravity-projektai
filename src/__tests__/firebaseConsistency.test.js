@@ -26,18 +26,21 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 
-import { PRIORITIES, DEFAULT_PRIORITY } from '../utils/priority.js';
+import { PRIORITIES, DEFAULT_PRIORITY, getPriorityLabel } from '../utils/priority.js';
 import {
   MAX_SESSION_MINUTES,
   MAX_MANUAL_TASK_MINUTES,
   MIN_LOGGED_SESSION_MINUTES,
   TIMER_HEARTBEAT_INTERVAL_MS,
   TIMER_HEARTBEAT_CONTINUE_MS,
+  getLithuanianDateString,
+  parseTimeStringToMinutes,
 } from '../utils/timeUtils.js';
 import { isManagerRole, isAdminRole } from '../utils/formatters.js';
 import { BADGE_CATALOG, TIER_KEYS } from '../utils/badgeCatalog.js';
 import { recurrenceFiresOn } from '../utils/recurrence.js';
-import { NOTIFICATIONS, notificationCopy, notificationCategory } from '../notifications/registry.js';
+import { NOTIFICATIONS, notificationCopy, notificationCategory, notificationLink } from '../notifications/registry.js';
+import { ON_TIME_GRACE_MIN } from '../utils/workerStats.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..', '..'); // src/__tests__ -> repo root
@@ -525,6 +528,181 @@ describe('secondary-session record-id lockstep (client sessionActions ↔ functi
       }
     }
     expect(mismatches, `sess_* id shapes diverged:\n${mismatches.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// DEEP-LINK MAPPING LOCKSTEP — notifyOnRequestNotification builds the push's `link` field with a
+// hand-copied ternary MIRROR of notificationLink() in the registry (calendar_decision → calendar
+// tab, achievement → profile tab, everything else → tasks tab). A drift here means tapping a push
+// notification lands the user on the wrong tab. We slice the ternary itself out of
+// functions/index.js and evaluate it as a function of `n.type`, so this test breaks the moment the
+// server's routing rule changes without updating the registry (or vice versa).
+// =============================================================================================
+
+describe('deep-link mapping lockstep (functions notifyOnRequestNotification link ↔ client notificationLink)', () => {
+  function buildServerLink() {
+    const marker = 'const link = n.type ===';
+    const start = FUNCTIONS_SRC.indexOf(marker);
+    if (start === -1) {
+      throw new Error('Could not find the `const link = ...` ternary in functions/index.js — moved; update this test.');
+    }
+    const end = FUNCTIONS_SRC.indexOf(';', start);
+    if (end === -1) {
+      throw new Error('Could not find the end of the `const link = ...` ternary in functions/index.js — update this test.');
+    }
+    const expr = FUNCTIONS_SRC.slice(start, end + 1);
+    return new Function('n', `${expr}\n;return link;`);
+  }
+
+  const serverLink = buildServerLink();
+
+  it('the server link ternary and notificationLink() agree for every registry type', () => {
+    const disagreements = [];
+    for (const type of Object.keys(NOTIFICATIONS)) {
+      const server = serverLink({ type });
+      const client = notificationLink(type);
+      if (server !== client) {
+        disagreements.push(`${type}: server=${server} client=${client}`);
+      }
+    }
+    expect(disagreements, `deep-link routing diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// ESCALATION LABEL LOCKSTEP — the deadline-escalation Cloud Function precomputes the Lithuanian
+// priority label onto the notification doc (ESCALATION_LABELS), a hand-copied MIRROR of the
+// client's PRIORITY_CONFIG labels (via getPriorityLabel). If they diverge, the push body shows a
+// different word than the priority chip does for the SAME priority.
+// =============================================================================================
+
+describe('escalation label lockstep (functions ESCALATION_LABELS ↔ client getPriorityLabel)', () => {
+  const m = FUNCTIONS_SRC.match(/ESCALATION_LABELS\s*=\s*\{([^}]*)\}/);
+
+  it('found ESCALATION_LABELS in functions/index.js (extraction sanity)', () => {
+    expect(m, 'Could not find ESCALATION_LABELS in functions/index.js — moved; update this test.').not.toBeNull();
+  });
+
+  it('every ESCALATION_LABELS entry equals the client priority label', () => {
+    const pairRe = /(\w+)\s*:\s*'([^']+)'/g;
+    const pairs = [];
+    let pm;
+    while ((pm = pairRe.exec(m[1])) !== null) pairs.push([pm[1], pm[2]]);
+    expect(pairs.length).toBeGreaterThan(0);
+
+    const disagreements = [];
+    for (const [priority, serverLabel] of pairs) {
+      const clientLabel = getPriorityLabel(priority);
+      if (serverLabel !== clientLabel) {
+        disagreements.push(`${priority}: server=${serverLabel} client=${clientLabel}`);
+      }
+    }
+    expect(disagreements, `escalation labels diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// ON-TIME GRACE WINDOW LOCKSTEP — the punctual-start badge is computed server-side (R6, using
+// GRACE_MINUTES) but the worker-stats UI shows the same "started within N minutes" window
+// (ON_TIME_GRACE_MIN) so the badge criteria and the displayed hint never disagree.
+// =============================================================================================
+
+describe('on-time grace window lockstep (functions GRACE_MINUTES ↔ client ON_TIME_GRACE_MIN)', () => {
+  it('the server grace window equals the client grace window', () => {
+    const m = FUNCTIONS_SRC.match(/GRACE_MINUTES\s*=\s*(\d+)/);
+    expect(m, 'Could not find GRACE_MINUTES in functions/index.js').not.toBeNull();
+    expect(Number(m[1])).toBe(ON_TIME_GRACE_MIN);
+  });
+});
+
+// =============================================================================================
+// LITHUANIAN CALENDAR-DAY LOCKSTEP — the punctual-start scan buckets sessions into a Vilnius
+// calendar day via lithuanianDay(), a hand-copied MIRROR of the client's getLithuanianDateString.
+// A drift near a DST boundary or midnight would bucket a session into the wrong day on one side,
+// desyncing the "same day" comparison the badge logic relies on. We slice the server's
+// self-contained function out and compare it against the client copy across a battery of
+// instants, including both 2026 DST transitions and the UTC-vs-Vilnius day rollover.
+// =============================================================================================
+
+describe('Lithuanian calendar-day lockstep (functions lithuanianDay ↔ client getLithuanianDateString)', () => {
+  function buildServerLithuanianDay() {
+    const start = FUNCTIONS_SRC.indexOf('function lithuanianDay');
+    const end = FUNCTIONS_SRC.indexOf('// R6', start);
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not slice lithuanianDay out of functions/index.js — markers moved; update this test.');
+    }
+    const block = FUNCTIONS_SRC.slice(start, end);
+    return new Function(`${block}\n;return lithuanianDay;`)();
+  }
+
+  const serverLithuanianDay = buildServerLithuanianDay();
+
+  const instants = [
+    '2026-01-01T00:00:00.000Z',   // plain UTC midnight
+    '2026-03-29T00:30:00.000Z',   // shortly before the 2026 spring-forward (EET→EEST)
+    '2026-03-29T02:30:00.000Z',   // shortly after the 2026 spring-forward
+    '2026-10-25T00:30:00.000Z',   // shortly before the 2026 fall-back (EEST→EET)
+    '2026-10-25T02:30:00.000Z',   // shortly after the 2026 fall-back
+    '2026-06-15T21:30:00.000Z',   // summer (EEST, UTC+3): still the same Vilnius day
+    '2026-06-15T22:00:00.000Z',   // summer: rolled into the next Vilnius day
+    '2026-01-15T21:30:00.000Z',   // winter (EET, UTC+2): still the same Vilnius day
+    '2026-01-15T22:00:00.000Z',   // winter: rolled into the next Vilnius day
+    '2026-12-31T23:59:00.000Z',   // year boundary
+  ];
+
+  it('server and client agree on the Vilnius calendar day for every instant', () => {
+    const disagreements = [];
+    for (const iso of instants) {
+      const date = new Date(iso);
+      const server = serverLithuanianDay(date);
+      const client = getLithuanianDateString(date);
+      if (server !== client) {
+        disagreements.push(`${iso}: server=${server} client=${client}`);
+      }
+    }
+    expect(disagreements, `Lithuanian calendar-day copies diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// ESTIMATE-STRING PARSER LOCKSTEP — the AI task-draft parser clamps a free-text estimate to
+// minutes via parseEstimateMinutes, a hand-copied MIRROR of the client's parseTimeStringToMinutes
+// (same comma-decimal + "val" suffix handling). A drift means the AI-suggested estimate and a
+// hand-typed one of the same text resolve to different minute counts. We slice the server's
+// self-contained function out and compare it against the client copy across a battery of inputs.
+// =============================================================================================
+
+describe('estimate-string parser lockstep (functions parseEstimateMinutes ↔ client parseTimeStringToMinutes)', () => {
+  function buildServerParseEstimateMinutes() {
+    const start = FUNCTIONS_SRC.indexOf('function parseEstimateMinutes');
+    const end = FUNCTIONS_SRC.indexOf('function recurringIsoWeekday', start);
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not slice parseEstimateMinutes out of functions/index.js — markers moved; update this test.');
+    }
+    const block = FUNCTIONS_SRC.slice(start, end);
+    return new Function(`${block}\n;return parseEstimateMinutes;`)();
+  }
+
+  const serverParseEstimateMinutes = buildServerParseEstimateMinutes();
+
+  const inputs = [
+    '5min', '45min', '1h', '1,5h', '1.5h', '12,5h', '200h',
+    '30m', '90 min', '2 val', '1,5 val',
+    'invalid', 'abc', '-30m', '2h 2h', '10m20m',
+    '', null, undefined,
+  ];
+
+  it('server and client agree on every estimate string', () => {
+    const disagreements = [];
+    for (const input of inputs) {
+      const server = serverParseEstimateMinutes(input);
+      const client = parseTimeStringToMinutes(input);
+      if (server !== client) {
+        disagreements.push(`${JSON.stringify(input)}: server=${server} client=${client}`);
+      }
+    }
+    expect(disagreements, `estimate-string parsing diverged:\n${disagreements.join('\n')}`).toEqual([]);
   });
 });
 
