@@ -112,6 +112,8 @@ export default function ManagerNotifications({ onClose }) {
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
     const [historyNotifications, setHistoryNotifications] = useState([]); // read request_notifications, lazy-loaded
+    const [calendarHistory, setCalendarHistory] = useState([]); // dismissed calendar_notifications, lazy-loaded
+    const [calendarRequestHistory, setCalendarRequestHistory] = useState([]); // resolved calendar_requests, lazy-loaded
     const [deleteModalData, setDeleteModalData] = useState(null); // { taskId, notificationId, taskTitle }
     const [actionError, setActionError] = useState(null); // friendly Lithuanian error message for the inline alert region
     const [actionNotice, setActionNotice] = useState(null); // neutral Lithuanian notice (e.g. an orphaned request was cleared) — not an error
@@ -204,12 +206,16 @@ export default function ManagerNotifications({ onClose }) {
         return () => unsubscribe();
     }, [currentUser, isManager]);
 
-    // 4. History — read (already-dismissed) request_notifications for this recipient. Subscribed
-    // LAZILY (only while the Istorija tab is open) so it adds no always-on listener cost; the read
-    // rule already lets a recipient read ALL their own notifications, and this two-equality query
-    // (recipientId + isRead) mirrors the active feed's shape, so it needs no rule or index change.
-    // Newest-first ordering + the HISTORY_CAP slice happen in render (avoids an orderBy composite
-    // index). This is the answer to "read notices vanish forever" — they now live on here.
+    // 4. History — the archived MIRROR of the active feed. The active tab merges THREE sources
+    // (request_notifications + calendar_notifications + calendar_requests); history must read the
+    // SAME three or a whole notification family "vanishes forever" once acted on. It originally read
+    // only request_notifications, so a manager who dismissed a calendar-change notice or resolved a
+    // calendar-approval request never saw it again — the exact gap this closes. All three are
+    // subscribed LAZILY (only while the Istorija tab is open) so they add no always-on listener cost,
+    // each is a single-field query (equality or array-contains → no composite index), and newest-first
+    // ordering + the HISTORY_CAP slice happen in render.
+    //
+    // 4a. request_notifications the recipient has read.
     useEffect(() => {
         if (!currentUser || view !== 'history') { setHistoryNotifications([]); return undefined; }
 
@@ -229,6 +235,52 @@ export default function ManagerNotifications({ onClose }) {
 
         return () => unsubscribe();
     }, [currentUser, view]);
+
+    // 4b. calendar_notifications this manager has DISMISSED (their uid is in dismissedBy). The active
+    // listener queries the CURRENT week only; history instead keys on the dismissal itself
+    // (array-contains), so it surfaces every past week the manager already cleared — regardless of
+    // weekStart. Tagged source:'calendar' so the existing calendar renderer draws it (readOnly hides
+    // its dismiss button). Manager-only, mirroring the active calendar listener.
+    useEffect(() => {
+        if (!currentUser || !isManager || view !== 'history') { setCalendarHistory([]); return undefined; }
+
+        const q = query(
+            collection(db, 'calendar_notifications'),
+            where('dismissedBy', 'array-contains', currentUser.uid)
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            setCalendarHistory(snapshot.docs.map(doc => ({ id: doc.id, source: 'calendar', ...doc.data() })));
+        }, (error) => {
+            console.error("ManagerNotifications: Calendar History Listener Error:", error);
+        });
+
+        return () => unsubscribe();
+    }, [currentUser, isManager, view]);
+
+    // 4c. calendar_requests addressed to this manager that are already RESOLVED (status != pending) —
+    // the archived counterpart of the active calendar-approval feed, which shows only pending ones.
+    // Same array-contains query the active listener uses; the pending/resolved split is done in
+    // memory (active keeps pending, history keeps the rest). Tagged source:'calendar_approval'.
+    useEffect(() => {
+        if (!currentUser || !isManager || view !== 'history') { setCalendarRequestHistory([]); return undefined; }
+
+        const q = query(
+            collection(db, 'calendar_requests'),
+            where('managerIds', 'array-contains', currentUser.uid)
+        );
+
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const resolved = snapshot.docs
+                .map(doc => ({ id: doc.id, source: 'calendar_approval', ...doc.data() }))
+                .filter(r => r.status !== 'pending');
+            setCalendarRequestHistory(resolved);
+        }, (error) => {
+            console.error("ManagerNotifications: Calendar Requests History Listener Error:", error);
+        });
+
+        return () => unsubscribe();
+    }, [currentUser, isManager, view]);
 
     const handleDismissCalendar = async (notificationId) => {
         try {
@@ -624,21 +676,28 @@ export default function ManagerNotifications({ onClose }) {
         }
     };
 
+    // One timestamp reader for BOTH feeds — a notification's recency must be computed the same way
+    // whether it is live or archived. Calendar notices carry no createdAt (their time lives on the
+    // last change entry), so falling back through createdAt → timestamp → last change keeps mixed
+    // sources comparable in one sort.
+    const getTimestamp = (notif) => {
+        if (notif.createdAt) return new Date(notif.createdAt).getTime();
+        if (notif.timestamp) return new Date(notif.timestamp).getTime();
+        if (notif.changes && notif.changes.length > 0) return new Date(notif.changes[notif.changes.length - 1].timestamp).getTime();
+        return 0;
+    };
+
     // Sort by urgency tier first, then newest within a tier.
-    const sortedNotifications = allNotifications.sort((a, b) => {
-        const getTimestamp = (notif) => {
-            if (notif.createdAt) return new Date(notif.createdAt).getTime();
-            if (notif.timestamp) return new Date(notif.timestamp).getTime();
-            if (notif.changes && notif.changes.length > 0) return new Date(notif.changes[notif.changes.length - 1].timestamp).getTime();
-            return 0;
-        };
-        return (urgencyRank(a) - urgencyRank(b)) || (getTimestamp(b) - getTimestamp(a));
-    });
+    const sortedNotifications = allNotifications.sort((a, b) =>
+        (urgencyRank(a) - urgencyRank(b)) || (getTimestamp(b) - getTimestamp(a)));
 
     const activeCount = sortedNotifications.length;
-    // History is sorted newest-first and capped in render (no orderBy → no composite index).
-    const sortedHistory = [...historyNotifications]
-        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
+    // History merges the SAME three sources the active feed does (read task notices + dismissed
+    // calendar notices + resolved calendar requests), sorted newest-first across all of them and
+    // capped in render (no orderBy → no composite index). Urgency is irrelevant here — everything is
+    // already resolved — so this is a pure recency sort.
+    const sortedHistory = [...historyNotifications, ...calendarHistory, ...calendarRequestHistory]
+        .sort((a, b) => getTimestamp(b) - getTimestamp(a))
         .slice(0, HISTORY_CAP);
 
     // The two tabs render through ONE feed + ONE renderer (renderNotif), so a notification looks the
@@ -1363,7 +1422,7 @@ export default function ManagerNotifications({ onClose }) {
 
             return null;
             })}
-            {readOnly && historyNotifications.length > HISTORY_CAP && (
+            {readOnly && (historyNotifications.length + calendarHistory.length + calendarRequestHistory.length) > HISTORY_CAP && (
                 <p className="pt-1 text-center text-caption text-ink-muted">
                     Rodomi naujausi {HISTORY_CAP} pranešimai.
                 </p>
