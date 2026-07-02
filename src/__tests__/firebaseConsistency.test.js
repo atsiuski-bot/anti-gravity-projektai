@@ -26,8 +26,16 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve, join } from 'node:path';
 
-import { PRIORITIES } from '../utils/priority.js';
-import { MAX_SESSION_MINUTES } from '../utils/timeUtils.js';
+import { PRIORITIES, DEFAULT_PRIORITY } from '../utils/priority.js';
+import {
+  MAX_SESSION_MINUTES,
+  MAX_MANUAL_TASK_MINUTES,
+  MIN_LOGGED_SESSION_MINUTES,
+  TIMER_HEARTBEAT_INTERVAL_MS,
+  TIMER_HEARTBEAT_CONTINUE_MS,
+} from '../utils/timeUtils.js';
+import { isManagerRole, isAdminRole } from '../utils/formatters.js';
+import { BADGE_CATALOG, TIER_KEYS } from '../utils/badgeCatalog.js';
 import { recurrenceFiresOn } from '../utils/recurrence.js';
 import { NOTIFICATIONS, notificationCopy, notificationCategory } from '../notifications/registry.js';
 
@@ -59,6 +67,26 @@ function extractArrayLiteral(src, name) {
   const m = src.match(re);
   if (!m) throw new Error(`Could not find array literal "${name}" — did it move or get renamed?`);
   return quotedTokens(m[1]);
+}
+
+// The contents of `NAME = '<string>'` (a single-quoted string constant) — throws if absent so a
+// renamed/moved constant fails LOUD instead of comparing undefined === undefined vacuously.
+function extractStringConst(src, name) {
+  const m = src.match(new RegExp(`${name}\\s*=\\s*'([^']*)'`));
+  if (!m) throw new Error(`Could not find string constant "${name}" — did it move or get renamed?`);
+  return m[1];
+}
+
+// The numeric value of `NAME = <arithmetic expression>;` (e.g. `5 * 60 * 1000`). The expression is
+// evaluated in isolation; a non-numeric result throws so a refactor to a non-literal fails LOUD.
+function extractNumberConst(src, name) {
+  const m = src.match(new RegExp(`${name}\\s*=\\s*([^;]+);`));
+  if (!m) throw new Error(`Could not find numeric constant "${name}" — did it move or get renamed?`);
+  const value = new Function(`return (${m[1].replace(/\/\/.*$/, '')});`)();
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Constant "${name}" did not evaluate to a finite number — update this test.`);
+  }
+  return value;
 }
 
 // Recursively list every .js/.jsx file under a directory.
@@ -448,5 +476,146 @@ describe('secondary-session record-id lockstep (client sessionActions ↔ functi
       .toEqual([]);
     expect(missingServer, `functions/index.js is missing record-id prefixes (dedup would break): ${missingServer.join(', ')}`)
       .toEqual([]);
+  });
+});
+
+// =============================================================================================
+// 9. SECONDARY-CLOSE CONSTANT LOCKSTEP — the server net (writeSecondaryCloseRecords) closes an
+//    abandoned break/call/quick-work with the SAME record shape the client logger writes, built
+//    from a block of hand-copied constants ("Field shapes MIRROR ... handleLegacyLogging"). This
+//    block HAD already drifted once: the darbas→veikla rebrand renamed the client's auto-stopped
+//    quick-work title but not the server copy, so the same abandoned session was titled
+//    differently depending on which closer won the race. Lock every constant in the block.
+// =============================================================================================
+
+describe('secondary-close constant lockstep (client sessionActions ↔ functions net)', () => {
+  it('AUTO_STOPPED_QUICK_WORK_TITLE is identical on both sides', () => {
+    // Extracted as TEXT on both sides (importing sessionActions.js would initialize Firebase).
+    const client = extractStringConst(SESSION_ACTIONS_SRC, 'AUTO_STOPPED_QUICK_WORK_TITLE');
+    const server = extractStringConst(FUNCTIONS_SRC, 'AUTO_STOPPED_QUICK_WORK_TITLE');
+    expect(server).toBe(client);
+  });
+
+  it('server DEFAULT_TASK_PRIORITY equals the client DEFAULT_PRIORITY', () => {
+    expect(extractStringConst(FUNCTIONS_SRC, 'DEFAULT_TASK_PRIORITY')).toBe(DEFAULT_PRIORITY);
+  });
+
+  it('server MIN_LOGGED_SECONDARY_MINUTES equals the client MIN_LOGGED_SESSION_MINUTES', () => {
+    expect(extractNumberConst(FUNCTIONS_SRC, 'MIN_LOGGED_SECONDARY_MINUTES')).toBe(MIN_LOGGED_SESSION_MINUTES);
+  });
+
+  // The role list decides self-confirm vs route-to-manager for an auto-closed quick work. The
+  // invariant is NOT equality: the server list is deliberately the client set PLUS the legacy
+  // admin spelling some old user docs still carry. So: every client manager role must be in the
+  // server list (a role the client treats as manager must self-confirm server-side too), and
+  // every server role must be recognized by the client as manager OR legacy-admin (no stray role
+  // the client would render as a worker).
+  it('SECONDARY_MANAGER_ROLES is the client manager set plus only legacy-admin spellings', () => {
+    const serverRoles = extractArrayLiteral(FUNCTIONS_SRC, 'SECONDARY_MANAGER_ROLES');
+    const clientManagerRoles = ['manager', 'admin', 'seniorManager'];
+    // Guard the hardcoded list against isManagerRole itself changing.
+    for (const role of clientManagerRoles) expect(isManagerRole(role), `isManagerRole(${role})`).toBe(true);
+
+    const missing = clientManagerRoles.filter((r) => !serverRoles.includes(r));
+    expect(missing, `Client manager roles missing from server SECONDARY_MANAGER_ROLES: ${missing.join(', ')}`)
+      .toEqual([]);
+
+    const strays = serverRoles.filter((r) => !isManagerRole(r) && !isAdminRole(r));
+    expect(strays, `Server SECONDARY_MANAGER_ROLES contains roles the client does not recognize: ${strays.join(', ')}`)
+      .toEqual([]);
+  });
+});
+
+// =============================================================================================
+// 10. THRESHOLD ORDERING INVARIANTS — these are NOT equality mirrors: several limits only work
+//     because they keep a strict ORDER across the boundaries. Raising one side without the other
+//     silently re-opens a closed failure class, so the ordering itself is the locked invariant.
+//     - heartbeat chain: the server may auto-close a "dead" session only after a gap the CLIENT
+//       could never produce while alive (else the double-credit / premature-close race returns);
+//       the client's continue window must in turn exceed the beat interval (else one slow beat
+//       misclassifies live work as abandonment).
+//     - rules ceilings: the rules duration cap is the OUTER corruption net and must sit at or
+//       above the client/server 16h clamp; the rules estimate cap is the same value as the
+//       client's manual-entry clamp (both are the 1000h gross-typo net).
+// =============================================================================================
+
+describe('threshold ordering invariants (client ↔ functions ↔ rules)', () => {
+  it('server heartbeat stale gap > client continue window > client beat interval', () => {
+    const serverStaleGap = extractNumberConst(FUNCTIONS_SRC, 'HEARTBEAT_STALE_GAP_MS');
+    expect(serverStaleGap).toBeGreaterThan(TIMER_HEARTBEAT_CONTINUE_MS);
+    expect(TIMER_HEARTBEAT_CONTINUE_MS).toBeGreaterThan(TIMER_HEARTBEAT_INTERVAL_MS);
+  });
+
+  it('rules durationMinutes ceiling >= the 16h session clamp', () => {
+    const m = RULES_SRC.match(/data\.get\('durationMinutes', 0\) <= (\d+)/);
+    expect(m, 'Could not find the durationMinutes ceiling inside firestore.rules durationInRange').not.toBeNull();
+    expect(Number(m[1])).toBeGreaterThanOrEqual(MAX_SESSION_MINUTES);
+  });
+
+  it('rules estimatedTimeMinutes ceiling equals the client manual-entry clamp', () => {
+    const m = RULES_SRC.match(/data\.estimatedTimeMinutes <= (\d+)/);
+    expect(m, 'Could not find the estimatedTimeMinutes ceiling inside firestore.rules taskFieldsOk').not.toBeNull();
+    expect(Number(m[1])).toBe(MAX_MANUAL_TASK_MINUTES);
+  });
+});
+
+// =============================================================================================
+// 11. BADGE CATALOG LOCKSTEP — the server BADGES map (functions/index.js) AWARDS tiers; the
+//     client BADGE_CATALOG (src/utils/badgeCatalog.js) DISPLAYS the same ladder (names, tier
+//     thresholds, ordering). The thresholds were already recalibrated once against production
+//     data, so this is the most churn-prone hand-copy in the repo: a one-sided retune makes the
+//     progress a worker sees disagree with what the server actually grants. Slice the object
+//     literal out (the CATEGORY_BY_TYPE pattern), evaluate it, and lock key set + order, names,
+//     and every threshold ladder — plus the ladder shape (one ascending step per tier).
+// =============================================================================================
+
+describe('badge catalog lockstep (functions BADGES ↔ client BADGE_CATALOG)', () => {
+  const serverBadges = (() => {
+    const marker = 'const BADGES = {';
+    const start = FUNCTIONS_SRC.indexOf(marker);
+    if (start === -1) throw new Error('Could not find BADGES in functions/index.js — marker moved; update this test.');
+    const end = FUNCTIONS_SRC.indexOf('};', start);
+    if (end === -1) throw new Error('Could not find the end of BADGES in functions/index.js — update this test.');
+    return new Function(`${FUNCTIONS_SRC.slice(start, end + 2)}\n;return BADGES;`)();
+  })();
+
+  const serverTierNames = (() => {
+    const marker = 'const TIER_NAMES = {';
+    const start = FUNCTIONS_SRC.indexOf(marker);
+    if (start === -1) throw new Error('Could not find TIER_NAMES in functions/index.js — marker moved; update this test.');
+    const end = FUNCTIONS_SRC.indexOf('};', start);
+    return new Function(`${FUNCTIONS_SRC.slice(start, end + 2)}\n;return TIER_NAMES;`)();
+  })();
+
+  it('the server map and the client catalog cover the same badges in the same order', () => {
+    expect(Object.keys(serverBadges)).toEqual(BADGE_CATALOG.map((b) => b.key));
+  });
+
+  it('every badge has the same name and tier thresholds on both sides', () => {
+    const disagreements = [];
+    for (const b of BADGE_CATALOG) {
+      const s = serverBadges[b.key];
+      if (!s) continue; // key-set mismatch already reported above
+      if (s.name !== b.name) disagreements.push(`${b.key} name: server=${s.name} client=${b.name}`);
+      if (JSON.stringify(s.thresholds) !== JSON.stringify(b.thresholds)) {
+        disagreements.push(`${b.key} thresholds: server=${JSON.stringify(s.thresholds)} client=${JSON.stringify(b.thresholds)}`);
+      }
+    }
+    expect(disagreements, `badge catalog diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+
+  it('every threshold ladder has one strictly-ascending step per tier', () => {
+    const bad = [];
+    for (const [key, s] of Object.entries(serverBadges)) {
+      if (s.thresholds.length !== TIER_KEYS.length) bad.push(`${key}: ${s.thresholds.length} steps for ${TIER_KEYS.length} tiers`);
+      for (let i = 1; i < s.thresholds.length; i += 1) {
+        if (s.thresholds[i] <= s.thresholds[i - 1]) bad.push(`${key}: thresholds not strictly ascending`);
+      }
+    }
+    expect(bad, bad.join('\n')).toEqual([]);
+  });
+
+  it('the server tier-name map covers exactly one Lithuanian name per client tier key', () => {
+    expect(Object.keys(serverTierNames).map(Number).sort()).toEqual(TIER_KEYS.map((_, i) => i + 1));
   });
 });
