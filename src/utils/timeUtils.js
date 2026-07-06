@@ -445,6 +445,58 @@ export const getCurrentWorkDayCutoff = (now = getLithuanianNow()) => {
  * @param {string} timeStr - Vilnius local time, "HH:MM" (24h).
  * @returns {string|null} UTC ISO string, or null if either part is malformed.
  */
+/**
+ * Inject "Neaktyvus" (inactive) gap markers between the activity items of a single-user
+ * timeline. A gap is the wall-clock hole where NO timer was running — it is derived here,
+ * never stored.
+ *
+ * The items MUST already be sorted ascending by startTime. Crucially, the gap is measured
+ * from the RUNNING MAXIMUM end time seen so far — not merely the previous item's end. This
+ * is the classic merge-intervals guard: when a short session (e.g. a manual/backdated entry)
+ * sits INSIDE a longer session, comparing only against the immediately-preceding item would
+ * invent a phantom "Neaktyvus" band for time the longer session already covered. Tracking the
+ * running max end collapses overlapping/nested items so only genuine holes surface. (Reports.jsx
+ * already does this; this helper is the shared, tested source of that truth.)
+ *
+ * @param {Array<{id:string,startTime:string,endTime:string}>} sortedItems - ascending by startTime.
+ * @param {number} [minGapMinutes=1] - only holes STRICTLY greater than this become a marker.
+ * @returns {Array} the items with `{ type:'inactive', title:'Neaktyvus', ... }` markers spliced in.
+ */
+export const injectInactiveGaps = (sortedItems, minGapMinutes = 1) => {
+    if (!Array.isArray(sortedItems) || sortedItems.length === 0) return sortedItems || [];
+
+    const withGaps = [];
+    let runningEnd = null; // latest endTime seen so far, as a Date
+
+    for (let i = 0; i < sortedItems.length; i++) {
+        const current = sortedItems[i];
+        const start = new Date(current.startTime);
+
+        if (runningEnd && Number.isFinite(start.getTime())) {
+            const gapMinutes = Math.floor((start.getTime() - runningEnd.getTime()) / 60000);
+            if (gapMinutes > minGapMinutes) {
+                withGaps.push({
+                    id: `gap-${current.id}`,
+                    type: 'inactive',
+                    startTime: runningEnd.toISOString(),
+                    endTime: current.startTime,
+                    title: 'Neaktyvus',
+                    duration: gapMinutes,
+                });
+            }
+        }
+
+        withGaps.push(current);
+
+        const end = new Date(current.endTime);
+        if (Number.isFinite(end.getTime()) && (!runningEnd || end > runningEnd)) {
+            runningEnd = end;
+        }
+    }
+
+    return withGaps;
+};
+
 export const vilniusWallClockToISO = (dateStr, timeStr) => {
     if (typeof dateStr !== 'string' || typeof timeStr !== 'string') return null;
     const dateMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);

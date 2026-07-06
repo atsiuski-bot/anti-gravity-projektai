@@ -12,6 +12,7 @@ import {
     formatSignedMinutesToHHMM,
     vilniusWallClockToISO,
     relativeDeadline,
+    injectInactiveGaps,
 } from './timeUtils';
 
 // These are characterization tests for the pure time-math + timezone helpers that the
@@ -410,5 +411,66 @@ describe('vilniusWallClockToISO (Vilnius wall-clock -> UTC ISO, DST-safe)', () =
         expect(vilniusWallClockToISO('2026-06-23', null)).toBeNull();
         expect(vilniusWallClockToISO(undefined, undefined)).toBeNull();
         expect(vilniusWallClockToISO(20260623, 1430)).toBeNull();
+    });
+});
+
+describe('injectInactiveGaps (derived "Neaktyvus" bands)', () => {
+    const item = (id, startTime, endTime) => ({ id, startTime, endTime });
+    const gaps = (out) => out.filter((x) => x.type === 'inactive');
+
+    it('inserts a Neaktyvus marker for a genuine hole between two sessions', () => {
+        const out = injectInactiveGaps([
+            item('a', '2026-07-03T08:00:00.000Z', '2026-07-03T08:10:00.000Z'),
+            item('b', '2026-07-03T08:30:00.000Z', '2026-07-03T08:40:00.000Z'),
+        ]);
+        const g = gaps(out);
+        expect(g).toHaveLength(1);
+        expect(g[0]).toMatchObject({
+            type: 'inactive',
+            title: 'Neaktyvus',
+            duration: 20,
+            startTime: '2026-07-03T08:10:00.000Z',
+            endTime: '2026-07-03T08:30:00.000Z',
+        });
+        // The marker sits between the two real items, order preserved.
+        expect(out.map((x) => x.id)).toEqual(['a', 'gap-b', 'b']);
+    });
+
+    it('does NOT invent a phantom gap when a short session is nested inside a longer one', () => {
+        // Long session 08:00–09:00 with a 2-min entry (e.g. manual/backdated) nested at 08:20.
+        // The buggy "compare only the previous item" logic saw 08:22→09:00 as a 38-min hole.
+        const out = injectInactiveGaps([
+            item('long', '2026-07-03T08:00:00.000Z', '2026-07-03T09:00:00.000Z'),
+            item('nested', '2026-07-03T08:20:00.000Z', '2026-07-03T08:22:00.000Z'),
+        ]);
+        expect(gaps(out)).toHaveLength(0);
+    });
+
+    it('measures the next gap from the running-max end, not the last item seen', () => {
+        // long ends 09:00; nested ends 08:22; next real session starts 09:05.
+        // Correct hole = 09:00→09:05 = 5 min (NOT 08:22→09:05 = 43 min).
+        const out = injectInactiveGaps([
+            item('long', '2026-07-03T08:00:00.000Z', '2026-07-03T09:00:00.000Z'),
+            item('nested', '2026-07-03T08:20:00.000Z', '2026-07-03T08:22:00.000Z'),
+            item('after', '2026-07-03T09:05:00.000Z', '2026-07-03T09:15:00.000Z'),
+        ]);
+        const g = gaps(out);
+        expect(g).toHaveLength(1);
+        expect(g[0].duration).toBe(5);
+        expect(g[0].startTime).toBe('2026-07-03T09:00:00.000Z');
+    });
+
+    it('ignores holes of 1 minute or less', () => {
+        const out = injectInactiveGaps([
+            item('a', '2026-07-03T08:00:00.000Z', '2026-07-03T08:10:00.000Z'),
+            item('b', '2026-07-03T08:11:00.000Z', '2026-07-03T08:20:00.000Z'), // 1-min hole
+        ]);
+        expect(gaps(out)).toHaveLength(0);
+    });
+
+    it('returns the input unchanged for empty or single-item lists', () => {
+        expect(injectInactiveGaps([])).toEqual([]);
+        const one = [item('a', '2026-07-03T08:00:00.000Z', '2026-07-03T08:10:00.000Z')];
+        expect(gaps(injectInactiveGaps(one))).toHaveLength(0);
     });
 });

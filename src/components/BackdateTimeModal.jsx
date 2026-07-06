@@ -10,6 +10,7 @@ import {
     vilniusWallClockToISO,
     MAX_BACKDATE_DAYS,
 } from '../utils/timeUtils';
+import { formatTime } from '../utils/formatters';
 import { deriveSessionFields, validateBackdateWindow, logBackdatedWorkerSession } from '../utils/sessionEditActions';
 
 // Validation-error code → Lithuanian copy. Codes come from deriveSessionFields (order/tooLong/
@@ -42,36 +43,61 @@ const ERROR_COPY = {
  * @param {Object} props
  * @param {boolean} props.open
  * @param {() => void} props.onClose
- * @param {Object} props.task - the worker's own task; { id, title } are used.
+ * @param {Object} [props.task] - a fixed task ({ id, title }). Used when the caller already knows the
+ *   task (e.g. the task detail screen). Ignored when `taskOptions` is provided.
+ * @param {Array<{id:string,title:string}>} [props.taskOptions] - when the caller does NOT know which
+ *   task the missed time belongs to (e.g. filling an inactive gap on the timeline), pass the
+ *   candidate tasks and the worker picks one from a dropdown.
+ * @param {string} [props.initialStart] - ISO instant to pre-fill the start (e.g. a gap's start).
+ * @param {string} [props.initialEnd] - ISO instant to pre-fill the end (e.g. a gap's end).
  * @param {{ uid?: string, displayName?: string, email?: string }} props.worker - the signed-in worker.
  * @param {string[]} props.adminUids - active-admin recipient ids for the FYI notification.
  * @param {() => void} [props.onSaved] - called after a successful write.
  */
-export default function BackdateTimeModal({ open, onClose, task, worker, adminUids, onSaved }) {
+export default function BackdateTimeModal({ open, onClose, task, taskOptions, initialStart, initialEnd, worker, adminUids, onSaved }) {
     const [startDate, setStartDate] = useState('');
     const [startTimeStr, setStartTimeStr] = useState('');
     const [endDate, setEndDate] = useState('');
     const [endTimeStr, setEndTimeStr] = useState('');
     const [reason, setReason] = useState('');
+    const [selectedTaskId, setSelectedTaskId] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
 
     const fieldId = useId();
+
+    // When the caller passes candidate tasks (gap-fill), the worker chooses one; otherwise the fixed
+    // `task` prop is used. `effectiveTask` is what the write is stamped against.
+    const hasOptions = Array.isArray(taskOptions) && taskOptions.length > 0;
+    const effectiveTask = hasOptions
+        ? taskOptions.find((t) => t.id === selectedTaskId) || taskOptions[0]
+        : task;
 
     // The selectable window: today back to today − MAX_BACKDATE_DAYS, as Vilnius calendar-day
     // strings the DatePicker bounds on directly (string compare is sort-safe for YYYY-MM-DD).
     const todayStr = getLithuanianDateString();
     const minDayStr = addDaysToDateString(todayStr, -MAX_BACKDATE_DAYS);
 
-    // Seed both dates to today each time the sheet opens; clear the rest.
+    // On open: if the caller pre-filled a window (gap-fill), seed the fields from it (Vilnius
+    // wall-clock, so the pickers show the exact gap the worker tapped) and default the reason so a
+    // trusted worker can confirm in one tap; otherwise seed both dates to today and clear the rest.
     useEffect(() => {
         if (!open) return;
         setError(null);
-        setReason('');
-        setStartDate(todayStr);
-        setEndDate(todayStr);
-        setStartTimeStr('');
-        setEndTimeStr('');
+        setSelectedTaskId(hasOptions ? taskOptions[0].id : '');
+        if (initialStart && initialEnd) {
+            setStartDate(getLithuanianDateString(initialStart));
+            setEndDate(getLithuanianDateString(initialEnd));
+            setStartTimeStr(formatTime(initialStart));
+            setEndTimeStr(formatTime(initialEnd));
+            setReason('Dirbau, pamiršau įjungti laikmatį');
+        } else {
+            setReason('');
+            setStartDate(todayStr);
+            setEndDate(todayStr);
+            setStartTimeStr('');
+            setEndTimeStr('');
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
@@ -98,13 +124,13 @@ export default function BackdateTimeModal({ open, onClose, task, worker, adminUi
               : null
         : null;
 
-    const canSave = complete && derived?.ok && windowCheck?.ok && reason.trim().length > 0 && !busy;
+    const canSave = complete && derived?.ok && windowCheck?.ok && reason.trim().length > 0 && !!effectiveTask?.id && !busy;
 
     const handleSave = async () => {
         setBusy(true);
         setError(null);
         const result = await logBackdatedWorkerSession({
-            task,
+            task: effectiveTask,
             worker,
             startTime: startISO,
             endTime: endISO,
@@ -146,9 +172,32 @@ export default function BackdateTimeModal({ open, onClose, task, worker, adminUi
             }
         >
             <div className="space-y-4">
-                <p className="text-body text-ink-muted">
-                    Užduotis: <span className="font-semibold text-ink">{task?.title || 'Užduotis'}</span>
-                </p>
+                {hasOptions ? (
+                    <div>
+                        <label
+                            htmlFor={`${fieldId}-task`}
+                            className="mb-1 block text-caption font-medium text-ink-muted"
+                        >
+                            Kurią užduotį dirbote?
+                        </label>
+                        <select
+                            id={`${fieldId}-task`}
+                            value={selectedTaskId}
+                            onChange={(e) => setSelectedTaskId(e.target.value)}
+                            className={inputClass}
+                        >
+                            {taskOptions.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                    {t.title || 'Užduotis'}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                ) : (
+                    <p className="text-body text-ink-muted">
+                        Užduotis: <span className="font-semibold text-ink">{effectiveTask?.title || 'Užduotis'}</span>
+                    </p>
+                )}
                 <p className="text-caption text-ink-muted">
                     Įrašykite laiką, kurį jau dirbote, bet pamiršote pažymėti. Galima iki {MAX_BACKDATE_DAYS} d. atgal.
                     Patvirtinimas nereikalingas — apie įrašą informuojami administratoriai.

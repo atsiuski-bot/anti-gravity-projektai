@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
@@ -33,6 +33,7 @@ import TaskModal from './TaskModal';
 import UserChip from './UserChip';
 import SessionEditModal from './SessionEditModal';
 import SessionEditedBadge from './task/SessionEditedBadge';
+import BackdateTimeModal from './BackdateTimeModal';
 
 export default function DailyStatistics({ currentUser, userRole, users = [], canExport = false, dateRange = null, forceUserId = null, forceUserName = null, initialDate = null, embedded = false, workerDetailOnly = false, onClose = null, view = 'full', approvalPhase = 'pending', showTestUsers = false, periodSummaryAbove = false, onShiftPeriod = null }) {
     // userData carries the auth identity (role + scopedManager) the listeners scope against;
@@ -81,6 +82,24 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         !item.isActive &&
         !item.isManualAdjustment &&
         resolveUserId(item) === currentUser?.uid;
+
+    // Self-service gap-fill: a worker granted canBackdateTime, looking at THEIR OWN day, may turn a
+    // derived "Neaktyvus" band into a real manual session on a task they pick — the same trusted
+    // self-backdate the task screen already exposes, brought to where the gap is actually seen. Gated
+    // to workers on their own timeline (managers use the admin editor); the per-gap within-window
+    // check lives on the button so it never opens a modal that could only fail 'tooOld'.
+    const canFillGaps =
+        !isManagerRole(userRole) &&
+        userData?.canBackdateTime === true &&
+        selectedUserId === currentUser?.uid;
+    const adminUids = useMemo(
+        () => (users || [])
+            .filter((u) => (u.role === 'admin' || u.role === 'Administratorius') && !u.isDisabled)
+            .map((u) => u.id),
+        [users]
+    );
+    // The open gap-fill modal's payload: { start, end, taskOptions }, or null when closed.
+    const [backdateGap, setBackdateGap] = useState(null);
     const [selectedDate, setSelectedDate] = useState(initialDate ?? getLithuanianDateString());
     const [, setLoading] = useState(false);
 
@@ -763,40 +782,38 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // Sort by start time
         const sortedItems = items.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-        // Inject inactive gaps for individual mode (matches Reports.jsx logic). Skipped in range
-        // mode — an overnight gap between one day's last session and the next day's first would
-        // render as a giant, meaningless "Neaktyvus" block spanning the hours nobody works.
+        // Inject inactive gaps for individual mode. Skipped in range mode — an overnight gap
+        // between one day's last session and the next day's first would render as a giant,
+        // meaningless "Neaktyvus" block spanning the hours nobody works. The shared helper
+        // measures each gap from the running-max end time (merge-intervals), so a short session
+        // nested inside a longer one does NOT invent a phantom "Neaktyvus" band — matching the
+        // (previously divergent) Reports.jsx behavior.
         if (!isRange && selectedUserId !== 'all' && sortedItems.length > 0) {
-             const withGaps = [];
-             for (let i = 0; i < sortedItems.length; i++) {
-                 const current = sortedItems[i];
-                 withGaps.push(current);
-
-                 if (i < sortedItems.length - 1) {
-                     const next = sortedItems[i + 1];
-                     const currentEnd = new Date(current.endTime);
-                     const nextStart = new Date(next.startTime);
-                     const gapMs = nextStart.getTime() - currentEnd.getTime();
-                     const gapMinutes = Math.floor(gapMs / 60000);
-
-                     if (gapMinutes > 1) { // Only show gaps > 1 minute
-                         withGaps.push({
-                             id: `gap-${current.id}`,
-                             type: 'inactive',
-                             startTime: current.endTime,
-                             endTime: next.startTime,
-                             title: 'Neaktyvus',
-                             duration: gapMinutes,
-                         });
-                     }
-                 }
-             }
-             return withGaps;
+             return injectInactiveGaps(sortedItems);
         }
 
         return sortedItems;
         // eslint-disable-next-line react-hooks/exhaustive-deps -- finishedTasks changes already propagate via manualTasks; preserving current timing
     }, [allValidSessions, manualTasks, allBreakSessions, selectedUserId, isRange]);
+
+    // Candidate tasks to attach a gap-fill to: the real task sessions immediately before/after the
+    // hole (deduped; breaks, calls and quick-work excluded — they aren't assignable tasks). Empty ⇒
+    // nothing sensible to attach to ⇒ the "Buvau darbe" affordance is hidden for that gap.
+    const gapTaskOptions = (idx) => {
+        const opts = [];
+        const seen = new Set();
+        for (const n of [combinedTimelineItems[idx - 1], combinedTimelineItems[idx + 1]]) {
+            if (!n || n.type !== 'session' || n.isSystemTask || n.isQuickWork) continue;
+            if (!n.taskId || seen.has(n.taskId)) continue;
+            seen.add(n.taskId);
+            opts.push({ id: n.taskId, title: String(n.title || 'Užduotis').replace(/^⏳ \(Vykdoma\)\s*/, '') });
+        }
+        return opts;
+    };
+    // The backdate window bounds the affordance too, so tapping never opens a modal that could only
+    // fail 'tooOld' (mirrors the modal's own validateBackdateWindow gate).
+    const gapWithinWindow = (item) =>
+        getLithuanianDateString(item.startTime) >= addDaysToDateString(getLithuanianDateString(), -MAX_BACKDATE_DAYS);
 
 
     // Find earliest start and latest end from COMBINED items
@@ -1519,6 +1536,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         )}>
                                             {formatMinutesToTimeString(item.duration)}
                                         </span>
+                                        {item.type === 'inactive' && canFillGaps && gapWithinWindow(item) && gapTaskOptions(idx).length > 0 && (
+                                            <Button variant="secondary" size="md" icon={Plus} onClick={() => setBackdateGap({ start: item.startTime, end: item.endTime, taskOptions: gapTaskOptions(idx) })}>
+                                                Buvau darbe
+                                            </Button>
+                                        )}
                                         {canEditRow && (
                                             <IconButton icon={Pencil} label="Redaguoti sesijos laiką" onClick={() => openEditSession(item, sessionEditTargetUser, totalWorkedMinutes)} />
                                         )}
@@ -1573,6 +1595,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                         <td className={`px-4 py-3 font-mono font-bold w-full text-right ${item.type === 'break' ? 'text-feedback-warning' : item.type === 'inactive' ? 'text-ink-muted' : 'text-brand'}`}>
                                             <span className="inline-flex items-center justify-end gap-1">
                                                 {formatMinutesToTimeString(item.duration)}
+                                                {item.type === 'inactive' && canFillGaps && gapWithinWindow(item) && gapTaskOptions(idx).length > 0 && (
+                                                    <Button variant="secondary" size="md" icon={Plus} onClick={() => setBackdateGap({ start: item.startTime, end: item.endTime, taskOptions: gapTaskOptions(idx) })}>
+                                                        Buvau darbe
+                                                    </Button>
+                                                )}
                                                 {canEditRow && (
                                                     <IconButton icon={Pencil} label="Redaguoti sesijos laiką" onClick={() => openEditSession(item, sessionEditTargetUser, totalWorkedMinutes)} />
                                                 )}
@@ -1798,6 +1825,23 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     item={errorReportTarget}
                     onSubmit={handleSubmitErrorReport}
                     onClose={() => setErrorReportTarget(null)}
+                />
+            )}
+
+            {/* Worker self-service gap-fill — turns a tapped "Neaktyvus" band into a real manual
+                session on a task the worker picks, pre-filled with the gap's window. Same trusted
+                backdate path as the task screen; the live listeners refresh the timeline on save so
+                the filled gap disappears without a manual reload. */}
+            {backdateGap && (
+                <BackdateTimeModal
+                    open
+                    onClose={() => setBackdateGap(null)}
+                    taskOptions={backdateGap.taskOptions}
+                    initialStart={backdateGap.start}
+                    initialEnd={backdateGap.end}
+                    worker={{ uid: currentUser?.uid, displayName: currentUser?.displayName, email: currentUser?.email }}
+                    adminUids={adminUids}
+                    onSaved={() => setBackdateGap(null)}
                 />
             )}
         </div>
