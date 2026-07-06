@@ -26,6 +26,7 @@ import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES } from '../utils/timeU
 import { claimRecoveredGap } from '../utils/sessionEditActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { pauseTask, creditAndResumeTask } from '../utils/taskActions';
+import { logError } from '../utils/errorLog';
 import { getDocFromServer } from 'firebase/firestore';
 
 // The credit-instant POLICY for a pre-boot running task, isolated from React so the arithmetic
@@ -152,6 +153,36 @@ describe('resolveUntrackedGap — what happens to the untracked gap after a paus
         expect(claimRecoveredGap).not.toHaveBeenCalled();
         expect(addRecoveryNotice).toHaveBeenCalledTimes(1);
         expect(addRecoveryNotice.mock.calls[0][1].kind).toBe('task-gap');
+    });
+
+    // The trace closes the "silent traceless loss" hole: the opt-in claim offer lives only in
+    // per-device localStorage, so a fallback the worker never taps left NO server record — exactly why
+    // Simona's lost 42 min could not be traced (no error_logs, just a cold "Neaktyvus" band). Every
+    // fallback now logs the un-credited gap so the next triage can find and restore it.
+    it('leaves a server trace (logError) naming the gap when the auto-credit write fails', async () => {
+        claimRecoveredGap.mockResolvedValue({ ok: false, error: 'write' });
+        const decision = { gapFrom: 1000, gapTo: 1000 + 20 * 60000 };
+
+        await resolveUntrackedGap(task, worker, decision);
+
+        expect(logError).toHaveBeenCalledTimes(1);
+        expect(logError.mock.calls[0][1]).toMatchObject({
+            source: 'orphanRecovery:gapNotAutoCredited',
+            taskId: 't1', gapMinutes: 20, cause: 'auto-credit-write-failed',
+            fromIso: new Date(1000).toISOString(), toIso: new Date(1000 + 20 * 60000).toISOString(),
+        });
+    });
+
+    it('leaves a server trace (logError) when the gap is not the signed-in worker\'s own task', async () => {
+        const decision = { gapFrom: 0, gapTo: 20 * 60000 };
+
+        await resolveUntrackedGap(task, null, decision);
+
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(logError).toHaveBeenCalledTimes(1);
+        expect(logError.mock.calls[0][1]).toMatchObject({
+            source: 'orphanRecovery:gapNotAutoCredited', taskId: 't1', cause: 'not-own-task',
+        });
     });
 
     it('falls back to the claim offer without calling claimRecoveredGap when there is no signed-in identity', async () => {

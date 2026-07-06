@@ -326,6 +326,71 @@ describe('recurrence firing lockstep (functions recurringFiresOn ↔ client recu
 //    of types (no type the push knows but the in-app feed doesn't, or vice versa).
 // =============================================================================================
 
+// =============================================================================================
+//  STALE-TIMER NUDGE PREDICATE — the pure decision behind the proactive "still running?" push
+//  (functions/index.js notifyStaleRunningTimers). Sliced from source so the false-positive tuning and
+//  the branch logic are locked without a functions-side test runner. This is the safety valve of the
+//  feature: it is what keeps a still-working, pocketed-phone field worker from being nudged too eagerly.
+// =============================================================================================
+describe('shouldNudgeStaleTimer (functions/index.js stale-running-timer nudge predicate)', () => {
+  const { shouldNudgeStaleTimer, TIMER_STALE_NUDGE_MS } = (() => {
+    const start = FUNCTIONS_SRC.indexOf('const TIMER_STALE_NUDGE_MS');
+    const end = FUNCTIONS_SRC.indexOf('async function notifyStaleRunningTimers');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not slice shouldNudgeStaleTimer out of functions/index.js — markers moved; update this test.');
+    }
+    const block = FUNCTIONS_SRC.slice(start, end);
+    // MAX_RUNNING_TIMER_MINUTES (the 16h ceiling) lives far above in the source and is a separately-
+    // locked mirror of the client MAX_SESSION_MINUTES; inject it so the sliced block evaluates
+    // standalone. The tunable this test actually pins — TIMER_STALE_NUDGE_MS — comes from the slice.
+    return new Function(`const MAX_RUNNING_TIMER_MINUTES = 16 * 60;\n${block}\n;return { shouldNudgeStaleTimer, TIMER_STALE_NUDGE_MS };`)();
+  })();
+
+  const NOW = new Date('2026-07-06T12:00:00.000Z').getTime();
+  const iso = (ms) => new Date(ms).toISOString();
+  // A running task the worker owns, started 2h ago, heartbeat 1 min past the stale line — the canonical
+  // "should nudge" case. Each test overrides ONE field to isolate the branch it exercises.
+  const base = {
+    timerStatus: 'running',
+    assignedUserId: 'worker-1',
+    timerStartedAt: iso(NOW - 2 * 60 * 60 * 1000),
+    timerLastHeartbeat: iso(NOW - TIMER_STALE_NUDGE_MS - 60 * 1000),
+  };
+
+  it('nudges a running, owned timer whose heartbeat is stale past the threshold and under 16h', () => {
+    expect(shouldNudgeStaleTimer(base, NOW)).toBe(true);
+  });
+
+  it('does NOT nudge while the heartbeat is still fresh (app alive on it — no false alarm)', () => {
+    const fresh = { ...base, timerLastHeartbeat: iso(NOW - (TIMER_STALE_NUDGE_MS - 60 * 1000)) };
+    expect(shouldNudgeStaleTimer(fresh, NOW)).toBe(false);
+  });
+
+  it('does NOT nudge a timer with no heartbeat at all (no proof the app was ever alive on it)', () => {
+    expect(shouldNudgeStaleTimer({ ...base, timerLastHeartbeat: undefined }, NOW)).toBe(false);
+  });
+
+  it('does NOT nudge past the 16h ceiling — the daily autoStopForgottenTimers owns that run', () => {
+    const old = {
+      ...base,
+      timerStartedAt: iso(NOW - 17 * 60 * 60 * 1000),
+      timerLastHeartbeat: iso(NOW - 16 * 60 * 60 * 1000),
+    };
+    expect(shouldNudgeStaleTimer(old, NOW)).toBe(false);
+  });
+
+  it('does NOT nudge a paused/unstarted timer or one with no assignee', () => {
+    expect(shouldNudgeStaleTimer({ ...base, timerStatus: 'paused' }, NOW)).toBe(false);
+    expect(shouldNudgeStaleTimer({ ...base, timerStartedAt: null }, NOW)).toBe(false);
+    expect(shouldNudgeStaleTimer({ ...base, assignedUserId: '' }, NOW)).toBe(false);
+  });
+
+  it('does NOT nudge on an unparseable start or heartbeat', () => {
+    expect(shouldNudgeStaleTimer({ ...base, timerStartedAt: 'nope' }, NOW)).toBe(false);
+    expect(shouldNudgeStaleTimer({ ...base, timerLastHeartbeat: 'nope' }, NOW)).toBe(false);
+  });
+});
+
 describe('notification copy lockstep (functions copyForRequestNotification ↔ client registry)', () => {
   // Slice the self-contained copy function out of functions/index.js and build it. It references only
   // its argument and built-ins, so it evaluates with no dependencies. Moved markers throw clearly.
@@ -379,6 +444,7 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     session_edited: [{ day: '2026-06-20' }, {}],
     session_deleted: [{ day: '2026-06-20' }, {}],
     session_auto_closed: [{ day: '2026-06-20' }, {}],
+    timer_running_check: [{ taskTitle: 'Užduotis' }, {}],
     // Name + day, day-only (name absent), and the empty fallback — covers both copy branches and the
     // whitespace-clamp on userName (the only free-form field) on both client and server mirrors.
     backdated_time_logged: [{ userName: '  Jonas   Jonaitis ', day: '2026-06-20' }, { day: '2026-06-20' }, {}],

@@ -226,6 +226,19 @@ export const NOTIFICATIONS = {
         link: TAB_TASKS,
         copy: (n) => ({ title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' }),
     },
+    // System → worker: a running TASK timer whose per-minute heartbeat has gone stale (the app was
+    // backgrounded / killed / lost signal for a while). A GENTLE, once-per-run check that the worker
+    // is still on it — so a timer they forgot to stop, OR one the OS froze while they kept working, is
+    // caught in minutes instead of surfacing days later as a cold "Neaktyvus" band. Deliberately
+    // 'info' (calm, non-sticky): a worker who is still working simply ignores it. Fired by the
+    // scheduled notifyStaleRunningTimers net (functions/index.js); the tap deep-links to the timer.
+    timer_running_check: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Ar laikmatis vis dar veikia?', body: n.taskTitle || 'Gildija' }),
+    },
 
     // ── Trusted worker → admin (oversight: an approval-free backdated entry was logged) ──────────
     // A worker granted canBackdateTime self-logged a missed session at a past time without approval.

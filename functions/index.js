@@ -170,6 +170,7 @@ const CATEGORY_BY_TYPE = {
     session_edited: 'info',
     session_deleted: 'info',
     session_auto_closed: 'info',
+    timer_running_check: 'info',
     backdated_time_logged: 'info',
     task_priority_escalated: 'info',
     achievement: 'info',
@@ -243,6 +244,9 @@ function copyForRequestNotification(n) {
         case 'session_auto_closed':
             // System → worker: a forgotten secondary-session timer was auto-closed + time credited.
             return { title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' };
+        case 'timer_running_check':
+            // System → worker: a running task timer went heartbeat-stale — a gentle "still on it?" check.
+            return { title: 'Ar laikmatis vis dar veikia?', body: title };
         case 'backdated_time_logged': {
             // Trusted worker → admin: an approval-free backdated session was logged. Body = WHO + day.
             // userName is the only free-form field; clamp identically to the registry MIRROR.
@@ -1260,6 +1264,94 @@ async function autoStopForgottenTimers() {
     }
     return { scanned: snap.size, stopped, samples };
 }
+
+// ---------------------------------------------------------------------------
+// Proactive stale-running-timer nudge (short cadence) — the real-time companion
+// ---------------------------------------------------------------------------
+//
+// autoStopForgottenTimers above only reconciles timers left running PAST the 16h ceiling, once a day.
+// That misses the SHORT dropped-session: a worker whose phone backgrounded / killed the PWA / lost
+// signal — which freezes the per-minute client heartbeat — while a task timer is still marked running.
+// They keep working, the timer's proof-of-life goes cold, and (unless reopen-recovery cleanly credits
+// it) the stretch later reads as a cold "Neaktyvus" band the worker only discovers days later.
+//
+// There is NO server-side way to tell "pocketed but still working" from "stopped": both look like a
+// stale heartbeat (a field worker with the screen off IS the normal case). So this net deliberately
+// does NOT credit or stop anything — that stays the worker's (reopen → recovery) and the daily net's
+// job. It fires ONE gentle "still on it?" nudge per run: a real loss is caught in minutes, and a
+// worker who is still working simply ignores it.
+const TIMER_STALE_NUDGE_MS = 25 * 60 * 1000; // heartbeat older than this → nudge. The feature's tuning knob.
+
+// Pure decision (unit-tested via a source slice in firebaseConsistency.test.js): nudge this running
+// task NOW? Yes when its heartbeat is stale beyond TIMER_STALE_NUDGE_MS AND the run is still under the
+// 16h ceiling — past that the daily autoStopForgottenTimers owns it, so the two nets never both act on
+// one run. No heartbeat at all → skip: no proof the app was ever alive on it (pre-heartbeat data, or a
+// timer killed before its first beat), and nudging a never-alive timer would be noise. No assignee →
+// nobody to notify. Once-per-run is enforced downstream by the deterministic notification id, not here.
+function shouldNudgeStaleTimer(task, nowMs) {
+    if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return false;
+    if (!task.assignedUserId) return false;
+    const startMs = new Date(task.timerStartedAt).getTime();
+    if (!Number.isFinite(startMs)) return false;
+    const beatMs = task.timerLastHeartbeat ? new Date(task.timerLastHeartbeat).getTime() : NaN;
+    if (!Number.isFinite(beatMs)) return false;                              // no proof of life → not ours to nudge
+    if (nowMs - beatMs < TIMER_STALE_NUDGE_MS) return false;                 // heartbeat still fresh (app alive on it)
+    if (nowMs - startMs > MAX_RUNNING_TIMER_MINUTES * 60000) return false;   // >16h → the daily net owns this run
+    return true;
+}
+
+// Scan running task timers and fire one gentle "still running?" nudge per stale run. The notification
+// id is deterministic on (taskId + the run's start), so create() + ALREADY_EXISTS makes it fire
+// exactly ONCE per run — never repeating across the 10-min cadence, while a fresh run after the worker
+// resumes/restarts (new timerStartedAt) can nudge again. The existing notifyOnRequestNotification
+// onCreate trigger turns the doc into the FCM push; a re-created (already-exists) doc never re-fires it.
+async function notifyStaleRunningTimers(nowMs = Date.now()) {
+    let snap;
+    try {
+        snap = await db.collection('tasks').where('timerStatus', '==', 'running').get();
+    } catch (err) {
+        logger.warn('notifyStaleRunningTimers query failed', { err: err.message });
+        return { scanned: 0, nudged: 0 };
+    }
+    const nowIso = new Date(nowMs).toISOString();
+    let nudged = 0;
+    for (const docSnap of snap.docs) {
+        const t = docSnap.data();
+        if (!shouldNudgeStaleTimer(t, nowMs)) continue;
+        const startMs = new Date(t.timerStartedAt).getTime();
+        const ref = db.collection('request_notifications').doc(`timercheck_${docSnap.id}_${startMs}`);
+        try {
+            // create (not add): the deterministic id + ALREADY_EXISTS is the once-per-run dedup, so a
+            // still-stale timer is never re-notified every 10 minutes.
+            await ref.create({
+                recipientId: t.assignedUserId,
+                type: 'timer_running_check',
+                category: 'info',
+                taskId: docSnap.id,
+                taskTitle: t.title || 'Užduotis',
+                isRead: false,
+                createdAt: nowIso,
+                createdBy: 'system_timer_check',
+            });
+            nudged += 1;
+        } catch (err) {
+            if (err && (err.code === 6 || err.code === 'already-exists')) continue; // already nudged this run
+            logger.warn('notifyStaleRunningTimers nudge failed', { id: docSnap.id, err: err.message });
+        }
+    }
+    return { scanned: snap.size, nudged };
+}
+
+// Every 10 minutes — bounds "how long until a dropped timer is flagged" to ~10 min + the stale
+// threshold. Cheap: one indexed query (timerStatus == running, the same index autoStopForgottenTimers
+// uses) over a single company's tasks, and a write only for the rare genuinely-stale run.
+exports.notifyStaleRunningTimers = onSchedule(
+    { schedule: 'every 10 minutes', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const result = await notifyStaleRunningTimers();
+        if (result.nudged > 0) logger.info('notifyStaleRunningTimers fired', result);
+    },
+);
 
 // ---------------------------------------------------------------------------
 // Abandoned SECONDARY-session safety net (break / call / quick-work)

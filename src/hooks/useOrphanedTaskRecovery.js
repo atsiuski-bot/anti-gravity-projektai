@@ -65,14 +65,25 @@ export async function resolveUntrackedGap(task, currentUser, decision) {
     const fromIso = new Date(decision.gapFrom).toISOString();
     const toIso = new Date(decision.gapTo).toISOString();
 
-    const offerManualClaim = () =>
+    // Offer the opt-in "Užskaityti" claim as the fallback when the gap cannot be AUTO-credited, and
+    // leave a durable server trace the moment it happens. The claim offer itself lives ONLY in
+    // per-device localStorage (recoveryNotice), so a fallback the worker never taps used to vanish
+    // with no server record at all — which is precisely why a genuine lost-time report could not be
+    // traced afterwards (the incident had no error_logs, only a cold "Neaktyvus" band). The trace
+    // names the un-credited gap [fromIso → toIso] so the next triage can find and restore it.
+    const offerManualClaim = (cause) => {
+        logError(new Error(`orphan gap not auto-credited (${cause})`), {
+            source: 'orphanRecovery:gapNotAutoCredited',
+            taskId: task.id, gapMinutes, fromIso, toIso, cause,
+        });
         addRecoveryNotice(task.assignedUserId, {
             kind: 'task-gap', taskId: task.id, taskTitle: task.title || '',
             gapMinutes, fromIso, toIso,
         });
+    };
 
     const isOwnTask = currentUser?.uid && currentUser.uid === task.assignedUserId;
-    if (!isOwnTask) { offerManualClaim(); return; }
+    if (!isOwnTask) { offerManualClaim('not-own-task'); return; }
 
     // AUTO-credit the gap as its own recovered-gap session (opt-out), attributed to and authored by
     // the worker so the work_sessions rules accept it.
@@ -89,7 +100,7 @@ export async function resolveUntrackedGap(task, currentUser, decision) {
             gapMinutes, sessionId: claim.id,
         });
     } else {
-        offerManualClaim();
+        offerManualClaim('auto-credit-write-failed');
     }
 }
 
@@ -206,6 +217,14 @@ export function useOrphanedTaskRecovery(tasks, currentUser) {
 
     useEffect(() => {
         if (!Array.isArray(tasks) || tasks.length === 0) return;
+        // Wait for a resolved identity before acting OR latching. resolveUntrackedGap AUTO-credits the
+        // untracked gap as a session authored by and attributed to the signed-in worker (its own-task
+        // check). If this effect ran while currentUser was still null — a boot where the tasks snapshot
+        // arrives before auth resolves — it would latch the task with only the opt-in claim offer and,
+        // because handledRef then no-ops the re-run, NEVER auto-credit once auth landed: the gap
+        // silently downgraded to "claim it yourself". Skipping until the uid is present (currentUser is
+        // a dep, so this re-runs when auth lands) is the same discipline useOrphanedSessionRecovery uses.
+        if (!currentUser?.uid) return;
 
         tasks.forEach((task) => {
             if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return;
@@ -227,8 +246,9 @@ export function useOrphanedTaskRecovery(tasks, currentUser) {
                 logError(e, { source: 'orphanRecovery:confirmTask', taskId: task.id });
             });
         });
-        // currentUser is a dep so a task loaded before auth resolves is still auto-credited once the
-        // user arrives; handledRef makes the re-run a no-op for any task already processed.
+        // currentUser is a dep so a task first seen before auth resolves is processed once the user
+        // arrives (the guard above skips until then); handledRef makes any later re-run a no-op for a
+        // task already handled.
     }, [tasks, currentUser]);
 }
 
