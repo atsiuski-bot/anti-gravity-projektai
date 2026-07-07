@@ -1,4 +1,4 @@
-import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
     getLithuanianDateString,
@@ -57,6 +57,61 @@ export const deriveSessionFields = (startISO, endISO) => {
     };
 };
 
+// ── Counter reconciliation ──────────────────────────────────────────────────────────────────
+// A task carries a DENORMALISED time counter (timerMinutes + manualMinutes) that the task detail
+// sheet, the earnings popup and the time-limit monitor all read via calculateCurrentTotalMinutes.
+// The live timer keeps that counter and the per-segment work_sessions in lock-step, but every
+// CORRECTION path in this file mutates only work_sessions — so after an edit/backdate/gap the
+// report (which sums work_sessions) moves while the cached counter stays stale, and the two
+// surfaces disagree for the same task. Decision (founder, 2026-07-07): work_sessions is canonical;
+// after a correction we re-derive the task counter from the sum of its non-deleted sessions so
+// every surface shows the one true number.
+//
+// SAFETY — synthetic-id guard. Only genuine timer tasks key their work_sessions on the REAL task
+// document id; quick-work/call/manual sessions use a synthetic taskId (quick_/call_/manual_…) whose
+// time lives in the task's manualMinutes and is NOT summed by-taskId. Summing sessions-where-
+// taskId==syntheticId finds ZERO, so we must never write that back. The `doc must exist` check does
+// exactly this: a synthetic taskId resolves to no task/archived_tasks doc, and reconciliation skips.
+// Best-effort: the session write already succeeded, so a reconcile failure (e.g. a worker path the
+// task rules don't permit) is swallowed — it only leaves the pre-existing drift, never worse.
+export const reconcileTaskTimerFromSessions = async (taskId) => {
+    if (!taskId) return;
+    try {
+        // Sum this task's non-deleted logged sessions — the canonical credited time.
+        const snap = await getDocs(query(collection(db, 'work_sessions'), where('taskId', '==', taskId)));
+        let total = 0;
+        snap.forEach((d) => {
+            const s = d.data();
+            if (s.isDeleted) return;
+            if (typeof s.durationMinutes === 'number' && s.durationMinutes > 0) total += s.durationMinutes;
+        });
+
+        // Locate the task in the live collection first, then the nightly archive. A synthetic-id
+        // session (quick-work/call/manual) matches neither → we skip without touching real pay.
+        let ref = doc(db, 'tasks', taskId);
+        let taskSnap = await getDoc(ref);
+        if (!taskSnap.exists()) {
+            ref = doc(db, 'archived_tasks', taskId);
+            taskSnap = await getDoc(ref);
+        }
+        if (!taskSnap.exists()) return;
+
+        // Collapse the credited time into timerMinutes and zero manualMinutes so
+        // calculateCurrentTotalMinutes (manual + timer + timeAdjustments) equals the summed
+        // sessions. Legacy timeAdjustments deltas are NOT sessions, so they intentionally stay
+        // added on top; a task that still carries them keeps that (pre-existing) separate offset.
+        await updateDoc(ref, {
+            timerMinutes: total,
+            manualMinutes: 0,
+            actualTime: formatMinutesToTimeString(total),
+            timeChanged: true,
+            updatedAt: new Date().toISOString(),
+        });
+    } catch (err) {
+        logError(err, { source: 'writeFail:reconcileTaskTimerFromSessions', taskId });
+    }
+};
+
 // Edit an existing tracked session's start/end in place. Recomputes durationMinutes + date,
 // snapshots the TRUE original exactly once, and stamps who/when/why. Returns { ok, error, ... }.
 export const editWorkSession = async (session, { startTime, endTime, reason, editor } = {}) => {
@@ -93,6 +148,9 @@ export const editWorkSession = async (session, { startTime, endTime, reason, edi
 
     try {
         await updateDoc(doc(db, 'work_sessions', session.id), updates);
+        // Re-derive the linked task's cached counter from its sessions so the task sheet / earnings /
+        // monitor match the report after this correction (no-op for a synthetic-id session).
+        await reconcileTaskTimerFromSessions(session.taskId);
         // Tell the worker their PAID time was corrected by an admin. The notify() recipient===actor
         // guard drops an admin editing their OWN session, so this never self-notifies. Best-effort:
         // a notification failure must never undo the (already-persisted) correction, so it is fired
@@ -137,6 +195,9 @@ export const deleteWorkSession = async (session, { reason, editor } = {}) => {
     };
     try {
         await updateDoc(doc(db, 'work_sessions', session.id), updates);
+        // The removed session no longer counts toward the report — re-derive the task counter so its
+        // sheet/earnings/monitor drop the same time (no-op for a synthetic-id session).
+        await reconcileTaskTimerFromSessions(session.taskId);
         // Tell the worker an admin removed one of their logged (paid) sessions. Same self-edit guard
         // and best-effort posture as editWorkSession. The day comes from the stored bucket (or the
         // session's start), so the worker knows which day's total changed.
@@ -265,6 +326,9 @@ export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTi
     };
     try {
         const ref = await addDoc(collection(db, 'work_sessions'), payload);
+        // The new backdated session counts toward the report — re-derive the task counter so its
+        // sheet/earnings/monitor include the same time. Best-effort (worker path; rules may deny).
+        await reconcileTaskTimerFromSessions(task.id);
         // FYI to every admin that an approval-free backdated entry was logged. notifyMany dedupes and
         // drops the actor, so a backdating admin never self-notifies. userId == the worker's uid
         // satisfies the rules' provenance check on a worker-authored notification.
@@ -333,6 +397,9 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
         // of the credited time, never leaving an invisible sibling duplicate behind.
         const ref = doc(db, 'work_sessions', `sess_gap_${task.id}_${new Date(startTime).getTime()}`);
         await setDoc(ref, payload, { merge: true });
+        // Fold the just-claimed offline gap into the task counter so its sheet/earnings/monitor match
+        // the report (recovery already credited the pre-gap segments; this adds the remainder).
+        await reconcileTaskTimerFromSessions(task.id);
         return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
     } catch (err) {
         logError(err, { source: 'writeFail:claimRecoveredGap' });
@@ -347,13 +414,17 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
  * hard delete (not the admin soft-delete) is correct here: the session was auto-created seconds ago
  * and never seen by anyone, so there is nothing to preserve an audit trail against.
  *
- * @param {Object} args - { sessionId } the work_sessions id returned by claimRecoveredGap.
+ * @param {Object} args - { sessionId, taskId } sessionId is the work_sessions id returned by
+ *   claimRecoveredGap; taskId (optional) is the gap's task, so the counter can be re-derived after
+ *   the gap is removed (omit for a synthetic/unknown task — reconciliation then no-ops).
  * @returns {Promise<{ok:boolean, error?:string}>}
  */
-export const discardRecoveredGap = async ({ sessionId } = {}) => {
+export const discardRecoveredGap = async ({ sessionId, taskId } = {}) => {
     if (!sessionId) return { ok: false, error: 'session' };
     try {
         await deleteDoc(doc(db, 'work_sessions', sessionId));
+        // The gap is gone — re-derive the task counter so its sheet/earnings/monitor drop it too.
+        await reconcileTaskTimerFromSessions(taskId);
         return { ok: true };
     } catch (err) {
         logError(err, { source: 'writeFail:discardRecoveredGap' });

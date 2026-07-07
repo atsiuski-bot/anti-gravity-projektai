@@ -90,7 +90,7 @@ export default function RecoveryNotice() {
         setClaimError(null);
         setClaimingId(n.taskId);
         try {
-            const res = await discardRecoveredGap({ sessionId: n.sessionId });
+            const res = await discardRecoveredGap({ sessionId: n.sessionId, taskId: n.taskId });
             if (res?.ok) {
                 setNotices(removeRecoveryNotice(uid, { kind: 'task-gap-credited', taskId: n.taskId }));
             } else {

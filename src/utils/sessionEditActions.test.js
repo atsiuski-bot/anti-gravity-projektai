@@ -9,6 +9,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // mocked, so MAX_SESSION_MINUTES and the Vilnius day bucketing are the genuine implementations.
 vi.mock('../firebase', () => ({ db: {}, auth: {} }));
 
+// getDoc/getDocs/query/where back the counter-reconciliation helper. They default to "no sessions,
+// no task doc" so every existing edit/delete/backdate test reconciles to a clean no-op (a synthetic
+// or absent task is skipped) and its updateDoc assertions are unaffected. The reconciliation suite
+// below overrides getDocs/getDoc per-case to drive the write-back.
 vi.mock('firebase/firestore', () => ({
     doc: vi.fn((_db, col, id) => ({ _path: `${col}/${id}`, id })),
     collection: vi.fn((_db, name) => ({ _col: name })),
@@ -16,6 +20,10 @@ vi.mock('firebase/firestore', () => ({
     addDoc: vi.fn(() => Promise.resolve({ id: 'generated-id' })),
     setDoc: vi.fn(() => Promise.resolve()),
     deleteDoc: vi.fn(() => Promise.resolve()),
+    getDoc: vi.fn(() => Promise.resolve({ exists: () => false })),
+    getDocs: vi.fn(() => Promise.resolve({ forEach: () => {} })),
+    query: vi.fn((...args) => ({ _query: args })),
+    where: vi.fn((field, op, value) => ({ field, op, value })),
 }));
 
 // notify()/notifyMany() are exercised in their own surface; here we only assert the action layer
@@ -26,7 +34,7 @@ vi.mock('./notify', () => ({
     notifyMany: vi.fn(() => Promise.resolve()),
 }));
 
-import { updateDoc, addDoc, setDoc, deleteDoc, doc } from 'firebase/firestore';
+import { updateDoc, addDoc, setDoc, deleteDoc, doc, getDoc, getDocs } from 'firebase/firestore';
 import { notify, notifyMany } from './notify';
 import {
     deriveSessionFields,
@@ -38,6 +46,7 @@ import {
     logBackdatedWorkerSession,
     claimRecoveredGap,
     discardRecoveredGap,
+    reconcileTaskTimerFromSessions,
 } from './sessionEditActions';
 import { MAX_SESSION_MINUTES, MAX_BACKDATE_DAYS } from './timeUtils';
 
@@ -557,5 +566,80 @@ describe('logBackdatedWorkerSession (trusted worker self-log, approval-free + ad
         const res = await logBackdatedWorkerSession(base);
         expect(res).toEqual({ ok: false, error: 'write' });
         expect(notifyMany).not.toHaveBeenCalled();
+    });
+});
+
+describe('reconcileTaskTimerFromSessions (work_sessions is canonical → re-derive the task counter)', () => {
+    // Build a work_sessions getDocs snapshot from plain data objects.
+    const sessionsSnap = (rows) => ({ forEach: (cb) => rows.forEach((data) => cb({ data: () => data })) });
+    // Grab the task write-back among updateDoc calls (skips the work_session write in integration tests).
+    const taskWrite = () => updateDoc.mock.calls.find(([ref]) => String(ref._path || '').startsWith('tasks/') || String(ref._path || '').startsWith('archived_tasks/'));
+
+    it('sets timerMinutes to the summed sessions and zeroes manualMinutes for a live task', async () => {
+        getDocs.mockResolvedValueOnce(sessionsSnap([
+            { durationMinutes: 13 }, { durationMinutes: 19 }, { durationMinutes: 12 },
+        ]));
+        getDoc.mockResolvedValueOnce({ exists: () => true }); // found in tasks/
+
+        await reconcileTaskTimerFromSessions('t-real');
+
+        const call = taskWrite();
+        expect(call).toBeTruthy();
+        expect(call[0]._path).toBe('tasks/t-real');
+        expect(call[1]).toMatchObject({ timerMinutes: 44, manualMinutes: 0, timeChanged: true });
+        expect(call[1].actualTime).toBe('44m');
+    });
+
+    it('excludes soft-deleted sessions from the sum', async () => {
+        getDocs.mockResolvedValueOnce(sessionsSnap([
+            { durationMinutes: 20 }, { durationMinutes: 999, isDeleted: true }, { durationMinutes: 5 },
+        ]));
+        getDoc.mockResolvedValueOnce({ exists: () => true });
+
+        await reconcileTaskTimerFromSessions('t-real');
+        expect(taskWrite()[1].timerMinutes).toBe(25);
+    });
+
+    it('SKIPS the write for a synthetic/absent task id — never wipes quick-work/call pay', async () => {
+        getDocs.mockResolvedValueOnce(sessionsSnap([])); // synthetic id sums to nothing by taskId
+        getDoc
+            .mockResolvedValueOnce({ exists: () => false })  // not in tasks/
+            .mockResolvedValueOnce({ exists: () => false }); // not in archived_tasks/
+
+        await reconcileTaskTimerFromSessions('quick_1720000000000');
+        expect(taskWrite()).toBeUndefined(); // no task write at all
+    });
+
+    it('is a no-op when no taskId is supplied', async () => {
+        await reconcileTaskTimerFromSessions(undefined);
+        expect(getDocs).not.toHaveBeenCalled();
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('falls back to archived_tasks when the task is no longer live', async () => {
+        getDocs.mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 30 }]));
+        getDoc
+            .mockResolvedValueOnce({ exists: () => false })  // not in tasks/
+            .mockResolvedValueOnce({ exists: () => true });  // found in archived_tasks/
+
+        await reconcileTaskTimerFromSessions('t-archived');
+        const call = taskWrite();
+        expect(call[0]._path).toBe('archived_tasks/t-archived');
+        expect(call[1].timerMinutes).toBe(30);
+    });
+
+    it('editWorkSession re-derives the linked task counter after the correction', async () => {
+        // The session edit itself succeeds; reconcile then sums the task's sessions and writes back.
+        getDocs.mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 40 }]));
+        getDoc.mockResolvedValueOnce({ exists: () => true });
+
+        const res = await editWorkSession(
+            { id: 'ws-1', taskId: 't-real', startTime: '2026-07-07T09:00:00.000Z', endTime: '2026-07-07T09:20:00.000Z' },
+            { startTime: '2026-07-07T09:00:00.000Z', endTime: '2026-07-07T09:40:00.000Z', reason: 'pataisa', editor: { uid: 'a1' } },
+        );
+        expect(res.ok).toBe(true);
+        const call = taskWrite();
+        expect(call[0]._path).toBe('tasks/t-real');
+        expect(call[1].timerMinutes).toBe(40);
     });
 });
