@@ -160,7 +160,7 @@ function ChipMultiSelect({ legend, candidates, selectedIds, onToggle, primaryId,
 //    assignment to an admin/senior stays visible and editable instead of silently vanishing from
 //    the picker. Star marks the primary (defaultManager, the approval/notification route);
 //    teamManagerIds is the visibility key the rules read.
-function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCandidates, onToggleManager, onSetPrimary, onToggleScoped, onToggleSenior }) {
+function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCandidates, workerCandidates, onToggleManager, onSetPrimary, onToggleScoped, onToggleSenior }) {
     const name = formatDisplayName(user.displayName) || user.email || '';
     if (user.role === 'admin') {
         return <span className="text-body italic text-ink-muted">Mato visus</span>;
@@ -190,8 +190,28 @@ function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCan
     }
     if (user.role === 'manager') {
         const scoped = user.scopedManager === true;
+        // Inverse view: build this manager's team right here. Membership lives on each MEISTRAS's
+        // doc (teamManagerIds), so a toggle writes the WORKER's doc — the same write the worker's
+        // own row would make, from the other side. This is the field the visibility rules read, so
+        // assigning a worker here is what makes their tasks/sessions show up for this manager.
+        const myTeamIds = (workerCandidates || [])
+            .filter((w) => effectiveTeamIds(w).includes(user.id))
+            .map((w) => w.id);
         return (
             <div className="space-y-3">
+                <div>
+                    <span className="mb-1 block text-caption font-medium text-ink-muted">Komanda (meistrai)</span>
+                    <ChipMultiSelect
+                        legend={`${name} komandos meistrai`}
+                        candidates={workerCandidates || []}
+                        selectedIds={myTeamIds}
+                        onToggle={(wid) => {
+                            const w = (workerCandidates || []).find((c) => c.id === wid);
+                            if (w) onToggleManager(w, user.id);
+                        }}
+                        emptyLabel="Nėra meistrų"
+                    />
+                </div>
                 <div>
                     <span className="mb-1 block text-caption font-medium text-ink-muted">Šis koordinatorius mato</span>
                     <button
@@ -237,6 +257,16 @@ function ManagerControl({ user, overseerCandidates, managerCandidates, seniorCan
     );
 }
 
+// Lithuanian count noun for "meistras": 1→as (21, 31…), 2–9→ai (except the teens), 0 & 11–19→ų.
+function meistraiLabel(n) {
+    const d = n % 10;
+    const dd = n % 100;
+    if (dd >= 11 && dd <= 19) return `${n} meistrų`;
+    if (d === 1) return `${n} meistras`;
+    if (d >= 2 && d <= 9) return `${n} meistrai`;
+    return `${n} meistrų`;
+}
+
 // Resolve an overseer's id to a display name via the prebuilt lookup. Returns null for an id that
 // no longer matches any user (e.g. a deleted account) so the caller can drop it from the summary.
 function overseerName(usersById, id) {
@@ -255,9 +285,15 @@ function OverseerSummary({ user, usersById }) {
     if (user.role === 'manager') {
         const scoped = user.scopedManager === true;
         const seniors = effectiveSeniorIds(user).map((id) => overseerName(usersById, id)).filter(Boolean);
+        // Team size = how many workers list this manager in their teamManagerIds (the same field the
+        // editor toggles), so the collapsed card shows whether a curator actually has a team yet.
+        const teamCount = Object.values(usersById).filter(
+            (u) => u.role === 'worker' && effectiveTeamIds(u).includes(user.id)
+        ).length;
         return (
             <p className={base}>
                 {scoped ? 'Mato tik savo komandą' : 'Mato visą įmonę'}
+                {`  ·  Komanda: ${meistraiLabel(teamCount)}`}
                 {seniors.length > 0 && `  ·  Vyr. koordinatoriai: ${seniors.join(', ')}`}
             </p>
         );
@@ -725,6 +761,9 @@ export default function UserManagement() {
     );
     const managerCandidates = users.filter((u) => u.role === 'manager' && !u.isDisabled);
     const seniorCandidates = users.filter((u) => u.role === 'seniorManager' && !u.isDisabled);
+    // Workers assignable to a manager's team, edited from the manager's OWN row (inverse of the
+    // worker→managers picker). Disabled accounts are excluded from the candidate pool.
+    const workerCandidates = users.filter((u) => u.role === 'worker' && !u.isDisabled);
     // Id → user lookup for the read-only overseer summary on collapsed mobile cards.
     const usersById = useMemo(() => Object.fromEntries(users.map((u) => [u.id, u])), [users]);
 
@@ -1196,6 +1235,7 @@ export default function UserManagement() {
                                         overseerCandidates={overseerCandidates}
                                         managerCandidates={managerCandidates}
                                         seniorCandidates={seniorCandidates}
+                                        workerCandidates={workerCandidates}
                                         onToggleManager={handleToggleManager}
                                         onSetPrimary={handleSetPrimary}
                                         onToggleScoped={handleToggleScoped}
@@ -1292,6 +1332,7 @@ export default function UserManagement() {
                                                     overseerCandidates={overseerCandidates}
                                                     managerCandidates={managerCandidates}
                                                     seniorCandidates={seniorCandidates}
+                                                    workerCandidates={workerCandidates}
                                                     onToggleManager={handleToggleManager}
                                                     onSetPrimary={handleSetPrimary}
                                                     onToggleScoped={handleToggleScoped}
