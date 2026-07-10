@@ -351,6 +351,94 @@ service cloud.firestore {
                             );
     }
 
+    // ---- REVISIONED TIMER ENGINE --------------------------------------------
+    // One canonical active-session record per worker. Every transition carries the revision/run it
+    // was built from; the first accepted batch increments the revision, so a stale second device is
+    // rejected instead of silently overwriting the winner. The active record is written in the SAME
+    // batch as its task/user compatibility projection and deterministic ledger row (ADR 0020).
+    function validTimerRun(run) {
+      return run is map &&
+             run.runId is string &&
+             run.type in ['task', 'break', 'call', 'quickWork'] &&
+             run.startedAt is string &&
+             run.revision is int;
+    }
+
+    function validActiveSessionRecord(data, userId) {
+      return data.userId == userId &&
+             data.revision is int &&
+             data.revision > 0 &&
+             data.expectedRevision is int &&
+             (data.expectedRunId == null || data.expectedRunId is string) &&
+             data.status in ['active', 'idle'] &&
+             data.lastCommandId is string &&
+             data.updatedAt is string &&
+             data.engineVersion == 2 &&
+             ((data.status == 'active' && validTimerRun(data.run)) ||
+              (data.status == 'idle' && data.run == null));
+    }
+
+    match /active_sessions/{userId} {
+      allow read: if isUserActive() &&
+                  (request.auth.uid == userId || isManagerOrAdmin());
+      allow create: if isUserActive() &&
+                    request.auth.uid == userId &&
+                    validActiveSessionRecord(request.resource.data, userId) &&
+                    request.resource.data.revision == 1 &&
+                    request.resource.data.expectedRevision == 0;
+      allow update: if isUserActive() &&
+                    validActiveSessionRecord(request.resource.data, userId) &&
+                    request.resource.data.userId == resource.data.userId &&
+                    request.resource.data.revision == resource.data.revision + 1 &&
+                    request.resource.data.expectedRevision == resource.data.revision &&
+                    ((resource.data.status == 'active' &&
+                      request.resource.data.expectedRunId == resource.data.run.runId) ||
+                     (resource.data.status == 'idle' &&
+                      request.resource.data.expectedRunId == null)) &&
+                    (
+                      request.auth.uid == userId ||
+                      (
+                        isManagerOrAdmin() &&
+                        request.resource.data.status == 'idle' &&
+                        request.resource.data.run == null
+                      )
+                    );
+      allow delete: if false;
+    }
+
+    // The committed-command marker is part of the transition batch. Its deterministic id lets a
+    // reboot distinguish "the original batch committed but this tab died before observing ACK" from
+    // "still queued", and makes replay idempotent. Client updates/deletes are forbidden.
+    match /users/{userId}/timer_commands/{commandId} {
+      allow read: if isUserActive() &&
+                  (userId == request.auth.uid || isManagerOrAdmin());
+      allow create: if isUserActive() &&
+                    request.resource.data.commandId == commandId &&
+                    request.resource.data.userId == userId &&
+                    request.resource.data.kind in [
+                      'start-task', 'resume-task', 'pause-task', 'end-task',
+                      'start-break', 'start-call', 'start-quick-work',
+                      'end-session', 'force-end-session', 'switch-session', 'recover', 'undo-recovery'
+                    ] &&
+                    (
+                      userId == request.auth.uid ||
+                      (
+                        isManagerOrAdmin() &&
+                        request.resource.data.kind == 'force-end-session' &&
+                        request.resource.data.actorId == request.auth.uid
+                      )
+                    ) &&
+                    request.resource.data.expectedRevision is int &&
+                    (request.resource.data.expectedRunId == null ||
+                     request.resource.data.expectedRunId is string) &&
+                    (request.resource.data.runId == null ||
+                     request.resource.data.runId is string) &&
+                    request.resource.data.appliedRevision is int &&
+                    request.resource.data.issuedAt is string &&
+                    request.resource.data.engineVersion == 2;
+      allow update, delete: if false;
+    }
+
     // ---- BREAK SESSIONS -----------------------------------------------------
     match /break_sessions/{sessionId} {
       // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.

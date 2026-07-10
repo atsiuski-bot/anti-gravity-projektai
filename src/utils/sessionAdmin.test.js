@@ -21,10 +21,14 @@ vi.mock('firebase/firestore', () => ({
 
 vi.mock('./taskActions', () => ({ pauseTask: vi.fn(() => Promise.resolve()) }));
 vi.mock('./errorLog', () => ({ logError: vi.fn() }));
+vi.mock('./timerTransitionExecutor', () => ({
+    applyTimerTransitionPlan: vi.fn(() => Promise.resolve()),
+}));
 
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { pauseTask } from './taskActions';
 import { logError } from './errorLog';
+import { applyTimerTransitionPlan } from './timerTransitionExecutor';
 import { endSessionForUser } from './sessionAdmin';
 
 // The clear-write payload aimed at a specific user doc, across all mock calls.
@@ -33,13 +37,15 @@ const userClearFor = (id) =>
 
 // Make getDoc resolve to a specific task body (the running-task branch reads tasks/<id>).
 const taskSnap = (data) => ({ exists: () => true, id: data.id, data: () => data });
+const missingSnap = () => ({ exists: () => false, data: () => ({}) });
 
 beforeEach(() => {
     vi.clearAllMocks();
     // clearAllMocks wipes call history but not implementations; re-arm the resolving defaults.
     updateDoc.mockResolvedValue(undefined);
     pauseTask.mockResolvedValue(undefined);
-    getDoc.mockResolvedValue({ exists: () => false, data: () => ({}) });
+    applyTimerTransitionPlan.mockResolvedValue(undefined);
+    getDoc.mockResolvedValue(missingSnap());
 });
 
 describe('endSessionForUser', () => {
@@ -56,7 +62,8 @@ describe('endSessionForUser', () => {
         // entirely, so getDoc/pauseTask are never reached, but the clear still fires.
         await endSessionForUser({ id: 'u1' });
 
-        expect(getDoc).not.toHaveBeenCalled();
+        expect(getDoc).toHaveBeenCalledTimes(1);
+        expect(getDoc.mock.calls[0][0]?._path).toBe('active_sessions/u1');
         expect(pauseTask).not.toHaveBeenCalled();
 
         const clear = userClearFor('u1');
@@ -71,12 +78,16 @@ describe('endSessionForUser', () => {
 
     it('settles the running task via pauseTask AND issues the activeSession:null + workStatus clear', async () => {
         const task = { id: 't1', title: 'Roof repair', timerStatus: 'running' };
-        getDoc.mockResolvedValue(taskSnap(task));
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'active_sessions/u1') return Promise.resolve(missingSnap());
+            if (ref?._path === 'tasks/t1') return Promise.resolve(taskSnap(task));
+            return Promise.resolve(missingSnap());
+        });
 
         await endSessionForUser({ id: 'u1', activeSession: { taskId: 't1' } });
 
         // The task was read and settled (pauseTask logs the open segment + clears the owner).
-        expect(getDoc).toHaveBeenCalledTimes(1);
+        expect(getDoc).toHaveBeenCalledTimes(2);
         expect(pauseTask).toHaveBeenCalledTimes(1);
         expect(pauseTask).toHaveBeenCalledWith(expect.objectContaining({ id: 't1', timerStatus: 'running' }));
 
@@ -95,12 +106,71 @@ describe('endSessionForUser', () => {
     it('does NOT settle a task that is no longer running, but still clears the ghost flags', async () => {
         // A lingering activeTaskId whose task already paused: read it, see it is not running,
         // skip pauseTask, and fall through to the clear (the orphan-flag recovery case).
-        getDoc.mockResolvedValue(taskSnap({ id: 't1', timerStatus: 'paused' }));
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'active_sessions/u1') return Promise.resolve(missingSnap());
+            if (ref?._path === 'tasks/t1') return Promise.resolve(taskSnap({ id: 't1', timerStatus: 'paused' }));
+            return Promise.resolve(missingSnap());
+        });
 
         await endSessionForUser({ id: 'u1', workStatus: { activeTaskId: 't1' } });
 
-        expect(getDoc).toHaveBeenCalledTimes(1);
+        expect(getDoc).toHaveBeenCalledTimes(2);
         expect(pauseTask).not.toHaveBeenCalled();
         expect(userClearFor('u1')).toBeDefined();
+    });
+
+    it('settles a canonical running task through one revisioned manager batch', async () => {
+        const task = {
+            id: 't1',
+            title: 'Roof repair',
+            timerStatus: 'running',
+            timerStartedAt: '2026-07-09T08:00:00.000Z',
+            timerMinutes: 2,
+        };
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'active_sessions/u1') {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => ({
+                        userId: 'u1',
+                        revision: 4,
+                        status: 'active',
+                        run: {
+                            runId: 'run-force',
+                            type: 'task',
+                            taskId: 't1',
+                            taskTitle: 'Roof repair',
+                            startedAt: '2026-07-09T08:00:00.000Z',
+                            revision: 4,
+                        },
+                    }),
+                });
+            }
+            if (ref?._path === 'tasks/t1') return Promise.resolve(taskSnap(task));
+            return Promise.resolve(missingSnap());
+        });
+
+        const result = await endSessionForUser({
+            id: 'u1',
+            displayName: 'Worker A',
+            activeSession: { type: 'task', taskId: 't1' },
+        }, { actorId: 'manager-a' });
+
+        expect(result.status).toBe('canonical-ended');
+        expect(pauseTask).not.toHaveBeenCalled();
+        expect(updateDoc).not.toHaveBeenCalled();
+        expect(applyTimerTransitionPlan).toHaveBeenCalledTimes(1);
+        const plan = applyTimerTransitionPlan.mock.calls[0][1];
+        expect(plan.command).toMatchObject({
+            kind: 'force-end-session',
+            userId: 'u1',
+            actorId: 'manager-a',
+            expectedRevision: 4,
+            expectedRunId: 'run-force',
+        });
+        expect(plan.writes.find((write) => write.path === 'work_sessions/sess_run_run-force').data)
+            .toMatchObject({ runId: 'run-force' });
+        expect(plan.writes.find((write) => write.path === 'active_sessions/u1').data)
+            .toMatchObject({ status: 'idle', revision: 5 });
     });
 });

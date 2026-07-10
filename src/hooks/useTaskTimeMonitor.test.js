@@ -16,10 +16,19 @@ vi.mock('../utils/soundUtils', () => ({
     },
 }));
 vi.mock('../context/AuthContext', () => ({ useAuth: vi.fn(() => ({})) }));
+vi.mock('./useRevisionedTimerSession', () => ({ useRevisionedTimerSession: vi.fn(() => ({ loaded: false })) }));
+vi.mock('../utils/timerCommandEngine', () => ({ issueTimerCommand: vi.fn() }));
+vi.mock('../utils/timerTransitionPlan', () => ({
+    canonicalSessionState: vi.fn(),
+    planTaskEnd: vi.fn(),
+    planTaskPause: vi.fn(),
+}));
+vi.mock('../utils/errorLog', () => ({ logError: vi.fn() }));
+vi.mock('../utils/notify', () => ({ notify: vi.fn() }));
 // Fixed at 0 so the "uses the module default" case below is unambiguous against any positive ms.
 vi.mock('./useOrphanedTaskRecovery', () => ({ APP_LOAD_TIME: 0 }));
 
-import { isPreBootOrphanTask } from './useTaskTimeMonitor';
+import { isPreBootOrphanTask, latestTaskForLimitAction } from './useTaskTimeMonitor';
 
 // Fixed reference instant so start offsets are exact.
 const LOAD = new Date('2026-07-01T11:00:00.000Z').getTime();
@@ -59,5 +68,20 @@ describe('isPreBootOrphanTask — which running tasks the time-limit monitor mus
 
     it('defaults appLoadTime to the shared APP_LOAD_TIME constant when omitted', () => {
         expect(isPreBootOrphanTask({ timerStartedAt: iso(1000) })).toBe(false);
+    });
+});
+
+describe('latestTaskForLimitAction', () => {
+    it('uses the fresh task snapshot when the limit popup holds an older running copy', () => {
+        const popupTask = { id: 'task-a', timerStatus: 'running', timerMinutes: 10 };
+        const freshTask = { id: 'task-a', timerStatus: 'paused', timerMinutes: 15 };
+
+        expect(latestTaskForLimitAction([freshTask], popupTask)).toBe(freshTask);
+    });
+
+    it('falls back to the popup copy when the task list no longer contains the task', () => {
+        const popupTask = { id: 'task-a', timerStatus: 'paused', timerMinutes: 15 };
+
+        expect(latestTaskForLimitAction([], popupTask)).toBe(popupTask);
     });
 });

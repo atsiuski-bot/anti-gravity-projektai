@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo, Fragment } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc, updateDoc, getDoc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
 import { ShieldAlert, Check, Sliders, Trash2, Clock, Ban, Star, Users, Globe, Sparkles, Coins, ChevronDown, Search, X, SearchX } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { pauseTask } from '../utils/taskActions';
 import { logError } from '../utils/errorLog';
+import { endSessionForUser } from '../utils/sessionAdmin';
 import { formatDisplayName } from '../utils/formatters';
 import { hasPayRate } from '../utils/payRate';
 import { getContrastingTextColor } from '../utils/priority';
@@ -989,25 +989,7 @@ export default function UserManagement() {
     // the disable itself, so it is logged and swallowed.
     const closeActiveSessionForUser = async (user) => {
         try {
-            const activeTaskId = user.activeSession?.taskId || user.workStatus?.activeTaskId;
-            if (activeTaskId) {
-                const taskSnap = await getDoc(doc(db, 'tasks', activeTaskId));
-                if (taskSnap.exists()) {
-                    const t = { id: taskSnap.id, ...taskSnap.data() };
-                    if (t.timerStatus === 'running') {
-                        await pauseTask(t); // logs the segment + clears the user's activeSession/workStatus
-                    }
-                }
-            }
-            await updateDoc(doc(db, 'users', user.id), {
-                activeSession: null,
-                'workStatus.isWorking': false,
-                'workStatus.status': 'idle',
-                'workStatus.activeTaskId': null,
-                'breakState.isTakingBreak': false,
-                'callState.isCalling': false,
-                'quickWorkState.isQuickWorking': false
-            });
+            await endSessionForUser(user, { actorId: currentUser?.uid });
         } catch (e) {
             logError(e, { source: 'closeActiveSessionForUser', userId: user.id });
         }

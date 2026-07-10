@@ -212,10 +212,11 @@ export async function pauseAtBeatAndResolveGap(task, currentUser, decision) {
  * @param {Array} tasks - the live tasks list (already scoped to the current user).
  * @param {Object} currentUser - the authenticated user (attributes + authors the auto-credited gap).
  */
-export function useOrphanedTaskRecovery(tasks, currentUser) {
+export function useOrphanedTaskRecovery(tasks, currentUser, enabled = true) {
     const handledRef = useRef(new Set());
 
     useEffect(() => {
+        if (!enabled) return;
         if (!Array.isArray(tasks) || tasks.length === 0) return;
         // Wait for a resolved identity before acting OR latching. resolveUntrackedGap AUTO-credits the
         // untracked gap as a session authored by and attributed to the signed-in worker (its own-task
@@ -249,7 +250,7 @@ export function useOrphanedTaskRecovery(tasks, currentUser) {
         // currentUser is a dep so a task first seen before auth resolves is processed once the user
         // arrives (the guard above skips until then); handledRef makes any later re-run a no-op for a
         // task already handled.
-    }, [tasks, currentUser]);
+    }, [tasks, currentUser, enabled]);
 }
 
 // Stamp the one-time "timer recovered" notice when a pause actually credited time. Keyed to the

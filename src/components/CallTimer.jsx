@@ -1,4 +1,6 @@
 import React, { useState, useRef, useCallback } from 'react';
+import { doc, getDoc, getDocFromCache } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
@@ -8,12 +10,39 @@ import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import { useRevisionedTimerSession } from '../hooks/useRevisionedTimerSession';
+import { issueTimerCommand } from '../utils/timerCommandEngine';
+import {
+    canonicalSessionState,
+    planSecondaryEnd,
+    planSecondaryStart,
+} from '../utils/timerTransitionPlan';
+import { logError } from '../utils/errorLog';
 import { getSessionColors } from '../utils/sessionColors';
 import { CALL_CONTACT_TYPES } from '../utils/callContacts';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import SessionToggleButton from './ui/SessionToggleButton';
+
+const idFor = (prefix) => {
+    const random = globalThis.crypto?.randomUUID?.()
+        || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    return `${prefix}_${random}`;
+};
+
+async function loadTaskForTimer(taskId) {
+    if (!taskId) return null;
+    const ref = doc(db, 'tasks', taskId);
+    try {
+        const cached = await getDocFromCache(ref);
+        if (cached.exists()) return { id: cached.id, ...cached.data() };
+    } catch {
+        // Fall through to the normal read; it may still resolve from local cache while offline.
+    }
+    const snapshot = await getDoc(ref);
+    return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+}
 
 // Separate memoized modal component to prevent re-renders from timer updates
 const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, onClose, onDiscard, currentSessionMinutes, isSubmitting, isDiscarding }) {
@@ -167,7 +196,8 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
 });
 
 export default function CallTimer({ compact = false, hideLabel = false }) {
-    const { currentUser, userData, setOptimisticUserData } = useAuth();
+    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled } = useAuth();
+    const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
 
     const {
@@ -187,13 +217,143 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
     // isSubmitting/isDiscarding flags. Mirrors TaskTimerControls' actionInFlightRef.
     const actionInFlightRef = useRef(false);
 
+    const trackRevisionedCall = useCallback(async (plan) => {
+        const issued = await issueTimerCommand(plan);
+        issued.settlement.then((outcome) => {
+            if (outcome.status === 'confirmed' || outcome.status === 'queued') return;
+            setError(
+                outcome.status === 'conflicted'
+                    ? 'Skambučio būsena pakeista kitame įrenginyje.'
+                    : 'Nepavyko pakeisti skambučio būsenos. Bandykite dar kartą.'
+            );
+            logError(outcome.error || new Error(`Call command ${outcome.status}`), {
+                source: 'CallTimer.revisionedSettlement',
+                commandId: outcome.commandId,
+                outcome: outcome.status,
+            });
+        }).catch((error) => {
+            setError('Nepavyko pakeisti skambučio būsenos. Bandykite dar kartą.');
+            logError(error, {
+                source: 'CallTimer.revisionedSettlement',
+                commandId: issued.commandId,
+            });
+        });
+        return issued;
+    }, []);
+
+    const tryRevisionedStartCall = async () => {
+        if (!timerEngineEnabled) return false;
+        if (!revisionedSession.loaded || revisionedSession.error) {
+            setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
+            return true;
+        }
+
+        const base = canonicalSessionState(revisionedSession.record, {
+            ...userData,
+            id: currentUser.uid,
+        });
+        const persistedCanonical = Boolean(revisionedSession.record);
+        if (base.status === 'active' && base.run?.type === 'quickWork') {
+            if (persistedCanonical) {
+                setError('Pirma užbaikite greitą veiklą, tada pradėkite skambutį.');
+                return true;
+            }
+            return false;
+        }
+        if (base.status === 'active' && !['task', 'break'].includes(base.run?.type)) {
+            if (persistedCanonical) {
+                setError('Pirma užbaikite aktyvią veiklą.');
+                return true;
+            }
+            return false;
+        }
+
+        const currentTask = base.status === 'active' && base.run?.type === 'task'
+            ? await loadTaskForTimer(base.run.taskId)
+            : null;
+        if (base.status === 'active' && base.run?.type === 'task' && !currentTask) {
+            setError('Nepavyko įkelti aktyvios užduoties. Prisijunkite prie interneto ir bandykite dar kartą.');
+            return true;
+        }
+
+        const plan = planSecondaryStart({
+            type: 'call',
+            userId: currentUser.uid,
+            userData,
+            activeRecord: revisionedSession.record,
+            currentTask,
+            commandId: idFor('timer_cmd'),
+            runId: idFor('timer_run'),
+            issuedAt: new Date().toISOString(),
+        });
+        await trackRevisionedCall(plan);
+        SoundManager.playCallSound();
+        return true;
+    };
+
+    const tryRevisionedFinishCall = useCallback(async ({ contactType = null, notes = '', discard = false } = {}) => {
+        if (!timerEngineEnabled) return false;
+        if (!revisionedSession.loaded || revisionedSession.error) {
+            setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
+            return true;
+        }
+
+        const base = canonicalSessionState(revisionedSession.record, {
+            ...userData,
+            id: currentUser.uid,
+        });
+        if (base.status !== 'active' || base.run?.type !== 'call') {
+            if (revisionedSession.record) {
+                setError('Skambučio būsena jau pasikeitė.');
+                return true;
+            }
+            return false;
+        }
+        if (base.run.pausedSession?.type && !['task', 'break'].includes(base.run.pausedSession.type)) {
+            if (revisionedSession.record) {
+                setError('Šiai skambučio kombinacijai dar naudojamas senasis užbaigimo kelias.');
+                return true;
+            }
+            return false;
+        }
+
+        let restoreTask = null;
+        if (base.run.pausedSession?.type === 'task') {
+            restoreTask = await loadTaskForTimer(base.run.pausedSession.taskId);
+            if (!restoreTask) {
+                restoreTask = {
+                    id: base.run.pausedSession.taskId,
+                    title: base.run.pausedSession.taskTitle || 'Užduotis',
+                };
+            }
+        }
+
+        const plan = planSecondaryEnd({
+            type: 'call',
+            userId: currentUser.uid,
+            userData,
+            activeRecord: revisionedSession.record,
+            restoreTask,
+            commandId: idFor('timer_cmd'),
+            runId: base.run.pausedSession?.type ? idFor('timer_run') : null,
+            issuedAt: new Date().toISOString(),
+            discard,
+            contactType,
+            callNotes: (notes || '').trim(),
+        });
+        await trackRevisionedCall(plan);
+        setShowTitleModal(false);
+        return true;
+    }, [currentUser, revisionedSession, timerEngineEnabled, trackRevisionedCall, userData]);
+
     const handleStartCall = async () => {
         if (!currentUser || isDisabled) return;
         setError('');
         try {
+            if (await tryRevisionedStartCall()) return;
+
             // Optimistic UI Update: Instantly assume call started, clear other sessions
-            setOptimisticUserData({
-                ...userData,
+            setPendingSessionProjection({
                 activeSession: {
                     type: 'call',
                     startTime: new Date().toISOString(),
@@ -209,7 +369,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             SoundManager.playCallSound();
         } catch (err) {
             console.error("Error starting call:", err);
-            setOptimisticUserData(null); // Revert
+            setPendingSessionProjection(null); // Revert
             setError("Nepavyko pradėti skambučio. Bandykite dar kartą.");
         }
     };
@@ -237,6 +397,10 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         setBusy(true);
         setError('');
         try {
+            if (await tryRevisionedFinishCall({ contactType, notes, discard })) {
+                return;
+            }
+
             // Determine what will be restored from pausedSession
             const pausedSession = userData?.activeSession?.pausedSession;
             const pausedType = pausedSession?.type;
@@ -260,7 +424,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             }
 
             // Optimistic UI Update: Instantly assume call ended and paused session restored
-            setOptimisticUserData(optimistic);
+            setPendingSessionProjection(optimistic);
 
             // End session. On the SAVE path the logger (handleLegacyLogging) derives the call title
             // from contactType ("Skambutis – Klientas", or plain "Skambutis" when null on the defer
@@ -270,14 +434,14 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             setShowTitleModal(false);
         } catch (err) {
             console.error(discard ? "Error discarding call:" : "Error completing call:", err);
-            setOptimisticUserData(null); // Revert
+            setPendingSessionProjection(null); // Revert
             setError(discard
                 ? "Nepavyko anuliuoti skambučio. Bandykite dar kartą."
                 : "Nepavyko išsaugoti skambučio. Bandykite dar kartą.");
         } finally {
             setBusy(false);
         }
-    }, [currentUser, userData, setOptimisticUserData]);
+    }, [currentUser, userData, setPendingSessionProjection, tryRevisionedFinishCall]);
 
     // Classify-now: the modal hands over the required contactType + optional notes. This is the
     // ONLY save path — every logged call must name who was on it, so reports can always group by

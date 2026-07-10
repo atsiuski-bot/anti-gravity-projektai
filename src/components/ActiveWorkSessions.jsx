@@ -40,6 +40,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
     // The worker whose session the manager is about to force-end (drives the confirm dialog).
     const [endTarget, setEndTarget] = useState(null);
     const [ending, setEnding] = useState(false);
+    const [endError, setEndError] = useState('');
 
     // A scoped manager only sees their own team's live activity; admin/unscoped see everyone.
     const scoped = isScopedOverseer(userData);
@@ -235,25 +236,30 @@ export default function ActiveWorkSessions({ embedded = false }) {
     const handleConfirmEnd = async () => {
         if (!endTarget) return;
         setEnding(true);
+        setEndError('');
         try {
-            await endSessionForUser(endTarget);
+            const result = await endSessionForUser(endTarget, { actorId: currentUser?.uid });
+            if (result?.status === 'failed') {
+                setEndError('Nepavyko užbaigti sesijos. Patikrinkite ryšį ir bandykite dar kartą.');
+                return;
+            }
+            setEndTarget(null);
         } finally {
             setEnding(false);
-            setEndTarget(null);
         }
     };
 
     const endDialog = endTarget && (
         <ConfirmDialog
             open
-            title="Užbaigti sesiją?"
+            title={endError || "Užbaigti sesiją?"}
             message={`Priverstinai užbaigti ${endTarget.displayName || endTarget.email} sesiją. Vykdoma užduotis bus pristabdyta ir užfiksuotas veiklos laikas; pertraukos / skambučio likutis bus tik išvalytas. Paskyra NEBUS užblokuota.`}
             warning="Naudokite tik kai sesija įstrigo (telefonas išsijungė ar programa užsidarė), o meistras pats jos užbaigti nebegali."
             confirmLabel="Užbaigti sesiją"
             cancelLabel="Atšaukti"
             loading={ending}
             onConfirm={handleConfirmEnd}
-            onCancel={() => { if (!ending) setEndTarget(null); }}
+            onCancel={() => { if (!ending) { setEndError(''); setEndTarget(null); } }}
         />
     );
 

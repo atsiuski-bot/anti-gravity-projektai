@@ -1,11 +1,31 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { calculateCurrentTotalMinutes, parseTimeStringToMinutes } from '../utils/timeUtils';
+import {
+    calculateCurrentTotalMinutes,
+    formatMinutesToTimeString,
+    parseTimeStringToMinutes,
+} from '../utils/timeUtils';
 import { pauseTask, requestTimeExtension, completeTaskAtLimit } from '../utils/taskActions';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
 import { APP_LOAD_TIME } from './useOrphanedTaskRecovery';
+import { useRevisionedTimerSession } from './useRevisionedTimerSession';
+import { issueTimerCommand } from '../utils/timerCommandEngine';
+import { canonicalSessionState, planTaskEnd, planTaskPause } from '../utils/timerTransitionPlan';
+import { logError } from '../utils/errorLog';
+import { notify } from '../utils/notify';
+
+const idFor = (prefix) => {
+    const random = globalThis.crypto?.randomUUID?.()
+        || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    return `${prefix}_${random}`;
+};
+
+export function latestTaskForLimitAction(tasks, popupTask) {
+    if (!popupTask?.id) return popupTask || null;
+    return tasks?.find((task) => task.id === popupTask.id) || popupTask;
+}
 
 // True when `task`'s running stretch predates this app load — i.e. it is a pre-boot orphan that
 // useOrphanedTaskRecovery (mirroring the same APP_LOAD_TIME instant) will also visit on this same
@@ -38,7 +58,8 @@ export function isPreBootOrphanTask(task, appLoadTime = APP_LOAD_TIME) {
  * @returns {Object} state for popups + the limit-popup action handlers
  */
 export function useTaskTimeMonitor(tasks) {
-    const { currentUser, userRole, userData } = useAuth();
+    const { currentUser, userRole, userData, timerEngineEnabled } = useAuth();
+    const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
 
     // Popup state
     const [warningPopup, setWarningPopup] = useState(null);  // { task, remaining }
@@ -74,6 +95,55 @@ export function useTaskTimeMonitor(tasks) {
     // auto-pause/alarm detection unreliable. We depend on stable primitives instead.
     const activeTaskRef = useRef(null);
     activeTaskRef.current = activeTask;
+    const currentUserRef = useRef(currentUser);
+    currentUserRef.current = currentUser;
+    const userDataRef = useRef(userData);
+    userDataRef.current = userData;
+    const timerEngineEnabledRef = useRef(timerEngineEnabled);
+    timerEngineEnabledRef.current = timerEngineEnabled;
+    const revisionedSessionRef = useRef(revisionedSession);
+    revisionedSessionRef.current = revisionedSession;
+
+    const issueRevisionedLimitPause = async (task, issuedAt) => {
+        const liveUser = currentUserRef.current;
+        if (!liveUser?.uid) return false;
+
+        const liveSession = revisionedSessionRef.current;
+        if (!liveSession.loaded || liveSession.error) {
+            logError(liveSession.error || new Error('Timer state is not loaded'), {
+                source: 'useTaskTimeMonitor.limitPause.unavailable',
+                taskId: task.id,
+            });
+            return false;
+        }
+
+        const plan = planTaskPause({
+            task,
+            userId: liveUser.uid,
+            userData: userDataRef.current,
+            activeRecord: liveSession.record,
+            commandId: idFor('timer_limit_pause'),
+            issuedAt,
+            taskUpdates: { timeLimitReached: true },
+        });
+        const issued = await issueTimerCommand(plan);
+        issued.settlement.then((outcome) => {
+            if (outcome.status === 'confirmed' || outcome.status === 'queued') return;
+            logError(outcome.error || new Error(`Limit pause ${outcome.status}`), {
+                source: 'useTaskTimeMonitor.limitPause.settlement',
+                taskId: task.id,
+                outcome: outcome.status,
+                commandId: outcome.commandId,
+            });
+        }).catch((error) => {
+            logError(error, {
+                source: 'useTaskTimeMonitor.limitPause.settlement',
+                taskId: task.id,
+                commandId: issued.commandId,
+            });
+        });
+        return true;
+    };
 
     // Check thresholds on an interval
     useEffect(() => {
@@ -150,24 +220,44 @@ export function useTaskTimeMonitor(tasks) {
             if (percentage >= 100 && !isPreBootOrphanTask(task) && limitReachedRef.current.get(taskId) !== task.timerStartedAt) {
                 limitReachedRef.current.set(taskId, task.timerStartedAt);
 
-                // 1. Auto-pause the task (stops the clock + logs the session). No-op if not running.
-                try {
-                    await pauseTask(task);
-                } catch (e) {
-                    console.error('Failed to auto-pause task at time limit:', e);
+                // 1. Auto-pause the task (stops the clock + logs the session). In the revisioned
+                // engine this is the same atomic active/task/ledger command as a manual pause; in
+                // legacy mode it keeps the old direct write path.
+                if (timerEngineEnabledRef.current) {
+                    try {
+                        const issued = await issueRevisionedLimitPause(task, new Date().toISOString());
+                        if (!issued) {
+                            limitReachedRef.current.delete(taskId);
+                            return;
+                        }
+                    } catch (e) {
+                        limitReachedRef.current.delete(taskId);
+                        logError(e, {
+                            source: 'useTaskTimeMonitor.limitPause',
+                            taskId,
+                            code: e?.code,
+                        });
+                        return;
+                    }
+                } else {
+                    try {
+                        await pauseTask(task);
+                    } catch (e) {
+                        console.error('Failed to auto-pause task at time limit:', e);
+                    }
+
+                    // 2. Mark on Firestore (idempotent — survives reload, gates the on_estimate badge).
+                    try {
+                        await updateDoc(doc(db, 'tasks', taskId), {
+                            timeLimitReached: true,
+                            updatedAt: new Date().toISOString()
+                        });
+                    } catch (e) {
+                        console.warn('Failed to mark time limit reached:', e);
+                    }
                 }
 
-                // 2. Mark on Firestore (idempotent — survives reload, gates the on_estimate badge).
-                try {
-                    await updateDoc(doc(db, 'tasks', taskId), {
-                        timeLimitReached: true,
-                        updatedAt: new Date().toISOString()
-                    });
-                } catch (e) {
-                    console.warn('Failed to mark time limit reached:', e);
-                }
-
-                // 3. Force the decision popup — request more time OR finish (never auto-sent). Skip
+                // 2. Force the decision popup — request more time OR finish (never auto-sent). Skip
                 //    if one is already open for this task so a re-tick can't stack popups.
                 const actualTime = Math.round(currentMinutes);
                 setLimitPopup((prev) => (prev?.task?.id === taskId ? prev : {
@@ -176,7 +266,7 @@ export function useTaskTimeMonitor(tasks) {
                     actualMinutes: actualTime
                 }));
 
-                // 4. Start repeating alarm
+                // 3. Start repeating alarm
                 SoundManager.startTimeLimitRepeat();
             }
         };
@@ -218,7 +308,89 @@ export function useTaskTimeMonitor(tasks) {
     // writes the completion fields (→ manager acceptance for a worker) and closes the popup.
     const finishFromLimit = useCallback(async () => {
         if (!limitPopup?.task) return;
-        const finishedTask = limitPopup.task;
+        const finishedTask = latestTaskForLimitAction(tasks, limitPopup.task);
+        if (timerEngineEnabled) {
+            if (!currentUser?.uid) throw new Error('Missing timer user');
+            if (!revisionedSession.loaded || revisionedSession.error) {
+                throw Object.assign(new Error('Timer state is unavailable'), {
+                    code: 'timer/unavailable',
+                });
+            }
+
+            const base = canonicalSessionState(revisionedSession.record, {
+                ...userData,
+                id: currentUser.uid,
+            });
+            if (base.status !== 'active' && finishedTask.timerStatus === 'running') {
+                throw Object.assign(new Error('Timer projection is still syncing'), {
+                    code: 'timer/syncing',
+                });
+            }
+
+            const issuedAt = new Date().toISOString();
+            const finishStatus = userRole === 'admin' ? 'confirmed' : 'completed';
+            const plan = planTaskEnd({
+                task: finishedTask,
+                userId: currentUser.uid,
+                userData,
+                activeRecord: revisionedSession.record,
+                commandId: idFor('timer_limit_finish'),
+                issuedAt,
+                completionStatus: finishStatus,
+                confirmedBy: finishStatus === 'confirmed' ? currentUser.uid : null,
+            });
+            const issued = await issueTimerCommand(plan);
+            SoundManager.stopTimeLimitRepeat();
+            setLimitPopup(null);
+
+            issued.settlement.then(async (outcome) => {
+                if (outcome.status !== 'confirmed') {
+                    logError(outcome.error || new Error(`Limit finish ${outcome.status}`), {
+                        source: 'useTaskTimeMonitor.limitFinish.settlement',
+                        taskId: finishedTask.id,
+                        outcome: outcome.status,
+                        commandId: outcome.commandId,
+                    });
+                    return;
+                }
+
+                if (finishStatus !== 'confirmed') {
+                    let recipientId = finishedTask.managerId || null;
+                    if (!recipientId || recipientId === currentUser.uid) {
+                        recipientId = userData?.defaultManager || null;
+                    }
+                    if (recipientId && recipientId !== currentUser.uid) {
+                        await notify({
+                            recipientId,
+                            type: 'task_completion',
+                            taskId: finishedTask.id,
+                            taskTitle: finishedTask.title || 'Užduotis',
+                            actualTime: formatMinutesToTimeString(plan.totalMinutes),
+                            actualMinutes: plan.totalMinutes,
+                            userName: currentUser.displayName || currentUser.email || 'Meistras',
+                            userId: currentUser.uid,
+                            completedAt: issuedAt,
+                        });
+                    }
+                }
+            }).catch((error) => {
+                logError(error, {
+                    source: 'useTaskTimeMonitor.limitFinish.notify',
+                    taskId: finishedTask.id,
+                });
+            });
+
+            if (finishedTask.assignedUserId === currentUser?.uid) {
+                window.dispatchEvent(new CustomEvent('request-completion-photo', {
+                    detail: {
+                        task: finishedTask,
+                        totalMinutes: plan.totalMinutes,
+                        showEarnings: false,
+                    }
+                }));
+            }
+            return { isManagerOrAdmin: finishStatus === 'confirmed', commandId: issued.commandId };
+        }
         const result = await completeTaskAtLimit(finishedTask, { currentUser, userData, userRole });
         SoundManager.stopTimeLimitRepeat();
         setLimitPopup(null);
@@ -230,7 +402,7 @@ export function useTaskTimeMonitor(tasks) {
             }));
         }
         return result;
-    }, [limitPopup, currentUser, userData, userRole]);
+    }, [limitPopup, tasks, timerEngineEnabled, currentUser, userData, userRole, revisionedSession]);
 
     return {
         warningPopup,

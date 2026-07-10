@@ -1,4 +1,6 @@
 import React, { useState, useRef, useCallback, useMemo } from 'react';
+import { doc, getDoc, getDocFromCache } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
@@ -15,11 +17,39 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import { useRevisionedTimerSession } from '../hooks/useRevisionedTimerSession';
+import { issueTimerCommand } from '../utils/timerCommandEngine';
+import {
+    canonicalSessionState,
+    planSecondaryEnd,
+    planSecondaryStart,
+} from '../utils/timerTransitionPlan';
+import { logError } from '../utils/errorLog';
+import { notify } from '../utils/notify';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
 import PersonSelect from './ui/PersonSelect';
 import SessionToggleButton from './ui/SessionToggleButton';
+
+const idFor = (prefix) => {
+    const random = globalThis.crypto?.randomUUID?.()
+        || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    return `${prefix}_${random}`;
+};
+
+async function loadTaskForTimer(taskId) {
+    if (!taskId) return null;
+    const ref = doc(db, 'tasks', taskId);
+    try {
+        const cached = await getDocFromCache(ref);
+        if (cached.exists()) return { id: cached.id, ...cached.data() };
+    } catch {
+        // Fall through to the normal read; it may still resolve from local cache while offline.
+    }
+    const snapshot = await getDoc(ref);
+    return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+}
 
 // Separate memoized modal component to prevent re-renders from timer updates
 const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, currentSessionMinutes, isSubmitting, managers = [], defaultManagerId = '', templateOptions = [], roster = [] }) => {
@@ -253,7 +283,8 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
 QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
 
 export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
-    const { currentUser, userData, setOptimisticUserData } = useAuth();
+    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled } = useAuth();
+    const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const { usersMap, activeUsers } = useUsers();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
 
@@ -310,6 +341,150 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     // could end one session too many). Mirrors TaskTimerControls' actionInFlightRef.
     const actionInFlightRef = useRef(false);
 
+    const trackRevisionedQuickWork = useCallback(async (plan) => {
+        const issued = await issueTimerCommand(plan);
+        issued.settlement.then(async (outcome) => {
+            if (outcome.status === 'confirmed') {
+                if (plan.quickWorkNotification) {
+                    await notify({
+                        recipientId: plan.quickWorkNotification.recipientId,
+                        type: 'task_completion',
+                        taskId: plan.quickWorkNotification.taskId,
+                        taskTitle: plan.quickWorkNotification.taskTitle,
+                        actualTime: formatMinutesToTimeString(plan.quickWorkNotification.actualMinutes),
+                        actualMinutes: plan.quickWorkNotification.actualMinutes,
+                        userName: userData?.displayName || 'Meistras',
+                        userId: currentUser.uid,
+                        completedAt: new Date().toISOString(),
+                    });
+                }
+                return;
+            }
+            if (outcome.status === 'queued') return;
+            setError(
+                outcome.status === 'conflicted'
+                    ? 'Greitos veiklos būsena pakeista kitame įrenginyje.'
+                    : 'Nepavyko pakeisti greitos veiklos būsenos. Bandykite dar kartą.'
+            );
+            logError(outcome.error || new Error(`Quick work command ${outcome.status}`), {
+                source: 'QuickWorkTimer.revisionedSettlement',
+                commandId: outcome.commandId,
+                outcome: outcome.status,
+            });
+        }).catch((error) => {
+            setError('Nepavyko pakeisti greitos veiklos būsenos. Bandykite dar kartą.');
+            logError(error, {
+                source: 'QuickWorkTimer.revisionedSettlement',
+                commandId: issued.commandId,
+            });
+        });
+        return issued;
+    }, [currentUser, userData?.displayName]);
+
+    const tryRevisionedStartQuickWork = async () => {
+        if (!timerEngineEnabled) return false;
+        if (!revisionedSession.loaded || revisionedSession.error) {
+            setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
+            return true;
+        }
+
+        const base = canonicalSessionState(revisionedSession.record, {
+            ...userData,
+            id: currentUser.uid,
+        });
+        const persistedCanonical = Boolean(revisionedSession.record);
+        if (base.status === 'active' && !['task', 'break'].includes(base.run?.type)) {
+            if (persistedCanonical) {
+                setError('Pirma užbaikite aktyvią veiklą.');
+                return true;
+            }
+            return false;
+        }
+
+        const currentTask = base.status === 'active' && base.run?.type === 'task'
+            ? await loadTaskForTimer(base.run.taskId)
+            : null;
+        if (base.status === 'active' && base.run?.type === 'task' && !currentTask) {
+            setError('Nepavyko įkelti aktyvios užduoties. Prisijunkite prie interneto ir bandykite dar kartą.');
+            return true;
+        }
+
+        const plan = planSecondaryStart({
+            type: 'quickWork',
+            userId: currentUser.uid,
+            userData,
+            activeRecord: revisionedSession.record,
+            currentTask,
+            commandId: idFor('timer_cmd'),
+            runId: idFor('timer_run'),
+            issuedAt: new Date().toISOString(),
+        });
+        await trackRevisionedQuickWork(plan);
+        SoundManager.playQuickTaskSound();
+        return true;
+    };
+
+    const tryRevisionedFinishQuickWork = useCallback(async ({
+        taskTitle,
+        auditorManagerId,
+        comment,
+        discard = false,
+    } = {}) => {
+        if (!timerEngineEnabled) return false;
+        if (!revisionedSession.loaded || revisionedSession.error) {
+            setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
+            return true;
+        }
+
+        const base = canonicalSessionState(revisionedSession.record, {
+            ...userData,
+            id: currentUser.uid,
+        });
+        if (base.status !== 'active' || base.run?.type !== 'quickWork') {
+            if (revisionedSession.record) {
+                setError('Greitos veiklos būsena jau pasikeitė.');
+                return true;
+            }
+            return false;
+        }
+        if (base.run.pausedSession?.type && !['task', 'break'].includes(base.run.pausedSession.type)) {
+            if (revisionedSession.record) {
+                setError('Šiai greitos veiklos kombinacijai dar naudojamas senasis užbaigimo kelias.');
+                return true;
+            }
+            return false;
+        }
+
+        let restoreTask = null;
+        if (base.run.pausedSession?.type === 'task') {
+            restoreTask = await loadTaskForTimer(base.run.pausedSession.taskId);
+            if (!restoreTask) {
+                restoreTask = {
+                    id: base.run.pausedSession.taskId,
+                    title: base.run.pausedSession.taskTitle || 'Užduotis',
+                };
+            }
+        }
+
+        const plan = planSecondaryEnd({
+            type: 'quickWork',
+            userId: currentUser.uid,
+            userData,
+            activeRecord: revisionedSession.record,
+            restoreTask,
+            commandId: idFor('timer_cmd'),
+            runId: base.run.pausedSession?.type ? idFor('timer_run') : null,
+            issuedAt: new Date().toISOString(),
+            discard,
+            customTitle: taskTitle,
+            customComment: comment,
+            auditorManagerId,
+        });
+        await trackRevisionedQuickWork(plan);
+        setShowTitleModal(false);
+        return true;
+    }, [currentUser, revisionedSession, timerEngineEnabled, trackRevisionedQuickWork, userData]);
+
     // Note: if a quick-work session is ended remotely (e.g. the worker starts a task elsewhere),
     // isQuickWorking flips to false on the next snapshot and this component simply stops showing the
     // timer — the "what did you do?" prompt is intentionally skipped cross-device (the work is logged
@@ -322,11 +497,12 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         actionInFlightRef.current = true;
         setError('');
         try {
+            if (await tryRevisionedStartQuickWork()) return;
+
             // Optimistic UI Update: Instantly assume Quick Work started, clear other sessions.
             // Preserve whatever session was active (e.g. a break started first) as pausedSession so
             // the optimistic state matches what the server writes and the break can resume on finish.
-            setOptimisticUserData({
-                ...userData,
+            setPendingSessionProjection({
                 activeSession: {
                     type: 'quickWork',
                     startTime: new Date().toISOString(),
@@ -342,7 +518,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             SoundManager.playQuickTaskSound();
         } catch (err) {
             console.error("Error starting quick work:", err);
-            setOptimisticUserData(null); // Revert on error
+            setPendingSessionProjection(null); // Revert on error
             setError("Nepavyko pradėti greitos veiklos. Bandykite dar kartą.");
         } finally {
             actionInFlightRef.current = false;
@@ -364,6 +540,9 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             // Discard an accidental sub-minute tap rather than prompting to name/log it.
             if (sessionDuration <= MIN_LOGGED_SESSION_MINUTES) {
                 try {
+                    if (await tryRevisionedFinishQuickWork({ discard: true })) {
+                        return;
+                    }
                     await endSession(currentUser.uid); // Auto discard/stop
                 } catch (err) {
                     // endSession now rethrows a failed critical write (so the described/finish paths can
@@ -392,6 +571,14 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         setIsSubmitting(true);
         setError('');
         try {
+            if (await tryRevisionedFinishQuickWork({
+                taskTitle,
+                auditorManagerId,
+                comment,
+            })) {
+                return;
+            }
+
             // Optimistic UI Update: restore whatever this quick work interrupted. If it was started
             // on top of a break/call/task (pausedSession), that session resumes — so finishing a
             // quick work taken during a break drops the worker straight back into the break, with no
@@ -418,7 +605,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                 optimistic.workStatus = activeTaskId ? { isWorking: true, status: 'running', activeTaskId } : userData?.workStatus;
             }
 
-            setOptimisticUserData(optimistic);
+            setPendingSessionProjection(optimistic);
 
             // End session with the chosen confirming manager (null if the worker has no managers;
             // endSession then leaves the auditor unset, today's behavior). A title is included
@@ -432,12 +619,12 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             setShowTitleModal(false);
         } catch (err) {
             console.error("Error completing quick work:", err);
-            setOptimisticUserData(null); // Revert on error
+            setPendingSessionProjection(null); // Revert on error
             setError("Nepavyko išsaugoti greitos veiklos. Bandykite dar kartą.");
         } finally {
             setIsSubmitting(false);
         }
-    }, [currentUser, userData, setOptimisticUserData]);
+    }, [currentUser, userData, setPendingSessionProjection, tryRevisionedFinishQuickWork]);
 
     const handleCompleteQuickWork = useCallback((taskTitle, auditorManagerId, comment) => {
         if (!taskTitle || !taskTitle.trim()) return;

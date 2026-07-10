@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Square, Clock } from 'lucide-react';
-import { doc, updateDoc, setDoc, getDoc, waitForPendingWrites } from 'firebase/firestore';
+import { Play, Pause, Square, Clock, CheckCircle2, RefreshCw, AlertTriangle, WifiOff } from 'lucide-react';
+import { doc, updateDoc, setDoc, getDoc, getDocFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask, taskSessionDocId } from '../utils/taskActions';
@@ -13,6 +13,14 @@ import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
+import { useRevisionedTimerSession } from '../hooks/useRevisionedTimerSession';
+import { issueTimerCommand } from '../utils/timerCommandEngine';
+import {
+    canonicalSessionState,
+    planTaskEnd,
+    planTaskPause,
+    planTaskStart,
+} from '../utils/timerTransitionPlan';
 import {
     COMMIT_CONFIRM_TIMEOUT_MS,
     FINISH_UNDO_WINDOW_MS,
@@ -27,9 +35,16 @@ import ConfirmDialog from './ui/ConfirmDialog';
 // stopBreak/stopCall no longer needed — startTask/resumeTask handle session cleanup
 
 export default function TaskTimerControls({ task, onShowModal: _onShowModal, role }) {
-    const { currentUser, userRole, userData, setOptimisticUserData } = useAuth();
+    const {
+        currentUser,
+        userRole,
+        userData,
+        setPendingSessionProjection,
+        timerEngineEnabled,
+    } = useAuth();
     const { showToast } = useToast();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
+    const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const isAssignedToMe = currentUser?.uid === task.assignedUserId;
 
     // Strict UI logic: The task document (timerStatus) is the ULTIMATE source of truth for the timer.
@@ -57,6 +72,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     const [finishError, setFinishError] = useState('');
     // Inline accessible error for the start/pause/resume controls (replaces window.alert).
     const [actionError, setActionError] = useState('');
+    const [commandOutcome, setCommandOutcome] = useState(null);
 
     // Live task reference so the 1s ticker reads fresh data without being torn down and
     // recreated on every Firestore snapshot (which hands us a brand-new `task` object).
@@ -91,42 +107,50 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     if (!isAssignedToMe || isManagerRole(role)) return null;
 
     /**
-     * Confirm that an OPTIMISTIC timer write actually reached the server (or was safely queued
-     * offline), instead of trusting navigator.onLine. `attempt` performs the optimistic flip and
-     * issues the write; we then classify what really happened and act on it:
-     *   - offline  → brief "saved on phone, will sync" success toast,
-     *   - online + drained → silent (the optimistic UI was already right),
-     *   - failed / unconfirmed → revert the optimistic state and surface the inline alert.
+     * Issue a legacy timer write without keeping the action guard locked until Firestore receives
+     * remote acknowledgement. The promise settles later; offline and slow-link actions return as
+     * queued so the worker can immediately issue the matching stop action.
      *
      * @param {() => Promise<void>} attempt          fires the optimistic flip + the awaited write
      * @param {string} offlineMessage                success copy shown when the write is offline-queued
      * @param {string} failureMessage                alert copy shown when the write fails / can't be confirmed
      */
     const runConfirmedTimerWrite = async (attempt, offlineMessage, failureMessage) => {
-        // Snapshot connectivity at issue time; an offline write is queued, not failed.
         const wasOffline = typeof navigator !== 'undefined' && navigator.onLine === false;
         let errored = false;
+        let drained = false;
+        let settlement;
         try {
-            await attempt();
+            settlement = Promise.resolve(attempt());
         } catch (err) {
             errored = true;
-            // Durable + console trail; the durable session-lifecycle logs already fire inside
-            // taskActions, this captures the UI-layer view of the same failure.
             console.error('Timer write failed:', err);
         }
 
-        let drained = false;
-        if (!errored && !wasOffline) {
-            // Online: prove the queued write actually flushed to the server within the budget.
-            // waitForPendingWrites resolves once ALL pending writes drain; race it against a
-            // timeout so a dead link cannot leave us falsely "confirmed".
-            try {
-                await Promise.race([
-                    waitForPendingWrites(db).then(() => { drained = true; }),
-                    new Promise((resolve) => setTimeout(resolve, COMMIT_CONFIRM_TIMEOUT_MS)),
-                ]);
-            } catch {
-                // waitForPendingWrites only rejects if the client is terminated; treat as unconfirmed.
+        if (!errored && wasOffline) {
+            settlement.catch((err) => {
+                console.error('Queued timer write failed:', err);
+                setPendingSessionProjection(null);
+                setActionError(failureMessage);
+            });
+        } else if (!errored) {
+            await Promise.race([
+                settlement.then(
+                    () => { drained = true; },
+                    (err) => {
+                        errored = true;
+                        console.error('Timer write failed:', err);
+                    }
+                ),
+                new Promise((resolve) => setTimeout(resolve, COMMIT_CONFIRM_TIMEOUT_MS)),
+            ]);
+
+            if (!drained && !errored) {
+                settlement.catch((err) => {
+                    console.error('Queued timer write failed:', err);
+                    setPendingSessionProjection(null);
+                    setActionError(failureMessage);
+                });
             }
         }
 
@@ -135,15 +159,132 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         if (commitNeedsRevert(outcome)) {
             // Roll the optimistic profile back to the real (server) state and warn — no longer
             // silently swallowed when we merely think we are online.
-            setOptimisticUserData(null);
+            setPendingSessionProjection(null);
             setActionError(failureMessage);
             return false;
         }
 
-        if (outcome === 'offline-queued') {
-            showToast(offlineMessage, { tone: 'success', duration: 4000 });
+        if (outcome === 'queued') {
+            showToast(offlineMessage, { tone: 'info', duration: 4000 });
         }
         return true;
+    };
+
+    const idFor = (prefix) => {
+        const random = globalThis.crypto?.randomUUID?.()
+            || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        return `${prefix}_${random}`;
+    };
+
+    const trackRevisionedOutcome = async (plan, offlineMessage) => {
+        const issued = await issueTimerCommand(plan);
+        const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+        setCommandOutcome({
+            status: 'queued',
+            message: offline ? offlineMessage : 'Sinchronizuojama…',
+        });
+        if (offline) {
+            showToast(offlineMessage, { tone: 'info', duration: 4000 });
+        }
+
+        issued.settlement.then((outcome) => {
+            if (outcome.status === 'confirmed') {
+                setCommandOutcome({
+                    status: 'confirmed',
+                    message: 'Sinchronizuota.',
+                });
+                setTimeout(() => {
+                    setCommandOutcome((current) => (
+                        current?.status === 'confirmed' ? null : current
+                    ));
+                }, 2500);
+            } else if (outcome.status === 'conflicted') {
+                setCommandOutcome({
+                    status: 'conflicted',
+                    message: 'Būsena pakeista kitame įrenginyje. Parodyta naujausia sesija.',
+                });
+            } else if (outcome.status === 'rejected') {
+                setCommandOutcome({
+                    status: 'rejected',
+                    message: 'Veiksmas nepriimtas. Bandykite dar kartą.',
+                });
+            }
+        });
+        return issued;
+    };
+
+    const previousTaskFor = async (base) => {
+        if (base.status !== 'active' || base.run?.type !== 'task' || base.run.taskId === task.id) {
+            return null;
+        }
+        const ref = doc(db, 'tasks', base.run.taskId);
+        let snapshot;
+        try {
+            snapshot = await getDocFromCache(ref);
+        } catch {
+            snapshot = await getDoc(ref);
+        }
+        if (!snapshot.exists()) {
+            throw new Error('The active task is unavailable');
+        }
+        return { id: snapshot.id, ...snapshot.data() };
+    };
+
+    const runRevisionedStart = async () => {
+        if (!revisionedSession.loaded || revisionedSession.error) {
+            setActionError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
+            return false;
+        }
+        const base = canonicalSessionState(revisionedSession.record, {
+            ...userData,
+            id: currentUser.uid,
+        });
+        const previousTask = await previousTaskFor(base);
+        const plan = planTaskStart({
+            task,
+            userId: currentUser.uid,
+            userData,
+            activeRecord: revisionedSession.record,
+            previousTask,
+            commandId: idFor('timer_cmd'),
+            runId: idFor('timer_run'),
+            issuedAt: new Date().toISOString(),
+        });
+        return trackRevisionedOutcome(
+            plan,
+            task.timerStatus === 'paused'
+                ? 'Tęsiama. Išsaugota šiame telefone.'
+                : 'Pradėta. Išsaugota šiame telefone.'
+        );
+    };
+
+    const runRevisionedPause = async () => {
+        if (!revisionedSession.loaded || revisionedSession.error) {
+            setActionError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
+            return false;
+        }
+        const plan = planTaskPause({
+            task,
+            userId: currentUser.uid,
+            userData,
+            activeRecord: revisionedSession.record,
+            commandId: idFor('timer_cmd'),
+            issuedAt: new Date().toISOString(),
+        });
+        return trackRevisionedOutcome(plan, 'Sustabdyta. Išsaugota šiame telefone.');
+    };
+
+    const reportRevisionedError = (error, source) => {
+        logError(error, { source, taskId: task.id, code: error?.code });
+        if (error?.code === 'timer/conflict' || error?.code === 'timer/already-running') {
+            setActionError('Sesija jau pakeista. Parodyta naujausia būsena.');
+        } else if (error?.code === 'timer/missing-active-task') {
+            setActionError('Nepavyko įkelti aktyvios užduoties. Prisijunkite prie interneto ir bandykite dar kartą.');
+        } else if (error?.message === 'Persistent timer storage is unavailable') {
+            setActionError('Šiame telefone nepavyko saugiai išsaugoti veiksmo. Atlaisvinkite naršyklės saugyklą.');
+        } else {
+            setActionError('Nepavyko pakeisti laikmačio būsenos. Bandykite dar kartą.');
+        }
     };
 
     const handleStart = async (e) => {
@@ -154,6 +295,10 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         setActionError('');
         try {
             if (!currentUser) return;
+            if (timerEngineEnabled) {
+                await runRevisionedStart();
+                return;
+            }
             // A genuinely-active quick work already disables this control (isSecondarySessionActive,
             // checked above). If only the LEGACY quickWorkState.isQuickWorking flag lingers (stale,
             // with activeSession not representing quick work), we must NOT block the start: startTask
@@ -164,8 +309,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             await runConfirmedTimerWrite(
                 async () => {
                     // Optimistic UI Update: Instantly assume task started and clear other sessions
-                    setOptimisticUserData({
-                        ...userData,
+                    setPendingSessionProjection({
                         activeSession: { type: 'task', startTime: new Date().toISOString(), taskId: task.id },
                         workStatus: { isWorking: true, status: 'running', activeTaskId: task.id },
                         breakState: { ...userData?.breakState, isTakingBreak: false },
@@ -179,6 +323,12 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 'Pradėta. Išsaugota telefone — sinchronizuosime, kai bus ryšys.',
                 'Nepavyko pradėti laikmačio. Bandykite dar kartą.'
             );
+        } catch (error) {
+            if (timerEngineEnabled) {
+                reportRevisionedError(error, 'TaskTimerControls.revisionedStart');
+            } else {
+                throw error;
+            }
         } finally {
             actionInFlightRef.current = false;
         }
@@ -191,11 +341,14 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         actionInFlightRef.current = true;
         setActionError('');
         try {
+            if (timerEngineEnabled) {
+                await runRevisionedPause();
+                return;
+            }
             await runConfirmedTimerWrite(
                 async () => {
                     // Optimistic UI: instantly show paused state
-                    setOptimisticUserData({
-                        ...userData,
+                    setPendingSessionProjection({
                         activeSession: null,
                         workStatus: { isWorking: false, status: 'paused', activeTaskId: task.id }
                     });
@@ -204,6 +357,12 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 'Sustabdyta. Išsaugota telefone — sinchronizuosime, kai bus ryšys.',
                 'Nepavyko sustabdyti laikmačio. Bandykite dar kartą.'
             );
+        } catch (error) {
+            if (timerEngineEnabled) {
+                reportRevisionedError(error, 'TaskTimerControls.revisionedPause');
+            } else {
+                throw error;
+            }
         } finally {
             actionInFlightRef.current = false;
         }
@@ -217,6 +376,10 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         setActionError('');
         try {
             if (!currentUser) return;
+            if (timerEngineEnabled) {
+                await runRevisionedStart();
+                return;
+            }
             // See handleStart: a stale legacy quickWorkState.isQuickWorking flag must not block the
             // resume. resumeTask clears it, so proceeding heals the corrupted state; the old
             // dead-event dispatch (no listener) only no-opped the tap. Removed.
@@ -224,8 +387,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             await runConfirmedTimerWrite(
                 async () => {
                     // Optimistic UI Update: Instantly assume task resumed and clear other sessions
-                    setOptimisticUserData({
-                        ...userData,
+                    setPendingSessionProjection({
                         activeSession: { type: 'task', startTime: new Date().toISOString(), taskId: task.id },
                         workStatus: { isWorking: true, status: 'running', activeTaskId: task.id },
                         breakState: { ...userData?.breakState, isTakingBreak: false },
@@ -238,6 +400,12 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 'Tęsiama. Išsaugota telefone — sinchronizuosime, kai bus ryšys.',
                 'Nepavyko atnaujinti laikmačio. Bandykite dar kartą.'
             );
+        } catch (error) {
+            if (timerEngineEnabled) {
+                reportRevisionedError(error, 'TaskTimerControls.revisionedResume');
+            } else {
+                throw error;
+            }
         } finally {
             actionInFlightRef.current = false;
         }
@@ -296,9 +464,89 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         }
     };
 
+    const performRevisionedFinish = async () => {
+        if (!revisionedSession.loaded || revisionedSession.error) {
+            throw Object.assign(new Error('Timer state is unavailable'), {
+                code: 'timer/unavailable',
+            });
+        }
+
+        const now = getLithuanianNow();
+        // A worker-owned finish always lands in the manager approval queue. Admins may self-confirm;
+        // other manager roles can own tasks they do not oversee, so optimistic auto-confirm would
+        // make the entire atomic batch fail its approval-field rule.
+        const finishStatus = userRole === 'admin' ? 'confirmed' : 'completed';
+        const plan = planTaskEnd({
+            task,
+            userId: currentUser.uid,
+            userData,
+            activeRecord: revisionedSession.record,
+            commandId: idFor('timer_cmd'),
+            issuedAt: now.toISOString(),
+            completionStatus: finishStatus,
+            confirmedBy: finishStatus === 'confirmed' ? currentUser.uid : null,
+        });
+        const preFinishTimerMinutes = Number(task.timerMinutes || 0);
+        const sessionDocRef = plan.closedSessionId
+            ? doc(db, 'work_sessions', plan.closedSessionId)
+            : null;
+        const issued = await trackRevisionedOutcome(
+            plan,
+            'Užbaigta. Išsaugota šiame telefone.'
+        );
+
+        setConfirmFinish(false);
+        issued.settlement.then(async (outcome) => {
+            if (outcome.status !== 'confirmed') return;
+
+            if (finishStatus !== 'confirmed') {
+                try {
+                    let recipientId = task.managerId || null;
+                    if (!recipientId || recipientId === currentUser.uid) {
+                        recipientId = userData?.defaultManager || null;
+                    }
+                    if (recipientId && recipientId !== currentUser.uid) {
+                        await notify({
+                            recipientId,
+                            type: 'task_completion',
+                            taskId: task.id,
+                            taskTitle: task.title || 'Užduotis',
+                            actualTime: formatMinutesToTimeString(plan.totalMinutes),
+                            actualMinutes: plan.totalMinutes,
+                            userName: currentUser.displayName || currentUser.email || 'Meistras',
+                            userId: currentUser.uid,
+                            completedAt: now.toISOString(),
+                        });
+                    }
+                } catch (notifErr) {
+                    console.error('Failed to send task completion notification:', notifErr);
+                }
+            }
+
+            showToast('Užduotis užbaigta. Galite atšaukti.', {
+                title: 'Puiki veikla!',
+                tone: 'success',
+                duration: FINISH_UNDO_WINDOW_MS,
+                onClick: () => undoFinish({ preFinishTimerMinutes, sessionDocRef }),
+            });
+            try { SoundManager.playQuickTaskSound(); } catch { /* audio is best-effort */ }
+            window.dispatchEvent(new CustomEvent('request-completion-photo', {
+                detail: {
+                    task,
+                    totalMinutes: plan.totalMinutes,
+                    showEarnings: hasPayRate(userData?.payRate),
+                },
+            }));
+        });
+    };
+
     const performFinish = async () => {
         setFinishing(true);
         try {
+            if (timerEngineEnabled) {
+                await performRevisionedFinish();
+                return;
+            }
             let finalTimerMinutes = task.timerMinutes || 0;
             // The task's pre-finish credited minutes — the rollback target if the worker undoes.
             const preFinishTimerMinutes = task.timerMinutes || 0;
@@ -590,6 +838,36 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     className="mt-2 text-caption font-medium text-feedback-danger wz-shake"
                 >
                     {actionError}
+                </div>
+            )}
+
+            {commandOutcome && (
+                <div
+                    role={commandOutcome.status === 'rejected' || commandOutcome.status === 'conflicted'
+                        ? 'alert'
+                        : 'status'}
+                    aria-live={commandOutcome.status === 'rejected' || commandOutcome.status === 'conflicted'
+                        ? 'assertive'
+                        : 'polite'}
+                    className={[
+                        'mt-2 flex min-h-touch items-center gap-2 rounded-control border px-3 py-2 text-caption font-medium',
+                        commandOutcome.status === 'confirmed'
+                            ? 'border-feedback-success-border bg-feedback-success-soft text-feedback-success-text'
+                            : commandOutcome.status === 'rejected' || commandOutcome.status === 'conflicted'
+                                ? 'border-feedback-danger-border bg-feedback-danger-soft text-feedback-danger-text'
+                                : 'border-line bg-surface-sunken text-ink',
+                    ].join(' ')}
+                >
+                    {commandOutcome.status === 'confirmed' ? (
+                        <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    ) : commandOutcome.status === 'conflicted' || commandOutcome.status === 'rejected' ? (
+                        <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    ) : typeof navigator !== 'undefined' && navigator.onLine === false ? (
+                        <WifiOff className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    ) : (
+                        <RefreshCw className="h-4 w-4 shrink-0 animate-spin" aria-hidden="true" />
+                    )}
+                    <span>{commandOutcome.message}</span>
                 </div>
             )}
 

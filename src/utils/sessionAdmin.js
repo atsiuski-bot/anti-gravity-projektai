@@ -2,6 +2,8 @@ import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask } from './taskActions';
 import { logError } from './errorLog';
+import { applyTimerTransitionPlan } from './timerTransitionExecutor';
+import { planManagerForceEnd } from './timerTransitionPlan';
 
 /**
  * Manager-side session teardown — settle a worker who is stuck "live" without disabling them.
@@ -24,9 +26,36 @@ import { logError } from './errorLog';
  * @param {Object} user - the target user doc ({ id, activeSession?, workStatus?, ... }).
  * @returns {Promise<void>}
  */
-export const endSessionForUser = async (user) => {
-    if (!user?.id) return;
+export const endSessionForUser = async (user, { actorId = null } = {}) => {
+    if (!user?.id) return { status: 'skipped' };
     try {
+        const activeSessionSnap = await getDoc(doc(db, 'active_sessions', user.id));
+        const activeRecord = activeSessionSnap.exists() ? activeSessionSnap.data() : null;
+        if (activeRecord?.status === 'active') {
+            if (!actorId) throw new Error('Manager force-end requires an actor id');
+            let activeTask = null;
+            if (activeRecord.run?.type === 'task') {
+                const taskSnap = await getDoc(doc(db, 'tasks', activeRecord.run.taskId));
+                if (!taskSnap.exists()) {
+                    throw new Error('Cannot force-end a canonical task without the task document');
+                }
+                activeTask = { id: taskSnap.id, ...taskSnap.data() };
+            }
+            const plan = planManagerForceEnd({
+                targetUser: user,
+                actorId,
+                activeRecord,
+                activeTask,
+                commandId: `manager_force_end_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+                issuedAt: new Date().toISOString(),
+            });
+            await applyTimerTransitionPlan(db, plan);
+            return {
+                status: 'canonical-ended',
+                creditedMinutes: plan.creditedMinutes,
+            };
+        }
+
         const activeTaskId = user.activeSession?.taskId || user.workStatus?.activeTaskId;
         if (activeTaskId) {
             const taskSnap = await getDoc(doc(db, 'tasks', activeTaskId));
@@ -49,8 +78,10 @@ export const endSessionForUser = async (user) => {
             'callState.isCalling': false,
             'quickWorkState.isQuickWorking': false,
         });
+        return { status: 'legacy-cleared' };
     } catch (e) {
         logError(e, { source: 'endSessionForUser', userId: user.id });
+        return { status: 'failed', error: e };
     }
 };
 

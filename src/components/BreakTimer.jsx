@@ -1,4 +1,6 @@
 import { useState, useRef } from 'react';
+import { doc, getDoc, getDocFromCache } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
 import { useTimerState } from '../hooks/useTimerState';
@@ -6,10 +8,38 @@ import { Coffee, Play, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import { useRevisionedTimerSession } from '../hooks/useRevisionedTimerSession';
+import { issueTimerCommand } from '../utils/timerCommandEngine';
+import {
+    canonicalSessionState,
+    planBreakEnd,
+    planBreakStart,
+} from '../utils/timerTransitionPlan';
+import { logError } from '../utils/errorLog';
 import SessionToggleButton from './ui/SessionToggleButton';
 
+const idFor = (prefix) => {
+    const random = globalThis.crypto?.randomUUID?.()
+        || `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    return `${prefix}_${random}`;
+};
+
+async function loadTaskForTimer(taskId) {
+    if (!taskId) return null;
+    const ref = doc(db, 'tasks', taskId);
+    try {
+        const cached = await getDocFromCache(ref);
+        if (cached.exists()) return { id: cached.id, ...cached.data() };
+    } catch {
+        // Fall through to the normal read; it may still use cache while offline.
+    }
+    const snapshot = await getDoc(ref);
+    return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
+}
+
 export default function BreakTimer({ currentUser: _propUser, compact = false, hideLabel = false }) {
-    const { currentUser, userData, setOptimisticUserData } = useAuth();
+    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled } = useAuth();
+    const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
     const {
         isActive: isTakingBreak,
@@ -24,6 +54,117 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
     // a break; a second end could close one session too many). Mirrors TaskTimerControls.
     const actionInFlightRef = useRef(false);
 
+    const trackRevisionedBreak = async (plan) => {
+        const issued = await issueTimerCommand(plan);
+        issued.settlement.then((outcome) => {
+            if (outcome.status === 'confirmed' || outcome.status === 'queued') return;
+            setError(
+                outcome.status === 'conflicted'
+                    ? 'Sesija pakeista kitame įrenginyje. Parodyta naujausia būsena.'
+                    : 'Nepavyko pakeisti pertraukos būsenos. Bandykite dar kartą.'
+            );
+            logError(outcome.error || new Error(`Break command ${outcome.status}`), {
+                source: 'BreakTimer.revisionedSettlement',
+                commandId: outcome.commandId,
+                outcome: outcome.status,
+            });
+        }).catch((error) => {
+            setError('Nepavyko pakeisti pertraukos būsenos. Bandykite dar kartą.');
+            logError(error, {
+                source: 'BreakTimer.revisionedSettlement',
+                commandId: issued.commandId,
+            });
+        });
+    };
+
+    const tryRevisionedBreakToggle = async () => {
+        if (!timerEngineEnabled) return false;
+        if (!revisionedSession.loaded || revisionedSession.error) {
+            setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
+            return true;
+        }
+
+        const base = canonicalSessionState(revisionedSession.record, {
+            ...userData,
+            id: currentUser.uid,
+        });
+        const baseIsPersistedCanonical = Boolean(revisionedSession.record);
+
+        if (!isTakingBreak) {
+            if (base.status === 'active' && base.run?.type !== 'task') {
+                if (baseIsPersistedCanonical) {
+                    setError('Pirma užbaikite aktyvią veiklą kitame įrenginyje.');
+                    return true;
+                }
+                return false;
+            }
+
+            const currentTask = base.status === 'active'
+                ? await loadTaskForTimer(base.run?.taskId)
+                : null;
+            if (base.status === 'active' && !currentTask) {
+                setError('Nepavyko įkelti aktyvios užduoties. Prisijunkite prie interneto ir bandykite dar kartą.');
+                return true;
+            }
+
+            const now = new Date().toISOString();
+            const plan = planBreakStart({
+                userId: currentUser.uid,
+                userData,
+                activeRecord: revisionedSession.record,
+                currentTask,
+                commandId: idFor('timer_cmd'),
+                runId: idFor('timer_run'),
+                issuedAt: now,
+            });
+            await trackRevisionedBreak(plan);
+            SoundManager.playBreakSound();
+            return true;
+        }
+
+        if (base.status !== 'active' || base.run?.type !== 'break') {
+            if (baseIsPersistedCanonical) {
+                setError('Pertraukos būsena jau pakeista. Parodyta naujausia būsena.');
+                return true;
+            }
+            return false;
+        }
+
+        const pausedSession = base.run?.pausedSession || userData?.activeSession?.pausedSession || null;
+        if (pausedSession?.type && pausedSession.type !== 'task') {
+            if (baseIsPersistedCanonical) {
+                setError('Šiai pertraukos kombinacijai dar naudojamas senasis užbaigimo kelias.');
+                return true;
+            }
+            return false;
+        }
+
+        let restoreTask = null;
+        if (pausedSession?.taskId) {
+            restoreTask = await loadTaskForTimer(pausedSession.taskId);
+            if (!restoreTask) {
+                restoreTask = {
+                    id: pausedSession.taskId,
+                    title: pausedSession.taskTitle || 'Užduotis',
+                };
+            }
+        }
+
+        const now = new Date().toISOString();
+        const plan = planBreakEnd({
+            userId: currentUser.uid,
+            userData,
+            activeRecord: revisionedSession.record,
+            restoreTask,
+            commandId: idFor('timer_cmd'),
+            runId: restoreTask ? idFor('timer_run') : null,
+            issuedAt: now,
+        });
+        await trackRevisionedBreak(plan);
+        SoundManager.playBreakSound();
+        return true;
+    };
+
     const handleToggleBreak = async () => {
         if (!currentUser || isDisabled) return;
         if (actionInFlightRef.current) return;
@@ -31,10 +172,11 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
 
         setError('');
         try {
+            if (await tryRevisionedBreakToggle()) return;
+
             if (!isTakingBreak) {
                 // Optimistic UI Update: Instantly assume break started, clear all other sessions
-                setOptimisticUserData({
-                    ...userData,
+                setPendingSessionProjection({
                     activeSession: { type: 'break', startTime: new Date().toISOString() },
                     breakState: { ...userData?.breakState, isTakingBreak: true, lastStartedAt: new Date().toISOString() },
                     // Clear other session flags so Layout shows break color
@@ -82,7 +224,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                     optimistic.workStatus = activeTaskId ? { isWorking: true, status: 'running', activeTaskId } : userData?.workStatus;
                 }
 
-                setOptimisticUserData(optimistic);
+                setPendingSessionProjection(optimistic);
 
                 // End Break Session
                 await endSession(currentUser.uid);
@@ -93,7 +235,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
         } catch (err) {
             console.error("Error toggling break:", err);
             // Revert optimistic update on failure (it will naturally happen on next snapshot, but we can clear it immediately)
-            setOptimisticUserData(null);
+            setPendingSessionProjection(null);
             setError("Nepavyko pakeisti pertraukos būsenos. Bandykite dar kartą.");
         } finally {
             actionInFlightRef.current = false;

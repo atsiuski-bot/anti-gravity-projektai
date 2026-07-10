@@ -12,6 +12,7 @@ import { logError } from '../utils/errorLog';
 import { removeFcmToken } from '../utils/messaging';
 import { setAgentsEnabled } from '../domain/agentControl';
 import { decideDisabledLogin } from '../utils/accountStatus';
+import { applyPendingSessionProjection } from '../utils/sessionProjection';
 
 const AuthContext = createContext();
 
@@ -22,8 +23,14 @@ export function useAuth() {
 
 export function AuthProvider({ children }) {
     const [currentUser, setCurrentUser] = useState(null);
-    const [userData, setUserData] = useState(null); // Real-time Firestore data
-    const [optimisticUserData, setOptimisticUserData] = useState(null); // Instant UI feedback overriding userData
+    const [userData, setUserData] = useState(null); // Latest Firestore view, including local pending writes
+    const [confirmedUserData, setConfirmedUserData] = useState(null); // Latest server-confirmed snapshot
+    const [pendingSessionProjection, setPendingSessionProjection] = useState(null);
+    const [userDataMetadata, setUserDataMetadata] = useState({
+        fromCache: true,
+        hasPendingWrites: false,
+    });
+    const [timerEngineEnabled, setTimerEngineEnabled] = useState(false);
     const [userRole, setUserRole] = useState(null);
     const [breakState, setBreakState] = useState(null);
     const [workStatus, setWorkStatus] = useState(null);
@@ -245,9 +252,14 @@ export function AuthProvider({ children }) {
                 const userRef = doc(db, 'users', user.uid);
 
                 // We use onSnapshot to get real-time updates for role and break status
-                unsubscribeSnapshot = onSnapshot(userRef, async (docSnap) => {
+                unsubscribeSnapshot = onSnapshot(userRef, { includeMetadataChanges: true }, async (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
+                        const metadata = {
+                            fromCache: docSnap.metadata.fromCache,
+                            hasPendingWrites: docSnap.metadata.hasPendingWrites,
+                        };
+                        setUserDataMetadata(metadata);
 
                         if (data.isDisabled) {
                             // Defer to the login flow while it is provisioning/evaluating this
@@ -266,6 +278,8 @@ export function AuthProvider({ children }) {
                             setCurrentUser(null);
                             setUserRole(null);
                             setUserData(null);
+                            setConfirmedUserData(null);
+                            setPendingSessionProjection(null);
                             setBreakState(null);
                             setWorkStatus(null);
                             setLoading(false);
@@ -278,36 +292,16 @@ export function AuthProvider({ children }) {
                         setUserRole(data.role || 'worker');
                         setBreakState(data.breakState || null);
                         setWorkStatus(data.workStatus || { isWorking: false });
-                        setUserData(data); // Update full user data
+                        setUserData(data);
 
-                        // Only clear optimistic data when real data has caught up
-                        setOptimisticUserData(prev => {
-                            if (!prev) return null;
-
-                            const optType = prev?.activeSession?.type;
-                            const realType = data?.activeSession?.type;
-
-                            if (optType) {
-                                if (optType === 'task') {
-                                    const optTid = prev?.workStatus?.activeTaskId;
-                                    const realTid = data?.workStatus?.activeTaskId;
-                                    if (realType === 'task' && data?.workStatus?.status === 'running' && realTid === optTid) {
-                                        return null; // Match found, clear optimistic
-                                    }
-                                    return prev; // Still waiting for DB to catch up
-                                }
-                                if (realType === optType) return null; // Match found
-                                return prev; // Still waiting
-                            }
-
-                            // If optimistic state expects no active session
-                            if (prev?.activeSession === null) {
-                                if (!data?.activeSession) return null; // DB finally cleared it
-                                return prev; // DB still has it, keep waiting
-                            }
-
-                            return prev; // Catch-all: hold onto optimistic state until explicitly matched
-                        });
+                        // A narrow session prediction may bridge the short interval before Firestore
+                        // emits its latency-compensated snapshot. Any newer SERVER snapshot wins,
+                        // regardless of whether it exactly matches the prediction. This prevents a
+                        // stale whole-profile overlay from hiding another device's accepted session.
+                        if (!metadata.fromCache && !metadata.hasPendingWrites) {
+                            setConfirmedUserData(data);
+                            setPendingSessionProjection(null);
+                        }
 
                         setCurrentUser(user);
                         setLoading(false);
@@ -362,7 +356,10 @@ export function AuthProvider({ children }) {
                 setBreakState(null);
                 setWorkStatus(null);
                 setUserData(null);
-                setOptimisticUserData(null);
+                setConfirmedUserData(null);
+                setPendingSessionProjection(null);
+                setUserDataMetadata({ fromCache: true, hasPendingWrites: false });
+                setTimerEngineEnabled(false);
                 setLoading(false);
             }
         });
@@ -395,6 +392,43 @@ export function AuthProvider({ children }) {
         return () => unsub();
     }, [currentUser?.uid]);
 
+    // ADR 0020 rollout gate. Missing config means legacy timer paths remain active, so the client
+    // can ship before the new rules are deployed. Once an admin enables system_config/timerEngine
+    // after the post-ship rules rollout, task start/pause/resume switches to the revisioned engine.
+    useEffect(() => {
+        if (!currentUser?.uid) {
+            setTimerEngineEnabled(false);
+            return undefined;
+        }
+        const unsub = onSnapshot(
+            doc(db, 'system_config', 'timerEngine'),
+            (snap) => setTimerEngineEnabled(snap.exists() && snap.data().enabled === true),
+            (err) => {
+                setTimerEngineEnabled(false);
+                if (err.code !== 'permission-denied') {
+                    logError(err, { source: 'timerEngine.config.subscribe' });
+                }
+            }
+        );
+        return () => unsub();
+    }, [currentUser?.uid]);
+
+    useEffect(() => {
+        if (!timerEngineEnabled || !currentUser?.uid) return;
+        const userId = currentUser.uid;
+        const replay = () => {
+            import('../utils/timerCommandEngine')
+                .then(({ replayQueuedTimerCommands }) => replayQueuedTimerCommands(userId))
+                .catch((error) => logError(error, {
+                    source: 'timerCommandEngine.bootReplay',
+                    userId,
+                }));
+        };
+        replay();
+        window.addEventListener('online', replay);
+        return () => window.removeEventListener('online', replay);
+    }, [currentUser?.uid, timerEngineEnabled]);
+
     const [showForceButton, setShowForceButton] = useState(false);
 
     useEffect(() => {
@@ -406,12 +440,15 @@ export function AuthProvider({ children }) {
         return () => clearTimeout(timer);
     }, [loading]);
 
-    const effectiveUserData = optimisticUserData || userData;
+    const effectiveUserData = applyPendingSessionProjection(userData, pendingSessionProjection);
 
     const value = {
         currentUser,
-        userData: effectiveUserData, // Exposed real-time or optimistic override
-        setOptimisticUserData, // Function to trigger instant UI updates
+        userData: effectiveUserData,
+        confirmedUserData,
+        userDataMetadata,
+        setPendingSessionProjection,
+        timerEngineEnabled,
         userRole,
         login,
         logout,

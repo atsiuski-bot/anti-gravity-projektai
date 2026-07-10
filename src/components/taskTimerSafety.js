@@ -10,11 +10,10 @@
 
 import { getChecklistProgress } from '../utils/checklistActions';
 
-// How long we wait for an ONLINE timer write to actually flush to the server before treating it as
-// failed. Firestore's updateDoc resolves on the LOCAL optimistic accept, so awaiting it proves
-// nothing about server commit. We race waitForPendingWrites (resolves once the queue drains) against
-// this budget: long enough to ride out a slow-but-working link, short enough that a worker outdoors
-// is not left staring. Offline links never reach this gate — they get a calm confirmation instead.
+// How long an online action may wait for remote acknowledgement before the UI releases the control
+// and classifies it as locally queued. Firestore Web mutation promises resolve only after backend
+// acknowledgement; an offline or half-open link can therefore keep that promise pending until
+// connectivity returns. The timer control must remain usable while that settlement continues.
 export const COMMIT_CONFIRM_TIMEOUT_MS = 8000;
 
 // How long the post-finish "Atšaukti" (undo) toast stays actionable. Long enough to catch the
@@ -26,24 +25,22 @@ export const FINISH_UNDO_WINDOW_MS = 90000;
  * trusting navigator.onLine alone.
  *
  *   - 'failed'         — the awaited write threw: a real, surfaced failure → alert + revert.
- *   - 'offline-queued' — offline when the write was issued: safely queued locally, will sync later
- *                        → calm success confirmation.
+ *   - 'queued'         — no acknowledgement yet (known offline or timeout): accepted for local
+ *                        processing and settling asynchronously → calm pending confirmation.
  *   - 'committed'      — online and the pending-writes queue drained within the budget → silent
  *                        happy path (the optimistic UI was already correct).
- *   - 'unconfirmed'    — online, did not throw, but the queue did NOT drain in time → treat as a
- *                        failure: alert + revert, because we cannot prove the server accepted it.
  *
  * @param {{ errored:boolean, wasOffline:boolean, drained:boolean }} signals
- * @returns {'failed'|'offline-queued'|'committed'|'unconfirmed'}
+ * @returns {'failed'|'queued'|'committed'}
  */
 export const classifyCommit = ({ errored, wasOffline, drained }) => {
     if (errored) return 'failed';
-    if (wasOffline) return 'offline-queued';
-    return drained ? 'committed' : 'unconfirmed';
+    if (wasOffline || !drained) return 'queued';
+    return 'committed';
 };
 
 /** A commit outcome that means the optimistic state must be rolled back and the user warned. */
-export const commitNeedsRevert = (outcome) => outcome === 'failed' || outcome === 'unconfirmed';
+export const commitNeedsRevert = (outcome) => outcome === 'failed';
 
 /**
  * Soft (non-blocking) warning text when finishing a task that still has unticked checklist items.

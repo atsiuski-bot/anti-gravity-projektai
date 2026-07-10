@@ -29,6 +29,7 @@ import { logError } from '../utils/errorLog';
 
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
+import { useRevisionedTaskRecovery } from '../hooks/useRevisionedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
 import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
 import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
@@ -59,7 +60,7 @@ const SortableTaskCardList = React.lazy(() => import('../components/task/Sortabl
 const ReorderableTaskTable = React.lazy(() => import('../components/task/ReorderableTaskTable'));
 
 export default function ManagerView() {
-    const { userRole, currentUser, userData } = useAuth();
+    const { userRole, currentUser, userData, timerEngineEnabled } = useAuth();
     const { activeTab, scrollPositions } = useNavigation();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
@@ -128,7 +129,8 @@ export default function ManagerView() {
     // sessions (the work-controls pill is role-agnostic), so they need the same orphan recovery
     // WorkerView has, or a manager crash credits ghost time with no notice. Scope task recovery to
     // the manager's OWN tasks (ownTasks), never the team list. (Full-sweep C2, 2026-06-24.)
-    useOrphanedTaskRecovery(ownTasks, currentUser);
+    useOrphanedTaskRecovery(ownTasks, currentUser, !timerEngineEnabled);
+    useRevisionedTaskRecovery(ownTasks, currentUser, userData, timerEngineEnabled);
 
     // Heartbeat for the running secondary session (break/call/quick-work) — lets the recovery
     // below finalize a genuinely abandoned session at its last proof of life, not the reopen instant.

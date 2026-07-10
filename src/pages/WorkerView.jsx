@@ -27,6 +27,7 @@ import Button from '../components/ui/Button';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
+import { useRevisionedTaskRecovery } from '../hooks/useRevisionedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
 import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
 import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
@@ -46,7 +47,7 @@ const AllUsersCalendar = React.lazy(() => import('../components/AllUsersCalendar
 const Reports = React.lazy(() => import('../components/Reports'));
 
 export default function WorkerView() {
-    const { currentUser, userRole } = useAuth();
+    const { currentUser, userRole, userData, timerEngineEnabled } = useAuth();
     const { usersMap, loading: usersLoading } = useUsers();
     const { activeTab, scrollPositions } = useNavigation();
     const [tasks, setTasks] = useState([]);
@@ -71,7 +72,8 @@ export default function WorkerView() {
     // Crash/reload recovery — heartbeat-aware: continue a briefly-reloaded timer, but pause a
     // genuinely abandoned one (auto-crediting the untracked gap, opt-out) so it neither credits
     // hours of ghost time nor silently drops real offline work.
-    useOrphanedTaskRecovery(tasks, currentUser);
+    useOrphanedTaskRecovery(tasks, currentUser, !timerEngineEnabled);
+    useRevisionedTaskRecovery(tasks, currentUser, userData, timerEngineEnabled);
 
     // Heartbeat for the running secondary session (break/call/quick-work) — lets the recovery below
     // finalize a genuinely abandoned session at its last proof of life, not the reopen instant.

@@ -17,26 +17,26 @@ describe('classifyCommit — what really happened to an optimistic timer write',
     });
 
     it('offline + no error = safely queued (not a failure)', () => {
-        expect(classifyCommit({ errored: false, wasOffline: true, drained: false })).toBe('offline-queued');
+        expect(classifyCommit({ errored: false, wasOffline: true, drained: false })).toBe('queued');
     });
 
     it('online + queue drained = committed', () => {
         expect(classifyCommit({ errored: false, wasOffline: false, drained: true })).toBe('committed');
     });
 
-    it('online + queue did NOT drain in time = unconfirmed (do not trust it)', () => {
-        expect(classifyCommit({ errored: false, wasOffline: false, drained: false })).toBe('unconfirmed');
+    it('online + no acknowledgement in time = queued, so the control stays usable', () => {
+        expect(classifyCommit({ errored: false, wasOffline: false, drained: false })).toBe('queued');
     });
 });
 
 describe('commitNeedsRevert — which outcomes roll back the optimistic UI + warn', () => {
-    it('reverts on failure and on unconfirmed', () => {
+    it('reverts only on a confirmed failure', () => {
         expect(commitNeedsRevert('failed')).toBe(true);
-        expect(commitNeedsRevert('unconfirmed')).toBe(true);
+        expect(commitNeedsRevert('queued')).toBe(false);
     });
-    it('does NOT revert on committed or offline-queued', () => {
+    it('does NOT revert on committed or queued', () => {
         expect(commitNeedsRevert('committed')).toBe(false);
-        expect(commitNeedsRevert('offline-queued')).toBe(false);
+        expect(commitNeedsRevert('queued')).toBe(false);
     });
 });
 
