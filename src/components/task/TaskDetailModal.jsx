@@ -3,7 +3,7 @@ import clsx from 'clsx';
 import {
     Pencil, Trash2, Undo2, CheckCircle2, Check, Clock, MessageSquare, ListChecks,
     Link as LinkIcon, ImageIcon, ImagePlus, Camera, Send, X, ChevronDown,
-    Calendar, Timer, Hourglass, UserCog, Square, CheckSquare,
+    Calendar, Timer, Hourglass, UserCog, Square, CheckSquare, ZoomIn,
 } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -646,10 +646,17 @@ export default function TaskDetailModal({
                                             key={idx}
                                             type="button"
                                             onClick={() => setLightboxIndex(idx)}
-                                            className="h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                            className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti nuotrauką ${idx + 1}`}
                                         >
-                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-cover" />
+                                            {/* object-contain (not cover) so a tall phone photo shows WHOLE, never cropped
+                                                to its centre band; the sunken bg fills the letterbox margins. The zoom badge
+                                                signals the thumbnail opens a full-size view — so the photo is never mistaken
+                                                for a clipped, un-openable image. */}
+                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-contain" />
+                                            <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 p-1 text-white">
+                                                <ZoomIn className="h-3.5 w-3.5" aria-hidden="true" />
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
@@ -690,10 +697,14 @@ export default function TaskDetailModal({
                                             key={idx}
                                             type="button"
                                             onClick={() => setCompletionLightboxIndex(idx)}
-                                            className="h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                            className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti pabaigos nuotrauką ${idx + 1}`}
                                         >
-                                            <img src={url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-cover" />
+                                            {/* Same whole-photo treatment as the attachment gallery above. */}
+                                            <img src={url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-contain" />
+                                            <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-black/55 p-1 text-white">
+                                                <ZoomIn className="h-3.5 w-3.5" aria-hidden="true" />
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
