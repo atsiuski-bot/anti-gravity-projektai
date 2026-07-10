@@ -125,8 +125,10 @@ export default function CompletionPhotoModal({ task, onClose }) {
                 {photos.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                         {photos.map((p, idx) => (
-                            <div key={p.url} className="relative h-20 w-20 overflow-hidden rounded-control border border-line">
-                                <img src={p.url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-cover" />
+                            <div key={p.url} className="relative h-20 w-20 overflow-hidden rounded-control border border-line bg-surface-sunken">
+                                {/* object-contain (not -cover) so a tall phone photo shows whole, not just its
+                                    middle; the sunken canvas fills the letterbox bands around it. */}
+                                <img src={p.url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-contain" />
                                 <button
                                     type="button"
                                     onClick={() => removePhoto(idx)}

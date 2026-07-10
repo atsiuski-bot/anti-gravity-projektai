@@ -4,7 +4,7 @@ import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
-import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate, Tag, EyeOff, Eye } from 'lucide-react';
+import { X, Plus, Trash2, Camera, CheckSquare, Square, Check, Sparkles, Pencil, LayoutTemplate, Tag, EyeOff, Eye, ZoomIn } from 'lucide-react';
 import { formatDisplayName, isManagerRole, isAdminRole } from '../utils/formatters';
 import { TASK_TAGS } from '../utils/taskUtils';
 import { scopeRoster } from '../utils/teamScope';
@@ -1812,9 +1812,14 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     <div className="mt-4 grid grid-cols-2 gap-2">
                                         {formData.attachmentUrls.map((url, index) => (
                                             <div key={`existing-${index}`} className="relative group border rounded-lg p-1">
-                                                <a href={url} target="_blank" rel="noopener noreferrer">
-                                                    <img src={url} alt={`Priedas ${index + 1}`} className="w-full h-24 object-cover rounded" />
+                                                <a href={url} target="_blank" rel="noopener noreferrer" className="block">
+                                                    {/* object-contain + sunken canvas so a tall photo shows whole,
+                                                        not just its middle; ZoomIn badge marks it openable full-size. */}
+                                                    <img src={url} alt={`Priedas ${index + 1}`} className="w-full h-24 object-contain rounded bg-surface-sunken" />
                                                 </a>
+                                                <span className="pointer-events-none absolute bottom-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
+                                                    <ZoomIn className="h-3 w-3" aria-hidden="true" />
+                                                </span>
                                                 <button
                                                     type="button"
                                                     onClick={() => removeExistingAttachment(index)}

@@ -5,7 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Bell, Plus, Ban, UserPlus, Hand, Hourglass } from 'lucide-react';
+import { X, AlertCircle, Check, CheckCircle2, XCircle, Trash2, Edit, MessageCircle, Clock, RotateCcw, ListTodo, BellOff, Bell, Plus, Ban, UserPlus, Hand, Hourglass, ZoomIn } from 'lucide-react';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import { notify, categoryOf } from '../utils/notify';
 import { notificationCopy } from '../notifications/registry';
@@ -1297,9 +1297,14 @@ export default function ManagerNotifications({ onClose }) {
                                                     href={url}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="block h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                    // object-contain + sunken canvas so a tall photo isn't cropped to
+                                                    // its middle; ZoomIn badge signals it opens full-size in a new tab.
+                                                    className="relative block h-20 w-20 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                 >
-                                                    <img src={url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-cover" loading="lazy" />
+                                                    <img src={url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" />
+                                                    <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
+                                                        <ZoomIn className="h-3 w-3" aria-hidden="true" />
+                                                    </span>
                                                 </a>
                                             ))}
                                         </div>

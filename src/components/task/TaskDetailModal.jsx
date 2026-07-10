@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useId, useMemo } from 'react';
 import clsx from 'clsx';
 import {
     Pencil, Trash2, Undo2, CheckCircle2, Check, Clock, MessageSquare, ListChecks,
-    Link as LinkIcon, ImageIcon, ImagePlus, Camera, Send, X, ChevronDown,
+    Link as LinkIcon, ImageIcon, ImagePlus, Camera, ZoomIn, Send, X, ChevronDown,
     Calendar, Timer, Hourglass, UserCog, Square, CheckSquare,
 } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
@@ -646,10 +646,16 @@ export default function TaskDetailModal({
                                             key={idx}
                                             type="button"
                                             onClick={() => setLightboxIndex(idx)}
-                                            className="h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                            // object-contain (not -cover) so tall phone photos show whole, not just
+                                            // their middle; the sunken canvas fills the letterbox bands and the
+                                            // ZoomIn badge marks the thumb as an openable preview (DESIGN_SYSTEM).
+                                            className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti nuotrauką ${idx + 1}`}
                                         >
-                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-cover" />
+                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-contain" />
+                                            <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
+                                                <ZoomIn className="h-3 w-3" aria-hidden="true" />
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
@@ -690,10 +696,13 @@ export default function TaskDetailModal({
                                             key={idx}
                                             type="button"
                                             onClick={() => setCompletionLightboxIndex(idx)}
-                                            className="h-16 w-16 overflow-hidden rounded-control border border-line focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                            className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti pabaigos nuotrauką ${idx + 1}`}
                                         >
-                                            <img src={url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-cover" />
+                                            <img src={url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-contain" />
+                                            <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
+                                                <ZoomIn className="h-3 w-3" aria-hidden="true" />
+                                            </span>
                                         </button>
                                     ))}
                                 </div>
