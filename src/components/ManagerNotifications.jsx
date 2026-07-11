@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, arrayUnion, getDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
+import { useUsers } from '../context/UsersContext';
+import { canSeeWholeTeam, isOverseenBy } from '../utils/teamScope';
 import { useNavigation } from '../context/NavigationContext';
 import { format, parseISO } from 'date-fns';
 import { lt } from 'date-fns/locale';
@@ -103,7 +105,8 @@ function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDelet
 }
 
 export default function ManagerNotifications({ onClose }) {
-    const { currentUser, userRole } = useAuth();
+    const { currentUser, userRole, userData } = useAuth();
+    const { usersMap } = useUsers();
     const { setActiveTab } = useNavigation();
     const isManager = isManagerRole(userRole);
     const runUndoable = useUndoableAction();
@@ -642,7 +645,23 @@ export default function ManagerNotifications({ onClose }) {
         }
     };
 
-    const allNotifications = [...calendarNotifications, ...calendarRequests, ...taskNotifications];
+    // Audit R-08: the calendar listener reads the whole company for the week (no subtree field exists
+    // on the doc to query by), so a scoped/senior manager must NOT be shown — nor allowed to dismiss —
+    // a worker outside their subtree (the rules now deny that dismiss). Whole-team viewers see all;
+    // a scoped overseer keeps only rows whose worker (userId) is in their overseer closure. Derived
+    // (not filtered in the listener) so it always uses the latest roster without re-subscribing on
+    // every user-doc change. usersMap[n.userId] resolves the worker; missing → fail-closed (hidden).
+    const scopedCalendarNotifications = useMemo(() => {
+        if (canSeeWholeTeam(userData)) return calendarNotifications;
+        // Keep the caller's OWN notice (a manager may log their own calendar change — the rule's
+        // owner branch lets them dismiss it) plus their subtree workers'. Mirrors scopeRoster's
+        // `u.id === uid || isOverseenBy(u, uid)` predicate.
+        return calendarNotifications.filter(
+            n => n.userId === currentUser?.uid || isOverseenBy(usersMap[n.userId], currentUser?.uid)
+        );
+    }, [calendarNotifications, usersMap, userData, currentUser]);
+
+    const allNotifications = [...scopedCalendarNotifications, ...calendarRequests, ...taskNotifications];
 
     // Action-required items must float above informational ones regardless of arrival order:
     // a blocked worker's time-extension request or a pending calendar approval should never sit
@@ -661,13 +680,13 @@ export default function ManagerNotifications({ onClose }) {
     // manager's calendar-change notices). Action items that still need a decision are left alone —
     // clearing them would silently skip the work they represent.
     const infoTaskNotifs = taskNotifications.filter(n => categoryOf(n.type) === 'info');
-    const hasInfoToClear = infoTaskNotifs.length + calendarNotifications.length > 0;
+    const hasInfoToClear = infoTaskNotifs.length + scopedCalendarNotifications.length > 0;
     const handleMarkAllRead = async () => {
         setMarkingAll(true);
         try {
             await Promise.all([
                 ...infoTaskNotifs.map(n => handleDismissTask(n.id)),
-                ...calendarNotifications.map(n => handleDismissCalendar(n.id)),
+                ...scopedCalendarNotifications.map(n => handleDismissCalendar(n.id)),
             ]);
         } catch (err) {
             console.error('Error marking all read:', err);

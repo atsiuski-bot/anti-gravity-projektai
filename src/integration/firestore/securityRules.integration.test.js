@@ -274,6 +274,14 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                     status: 'pending',
                     managerIds: [IN_SCOPE_MGR, OUT_SCOPE_MGR],
                 },
+                // TARGET's weekly calendar-change notification — a manager may dismiss it (dismissedBy)
+                // only within scope.
+                'calendar_notifications/cn-1': {
+                    userId: TARGET_ID,
+                    weekStart: '2026-W28',
+                    changes: [],
+                    dismissedBy: [],
+                },
             });
         }, 30_000);
 
@@ -368,6 +376,30 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
         it('an IN-SCOPE scoped manager still cannot change an admin-only field (payRate)', async () => {
             await assertFails(
                 updateDoc(doc(authedDb(IN_SCOPE_MGR), 'users', TARGET_ID), { payRate: { tier1: 10 } })
+            );
+        });
+
+        // calendar_notifications: a manager may dismiss (dismissedBy) only a subtree worker's notice.
+        // The client already lists only subtree rows for a scoped manager (scopedCalendarNotifications),
+        // so this rule just backstops that boundary server-side.
+        it('an OUT-OF-SCOPE scoped manager cannot dismiss the calendar notification', async () => {
+            await assertFails(
+                updateDoc(doc(authedDb(OUT_SCOPE_MGR), 'calendar_notifications', 'cn-1'),
+                    { dismissedBy: [OUT_SCOPE_MGR] })
+            );
+        });
+
+        it('an IN-SCOPE scoped manager may dismiss a subtree calendar notification', async () => {
+            await assertSucceeds(
+                updateDoc(doc(authedDb(IN_SCOPE_MGR), 'calendar_notifications', 'cn-1'),
+                    { dismissedBy: [IN_SCOPE_MGR] })
+            );
+        });
+
+        it('a whole-company admin may dismiss any calendar notification', async () => {
+            await assertSucceeds(
+                updateDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'calendar_notifications', 'cn-1'),
+                    { dismissedBy: [WHOLE_TEAM_ADMIN] })
             );
         });
     });

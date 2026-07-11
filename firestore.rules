@@ -635,15 +635,28 @@ service cloud.firestore {
     // Managers monitor every worker's weekly calendar changes; a worker only its
     // own. The worker appends changes (owner update); a manager dismisses.
     match /calendar_notifications/{notifId} {
+      // READ stays broad: the manager bell queries the whole week (no subtree field exists on this
+      // doc to array-contains on) and filters to its subtree in the client, so a per-owner read rule
+      // would fail the whole query. The R-08 boundary here is WRITE authority (below), matched by the
+      // client only displaying/dismissing subtree rows (ManagerNotifications scopedCalendarNotifications).
       allow read:   if isUserActive() &&
                     (resource.data.get('userId', '') == request.auth.uid || isManagerOrAdmin());
-      // Worker creates its own; a manager also creates the FIRST notification of a
-      // worker's week when approving a calendar change (the audit log carries the
-      // worker's userId, not the manager's), so a manager escape is required.
-      allow create: if isUserActive() && (createOwnsUserId() || isManagerOrAdmin());
+      // Worker creates its own; a manager also creates the FIRST notification of a worker's week when
+      // approving that worker's calendar change (the audit log carries the worker's userId). Audit
+      // R-08: a scoped/senior manager may create only for a worker in their subtree (the approve flow
+      // that reaches here is itself subtree-bounded via the scoped calendar_requests + work_hours rules).
+      allow create: if isUserActive() &&
+                    (createOwnsUserId() || canSeeWholeTeam() ||
+                     (isScopedOverseer() && overseesUser(request.resource.data.get('userId', ''))));
+      // Worker updates its own (append changes); a manager dismisses (dismissedBy). Audit R-08: a
+      // scoped/senior manager may dismiss only a subtree worker's notification — matched by the client,
+      // which never lists a non-subtree row for them to dismiss.
       allow update: if isUserActive() &&
-                    (resource.data.get('userId', '') == request.auth.uid || isManagerOrAdmin());
-      allow delete: if isManagerOrAdmin();
+                    (resource.data.get('userId', '') == request.auth.uid || canSeeWholeTeam() ||
+                     (isScopedOverseer() && overseesUser(resource.data.get('userId', ''))));
+      allow delete: if isUserActive() &&
+                    (canSeeWholeTeam() ||
+                     (isScopedOverseer() && overseesUser(resource.data.get('userId', ''))));
     }
 
     // ---- CALENDAR REQUESTS (approval workflow) ------------------------------
