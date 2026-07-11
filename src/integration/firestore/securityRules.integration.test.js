@@ -265,6 +265,15 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                     engineVersion: 2,
                     run: { runId: 'run-1', type: 'task', startedAt: '2026-07-11T00:00:00.000Z', revision: 1 },
                 },
+                // TARGET's pending calendar request. managerIds addresses BOTH scoped managers
+                // (client-supplied, so it is NOT a security boundary) — the rule must scope by the
+                // owner's overseer closure regardless, so only the in-scope manager may act.
+                'calendar_requests/cr-1': {
+                    userId: TARGET_ID,
+                    type: 'add',
+                    status: 'pending',
+                    managerIds: [IN_SCOPE_MGR, OUT_SCOPE_MGR],
+                },
             });
         }, 30_000);
 
@@ -301,6 +310,64 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                     doc(authedDb(IN_SCOPE_MGR), `users/${TARGET_ID}/timer_commands`, 'fe-cmd-1'),
                     forceEndCommand(IN_SCOPE_MGR)
                 )
+            );
+        });
+
+        // Calendar-request approval workflow (decline is the acute gap: it bypasses the already-scoped
+        // work_hours write that approve performs). The userId pin is preserved by the merge update.
+        const declinePatch = { status: 'declined', declinedBy: 'x', declinedAt: '2026-07-11T02:00:00.000Z' };
+
+        it('an OUT-OF-SCOPE scoped manager cannot decline the request', async () => {
+            await assertFails(
+                updateDoc(doc(authedDb(OUT_SCOPE_MGR), 'calendar_requests', 'cr-1'), declinePatch)
+            );
+        });
+
+        it('an IN-SCOPE scoped manager may decline the request (legit flow preserved)', async () => {
+            await assertSucceeds(
+                updateDoc(doc(authedDb(IN_SCOPE_MGR), 'calendar_requests', 'cr-1'), declinePatch)
+            );
+        });
+
+        it('a whole-company admin may decline any request regardless of subtree', async () => {
+            await assertSucceeds(
+                updateDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'calendar_requests', 'cr-1'), declinePatch)
+            );
+        });
+
+        // users/{userId} update: a manager may act on another user's doc only within scope. The one
+        // legit scoped-manager cross-user write is the force-end (activeSession:null on the target);
+        // all management writes (isDisabled/role/pay/membership) are admin-only in the client UI.
+        it('an OUT-OF-SCOPE scoped manager cannot write another team member user doc', async () => {
+            await assertFails(
+                updateDoc(doc(authedDb(OUT_SCOPE_MGR), 'users', TARGET_ID), { activeSession: null })
+            );
+        });
+
+        it('an IN-SCOPE scoped manager may write a subtree member user doc (force-end path)', async () => {
+            await assertSucceeds(
+                updateDoc(doc(authedDb(IN_SCOPE_MGR), 'users', TARGET_ID), { activeSession: null })
+            );
+        });
+
+        it('an OUT-OF-SCOPE scoped manager cannot disable a worker outside their subtree', async () => {
+            await assertFails(
+                updateDoc(doc(authedDb(OUT_SCOPE_MGR), 'users', TARGET_ID), { isDisabled: true })
+            );
+        });
+
+        it('a whole-company admin may still disable any worker (management preserved)', async () => {
+            await assertSucceeds(
+                updateDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'users', TARGET_ID), { isDisabled: true })
+            );
+        });
+
+        // The R-08 gate now lets a scoped manager write a SUBTREE member's user doc — prove the
+        // admin-only field pins still block privilege escalation through that opening. Changing
+        // payRate is admin-only, so even an in-scope manager (whose gate passes) must be denied.
+        it('an IN-SCOPE scoped manager still cannot change an admin-only field (payRate)', async () => {
+            await assertFails(
+                updateDoc(doc(authedDb(IN_SCOPE_MGR), 'users', TARGET_ID), { payRate: { tier1: 10 } })
             );
         });
     });

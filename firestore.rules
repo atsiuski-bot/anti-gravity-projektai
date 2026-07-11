@@ -85,6 +85,20 @@ service cloud.firestore {
     function inCallerTeam() {
       return request.auth.uid in resource.data.get('teamManagerIds', []);
     }
+    // Audit R-08 — WRITE-side scope for a MANAGER acting on ANOTHER user's own doc. The document
+    // being written IS the target user, so their overseer closure reads straight from resource.data
+    // (no extra get()). Admins + unscoped managers keep whole-company reach; a scoped/senior manager
+    // must appear in the target's overseerIds. That closure is CF-maintained and only ever holds
+    // manager/senior uids, so membership already implies a legitimate overseer (a worker uid can
+    // never be in it, and the field pins still block any privilege field) — no separate role call
+    // needed. Kept as ONE function so the users-update gate is a single call: the users rule carries
+    // ~10 field pins, and inlining this multi-term OR at the statement level pushed the whole rule
+    // past the rules engine's per-request evaluation limit (empirically it denied a logically-true
+    // write; the same OR shape works inline on break_sessions/work_sessions, which have far fewer pins).
+    function overseesUserDoc() {
+      return canSeeWholeTeam() ||
+             (request.auth.uid in resource.data.get('overseerIds', []));
+    }
     // A private row (task/session) is readable by: whole-team viewers, its owner, the caller's
     // team membership, or (tasks only) the manager/auditor named on the row.
     function canReadOwnedTask() {
@@ -256,47 +270,48 @@ service cloud.firestore {
       // for those accounts. Managers/admins were spared only because isManagerOrAdmin() short-circuits
       // the conjunct before the dot access. .get() on both sides defaults a missing field to a safe
       // value so the equality (unchanged on these self-writes) passes for legacy and current docs alike.
+      // Audit R-08: a manager may act on ANOTHER user's doc only within scope. Admins and UNSCOPED
+      // managers keep whole-company reach (canSeeWholeTeam) — new-signup approval writes and the
+      // force-end-anyone control both depend on it; a scoped or senior manager must oversee the
+      // TARGET (overseesUser reads users/{userId}.overseerIds). This completes the force-end scope:
+      // active_sessions + users/{userId}/timer_commands already use this exact predicate, so all
+      // three writes of one force-end now share a single subtree boundary. Was bare isManagerOrAdmin(),
+      // which let a scoped/senior manager disable or mutate ANY user's doc outside their subtree. The
+      // per-field pins below are unchanged — they still gate WHICH fields each role may change; this
+      // only gates WHETHER the caller may touch this user at all. (Signup approval is admin-only, so
+      // the empty-overseerIds new user is reached via canSeeWholeTeam, never overseesUser.)
       allow update: if isAuthenticated()
-                    && (request.auth.uid == userId || isManagerOrAdmin())
-                    && (isAdmin() ||
-                        request.resource.data.get('role', '') == resource.data.get('role', ''))
+                    && (request.auth.uid == userId || overseesUserDoc())
+                    // isDisabled may be toggled by any manager/admin (approval / disable / re-enable);
+                    // everyone else must leave it unchanged. Kept separate from the admin-only block
+                    // below because a manager legitimately toggles it. .get() on both sides keeps a
+                    // legacy doc without the field editable (the dot-access trap documented above).
                     && (isManagerOrAdmin() ||
                         request.resource.data.get('isDisabled', false) == resource.data.get('isDisabled', false))
-                    && (isAdmin() ||
-                        request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []))
-                    && (isAdmin() ||
-                        request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false))
-                    // Senior-manager membership (which seniors a manager answers to) is admin-only,
-                    // exactly like teamManagerIds/scopedManager. (ADR 0007)
-                    && (isAdmin() ||
-                        request.resource.data.get('seniorManagerIds', []) == resource.data.get('seniorManagerIds', []))
-                    && (isAdmin() ||
-                        request.resource.data.get('defaultSeniorManager', '') == resource.data.get('defaultSeniorManager', ''))
                     // The overseer closure is written ONLY by the admin-SDK Cloud Function (which
                     // bypasses rules). No client — not even an admin — may hand-edit it, or the
                     // confidentiality boundary could be silently desynced. (ADR 0007)
                     && request.resource.data.get('overseerIds', []) == resource.data.get('overseerIds', [])
-                    // Pay rate (tiered NET hourly rates) is admin-only, like team membership — a
-                    // worker must never be able to set their own rate. (ADR 0012)
-                    && (isAdmin() ||
-                        request.resource.data.get('payRate', {}) == resource.data.get('payRate', {}))
-                    // Approval-free backdated time-logging is a privilege an admin grants per-user;
-                    // it must be admin-only to set, or a worker could self-grant it on one of their
-                    // own routine self-writes (workStatus/activeSession). Pinned with .get(...,false)
-                    // on BOTH sides so a legacy doc without the field stays editable (the isDisabled
-                    // dot-access trap). NOTE: this only gates WHO sets the flag — a worker can already
-                    // create their own work_sessions at any timestamp; the flag/UI is the product
-                    // gate, the admin notification is the audit trail.
-                    && (isAdmin() ||
-                        request.resource.data.get('canBackdateTime', false) == resource.data.get('canBackdateTime', false))
-                    // isTest excludes an account from every report and pay total (Reports.jsx /
-                    // DailyStatistics filter it out). A worker must never be able to self-classify as
-                    // a test account and silently disappear from accountability while its sessions keep
-                    // accruing — so, like role/scope/pay, it is admin/server-only (audit R-07). Pinned
-                    // through .get(...,false) on both sides so a legacy doc without the field stays
-                    // editable (the isDisabled dot-access trap documented above).
-                    && (isAdmin() ||
-                        request.resource.data.get('isTest', false) == resource.data.get('isTest', false));
+                    // ADMIN-ONLY FIELDS. A non-admin may change NONE of these; only an admin may set
+                    // role (no self-mint), team/senior membership + scope (ADR 0005/0007), payRate
+                    // (ADR 0012), canBackdateTime (per-user admin grant), or isTest (audit R-07 — no
+                    // self-exclusion from reports/pay). Consolidated into ONE isAdmin() branch (was 8
+                    // separate `isAdmin() || …` conjuncts): logically identical — a non-admin must
+                    // leave every one of these unchanged either way — but it evaluates isAdmin() ONCE.
+                    // That matters because with the R-08 scope gate now on the manager branch above,
+                    // 8 separate isAdmin() evaluations pushed the whole rule past Firestore's per-
+                    // request rule-evaluation budget and denied even legitimate writes (a manager's
+                    // force-end). .get(...) defaults keep legacy docs writable (the dot-access trap).
+                    && (isAdmin() || (
+                        request.resource.data.get('role', '') == resource.data.get('role', '') &&
+                        request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []) &&
+                        request.resource.data.get('scopedManager', false) == resource.data.get('scopedManager', false) &&
+                        request.resource.data.get('seniorManagerIds', []) == resource.data.get('seniorManagerIds', []) &&
+                        request.resource.data.get('defaultSeniorManager', '') == resource.data.get('defaultSeniorManager', '') &&
+                        request.resource.data.get('payRate', {}) == resource.data.get('payRate', {}) &&
+                        request.resource.data.get('canBackdateTime', false) == resource.data.get('canBackdateTime', false) &&
+                        request.resource.data.get('isTest', false) == resource.data.get('isTest', false)
+                    ));
       allow delete: if isAdmin();
 
       // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------
@@ -644,9 +659,22 @@ service cloud.firestore {
       // calendar history (which the Reports tab queries by userId). The .get() form tolerates a
       // legacy doc predating the userId field, matching the pin on work_sessions/break_sessions/
       // work_hours. Split from delete because a delete carries no request.resource to compare.
-      allow update: if isUserActive() && (ownsUserId() || isManagerOrAdmin())
+      // Audit R-08: a manager may approve/decline/delete a request only within scope. A scoped or
+      // senior manager must oversee the request's owner (the worker); admins and unscoped managers
+      // keep whole-company reach. The APPROVE path was already effectively bounded because it writes
+      // the worker's work_hours FIRST (that rule requires overseesUser too), but DECLINE touches only
+      // this status flip, so a scoped manager could previously decline ANY team's request. Keyed on
+      // the EXISTING owner (resource.data.userId); the userId pin below keeps it immutable on update.
+      // (calendar_notifications is deliberately NOT scoped the same way: a manager's notification bell
+      // lists the whole company by weekStart, so scoping its dismiss write would deny dismissing rows
+      // the UI legitimately shows — a read-breadth concern, not this write-authority one.)
+      allow update: if isUserActive()
+                    && (ownsUserId() || canSeeWholeTeam() ||
+                        (isScopedOverseer() && overseesUser(resource.data.userId)))
                     && request.resource.data.get('userId', '') == resource.data.get('userId', '');
-      allow delete: if isUserActive() && (ownsUserId() || isManagerOrAdmin());
+      allow delete: if isUserActive()
+                    && (ownsUserId() || canSeeWholeTeam() ||
+                        (isScopedOverseer() && overseesUser(resource.data.userId)));
     }
 
     // ---- REQUEST NOTIFICATIONS (recipient = owner) --------------------------
