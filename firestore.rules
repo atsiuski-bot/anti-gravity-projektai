@@ -439,7 +439,12 @@ service cloud.firestore {
                     (
                       request.auth.uid == userId ||
                       (
-                        isManagerOrAdmin() &&
+                        // Audit R-08: a manager may force-idle a live session only within scope.
+                        // canSeeWholeTeam() = admin or unscoped manager (whole company, as before);
+                        // a scoped or senior manager must have the TARGET user in their overseer
+                        // closure (overseesUser reads users/{userId}.overseerIds). Previously the
+                        // bare isManagerOrAdmin() let a scoped manager idle ANOTHER team's session.
+                        (canSeeWholeTeam() || (isScopedOverseer() && overseesUser(userId))) &&
                         request.resource.data.status == 'idle' &&
                         request.resource.data.run == null
                       )
@@ -464,7 +469,12 @@ service cloud.firestore {
                     (
                       userId == request.auth.uid ||
                       (
-                        isManagerOrAdmin() &&
+                        // Audit R-08: a manager may issue a force-end-session command only within
+                        // scope — same partition as the active_sessions force-idle branch above.
+                        // A scoped/senior manager must oversee the TARGET user; admins and unscoped
+                        // managers keep whole-company reach. Was bare isManagerOrAdmin(), which let a
+                        // scoped manager force-end ANOTHER team's break/call/quick-work/task run.
+                        (canSeeWholeTeam() || (isScopedOverseer() && overseesUser(userId))) &&
                         request.resource.data.kind == 'force-end-session' &&
                         request.resource.data.actorId == request.auth.uid
                       )

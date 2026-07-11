@@ -7,17 +7,25 @@ import {
 import { doc, setDoc, updateDoc } from 'firebase/firestore';
 import { readFile } from 'node:fs/promises';
 
-// Exploit-regression oracles for the P0 authorization fixes from the 2026-07-10 full sweep:
+// Exploit-regression oracles for the authorization fixes from the 2026-07-10 full sweep:
 //   R-01 — a fresh user may create ONLY a safe, disabled-worker profile (no self-minted admin).
 //   R-05 — a worker may not forge the CREATE-ONLY team-visibility stamp on their own session.
 //   R-06 — a worker may not re-point their own task to a colleague (horizontal ownership bypass).
 //   R-07 — a worker may not self-classify as a test account and vanish from reports.
+//   R-08 — a scoped manager may force-end/idle a session ONLY inside their overseer subtree (P1).
 // Each fix ships with a FAIL case (the exploit) and a SUCCESS case (the legitimate flow it must
 // preserve), so a future rules edit that regresses either boundary breaks this suite.
 
 const PROJECT_ID = 'demo-workz-security-rules';
 const WORKER_ID = 'rules-worker';
 const OTHER_ID = 'rules-other-worker';
+// R-08 principals: a target worker whose live session a manager may force-end, an in-scope scoped
+// manager (present in the target's overseerIds), an out-of-scope scoped manager (absent from it),
+// and a whole-company admin (must keep reach regardless of subtree).
+const TARGET_ID = 'rules-target';
+const IN_SCOPE_MGR = 'rules-mgr-in';
+const OUT_SCOPE_MGR = 'rules-mgr-out';
+const WHOLE_TEAM_ADMIN = 'rules-admin';
 const emulatorAvailable = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const describeEmulator = emulatorAvailable ? describe : describe.skip;
 
@@ -40,6 +48,13 @@ function workerDb() {
 
 // A brand-new principal whose users/{uid} document does NOT exist yet (first-login create path).
 function freshDb(uid) {
+    return testEnv.authenticatedContext(uid, {
+        email: `${uid}@example.test`,
+    }).firestore();
+}
+
+// An authenticated principal whose users/{uid} document IS seeded (role/scope come from the seed).
+function authedDb(uid) {
     return testEnv.authenticatedContext(uid, {
         email: `${uid}@example.test`,
     }).firestore();
@@ -185,5 +200,108 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
         await assertSucceeds(
             updateDoc(doc(workerDb(), 'tasks', 'task-a'), { status: 'in-progress' })
         );
+    });
+
+    // ---- R-08: a manager may force-end a session only inside their overseer subtree ----
+    describe('R-08: scoped force-end is subtree-bounded', () => {
+        // The idle record a manager writes to force-end TARGET's live run. Full-replace (setDoc) so
+        // request.resource.data is exactly this — no merge with the seeded 'active' record. It clears
+        // the run and advances the revision, satisfying validActiveSessionRecord + the active→idle
+        // transition guard; the ONLY thing that varies between fail/success is the CALLER's scope.
+        const forceIdleRecord = {
+            userId: TARGET_ID,
+            status: 'idle',
+            run: null,
+            revision: 6,
+            expectedRevision: 5,
+            expectedRunId: 'run-1',
+            lastCommandId: 'cmd-force',
+            updatedAt: '2026-07-11T01:00:00.000Z',
+            engineVersion: 2,
+        };
+        // A well-formed force-end-session command; actorId must stamp the caller.
+        function forceEndCommand(actorUid) {
+            return {
+                commandId: 'fe-cmd-1',
+                userId: TARGET_ID,
+                kind: 'force-end-session',
+                actorId: actorUid,
+                expectedRevision: 5,
+                expectedRunId: 'run-1',
+                runId: null,
+                appliedRevision: 0,
+                issuedAt: '2026-07-11T01:00:00.000Z',
+                engineVersion: 2,
+            };
+        }
+
+        beforeEach(async () => {
+            if (!emulatorAvailable) return;
+            await seed({
+                [`users/${TARGET_ID}`]: {
+                    id: TARGET_ID,
+                    role: 'worker',
+                    isDisabled: false,
+                    overseerIds: [IN_SCOPE_MGR], // IN_SCOPE_MGR oversees; OUT_SCOPE_MGR does not
+                },
+                [`users/${IN_SCOPE_MGR}`]: {
+                    id: IN_SCOPE_MGR, role: 'manager', scopedManager: true, isDisabled: false,
+                },
+                [`users/${OUT_SCOPE_MGR}`]: {
+                    id: OUT_SCOPE_MGR, role: 'manager', scopedManager: true, isDisabled: false,
+                },
+                [`users/${WHOLE_TEAM_ADMIN}`]: {
+                    id: WHOLE_TEAM_ADMIN, role: 'admin', isDisabled: false,
+                },
+                // TARGET's live session, mid-run — the row a manager may force-idle.
+                [`active_sessions/${TARGET_ID}`]: {
+                    userId: TARGET_ID,
+                    status: 'active',
+                    revision: 5,
+                    expectedRevision: 4,
+                    expectedRunId: null,
+                    lastCommandId: 'cmd-seed',
+                    updatedAt: '2026-07-11T00:00:00.000Z',
+                    engineVersion: 2,
+                    run: { runId: 'run-1', type: 'task', startedAt: '2026-07-11T00:00:00.000Z', revision: 1 },
+                },
+            });
+        }, 30_000);
+
+        it('an OUT-OF-SCOPE scoped manager cannot force-idle the session', async () => {
+            await assertFails(
+                setDoc(doc(authedDb(OUT_SCOPE_MGR), 'active_sessions', TARGET_ID), forceIdleRecord)
+            );
+        });
+
+        it('an IN-SCOPE scoped manager may force-idle the session (legit flow preserved)', async () => {
+            await assertSucceeds(
+                setDoc(doc(authedDb(IN_SCOPE_MGR), 'active_sessions', TARGET_ID), forceIdleRecord)
+            );
+        });
+
+        it('a whole-company admin may force-idle any session regardless of subtree', async () => {
+            await assertSucceeds(
+                setDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'active_sessions', TARGET_ID), forceIdleRecord)
+            );
+        });
+
+        it('an OUT-OF-SCOPE scoped manager cannot issue a force-end-session command', async () => {
+            await assertFails(
+                setDoc(
+                    doc(authedDb(OUT_SCOPE_MGR), `users/${TARGET_ID}/timer_commands`, 'fe-cmd-1'),
+                    forceEndCommand(OUT_SCOPE_MGR)
+                )
+            );
+        });
+
+        it('an IN-SCOPE scoped manager may issue a force-end-session command (legit flow preserved)', async () => {
+            await assertSucceeds(
+                setDoc(
+                    doc(authedDb(IN_SCOPE_MGR), `users/${TARGET_ID}/timer_commands`, 'fe-cmd-1'),
+                    forceEndCommand(IN_SCOPE_MGR)
+                )
+            );
+        });
     });
 });
