@@ -638,6 +638,56 @@ describe('revisioned timer transition plans', () => {
         }
     );
 
+    it('caps a split-heartbeat recovery run to one MAX_SESSION_MINUTES budget (R-03)', () => {
+        // Orphaned run: started at 0h, last heartbeat at 15h, recovered at 30h. The proven
+        // segment (15h) and the post-heartbeat gap (15h) must NOT each be clamped to 16h and
+        // summed (that credited 30h); the whole run shares one 960-minute ceiling.
+        const startedAt = '2026-07-09T00:00:00.000Z';
+        const startMs = new Date(startedAt).getTime();
+        const heartbeatAt = new Date(startMs + 15 * 60 * 60000).toISOString();
+        const recoveredAt = new Date(startMs + 30 * 60 * 60000).toISOString();
+        const plan = planTaskRecover({
+            task: {
+                ...baseTask,
+                timerStatus: 'running',
+                timerStartedAt: startedAt,
+                timerLastHeartbeat: heartbeatAt,
+            },
+            userId,
+            userData: idleUser,
+            activeRecord: {
+                userId,
+                revision: 3,
+                status: 'active',
+                run: {
+                    runId: 'run-before-crash',
+                    type: 'task',
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    startedAt,
+                    revision: 3,
+                },
+            },
+            commandId: 'cmd-recover-split',
+            runId: 'run-after-recovery-split',
+            issuedAt: recoveredAt,
+            recoveredAt,
+        });
+
+        // Total credited time across both ledger rows must not exceed the 16h ceiling.
+        expect(plan.creditedMinutes).toBeLessThanOrEqual(960);
+        expect(plan.creditedMinutes).toBe(960);
+        // The task projection must reflect the same single-budget total (baseTask starts at 0).
+        expect(plan.writes.find((write) => write.path === 'tasks/task-a').data.timerMinutes)
+            .toBe(960);
+        // Neither individual ledger row may exceed the ceiling either.
+        const provenRow = plan.writes.find((w) => w.path === 'work_sessions/sess_run_run-before-crash');
+        const gapRow = plan.writes.find((w) => w.path === 'work_sessions/sess_gap_run_run-before-crash');
+        expect(provenRow.data.durationMinutes).toBeLessThanOrEqual(960);
+        expect(gapRow.data.durationMinutes).toBeLessThanOrEqual(960);
+        expect(provenRow.data.durationMinutes + gapRow.data.durationMinutes).toBe(960);
+    });
+
     it('finishes the active task, ledger, canonical session, and user projection atomically', () => {
         const plan = planTaskEnd({
             task: {

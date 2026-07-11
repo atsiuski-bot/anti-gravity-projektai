@@ -336,31 +336,63 @@ exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', as
 // Storage attachment cleanup
 // ---------------------------------------------------------------------------
 
-// Firebase download URL → object path: .../o/<URL-ENCODED-PATH>?alt=media&token=...
-function pathFromDownloadUrl(url) {
+// Firebase download URL → { bucket, path }. Format:
+//   https://firebasestorage.googleapis.com/v0/b/<BUCKET>/o/<URL-ENCODED-PATH>?alt=media&token=...
+// We capture the BUCKET too (not just the path) so cleanup can reject an object that does not
+// live in this project's own default bucket (see deleteObjects — audit R-02).
+function parseStorageUrl(url) {
     try {
         const u = new URL(url);
-        const m = u.pathname.match(/\/o\/(.+)$/);
+        const m = u.pathname.match(/\/b\/([^/]+)\/o\/(.+)$/);
         if (!m) return null;
-        return decodeURIComponent(m[1]);
+        return { bucket: decodeURIComponent(m[1]), path: decodeURIComponent(m[2]) };
     } catch (err) {
         return null;
     }
 }
 
-async function deleteObjects(urls) {
-    if (!urls || !urls.length) return;
+// The uid embedded in a task-attachment object key: `attachments/<uid>/<file>` — attachmentUpload.js
+// and TaskModal always upload under the UPLOADER's own uid (storage.rules enforce that). Returns
+// null for any other shape (legacy flat `attachments/<file>`, avatars, etc.), which cleanup then
+// refuses to touch.
+function attachmentOwnerUid(path) {
+    const m = /^attachments\/([^/]+)\/[^/]+/.exec(path);
+    return m ? m[1] : null;
+}
+
+// Delete Storage objects referenced by a task — but NEVER trust the client-controlled attachment
+// URL as authorization to delete (audit R-02). attachmentUrls is a plain array on a client-writable
+// task, so a crafted entry could point at ANOTHER user's `attachments/<victim>/…` object and turn
+// this Admin-SDK cleanup (which bypasses Storage rules) into arbitrary cross-user data loss. Two
+// guards make a delete safe:
+//   1. the object must live in THIS project's default bucket (a foreign host/bucket is ignored), and
+//   2. its `attachments/<uid>/…` owner prefix must equal a uid we can PROVE is tied to the task.
+//      Only `assignedUserId` qualifies: the rules pin it (a worker cannot self-assign to a colleague
+//      and, post-R-06, cannot re-point it), whereas createdBy/managerId are client-writable and could
+//      be forged to smuggle a victim uid into the allow-set. A manager-uploaded file (under the
+//      manager's own uid) therefore is NOT auto-deleted — it is left as a harmless orphan rather than
+//      risk the confused-deputy delete.
+async function deleteObjects(urls, allowedOwners) {
+    if (!urls || !urls.length || !allowedOwners || !allowedOwners.size) return;
     const bucket = getStorage().bucket();
     await Promise.all(urls.map(async (url) => {
-        const path = pathFromDownloadUrl(url);
-        if (!path) return; // not a Firebase Storage URL (legacy/external) — leave it
+        const parsed = parseStorageUrl(url);
+        if (!parsed) return;                                          // not a Storage URL (legacy/external)
+        if (parsed.bucket && parsed.bucket !== bucket.name) return;   // foreign bucket — never touch
+        const owner = attachmentOwnerUid(parsed.path);
+        if (!owner || !allowedOwners.has(owner)) return;              // not provably this task's file
         try {
-            await bucket.file(path).delete();
+            await bucket.file(parsed.path).delete();
         } catch (err) {
             // 404 = already gone; anything else is logged but never throws (best effort).
-            if (err && err.code !== 404) logger.warn('deleteObject failed', { path, err: err.message });
+            if (err && err.code !== 404) logger.warn('deleteObject failed', { path: parsed.path, err: err.message });
         }
     }));
+}
+
+// The rule-guaranteed uid that may own this task's attachment objects (see deleteObjects guard #2).
+function taskAttachmentOwners(task) {
+    return new Set(task && task.assignedUserId ? [task.assignedUserId] : []);
 }
 
 function urlsOf(task) {
@@ -370,12 +402,13 @@ function urlsOf(task) {
     return task.attachmentUrl ? [task.attachmentUrl] : [];
 }
 
-// In-modal attachment removal: delete objects that disappeared from the list.
+// In-modal attachment removal: delete objects that disappeared from the list (only those the task's
+// own assignee uploaded — deleteObjects enforces the owner guard).
 exports.cleanupAttachmentsOnTaskUpdate = onDocumentUpdated('tasks/{id}', async (event) => {
-    const before = urlsOf(event.data && event.data.before && event.data.before.data());
-    const after = urlsOf(event.data && event.data.after && event.data.after.data());
-    const removed = before.filter((u) => !after.includes(u));
-    if (removed.length) await deleteObjects(removed);
+    const beforeTask = event.data && event.data.before && event.data.before.data();
+    const afterTask = event.data && event.data.after && event.data.after.data();
+    const removed = urlsOf(beforeTask).filter((u) => !urlsOf(afterTask).includes(u));
+    if (removed.length) await deleteObjects(removed, taskAttachmentOwners(afterTask || beforeTask));
 });
 
 // True task deletion: delete attachments — UNLESS the task was merely ARCHIVED (a copy now
@@ -383,14 +416,16 @@ exports.cleanupAttachmentsOnTaskUpdate = onDocumentUpdated('tasks/{id}', async (
 exports.cleanupAttachmentsOnTaskDelete = onDocumentDeleted('tasks/{id}', async (event) => {
     const sibling = await db.collection('archived_tasks').doc(event.params.id).get();
     if (sibling.exists) return;
-    await deleteObjects(urlsOf(event.data && event.data.data()));
+    const deleted = event.data && event.data.data();
+    await deleteObjects(urlsOf(deleted), taskAttachmentOwners(deleted));
 });
 
 // Symmetric guard for the archived copy (skip if a live task copy still references the files).
 exports.cleanupAttachmentsOnArchivedDelete = onDocumentDeleted('archived_tasks/{id}', async (event) => {
     const sibling = await db.collection('tasks').doc(event.params.id).get();
     if (sibling.exists) return;
-    await deleteObjects(urlsOf(event.data && event.data.data()));
+    const deleted = event.data && event.data.data();
+    await deleteObjects(urlsOf(deleted), taskAttachmentOwners(deleted));
 });
 
 // ---------------------------------------------------------------------------

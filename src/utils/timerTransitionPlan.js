@@ -1313,9 +1313,19 @@ export function planTaskRecover({
         && heartbeatMs >= oldStart.getTime()
         && heartbeatMs < recoveryEnd.getTime();
     const provenEnd = new Date(hasUsableHeartbeat ? heartbeatMs : recoveryEnd.getTime());
-    const provenMinutes = clampSessionMinutes((provenEnd - oldStart) / 60000);
+    // Clamp the ENTIRE orphaned run (oldStart → recoveryEnd) to ONE MAX_SESSION_MINUTES
+    // budget, then PARTITION that single budget between the heartbeat-proven segment and the
+    // post-heartbeat gap. Clamping each segment independently (the previous behaviour) let one
+    // run credit up to 2×MAX_SESSION_MINUTES — e.g. a heartbeat at 15h and recovery at 30h
+    // credited 15h + 15h = 30h, doubling the 16h safety ceiling (audit R-03). The proven segment
+    // is credited first (it is the observed-alive portion) and the gap takes only the remainder.
+    const totalBudgetMinutes = clampSessionMinutes((recoveryEnd - oldStart) / 60000);
+    const provenMinutes = Math.min(
+        clampSessionMinutes((provenEnd - oldStart) / 60000),
+        totalBudgetMinutes,
+    );
     const gapMinutes = hasUsableHeartbeat
-        ? clampSessionMinutes((recoveryEnd - provenEnd) / 60000)
+        ? Math.max(0, totalBudgetMinutes - provenMinutes)
         : 0;
     const timerMinutes = Number(task.timerMinutes || 0) + provenMinutes + gapMinutes;
 

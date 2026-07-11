@@ -219,8 +219,28 @@ service cloud.firestore {
       // valid token for up to ~1h but can no longer enumerate the whole company.
       allow read: if isAuthenticated() &&
                   (request.auth.uid == userId || isUserActive());
-      // Users create their own document on first login.
-      allow create: if isAuthenticated() && request.auth.uid == userId;
+      // Users create their own document on first login — and ONLY as a safe, self-provisioned
+      // DISABLED WORKER awaiting admin approval (the exact shape AuthContext.processUserAfterLogin
+      // writes). The create rule previously accepted ANY shape, so a hostile client could win the
+      // first write to users/{ownUid} with role:'admin' + isDisabled:false and self-escalate to
+      // full admin across every admin-gated collection (audit R-01). We pin every privilege-bearing
+      // field to its safe default here, mirroring the admin-only pins on the UPDATE rule below:
+      //   * role must be 'worker' (no self-minted admin/manager/senior),
+      //   * the account must start EXPLICITLY disabled — an ABSENT isDisabled reads as ACTIVE
+      //     (isUserActive defaults it false), so it must be present AND true, and
+      //   * no scope / pay / test / backdate field may be pre-set.
+      // An admin later grants the real role and access via the (fully-pinned) update rule.
+      allow create: if isAuthenticated() && request.auth.uid == userId
+                    && request.resource.data.get('role', '') == 'worker'
+                    && request.resource.data.get('isDisabled', false) == true
+                    && request.resource.data.get('scopedManager', false) == false
+                    && request.resource.data.get('isTest', false) == false
+                    && request.resource.data.get('canBackdateTime', false) == false
+                    && request.resource.data.get('teamManagerIds', []) == []
+                    && request.resource.data.get('seniorManagerIds', []) == []
+                    && request.resource.data.get('overseerIds', []) == []
+                    && request.resource.data.get('defaultSeniorManager', '') == ''
+                    && request.resource.data.get('payRate', {}) == {};
       // Update: own doc or a manager/admin acting on anyone. Only admins change
       // roles; only managers/admins toggle isDisabled (the `get` fallback keeps
       // legacy docs without the field editable).
@@ -268,7 +288,15 @@ service cloud.firestore {
                     // create their own work_sessions at any timestamp; the flag/UI is the product
                     // gate, the admin notification is the audit trail.
                     && (isAdmin() ||
-                        request.resource.data.get('canBackdateTime', false) == resource.data.get('canBackdateTime', false));
+                        request.resource.data.get('canBackdateTime', false) == resource.data.get('canBackdateTime', false))
+                    // isTest excludes an account from every report and pay total (Reports.jsx /
+                    // DailyStatistics filter it out). A worker must never be able to self-classify as
+                    // a test account and silently disappear from accountability while its sessions keep
+                    // accruing — so, like role/scope/pay, it is admin/server-only (audit R-07). Pinned
+                    // through .get(...,false) on both sides so a legacy doc without the field stays
+                    // editable (the isDisabled dot-access trap documented above).
+                    && (isAdmin() ||
+                        request.resource.data.get('isTest', false) == resource.data.get('isTest', false));
       allow delete: if isAdmin();
 
       // ---- ACHIEVEMENTS (server-awarded, client-immutable) ----------------
@@ -302,13 +330,20 @@ service cloud.firestore {
       // their team; the assignee edits their own but may NOT flip the manager-only approval fields.
       // taskFieldsOkForUpdate adds the priority/estimate shape guard (enforced only when this write
       // changes those fields).
+      // The assignee branch pins the NEW assignedUserId to the caller: ownsAssignedUser() only proves
+      // the EXISTING owner is the caller, so without this a worker could rewrite assignedUserId to a
+      // colleague and inject their (self-forged) task into another user's queue — horizontal task
+      // ownership bypass (audit R-06). Legitimate reassignment is a manager action, handled by the
+      // whole-team / scoped-overseer branches above.
       allow update: if isUserActive() && taskFieldsOkForUpdate() && (
                       canSeeWholeTeam() ||
                       isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
                          overseesUser(request.resource.data.assignedUserId))) ||
-                      (ownsAssignedUser() && !changesApprovalFields())
+                      (ownsAssignedUser() &&
+                        request.resource.data.assignedUserId == request.auth.uid &&
+                        !changesApprovalFields())
                     );
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
@@ -334,16 +369,22 @@ service cloud.firestore {
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && overseesUser(request.resource.data.userId))
                             ) && durationInRange(request.resource.data);
-      // Update carries BOTH guards (composed with &&): the duration guard (main — rejects an
-      // impossible credited time, the >960-min corruption vector) AND the userId pin (full-sweep
-      // F5 — an owner or whole-team manager may NOT re-point the record to a colleague). Delete is
-      // split out because it carries no request.resource to validate.
+      // Update carries THREE guards (composed with &&): the duration guard (main — rejects an
+      // impossible credited time, the >960-min corruption vector), the userId pin (full-sweep
+      // F5 — an owner or whole-team manager may NOT re-point the record to a colleague), and the
+      // teamManagerIds pin. The last one closes audit R-05: the team-visibility stamp is
+      // denormalized by a CREATE-ONLY Cloud Function (stampTeamOnWorkSessionCreate), so a forged
+      // teamManagerIds written on UPDATE would PERSIST — silently re-scoping who may read the row
+      // (adding an unrelated manager, or hiding it from a legitimate overseer). No client write-site
+      // ever changes this field on a session (only the admin-SDK trigger sets it), so pinning it
+      // unchanged breaks nothing. Delete is split out because it carries no request.resource.
       allow update:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
                             ) && durationOkForUpdate()
-                            && request.resource.data.get('userId', '') == resource.data.get('userId', '');
+                            && request.resource.data.get('userId', '') == resource.data.get('userId', '')
+                            && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
@@ -446,15 +487,18 @@ service cloud.firestore {
       // Breaks are self-logged only (no manager-create path). Duration guard (main) — this is the
       // exact collection the >960-min corruption landed in.
       allow create:        if isUserActive() && createOwnsUserId() && durationInRange(request.resource.data);
-      // Update carries BOTH guards (composed with &&): the duration guard (main) AND the userId
-      // pin (full-sweep F5 — no re-pointing the record to a colleague). Delete is split out
-      // because it carries no request.resource to validate.
+      // Update carries THREE guards (composed with &&): the duration guard (main), the userId pin
+      // (full-sweep F5 — no re-pointing the record to a colleague), and the teamManagerIds pin
+      // (audit R-05). break_sessions is stamped by a CREATE-ONLY Cloud Function too, so a forged
+      // team-visibility stamp on UPDATE would persist; no client write-site changes it on update,
+      // so pinning it unchanged is safe. Delete is split out (no request.resource to validate).
       allow update:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
                             ) && durationOkForUpdate()
-                            && request.resource.data.get('userId', '') == resource.data.get('userId', '');
+                            && request.resource.data.get('userId', '') == resource.data.get('userId', '')
+                            && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
@@ -522,13 +566,17 @@ service cloud.firestore {
                       canSeeWholeTeam() ||
                       (isScopedOverseer() && overseesUser(request.resource.data.assignedUserId))
                     );
+      // Same NEW-assignee pin as /tasks: a worker editing their own archived task may not re-point it
+      // to a colleague (audit R-06). Reassignment stays a manager action via the branches above.
       allow update: if isUserActive() && (
                       canSeeWholeTeam() ||
                       isNamedTaskOverseer() ||
                       (isScopedOverseer() && inCallerTeam() &&
                         (request.resource.data.assignedUserId == resource.data.assignedUserId ||
                          overseesUser(request.resource.data.assignedUserId))) ||
-                      (ownsAssignedUser() && !changesApprovalFields())
+                      (ownsAssignedUser() &&
+                        request.resource.data.assignedUserId == request.auth.uid &&
+                        !changesApprovalFields())
                     );
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
