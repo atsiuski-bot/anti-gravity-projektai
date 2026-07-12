@@ -1583,6 +1583,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                         placeholder="Atlikti iki…"
                                         aria-label="Atlikti iki"
                                         disabled={fieldsLocked}
+                                        clearable
                                     />
                                 </div>
                                 {/* Žyma — optional single tag from the canonical list. Opens a list panel
