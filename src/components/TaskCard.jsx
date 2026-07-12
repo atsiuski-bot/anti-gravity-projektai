@@ -54,7 +54,7 @@ const DEADLINE_TONE = {
  * Tapping anywhere that is not itself a control (or a person chip) opens the preview; the edit
  * button opens the create/edit form directly, bypassing the preview.
  */
-const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null, leadingHandle = null }) => {
+const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, signoffOnly = false, surface = 'active', actions: actionsProp = null, detailOverrides = null, leadingHandle = null, completedByName = null, completedById = null }) => {
     const { currentUser, userRole, userData } = useAuth();
     const runUndoable = useUndoableAction();
     const [activeModal, setActiveModal] = useState(null); // 'checklist' | 'timeAdjustments'
@@ -491,9 +491,18 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                             </div>
                         </div>
 
-                        {/* Who does it · who manages — one calm line (deduped when they are the same
-                            person). */}
-                        {(showAssignee || (managerName && !samePerson)) && (
+                        {/* Who did the work · who manages. In the completion sign-off context the
+                            notification passes completedByName — there the VIEWER is always the
+                            coordinator, so "Koord." is noise; show WHO COMPLETED the task instead.
+                            Everywhere else this stays the calm "assignee · Koord." line (deduped when
+                            they are one person). */}
+                        {completedByName ? (
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
+                                <span className="inline-flex items-center whitespace-nowrap">
+                                    Atliko <UserChip userId={completedById} name={completedByName} className="ml-1" />
+                                </span>
+                            </div>
+                        ) : (showAssignee || (managerName && !samePerson)) && (
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-caption text-ink-muted">
                                 {showAssignee && (
                                     <AssigneeChip userId={task.assignedUserId} name={task.assignedUserName} color={displayColor} ring />

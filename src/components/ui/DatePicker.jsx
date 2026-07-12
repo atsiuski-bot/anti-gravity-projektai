@@ -12,7 +12,7 @@ import {
     eachDayOfInterval,
 } from 'date-fns';
 import { lt } from 'date-fns/locale';
-import { CalendarDays, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarDays, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { cn } from '../../utils/cn';
 import IconButton from './IconButton';
 import { getLithuanianDateString } from '../../utils/timeUtils';
@@ -40,6 +40,8 @@ import { getLithuanianDateString } from '../../utils/timeUtils';
  * @param {string} [min] - earliest selectable date (`yyyy-MM-dd`).
  * @param {string} [max] - latest selectable date (`yyyy-MM-dd`).
  * @param {boolean} [disabled]
+ * @param {boolean} [clearable] - when true and a date is set, a "×" button clears it back to ''
+ *   (opt-in, because most call sites are required or range-filter fields where clearing is wrong).
  * @param {string} [placeholder] - shown when `value` is empty.
  * @param {string} [displayFormat] - date-fns pattern for the trigger label (default `yyyy MMM d`,
  *   abbreviated so the day never truncates in narrow side-by-side range filters).
@@ -78,6 +80,7 @@ export default function DatePicker({
     min,
     max,
     disabled = false,
+    clearable = false,
     placeholder = 'Pasirinkite datą',
     displayFormat = 'yyyy MMM d',
     className,
@@ -196,6 +199,11 @@ export default function DatePicker({
         ? format(selectedDate, displayFormat, { locale: lt })
         : placeholder;
 
+    // Show the clear "×" only when clearing makes sense — opted in, a date is set, and the field is
+    // editable. When shown it replaces the calendar glyph (one control on the right edge, never two)
+    // and the trigger reserves right padding so the label never slides under it.
+    const showClear = clearable && !!selectedDate && !disabled;
+
     return (
         <div ref={containerRef} className="relative">
             <button
@@ -209,7 +217,8 @@ export default function DatePicker({
                 aria-controls={open ? dialogId : undefined}
                 className={cn(
                     'flex w-full items-center justify-between gap-2 min-h-touch',
-                    'rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg text-left',
+                    'rounded-input border border-line bg-surface-card py-2 pl-3 text-body-lg text-left',
+                    showClear ? 'pr-12' : 'pr-3',
                     'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand',
                     'disabled:opacity-50 disabled:pointer-events-none',
                     !selectedDate && 'text-ink-muted',
@@ -218,8 +227,28 @@ export default function DatePicker({
                 {...rest}
             >
                 <span className="truncate capitalize">{triggerLabel}</span>
-                <CalendarDays className="w-5 h-5 shrink-0 text-ink-muted" aria-hidden="true" />
+                {!showClear && <CalendarDays className="w-5 h-5 shrink-0 text-ink-muted" aria-hidden="true" />}
             </button>
+
+            {showClear && (
+                <button
+                    type="button"
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        onChange?.('');
+                        // Keep keyboard users on the field after clearing.
+                        requestAnimationFrame(() => triggerRef.current?.focus());
+                    }}
+                    aria-label="Išvalyti datą"
+                    className={cn(
+                        'absolute right-1 top-1/2 -translate-y-1/2 flex h-11 w-11 items-center justify-center',
+                        'rounded-input text-ink-muted hover:bg-surface-sunken hover:text-ink',
+                        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand'
+                    )}
+                >
+                    <X className="w-4 h-4" aria-hidden="true" />
+                </button>
+            )}
 
             {open && (
                 <div

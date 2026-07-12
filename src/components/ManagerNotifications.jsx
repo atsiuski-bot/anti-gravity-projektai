@@ -57,38 +57,88 @@ const HISTORY_CAP = 100;
  * post-action hooks below are what keep the two-way feed honest — after the card's own write
  * succeeds they dismiss this notification and notify the worker.
  */
-function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDeleted, readOnly = false }) {
+function NotificationTaskCard({ taskId, notifId, notifTitle, onStale, completedByName, completedById, onEdit, onConfirmed, onReverted, onDeleted, readOnly = false }) {
     const [task, setTask] = useState(null);
-    const [loading, setLoading] = useState(true);
+    // The task-doc listener resolves to one of three terminal states, which the phantom cleanup
+    // below treats differently:
+    //   'ok'         — the task exists; render the real card.
+    //   'missing'    — a CLEAN empty read (snapshot with exists=false). Unambiguous: the task was
+    //                  deleted. A whole-team viewer's read of a gone task lands here.
+    //   'unreadable' — the listener ERRORED. A scoped manager reading a DELETED task resolves to
+    //                  permission-denied (canReadOwnedTask's branches all need resource.data, which
+    //                  is null once the row is gone), so it can't come back as a clean empty read.
+    //                  Ambiguous (could also be transient), so we never auto-dismiss it.
+    const [status, setStatus] = useState('loading'); // 'loading' | 'ok' | 'missing' | 'unreadable'
 
     useEffect(() => {
-        if (!taskId) { setLoading(false); return undefined; }
+        if (!taskId) { setStatus('missing'); return undefined; }
+        setStatus('loading');
         const unsub = onSnapshot(
             doc(db, 'tasks', taskId),
             (snap) => {
-                setTask(snap.exists() ? { id: snap.id, ...snap.data() } : null);
-                setLoading(false);
+                if (snap.exists()) {
+                    setTask({ id: snap.id, ...snap.data() });
+                    setStatus('ok');
+                } else {
+                    setTask(null);
+                    setStatus('missing');
+                }
             },
             (err) => {
                 console.error('NotificationTaskCard: task listener error:', err);
-                setLoading(false);
+                setTask(null);
+                setStatus('unreadable');
             }
         );
         return () => unsub();
     }, [taskId]);
 
-    if (loading) {
+    // Self-heal the phantom badge: a completion notice whose task was DELETED stays isRead:false (so
+    // the bell keeps counting it) but renders nothing — a permanent counted-but-invisible "1". On a
+    // CONFIRMED-missing task (clean empty read) dismiss the notice once, so the ghost clears itself
+    // the next time the recipient opens the bell. Live feed only (history is already read), and only
+    // for the unambiguous 'missing' state — never for 'unreadable', which could be transient.
+    useEffect(() => {
+        if (status === 'missing' && !readOnly && notifId) onStale?.(notifId);
+    }, [status, readOnly, notifId, onStale]);
+
+    if (status === 'loading') {
         return <Card className="h-28 max-w-xl animate-pulse" />;
     }
-    // Task already gone (deleted/archived): the completion notice is stale — render nothing.
-    if (!task) return null;
+
+    // Task gone or unreadable — no real card to draw:
+    //   • history, or a self-healing 'missing' in the live feed → render nothing (the dismiss above
+    //     clears it); this is the old silent behaviour, kept for the cases that resolve themselves.
+    //   • 'unreadable' in the live feed → a scoped manager's deleted task we can't confirm gone.
+    //     Instead of a silent, uncountable-away phantom, show a compact DISMISSIBLE stub (title +
+    //     who completed it, both carried on the notification itself) so the recipient can clear it.
+    if (status !== 'ok' || !task) {
+        if (readOnly || status !== 'unreadable') return null;
+        return (
+            <div className="max-w-xl">
+                <Card className="flex items-center justify-between gap-3 p-3">
+                    <div className="min-w-0">
+                        <p className="truncate text-body font-medium text-ink-strong">
+                            {notifTitle || 'Užduotis'}
+                        </p>
+                        <p className="text-caption text-ink-muted">
+                            {completedByName ? `Atliko ${completedByName} · ` : ''}užduotis nebepasiekiama
+                        </p>
+                    </div>
+                    <Button variant="secondary" onClick={() => onStale?.(notifId)} className="shrink-0">
+                        Gerai
+                    </Button>
+                </Card>
+            </div>
+        );
+    }
 
     // In history (readOnly) the same TaskCard is drawn on the inert 'report' surface with no action
     // set, so an archived completion looks identical to the live one but carries no sign-off buttons.
     return (
         <div className="max-w-xl">
             {readOnly ? (
-                <TaskCard task={task} role="manager" surface="report" actions={[]} />
+                <TaskCard task={task} role="manager" surface="report" actions={[]} completedByName={completedByName} completedById={completedById} />
             ) : (
                 <TaskCard
                     task={task}
@@ -97,6 +147,8 @@ function NotificationTaskCard({ taskId, onEdit, onConfirmed, onReverted, onDelet
                     onConfirmed={onConfirmed}
                     onReverted={onReverted}
                     onDeleted={onDeleted}
+                    completedByName={completedByName}
+                    completedById={completedById}
                     signoffOnly
                 />
             )}
@@ -1267,6 +1319,11 @@ export default function ManagerNotifications({ onClose }) {
                             <NotificationTaskCard
                                 key={notif.id}
                                 taskId={notif.taskId}
+                                notifId={notif.id}
+                                notifTitle={notif.taskTitle}
+                                onStale={handleDismissTask}
+                                completedByName={notif.userName}
+                                completedById={notif.userId}
                                 readOnly={readOnly}
                                 onEdit={(t) => {
                                     onClose?.();
