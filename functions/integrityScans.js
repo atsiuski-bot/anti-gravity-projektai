@@ -121,6 +121,32 @@ function classifySuspiciousWorkDays(rows, dayOf, sampleLimit = DEFAULT_SAMPLE_LI
     return { checked: totals.size, count: offenders.length, samples: offenders.slice(0, sampleLimit) };
 }
 
+/**
+ * Migration telemetry (ADR-0020 step 6 gate instrument). Step 6 — "stop legacy writes only after
+ * telemetry shows no active legacy clients/runs" — needs a signal for how much credited work is
+ * still authored by the LEGACY client paths vs the revisioned engine, which stamps engineVersion==2
+ * on every row it writes. `legacy` = rows without engineVersion==2; NOTE this bucket also includes
+ * the durable standalone intents (backdate/gap-claim/manager-manual) and server compensating writes,
+ * which are NOT legacy-timer rows and persist regardless — so the target for retiring the legacy
+ * timer sites (roadmap P8) is the TREND toward zero NEW engine-less timer rows after the flag flip,
+ * not literally legacyPct==0. While system_config/timerEngine is absent in prod the engine is
+ * dormant, so this reads ~100% legacy — the informative baseline, not an alarm. A per-path breakdown
+ * (legacy-timer vs intent vs server) is a documented follow-up. Report-only.
+ * @param {Array<Object>} rows - work_sessions docs.
+ * @returns {{ total: number, engineV2: number, legacy: number, legacyPct: number }}
+ */
+function classifyEngineAdoption(rows) {
+    let total = 0;
+    let engineV2 = 0;
+    for (const row of rows) {
+        total += 1;
+        if (row.engineVersion === 2) engineV2 += 1;
+    }
+    const legacy = total - engineV2;
+    const legacyPct = total > 0 ? Math.round((legacy / total) * 1000) / 10 : 0;
+    return { total, engineV2, legacy, legacyPct };
+}
+
 module.exports = {
     SUSPICIOUS_DAY_WORK_MINUTES,
     IMPOSSIBLE_DAY_MINUTES,
@@ -128,4 +154,5 @@ module.exports = {
     collectReferentialTaskIds,
     findOrphanSessions,
     classifySuspiciousWorkDays,
+    classifyEngineAdoption,
 };
