@@ -12,6 +12,7 @@ const {
     collectReferentialTaskIds,
     findOrphanSessions,
     classifySuspiciousWorkDays,
+    classifyEngineAdoption,
 } = require('./integrityScans');
 
 // 1. isReferentialTaskSession — only rows that SHOULD point at a real task are checked.
@@ -88,5 +89,26 @@ assert.strictEqual(
     classifySuspiciousWorkDays([{ userId: 'C1', durationMinutes: 1000, createdAt: '2026-07-11T06:00:00Z' }], dayOf).count,
     1,
 );
+
+// 5. classifyEngineAdoption — the ADR-0020 step-6 migration gate signal (engineVersion==2 share).
+const adopt = classifyEngineAdoption([
+    { engineVersion: 2 },              // engine
+    { engineVersion: 2 },              // engine
+    { engineVersion: 1 },              // legacy-ish (not 2)
+    {},                                // no engineVersion → legacy
+    { engineVersion: '2' },            // string, NOT === 2 → legacy (strict)
+]);
+assert.strictEqual(adopt.total, 5);
+assert.strictEqual(adopt.engineV2, 2);
+assert.strictEqual(adopt.legacy, 3);
+assert.strictEqual(adopt.legacyPct, 60);
+// Empty input never divides by zero.
+const adoptEmpty = classifyEngineAdoption([]);
+assert.strictEqual(adoptEmpty.total, 0);
+assert.strictEqual(adoptEmpty.legacyPct, 0);
+// The dormant-engine baseline: 100% legacy when nothing carries engineVersion==2.
+const adoptDormant = classifyEngineAdoption([{}, { engineVersion: 1 }, { isSystemTask: true }]);
+assert.strictEqual(adoptDormant.legacyPct, 100);
+assert.strictEqual(adoptDormant.engineV2, 0);
 
 console.log('integrityScans.test.cjs: all assertions passed');
