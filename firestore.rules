@@ -350,6 +350,16 @@ service cloud.firestore {
       // colleague and inject their (self-forged) task into another user's queue — horizontal task
       // ownership bypass (audit R-06). Legitimate reassignment is a manager action, handled by the
       // whole-team / scoped-overseer branches above.
+      // The teamManagerIds pin completes audit R-05 for tasks (the sessions half shipped first):
+      // the stamp is maintained ONLY by the admin-SDK stamp trigger, but stampTeamOnTaskWrite skips
+      // a routine edit whose owner is unchanged and that already HAS a stamp — so a forged stamp
+      // written on UPDATE would PERSIST, hiding the task from its legitimate scoped/senior overseers
+      // (teamManagerIds gates their read via inCallerTeam) or granting an unrelated scoped manager
+      // read + write reach over it. No client write-site ever changes this field on a task (restore
+      // spreads the stored value verbatim; every other edit is a partial update), so pinning it
+      // unchanged breaks nothing. CREATE is deliberately NOT pinned: archiving/restoring copies the
+      // stamp between tasks/archived_tasks, and the stamp trigger re-stamps every create anyway
+      // (owner "changed" from absent), so a create-time forgery cannot persist there.
       allow update: if isUserActive() && taskFieldsOkForUpdate() && (
                       canSeeWholeTeam() ||
                       isNamedTaskOverseer() ||
@@ -359,7 +369,8 @@ service cloud.firestore {
                       (ownsAssignedUser() &&
                         request.resource.data.assignedUserId == request.auth.uid &&
                         !changesApprovalFields())
-                    );
+                    )
+                    && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
@@ -379,11 +390,18 @@ service cloud.firestore {
       allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
       // Workers log their own; whole-team viewers create time corrections for anyone; a scoped
       // manager only for their people. The duration guard rejects impossible credited time.
+      // The teamManagerIds pin closes the CREATE half of audit R-05: the stamp trigger
+      // (stampTeamOnWorkSessionCreate) skips the write when the owner's overseer closure is EMPTY,
+      // so a forged stamp created by a closure-less account (unassigned worker, manager, senior)
+      // would PERSIST and grant an unrelated scoped manager read + update/delete reach over the row
+      // (inCallerTeam). No client create-site ever writes this field (only the admin-SDK trigger
+      // stamps it), so requiring it absent/empty at create breaks nothing.
       allow create:        if isUserActive() && (
                               createOwnsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && overseesUser(request.resource.data.userId))
-                            ) && durationInRange(request.resource.data);
+                            ) && durationInRange(request.resource.data)
+                            && request.resource.data.get('teamManagerIds', []) == [];
       // Update carries THREE guards (composed with &&): the duration guard (main — rejects an
       // impossible credited time, the >960-min corruption vector), the userId pin (full-sweep
       // F5 — an owner or whole-team manager may NOT re-point the record to a colleague), and the
@@ -536,8 +554,11 @@ service cloud.firestore {
       // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.
       allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
       // Breaks are self-logged only (no manager-create path). Duration guard (main) — this is the
-      // exact collection the >960-min corruption landed in.
-      allow create:        if isUserActive() && createOwnsUserId() && durationInRange(request.resource.data);
+      // exact collection the >960-min corruption landed in. The teamManagerIds pin mirrors
+      // work_sessions (audit R-05 create half): the create-only stamp trigger skips closure-less
+      // owners, so a forged stamp at create would persist; no client create-site writes the field.
+      allow create:        if isUserActive() && createOwnsUserId() && durationInRange(request.resource.data)
+                            && request.resource.data.get('teamManagerIds', []) == [];
       // Update carries THREE guards (composed with &&): the duration guard (main), the userId pin
       // (full-sweep F5 — no re-pointing the record to a colleague), and the teamManagerIds pin
       // (audit R-05). break_sessions is stamped by a CREATE-ONLY Cloud Function too, so a forged
@@ -619,6 +640,10 @@ service cloud.firestore {
                     );
       // Same NEW-assignee pin as /tasks: a worker editing their own archived task may not re-point it
       // to a colleague (audit R-06). Reassignment stays a manager action via the branches above.
+      // Same teamManagerIds pin as /tasks (audit R-05 task half): stampTeamOnArchivedTaskWrite skips
+      // a stamped, owner-unchanged edit, so a forged stamp on UPDATE would persist and re-scope who
+      // may see/act on the archived row. CREATE stays unpinned — archiving copies the live task's
+      // stamp verbatim, and the stamp trigger re-stamps every create anyway.
       allow update: if isUserActive() && (
                       canSeeWholeTeam() ||
                       isNamedTaskOverseer() ||
@@ -628,7 +653,8 @@ service cloud.firestore {
                       (ownsAssignedUser() &&
                         request.resource.data.assignedUserId == request.auth.uid &&
                         !changesApprovalFields())
-                    );
+                    )
+                    && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
