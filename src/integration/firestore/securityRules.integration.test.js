@@ -4,7 +4,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { readFile } from 'node:fs/promises';
 
 // Exploit-regression oracles for the authorization fixes from the 2026-07-10 full sweep:
@@ -265,6 +265,16 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                     engineVersion: 2,
                     run: { runId: 'run-1', type: 'task', startedAt: '2026-07-11T00:00:00.000Z', revision: 1 },
                 },
+                // The credited-work ledger for run-1, pre-seeded so the R-12 atomicity binding
+                // (taskCloseLedgerBound) is satisfied by getAfter regardless of the batch — these R-08
+                // cases force-idle a TASK run and must vary ONLY on the caller's SCOPE, not on whether
+                // the ledger is present (the real planManagerForceEnd writes this row in the same batch;
+                // pre-seeding it keeps this suite focused on scope, orthogonal to R-12).
+                'work_sessions/sess_run_run-1': {
+                    userId: TARGET_ID, taskId: 'task-t', taskTitle: 'Target task', runId: 'run-1',
+                    startTime: '2026-07-11T00:00:00.000Z', endTime: '2026-07-11T00:30:00.000Z',
+                    durationMinutes: 30, date: '2026-07-11', engineVersion: 2,
+                },
                 // TARGET's pending calendar request. managerIds addresses BOTH scoped managers
                 // (client-supplied, so it is NOT a security boundary) — the rule must scope by the
                 // owner's overseer closure regardless, so only the in-scope manager may act.
@@ -401,6 +411,80 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                 updateDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'calendar_notifications', 'cn-1'),
                     { dismissedBy: [WHOLE_TEAM_ADMIN] })
             );
+        });
+    });
+
+    // ---- R-12: a task-run close must carry its ledger row in the SAME batch (ADR 0021, Option A) ----
+    // ADR-0020 invariant #6 (revision bump + credited-work ledger commit atomically) was only a
+    // client-batch convention; the rule clauses were independent. The active_sessions binding
+    // (taskCloseLedgerBound) now enforces it for the TASK path: advancing the revision to close an
+    // active task run REQUIRES work_sessions/sess_run_{runId} in the same batch with a matching runId.
+    // FAIL cases = the R-12 exploit (revision advanced, ledger omitted / decoyed / content-mismatched);
+    // SUCCESS cases = the legit close bundle, and a non-task (break) close which must stay unaffected.
+    describe('R-12: task-close atomicity is rule-bound', () => {
+        const RUN_ID = 'run-1';
+        // The seeded pre-image: WORKER_ID mid-run on a task, revision 5.
+        const activeTaskRun = {
+            userId: WORKER_ID, status: 'active', revision: 5, expectedRevision: 4, expectedRunId: null,
+            lastCommandId: 'cmd-seed', updatedAt: '2026-07-11T00:00:00.000Z', engineVersion: 2,
+            run: { runId: RUN_ID, type: 'task', startedAt: '2026-07-11T00:00:00.000Z', revision: 1 },
+        };
+        // The idle record that closes run-1 and advances the revision (a legit pause/end/force).
+        const closeToIdle = {
+            userId: WORKER_ID, status: 'idle', run: null, revision: 6, expectedRevision: 5,
+            expectedRunId: RUN_ID, lastCommandId: 'cmd-close', updatedAt: '2026-07-11T01:00:00.000Z',
+            engineVersion: 2,
+        };
+        // A durationInRange-valid ledger row; runIdField lets a test forge a content mismatch.
+        const ledgerRow = (runIdField = RUN_ID) => ({
+            taskId: 'task-a', taskTitle: 'Task A', userId: WORKER_ID, userName: 'Rules Worker',
+            runId: runIdField, startTime: '2026-07-11T00:00:00.000Z', endTime: '2026-07-11T01:00:00.000Z',
+            durationMinutes: 60, date: '2026-07-11', createdAt: '2026-07-11T01:00:00.000Z', engineVersion: 2,
+        });
+
+        beforeEach(async () => {
+            if (!emulatorAvailable) return;
+            await seed({ [`active_sessions/${WORKER_ID}`]: activeTaskRun });
+        }, 30_000);
+
+        // A batch that closes the task run; pass a ledger id (+ optional forged runId) to include the
+        // ledger sibling, or omit it entirely for the ledger-less exploit.
+        function closeBatch(db, { ledgerId, ledgerRunId } = {}) {
+            const b = writeBatch(db);
+            b.set(doc(db, 'active_sessions', WORKER_ID), closeToIdle);
+            if (ledgerId) b.set(doc(db, 'work_sessions', ledgerId), ledgerRow(ledgerRunId), { merge: true });
+            return b.commit();
+        }
+
+        it('R-12 exploit: advancing the revision with NO ledger row is denied', async () => {
+            await assertFails(closeBatch(workerDb()));
+        });
+
+        it('R-12 exploit: a decoy ledger at the wrong id does not satisfy the binding', async () => {
+            await assertFails(closeBatch(workerDb(), { ledgerId: 'sess_run_decoy' }));
+        });
+
+        it('R-12 exploit: the right ledger id but a mismatched runId body is denied', async () => {
+            await assertFails(closeBatch(workerDb(), { ledgerId: `sess_run_${RUN_ID}`, ledgerRunId: 'evil' }));
+        });
+
+        it('the legitimate close bundle (revision bump + matching ledger) succeeds', async () => {
+            await assertSucceeds(closeBatch(workerDb(), { ledgerId: `sess_run_${RUN_ID}` }));
+        });
+
+        it('a NON-task (break) close is unaffected — succeeds with no sess_run ledger', async () => {
+            // Reseat the pre-image as an active BREAK run; the binding is task-only, so the break end
+            // (which writes to break_sessions, not sess_run_) must still be allowed.
+            await seed({
+                [`active_sessions/${WORKER_ID}`]: {
+                    ...activeTaskRun,
+                    run: { runId: 'brun-1', type: 'break', startedAt: '2026-07-11T00:00:00.000Z', revision: 1 },
+                },
+            });
+            const db = workerDb();
+            const b = writeBatch(db);
+            b.set(doc(db, 'active_sessions', WORKER_ID), { ...closeToIdle, expectedRunId: 'brun-1' });
+            await assertSucceeds(b.commit());
         });
     });
 });

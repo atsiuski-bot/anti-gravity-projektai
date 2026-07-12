@@ -434,6 +434,30 @@ service cloud.firestore {
               (data.status == 'idle' && data.run == null));
     }
 
+    // Audit R-12 — atomic-bundle binding. ADR-0020 invariant #6 requires the active-session revision
+    // bump and its credited-work ledger row to commit in ONE batch, but that was only a client-batch
+    // CONVENTION: each doc's rule was independent, so a custom/buggy client could advance the revision
+    // and omit the ledger, and every individual rule still passed (canonical state ↔ credited time then
+    // silently diverge). This binds them at the rule: when a transition CLOSES a task run (the pre-image
+    // is an active task run), the deterministic ledger work_sessions/sess_run_{runId} MUST exist in the
+    // SAME batch (getAfter) and carry the matching runId — a content check, not mere existence, so a
+    // decoy row cannot satisfy it. closeTaskWrites() emits that row UNCONDITIONALLY (even sub-minute),
+    // so the implication is total for the task path. Break/call/quick closes write a duration-gated or
+    // startMs-keyed ledger the rule cannot reconstruct, so they are deliberately NOT bound here and stay
+    // convention-enforced until the ADR-0020 migration folds them into the engine batch. Non-closing
+    // transitions (start-from-idle, resume) skip the check via the run.type guard. ⚠️ Any FUTURE
+    // task-run transition (e.g. undo-recovery, switch-session) that leaves an active task run MUST also
+    // write sess_run_{runId}, or this gate will correctly deny it. Emulator-proven not to trip the
+    // per-request evaluation budget, even stacked on the manager force-idle overseesUser() read
+    // (active_sessions is lean — unlike the users rule whose ~10 field pins hit the ceiling, L88-97).
+    function taskCloseLedgerBound() {
+      return !(resource.data.status == 'active' && resource.data.run.type == 'task') ||
+             (
+               existsAfter(/databases/$(database)/documents/work_sessions/$('sess_run_' + resource.data.run.runId)) &&
+               getAfter(/databases/$(database)/documents/work_sessions/$('sess_run_' + resource.data.run.runId)).data.runId == resource.data.run.runId
+             );
+    }
+
     match /active_sessions/{userId} {
       allow read: if isUserActive() &&
                   (request.auth.uid == userId || isManagerOrAdmin());
@@ -463,7 +487,9 @@ service cloud.firestore {
                         request.resource.data.status == 'idle' &&
                         request.resource.data.run == null
                       )
-                    );
+                    ) &&
+                    // Audit R-12: a task-run close must carry its ledger row in the same batch.
+                    taskCloseLedgerBound();
       allow delete: if false;
     }
 
