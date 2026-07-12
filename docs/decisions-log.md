@@ -31,6 +31,23 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-07-12** — **ADR-0021 FU#4 verified + credit-integrity net widened (drafted, not deployed).**
+  Verified the compensating controls that justify deferring **R-04** (see [ADR 0021](./adr/0021-server-authoritative-timer-session-write-path.md), FU#4 verification section).
+  Result **partial**: `dailyIntegrityScan` catches *gross* duplication (>24h combined work+break/day)
+  but had three holes against a client minting *well-formed* `work_sessions` — sub-24h inflation is
+  invisible (the per-row scan only rejects malformed rows), backdated inflation evades the
+  `startTime`-bucketed 2-day scan, and there was **no referential-orphan check** despite ADR-0020 §6
+  advertising one. Drafted an interim, **report-only** tightening (new pure
+  [`functions/integrityScans.js`](../functions/integrityScans.js) + standalone
+  `integrityScans.test.cjs`, wired as `scanCreditIntegrity` in `dailyIntegrityScan`): (1) **orphan
+  detection** — a referential row (excludes synthetic call/quick/partial system sessions) whose
+  `taskId` is absent from `tasks` is flagged; (2) **suspicious-work-day tier** — per-worker work-only
+  day totals in `(16h, 24h]` flagged, disjoint from the 24h wire. This **widens the detection net; it
+  does not close R-04** (credited time is still client-authored — the server producer stays gated on
+  the ADR-0020 migration). Verified via `node functions/integrityScans.test.cjs` + functions lint;
+  **awaiting founder review, then rides the same human `firebase deploy --only functions`.** No
+  `firestore.rules`/client change.
+
 - **2026-06-30** — **Firebase-shaped threat model + security-test checklist.** Added
   [`docs/security/threat-model-checklist.md`](./security/threat-model-checklist.md): a STRIDE
   pass and a 10-item pre-change checklist retargeted to how WORKZ actually enforces security —

@@ -219,5 +219,57 @@ trigger**; a partial transition is impossible (single Admin transaction); replay
 2. Track R-04 + R-06-create as explicitly-accepted deferred risks in `docs/decisions-log.md`, with the
    compensating controls named.
 3. After ADR-0020 steps 4-6 land, open a scoped follow-up ADR for the residual 3-intent server producer.
-4. Verify the compensating controls actually fire on standalone sessions: confirm `dailyIntegrityScan`
-   flags duplicate/overlapping/orphan `work_sessions` from intents (e)-(g).
+4. **Verify the compensating controls actually fire on standalone sessions** — DONE 2026-07-12,
+   result **partial** (three holes found + an interim tightening drafted). See the verification
+   section below.
+
+## FU#4 verification — the compensating-control net has three holes (2026-07-12)
+
+The whole Option-A deferral rests on the interim controls actually bounding R-04. A read of
+`dailyIntegrityScan` ([`functions/index.js`](../../functions/index.js)) end-to-end shows the net
+catches **gross** abuse but has three gaps against a client minting *well-formed* `work_sessions`:
+
+- ✅ **Gross duplication is caught.** `scanDailyOverdraft` sums each worker's work+break minutes per
+  Vilnius day and flags totals over 24 h — the physically-impossible signal (the 2026-07-01
+  break-dup incident). Real and working.
+- ⚠️ **Sub-24h inflation is invisible.** The per-row anomaly scan only rejects *malformed* rows
+  (NaN / negative / > 16 h / end-before-start / missing owner). A worker who really did 8 h can mint
+  up to ~16 h of extra *valid-shaped* rows and stay under the 24 h/day wire — up to ~3× pay inflation
+  passes the automated scan.
+- ⚠️ **Backdated inflation largely evades the daily scan.** `scanDailyOverdraft` buckets on the
+  attacker-controlled `startTime` and only looks back `LOOKBACK_DAYS = 2`, so rows spread across
+  older days aren't even queried. Bounded instead by `MAX_BACKDATE_DAYS` + the `canBackdateTime`
+  trust gate + admin-notify-on-backdate — not by the scan.
+- ❌ **No referential-orphan check existed.** ADR-0020 §6 advertised the scanner reports "missing …
+  and projection-drift" cases, but neither scan verified that a `work_sessions` row is backed by a
+  real task/run. A valid-shaped, sub-24 h row with a bogus/absent `taskId` was caught by nothing.
+
+**Interim tightening drafted 2026-07-12 (NOT yet shipped or deployed; awaiting founder review).**
+A new pure module [`functions/integrityScans.js`](../../functions/integrityScans.js) (unit-tested
+standalone via [`functions/integrityScans.test.cjs`](../../functions/integrityScans.test.cjs),
+mirroring the `decisionLog.js` pattern), wired into `dailyIntegrityScan` as a report-only
+`scanCreditIntegrity` pass, adds two checks that close the orphan hole and narrow the sub-24h one:
+
+1. **Orphan detection** — every *referential* `work_sessions` row (excludes genuine call / quick-work
+   / interrupted-partial system sessions, whose `taskId` is synthetic by design) whose `taskId` is
+   absent from `tasks` is flagged as credit with no run behind it.
+2. **Suspicious-work-day tier** — per-worker **work-only** day totals in the `(16h, 24h]` band (16 h
+   mirrors the client `MAX_SESSION_MINUTES` single-session clamp) are flagged, disjoint from the
+   existing 24 h combined wire — catching the moderate pay-inflation the wire misses.
+
+Both are **report-only** (surface into `integrity_reports/{day}` + a `logger.warn`), so a rare
+genuine long/night-shift day is a harmless manager-review nudge, not a block. This **does not close
+R-04** — credited time is still client-authored — it **widens the detection net** as a better interim
+compensating control; the server producer remains gated on the ADR-0020 migration (Follow-up #3).
+Known residual: moderate inflation **below** 16 h/day and plausible-looking single-day backdated
+entries still fall back to **manager pay review** (a human control). Rides the same human
+`firebase deploy --only functions` when approved.
+
+**Documented future option (deferred 2026-07-12, not built).** A per-worker *conditional*
+planned-hours ratio in `scanCreditIntegrity`: flag a work-only day total exceeding a multiple of
+that worker's `work_hours` planned hours — but ONLY when planned hours exist for that user/day, so it
+degrades to silence (never a false positive) when there is no plan. This is the tighter complement to
+the absolute 16 h tier that the founder-confirmed decision intentionally deferred: per-worker
+expected-hours data is fragile (`workz-reports-baseline-fragility` — actual ≠ plan for field
+workers), so the robust absolute tier ships first with no new data dependency, and the ratio stays an
+on-record option for whoever tightens the net further (e.g. alongside the post-migration R-04 ADR).

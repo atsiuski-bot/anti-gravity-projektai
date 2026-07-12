@@ -26,6 +26,7 @@ const { getFirestore } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
 const { appendSystemDecision } = require('./decisionLog');
+const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays } = require('./integrityScans');
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -1168,6 +1169,51 @@ async function scanDailyOverdraft() {
     return { checked: totals.size, offenders: offenders.length, samples: offenders.slice(0, SAMPLE_LIMIT) };
 }
 
+// CREDIT-INTEGRITY scan — two report-only checks that close R-04's compensating-control gaps (ADR
+// 0021): (1) ORPHAN — a work_sessions row that claims task work but references no real task; (2)
+// SUSPICIOUS WORK DAY — a per-worker work-only day total in the (16h, 24h] moderate-inflation band
+// the combined-overdraft scan is blind to. One fetch of the recent work_sessions window feeds both;
+// the decision logic lives in ./integrityScans (pure, unit-tested standalone). Read-only.
+async function scanCreditIntegrity() {
+    const empty = { orphan: { checked: 0, orphans: 0, samples: [] }, suspicious: { checked: 0, count: 0, samples: [] } };
+    const cutoff = lookbackCutoffIso();
+    let snap;
+    try {
+        snap = await db.collection('work_sessions').where('createdAt', '>=', cutoff).get();
+    } catch (err) {
+        logger.warn('scanCreditIntegrity query failed', { err: err.message });
+        return empty;
+    }
+    const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+
+    // Orphan: verify every REFERENTIAL row's task exists. Distinct real taskIds are few over a 2-day
+    // window; batch-get them and treat any absent task as an orphaned credit row.
+    const taskIds = collectReferentialTaskIds(rows);
+    const existing = new Set();
+    for (let i = 0; i < taskIds.length; i += 300) {
+        const chunk = taskIds.slice(i, i + 300);
+        try {
+            const docs = await db.getAll(...chunk.map((id) => db.collection('tasks').doc(id)));
+            docs.forEach((d) => { if (d.exists) existing.add(d.id); });
+        } catch (err) {
+            // Fail SAFE for a report-only check: on a read error treat this chunk as present so an
+            // infra hiccup never raises a false orphan alert.
+            logger.warn('scanCreditIntegrity task getAll failed', { err: err.message });
+            chunk.forEach((id) => existing.add(id));
+        }
+    }
+    const orphan = { checked: taskIds.length, ...findOrphanSessions(rows, existing) };
+
+    // Suspicious work day: pure classification, Vilnius-day bucketed (guard unparseable anchors).
+    const dayOf = (iso) => {
+        const d = new Date(iso);
+        return Number.isNaN(d.getTime()) ? null : lithuanianDay(d);
+    };
+    const suspicious = classifySuspiciousWorkDays(rows, dayOf);
+
+    return { orphan, suspicious };
+}
+
 // Hard ceiling for a SINGLE continuous running timer — MIRROR of src/utils/timeUtils
 // MAX_SESSION_MINUTES (16h). No real continuous session approaches this; a larger elapsed can only
 // be a timer left running after the app was closed.
@@ -1682,6 +1728,10 @@ exports.dailyIntegrityScan = onSchedule(
         //      rows that (2) cannot see because no single row is out of range.
         const dailyOverdraft = await scanDailyOverdraft();
 
+        // (2c) Credit-integrity — orphaned task-credit rows + moderate work-day inflation the (2b)
+        //      24h wire misses (ADR 0021 R-04 compensating-control tightening). Report-only.
+        const creditIntegrity = await scanCreditIntegrity();
+
         // (3) Task timer integrity — stop forgotten running timers, and surface the stale backlog.
         const autoStoppedTimers = await autoStopForgottenTimers();
         // (3b) Secondary-session integrity — close abandoned break/call/quick-work sessions the
@@ -1691,6 +1741,7 @@ exports.dailyIntegrityScan = onSchedule(
 
         const critical = drops.length > 0;
         const warning = totalAnomalies > 0 || dailyOverdraft.offenders > 0 ||
+            creditIntegrity.orphan.orphans > 0 || creditIntegrity.suspicious.count > 0 ||
             autoStoppedTimers.stopped > 0 || autoClosedSessions.closed > 0;
         const report = {
             day,
@@ -1701,6 +1752,7 @@ exports.dailyIntegrityScan = onSchedule(
             anomalies: anomalyReport,
             totalAnomalies,
             dailyOverdraft,
+            creditIntegrity,
             autoStoppedTimers,
             autoClosedSessions,
             staleBacklog
@@ -1722,6 +1774,12 @@ exports.dailyIntegrityScan = onSchedule(
         }
         if (dailyOverdraft.offenders > 0) {
             logger.warn('INTEGRITY: user-day overdraft (>24h combined session minutes) — possible duplicate rows', dailyOverdraft);
+        }
+        if (creditIntegrity.orphan.orphans > 0) {
+            logger.warn('INTEGRITY: orphaned task-credit rows — work_sessions referencing no real task', creditIntegrity.orphan);
+        }
+        if (creditIntegrity.suspicious.count > 0) {
+            logger.warn('INTEGRITY: suspicious work-day total (>16h work, <24h) — possible moderate inflation', creditIntegrity.suspicious);
         }
         if (autoStoppedTimers.stopped > 0) logger.warn('INTEGRITY: auto-stopped forgotten timers', autoStoppedTimers);
         if (autoClosedSessions.closed > 0) logger.warn('INTEGRITY: auto-closed abandoned secondary sessions', autoClosedSessions);
