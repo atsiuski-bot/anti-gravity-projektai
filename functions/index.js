@@ -26,7 +26,7 @@ const { getFirestore } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
 const { appendSystemDecision } = require('./decisionLog');
-const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays } = require('./integrityScans');
+const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, classifyEngineAdoption } = require('./integrityScans');
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -1175,7 +1175,11 @@ async function scanDailyOverdraft() {
 // the combined-overdraft scan is blind to. One fetch of the recent work_sessions window feeds both;
 // the decision logic lives in ./integrityScans (pure, unit-tested standalone). Read-only.
 async function scanCreditIntegrity() {
-    const empty = { orphan: { checked: 0, orphans: 0, samples: [] }, suspicious: { checked: 0, count: 0, samples: [] } };
+    const empty = {
+        orphan: { checked: 0, orphans: 0, samples: [] },
+        suspicious: { checked: 0, count: 0, samples: [] },
+        engineAdoption: { total: 0, engineV2: 0, legacy: 0, legacyPct: 0 },
+    };
     const cutoff = lookbackCutoffIso();
     let snap;
     try {
@@ -1211,7 +1215,12 @@ async function scanCreditIntegrity() {
     };
     const suspicious = classifySuspiciousWorkDays(rows, dayOf);
 
-    return { orphan, suspicious };
+    // Migration telemetry (ADR-0020 step 6): engineVersion==2 adoption over the same rows. The gate
+    // to retire the legacy self-write sites (roadmap P8) watches this trend toward zero legacy timer
+    // authorship. Dormant engine (flag absent) reads ~100% legacy — the baseline, not an alarm.
+    const engineAdoption = classifyEngineAdoption(rows);
+
+    return { orphan, suspicious, engineAdoption };
 }
 
 // Hard ceiling for a SINGLE continuous running timer — MIRROR of src/utils/timeUtils
@@ -1781,6 +1790,9 @@ exports.dailyIntegrityScan = onSchedule(
         if (creditIntegrity.suspicious.count > 0) {
             logger.warn('INTEGRITY: suspicious work-day total (>16h work, <24h) — possible moderate inflation', creditIntegrity.suspicious);
         }
+        // Migration telemetry (ADR-0020 step 6): report the revisioned-engine adoption baseline every
+        // run, so the legacy-drain trend is visible before retiring the legacy write sites (roadmap P8).
+        logger.info('INTEGRITY: engine adoption (work_sessions engineVersion==2 share)', creditIntegrity.engineAdoption);
         if (autoStoppedTimers.stopped > 0) logger.warn('INTEGRITY: auto-stopped forgotten timers', autoStoppedTimers);
         if (autoClosedSessions.closed > 0) logger.warn('INTEGRITY: auto-closed abandoned secondary sessions', autoClosedSessions);
         if (staleBacklog.count > 0) logger.info('INTEGRITY: stale backlog surfaced', { count: staleBacklog.count });
