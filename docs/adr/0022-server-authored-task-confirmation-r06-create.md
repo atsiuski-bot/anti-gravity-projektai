@@ -1,9 +1,14 @@
 # ADR 0022 — Server-authored task confirmation (audit R-06-create / roadmap P-R06)
 
 - **Date:** 2026-07-13
-- **Status:** **Proposed** — scoping only; no direction accepted, nothing built. Awaits a founder
-  decision between Option B (interim rules narrowing, now) and Option A (durable server authorship,
-  deferred). Mirrors ADR 0021's Proposed→Accepted-on-decision flow.
+- **Status:** **Accepted — Option A** (founder decision, 2026-07-13), **deferred**. The durable close
+  — a server authors the task confirmation off a bounded offline intent — is the chosen direction, but
+  it **rides the shared ADR-0020 offline intent rail** (R-04's P2) rather than a second bespoke trigger,
+  so it is gated on that rail existing (which is in turn gated on the dormant engine migration). Option B
+  (interim rules narrowing) is **declined**: it would be throwaway once A forbids worker `confirmed`
+  creates outright. Until the rail lands, R-06-create stays an **accepted-with-controls** risk — the
+  Option C compensating controls (pay review, `scanCreditIntegrity`, report exclusions) hold in the
+  interim. Nothing is built yet; this ADR is the committed design for when the rail is available.
 - **Relates to:** [ADR 0021](0021-server-authoritative-timer-session-write-path.md) (the R-04/R-12
   parent — defers R-06-create as an accepted risk, FU#3 asks for this ADR),
   [ADR 0020](0020-reliable-offline-session-engine.md) (the offline engine whose intent rail Option A
@@ -117,7 +122,19 @@ second bespoke trigger and hot-path QA effort. If the founder prefers to keep th
 (status quo) remains defensible given the compensating controls — this ADR exists to make that a
 *chosen* posture, not an unexamined gap.
 
-## QA plan (binding on whichever option ships)
+## Decision (founder, 2026-07-13)
+
+**Option A, deferred.** The founder chose the durable server-authored close over the interim rules
+narrowing (B). Rationale: Option A's final rule forbids a worker's client from creating any
+`confirmed`/`approved` task, which makes B's signature-binding rule **redundant** — shipping B now
+would be building a rule only to delete it when A lands. Rather than that throwaway step, R-06-create
+remains an **accepted risk bounded by the Option C controls** until the ADR-0020 offline intent rail
+(R-04's P2) exists, at which point A is built on that shared rail with the QA plan below. This makes
+P-R06 **gated on the same migration long-pole** as R-04's self-mint core — a deliberate trade of
+interim exposure (bounded, low-volume, detection-covered) for a single clean structural close instead
+of two.
+
+## QA plan (binding when Option A is built)
 
 - **Emulator oracle** (`src/integration/firestore/securityRules.integration.test.js`, the R-04/R-12
   oracle pattern): a plain worker directly creating a `confirmed`/`approved` task **without** the
@@ -144,11 +161,13 @@ second bespoke trigger and hot-path QA effort. If the founder prefers to keep th
 
 ## Follow-ups / open questions
 
-1. Which option? (B interim / A durable / C accept.) This ADR flips to **Accepted** once chosen.
-2. For Option B, does the signature need to admit the *manager* quick-work `sess_qw_task_` confirmed
-   create, or is that already covered by the manager branch of the create rule? (Trace + oracle.)
-3. For Option A, confirm the intent rides the ADR-0020 outbox (offline projection) rather than a bare
-   Firestore write, so an offline call→stop still queues.
-4. Does the `scanCreditIntegrity` net already flag an auto-log-shaped forgery (task carries
-   `manualMinutes`; is there a paired `work_sessions` row?), or is that a detection gap to widen
-   alongside Option B? (Conservative assumption: partial.)
+1. ~~Which option?~~ **Resolved 2026-07-13: Option A, deferred** (see Decision).
+2. When A is built: confirm the intent rides the ADR-0020 outbox (offline projection) rather than a bare
+   Firestore write, so an offline call→stop still queues; and that the trigger re-derives credited
+   minutes from the paired `work_sessions` row rather than trusting the intent's `manualMinutes`.
+3. When A is built: the emulator oracle must prove *any* worker-client `confirmed`/`approved` task
+   create is DENIED and only the server-authored row is ALLOWED — plus the browser-QA pass on the live
+   call/quick auto-log paths (never automated-QA'd).
+4. Interim (while deferred): does the `scanCreditIntegrity` net already flag an auto-log-shaped forgery
+   (task carries `manualMinutes`; is there a paired `work_sessions` row?), or is that a detection gap
+   worth widening as a cheap compensating control *before* A lands? (Conservative assumption: partial.)
