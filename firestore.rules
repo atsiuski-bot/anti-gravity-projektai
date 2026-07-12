@@ -383,7 +383,18 @@ service cloud.firestore {
                               createOwnsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && overseesUser(request.resource.data.userId))
-                            ) && durationInRange(request.resource.data);
+                            ) && durationInRange(request.resource.data)
+                            // Audit R-04 (provenance pin): createdByAdmin is the manager correction
+                            // stamp (createWorkSession, the sole cross-user authoring tool). A NON-manager
+                            // self-logging their own time — gap-claim, backdate, and the legacy call/
+                            // quick-work/partial writers — never sets it. Requiring it ABSENT for a
+                            // non-manager forbids a worker forging admin authorship to disguise a
+                            // self-minted row as an approved correction, without touching any real path
+                            // (managers, whole-team or scoped, keep the stamp; only the self-owned branch
+                            // reached by a plain worker is constrained). Narrows R-04's forgery surface;
+                            // does NOT close it (the credited number is still client-authored — ADR 0021).
+                            && (canSeeWholeTeam() || isScopedOverseer()
+                                || request.resource.data.get('createdByAdmin', '') == '');
       // Update carries THREE guards (composed with &&): the duration guard (main — rejects an
       // impossible credited time, the >960-min corruption vector), the userId pin (full-sweep
       // F5 — an owner or whole-team manager may NOT re-point the record to a colleague), and the

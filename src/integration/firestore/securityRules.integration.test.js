@@ -189,6 +189,51 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
         );
     });
 
+    // ---- R-04: a non-manager may not forge admin provenance on a self-logged session ----
+    // createdByAdmin is the manager correction stamp; a worker forging it disguises a self-minted
+    // row as an approved correction. The pin forbids it ONLY on the non-manager self-owned branch.
+    it('R-04: a worker cannot stamp createdByAdmin on their own work_session create', async () => {
+        await assertFails(
+            setDoc(doc(workerDb(), 'work_sessions', 'ws-forge'), {
+                userId: WORKER_ID,
+                taskId: 'manual_1',
+                taskTitle: 'Forged correction',
+                durationMinutes: 120,
+                date: '2026-07-11',
+                createdByAdmin: WHOLE_TEAM_ADMIN, // forged admin authorship
+            })
+        );
+    });
+
+    it('R-04: a worker may self-log a session that does not claim admin authorship', async () => {
+        await assertSucceeds(
+            setDoc(doc(workerDb(), 'work_sessions', 'ws-self'), {
+                userId: WORKER_ID,
+                taskId: 'task-a',
+                taskTitle: 'Task A',
+                durationMinutes: 90,
+                date: '2026-07-11',
+            })
+        );
+    });
+
+    it('R-04: a whole-team manager may still author a cross-user correction with createdByAdmin', async () => {
+        await seed({
+            [`users/${WHOLE_TEAM_ADMIN}`]: { id: WHOLE_TEAM_ADMIN, role: 'admin', isDisabled: false },
+        });
+        await assertSucceeds(
+            setDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'work_sessions', 'ws-mgr'), {
+                userId: OTHER_ID, // authored for another worker
+                taskId: 'manual_2',
+                taskTitle: 'Manager correction',
+                durationMinutes: 60,
+                date: '2026-07-11',
+                createdByAdmin: WHOLE_TEAM_ADMIN,
+                isManualSession: true,
+            })
+        );
+    });
+
     // ---- R-06: a worker cannot reassign their own task to a colleague ----
     it('R-06: a worker cannot re-point their own task to another user', async () => {
         await assertFails(
