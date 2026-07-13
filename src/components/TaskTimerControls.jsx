@@ -572,13 +572,15 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             const totalMinutes = finalTimerMinutes + currentManualMinutes;
             const formattedTime = formatMinutesToTimeString(totalMinutes);
 
-            // Destructure to strip denormalized display fields from the task before
-            // writing it back to Firestore; the named siblings are intentionally unused.
-            // eslint-disable-next-line no-unused-vars
-            const { assignedUserName, assignedWorkerColor, creatorName, ...cleanTask } = task;
-
+            // Write ONLY the completion fields as a targeted merge — never spread the whole task
+            // snapshot back. The worker's local copy can be stale: a manager may have edited the
+            // estimate / checklist / description, or the admin-SDK re-stamp trigger may have changed
+            // the denormalized teamManagerIds, while this worker was offline. Re-writing `...task`
+            // silently reverted those server-side edits (audit: legacy-finish clobber) and — once
+            // teamManagerIds is pinned immutable on the /tasks update rule — would get the finish
+            // rejected outright for carrying a stale value. updateDoc merges, so every field we do
+            // NOT list keeps its current server value.
             const taskData = {
-                ...cleanTask,
                 timerStatus: 'paused',
                 timerStartedAt: null,
                 timerMinutes: finalTimerMinutes,

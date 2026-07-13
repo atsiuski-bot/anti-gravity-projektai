@@ -247,6 +247,98 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
         );
     });
 
+    // ---- Triage sweep 2026-07-13: authz gaps found by read-only finders + 3-skeptic verify ----
+    // TS-1 (HIGH): teamManagerIds is immutable on a TASK update too (it was pinned only on
+    // work_sessions/break_sessions). A worker cannot unstamp their own task to escape scoped/senior
+    // oversight, nor inject a colleague to grant them read.
+    it('TS-1: a worker cannot clear teamManagerIds on their own task', async () => {
+        await assertFails(
+            updateDoc(doc(workerDb(), 'tasks', 'task-a'), { teamManagerIds: [] })
+        );
+    });
+
+    it('TS-1: a worker cannot inject a colleague into their task teamManagerIds', async () => {
+        await assertFails(
+            updateDoc(doc(workerDb(), 'tasks', 'task-a'), { teamManagerIds: ['mgr-legit', OTHER_ID] })
+        );
+    });
+
+    it('TS-1: the same immutability pin guards archived_tasks', async () => {
+        await seed({
+            'archived_tasks/arc-a': {
+                id: 'arc-a',
+                title: 'Archived A',
+                assignedUserId: WORKER_ID,
+                status: 'confirmed',
+                teamManagerIds: ['mgr-legit'],
+            },
+        });
+        await assertFails(
+            updateDoc(doc(workerDb(), 'archived_tasks', 'arc-a'), { teamManagerIds: [] })
+        );
+    });
+
+    it('TS-1: a legitimate task edit that leaves teamManagerIds untouched is allowed', async () => {
+        await assertSucceeds(
+            updateDoc(doc(workerDb(), 'tasks', 'task-a'), { title: 'Task A (edited)' })
+        );
+    });
+
+    // TS-5 (MED): a (non-admin) manager may disable a worker but NOT an admin — otherwise one manager
+    // credential could disable every admin, and a disabled admin has no in-app path to re-enable.
+    it('TS-5: an unscoped manager cannot disable an admin account', async () => {
+        await seed({
+            'users/ts-mgr': { id: 'ts-mgr', role: 'manager', isDisabled: false },
+            'users/ts-admin': { id: 'ts-admin', role: 'admin', isDisabled: false },
+        });
+        await assertFails(
+            updateDoc(doc(authedDb('ts-mgr'), 'users', 'ts-admin'), { isDisabled: true })
+        );
+    });
+
+    it('TS-5: an unscoped manager may still disable an ordinary worker', async () => {
+        await seed({
+            'users/ts-mgr': { id: 'ts-mgr', role: 'manager', isDisabled: false },
+        });
+        await assertSucceeds(
+            updateDoc(doc(authedDb('ts-mgr'), 'users', WORKER_ID), { isDisabled: true })
+        );
+    });
+
+    // TS-6 (MED): a worker cannot self-approve their own calendar_request nor forge approvedBy; the
+    // manager approval path and a worker's own non-approval edit both still work.
+    it('TS-6: a worker cannot self-approve their own calendar_request', async () => {
+        await seed({
+            'calendar_requests/cr-1': { userId: WORKER_ID, status: 'pending', type: 'add' },
+        });
+        await assertFails(
+            updateDoc(doc(workerDb(), 'calendar_requests', 'cr-1'), {
+                status: 'approved', approvedBy: 'ts-mgr', approvedAt: '2026-07-13T00:00:00.000Z',
+            })
+        );
+    });
+
+    it('TS-6: a worker may still edit a non-approval field on their own request', async () => {
+        await seed({
+            'calendar_requests/cr-2': { userId: WORKER_ID, status: 'pending', type: 'add' },
+        });
+        await assertSucceeds(
+            updateDoc(doc(workerDb(), 'calendar_requests', 'cr-2'), { reason: 'updated note' })
+        );
+    });
+
+    it('TS-6: a whole-team manager may still approve the request', async () => {
+        await seed({
+            'users/ts-mgr': { id: 'ts-mgr', role: 'manager', isDisabled: false },
+            'calendar_requests/cr-3': { userId: WORKER_ID, status: 'pending', type: 'add' },
+        });
+        await assertSucceeds(
+            updateDoc(doc(authedDb('ts-mgr'), 'calendar_requests', 'cr-3'), {
+                status: 'approved', approvedBy: 'ts-mgr', approvedAt: '2026-07-13T00:00:00.000Z',
+            })
+        );
+    });
+
     // ---- R-08: a manager may force-end a session only inside their overseer subtree ----
     describe('R-08: scoped force-end is subtree-bounded', () => {
         // The idle record a manager writes to force-end TARGET's live run. Full-replace (setDoc) so

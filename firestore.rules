@@ -168,6 +168,18 @@ service cloud.firestore {
              request.resource.data.get('approvedBy', null) != resource.data.get('approvedBy', null);
     }
 
+    // calendar_requests approval fields — the owner (worker) may edit their own request's dates/reason
+    // but must NOT self-flip these. Only a manager path (canSeeWholeTeam / scoped overseer) writes them
+    // via calendarApproval.js. Without this an owner could updateDoc {status:'approved', approvedBy:
+    // <any managerUid>} to self-approve leave and plant a forged decision in the Reports history.
+    function changesCalendarApprovalFields() {
+      return request.resource.data.get('status', '') != resource.data.get('status', '') ||
+             request.resource.data.get('approvedBy', null) != resource.data.get('approvedBy', null) ||
+             request.resource.data.get('approvedAt', null) != resource.data.get('approvedAt', null) ||
+             request.resource.data.get('declinedBy', null) != resource.data.get('declinedBy', null) ||
+             request.resource.data.get('declinedAt', null) != resource.data.get('declinedAt', null);
+    }
+
     // ---- Data shape / range validation (durability guardrails) --------------
     // The rules above answer WHO may write; these answer WHAT a write may contain, so a buggy
     // client or a runaway agent cannot poison the logged-time record with impossible values — the
@@ -282,11 +294,17 @@ service cloud.firestore {
       // the empty-overseerIds new user is reached via canSeeWholeTeam, never overseesUser.)
       allow update: if isAuthenticated()
                     && (request.auth.uid == userId || overseesUserDoc())
-                    // isDisabled may be toggled by any manager/admin (approval / disable / re-enable);
-                    // everyone else must leave it unchanged. Kept separate from the admin-only block
-                    // below because a manager legitimately toggles it. .get() on both sides keeps a
-                    // legacy doc without the field editable (the dot-access trap documented above).
-                    && (isManagerOrAdmin() ||
+                    // isDisabled toggle: an admin may toggle ANYONE; a (non-admin) manager may toggle
+                    // only a NON-admin target; everyone else must leave it unchanged. Without the
+                    // target-role guard a single unscoped-manager credential could disable every admin
+                    // (canSeeWholeTeam reaches them) — and a disabled admin loses isAdmin()/isUserActive(),
+                    // so NO in-app path could re-enable them (governance lockout). Approval / disable of
+                    // ordinary workers is unaffected (a self-signup is never role 'admin'). .get() on both
+                    // sides keeps a legacy doc without the field editable (the dot-access trap above).
+                    && (isAdmin() ||
+                        (isManagerOrAdmin() &&
+                         resource.data.get('role', '') != 'admin' &&
+                         resource.data.get('role', '') != 'Administratorius') ||
                         request.resource.data.get('isDisabled', false) == resource.data.get('isDisabled', false))
                     // The overseer closure is written ONLY by the admin-SDK Cloud Function (which
                     // bypasses rules). No client — not even an admin — may hand-edit it, or the
@@ -359,7 +377,15 @@ service cloud.firestore {
                       (ownsAssignedUser() &&
                         request.resource.data.assignedUserId == request.auth.uid &&
                         !changesApprovalFields())
-                    );
+                    )
+                    // Pin the denormalized oversight key immutable on EVERY client update: only the
+                    // admin-SDK re-stamp trigger (stampTeamOnTaskWrite) sets teamManagerIds, exactly
+                    // like work_sessions/break_sessions (audit R-05). Without this a worker could
+                    // updateDoc {teamManagerIds: []} on their own task to opt it out of scoped-manager /
+                    // senior oversight (the inCallerTeam read + update/delete branches key on this
+                    // field), or inject a colleague's uid to grant them read — and the trigger's
+                    // owner-unchanged early-return never repairs the forged array.
+                    && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
@@ -639,7 +665,10 @@ service cloud.firestore {
                       (ownsAssignedUser() &&
                         request.resource.data.assignedUserId == request.auth.uid &&
                         !changesApprovalFields())
-                    );
+                    )
+                    // Same teamManagerIds immutability pin as /tasks (audit R-05): only the admin-SDK
+                    // re-stamp trigger sets it; a worker must not forge it to escape/redirect oversight.
+                    && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete: if isUserActive() && (
                       ownsAssignedUser() ||
                       canSeeWholeTeam() ||
@@ -719,8 +748,9 @@ service cloud.firestore {
       // lists the whole company by weekStart, so scoping its dismiss write would deny dismissing rows
       // the UI legitimately shows — a read-breadth concern, not this write-authority one.)
       allow update: if isUserActive()
-                    && (ownsUserId() || canSeeWholeTeam() ||
-                        (isScopedOverseer() && overseesUser(resource.data.userId)))
+                    && (canSeeWholeTeam() ||
+                        (isScopedOverseer() && overseesUser(resource.data.userId)) ||
+                        (ownsUserId() && !changesCalendarApprovalFields()))
                     && request.resource.data.get('userId', '') == resource.data.get('userId', '');
       allow delete: if isUserActive()
                     && (ownsUserId() || canSeeWholeTeam() ||
