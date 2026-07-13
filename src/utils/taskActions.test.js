@@ -40,7 +40,7 @@ import { updateDoc, addDoc, setDoc, getDocs, getDoc, getDocFromServer } from 'fi
 import { logError } from './errorLog';
 import { getLithuanianNow } from './timeUtils';
 import { MAX_SESSION_MINUTES } from './timeUtils';
-import { startTask, pauseTask, resumeTask, creditAndResumeTask, taskSessionDocId } from './taskActions';
+import { startTask, pauseTask, resumeTask, creditAndResumeTask, taskSessionDocId, pauseOtherTasks } from './taskActions';
 
 // Fixed "now" so the credit math (now - timerStartedAt) is exact. June -> Vilnius is a
 // stable UTC+3, so the session date buckets to 2026-06-23 with no DST ambiguity.
@@ -161,6 +161,85 @@ describe('pauseTask — credit math (now - timerStartedAt)', () => {
         // Only the task doc is written; the user doc is left for startTask/resumeTask to set.
         expect(taskUpdateFor('t5')).toBeDefined();
         expect(userUpdatesFor('u1')).toHaveLength(0);
+    });
+});
+
+describe('pauseOtherTasks — server-first confirmation before pausing (finding #2 fix)', () => {
+    it('skips a task the discovery query shows running but the server confirms is already paused', async () => {
+        // The discovery query can be served from a stale local cache (another device already
+        // paused this task); the server-first re-read must catch that before crediting anything.
+        getDocs.mockResolvedValue({
+            docs: [{ id: 't9', data: () => ({ assignedUserId: 'u1', timerStatus: 'running', timerStartedAt: '2026-06-23T09:00:00.000Z', timerMinutes: 0 }) }],
+        });
+        getDocFromServer.mockImplementation((ref) => {
+            if (ref?._path === 'tasks/t9') {
+                return Promise.resolve({ exists: () => true, data: () => ({ assignedUserId: 'u1', timerStatus: 'paused', timerStartedAt: null, timerMinutes: 60 }) });
+            }
+            return Promise.resolve({ exists: () => false, data: () => ({}) });
+        });
+
+        await pauseOtherTasks('u1', 'currentTask');
+
+        // Must NOT re-pause it: no task write and no work_session logged for the stale candidate.
+        expect(taskUpdateFor('t9')).toBeUndefined();
+        expect(workSessionWrites().some((w) => w.taskId === 't9')).toBe(false);
+    });
+
+    it('pauses using the SERVER-confirmed timerStartedAt, not the stale cached one', async () => {
+        // Cached snapshot thinks the run started at 09:00 (would credit 180 min); the server
+        // confirms it was actually resumed later, at 11:30 (30 min before NOW).
+        getDocs.mockResolvedValue({
+            docs: [{ id: 't9', data: () => ({ assignedUserId: 'u1', timerStatus: 'running', timerStartedAt: '2026-06-23T09:00:00.000Z', timerMinutes: 0 }) }],
+        });
+        getDocFromServer.mockImplementation((ref) => {
+            if (ref?._path === 'tasks/t9') {
+                return Promise.resolve({ exists: () => true, data: () => ({ assignedUserId: 'u1', timerStatus: 'running', timerStartedAt: '2026-06-23T11:30:00.000Z', timerMinutes: 0 }) });
+            }
+            return Promise.resolve({ exists: () => false, data: () => ({}) });
+        });
+
+        await pauseOtherTasks('u1', 'currentTask');
+
+        const upd = taskUpdateFor('t9');
+        expect(upd.timerMinutes).toBe(30); // 11:30 -> 12:00, NOT 09:00 -> 12:00 (180)
+    });
+
+    it('fails CLOSED (skips the pause) when the server confirmation read itself fails', async () => {
+        getDocs.mockResolvedValue({
+            docs: [{ id: 't9', data: () => ({ assignedUserId: 'u1', timerStatus: 'running', timerStartedAt: '2026-06-23T09:00:00.000Z', timerMinutes: 0 }) }],
+        });
+        getDocFromServer.mockRejectedValue(new Error('offline'));
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'tasks/t9') return Promise.reject(new Error('offline-cache-miss'));
+            return Promise.resolve({ exists: () => false, data: () => ({}) });
+        });
+
+        await pauseOtherTasks('u1', 'currentTask');
+
+        expect(taskUpdateFor('t9')).toBeUndefined();
+        expect(logError).toHaveBeenCalledWith(
+            expect.any(Error),
+            expect.objectContaining({ source: 'pauseOtherTasks:guardRead', taskId: 't9' })
+        );
+    });
+
+    it('still pauses a genuinely running OTHER task confirmed fresh by the server', async () => {
+        getDocs.mockResolvedValue({
+            docs: [{ id: 't9', data: () => ({ assignedUserId: 'u1', timerStatus: 'running', timerStartedAt: '2026-06-23T11:00:00.000Z', timerMinutes: 0 }) }],
+        });
+        getDocFromServer.mockImplementation((ref) => {
+            if (ref?._path === 'tasks/t9') {
+                return Promise.resolve({ exists: () => true, data: () => ({ assignedUserId: 'u1', timerStatus: 'running', timerStartedAt: '2026-06-23T11:00:00.000Z', timerMinutes: 0 }) });
+            }
+            return Promise.resolve({ exists: () => false, data: () => ({}) });
+        });
+
+        await pauseOtherTasks('u1', 'currentTask');
+
+        const upd = taskUpdateFor('t9');
+        expect(upd).toBeDefined();
+        expect(upd.timerStatus).toBe('paused');
+        expect(upd.timerMinutes).toBe(60); // 11:00 -> 12:00
     });
 });
 

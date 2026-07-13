@@ -410,18 +410,37 @@ export const pauseOtherTasks = async (userId, currentTaskId) => {
         // Use robust fetch
         const snapshot = await getDocsWithCacheFallback(q);
 
-        const pausePromises = snapshot.docs
-            .filter(doc => doc.id !== currentTaskId)
-            .map(docSnap => {
-                const taskData = { id: docSnap.id, ...docSnap.data() };
-                return pauseTask(taskData, { skipUserStatusUpdate: true });
-            });
+        const candidates = snapshot.docs.filter(docSnap => docSnap.id !== currentTaskId);
 
-        if (pausePromises.length > 0) {
+        const pausePromises = candidates.map(async (docSnap) => {
+            // The discovery query above can be served from a stale local cache with no error at
+            // all (persistentLocalCache does this silently when offline; the try/catch inside
+            // getDocsWithCacheFallback only covers the rarer hard-failure case) — the SAME class
+            // of staleness startTask/resumeTask already guard against on the user doc. Re-confirm
+            // THIS specific task doc against the server before pausing it: if another device
+            // already paused it, the server copy shows timerStatus:'paused' (or a resumed run with
+            // a newer timerStartedAt), and blindly pausing the stale snapshot would credit idle
+            // time from the old timerStartedAt and clobber the newer work_sessions row via the
+            // deterministic doc id (taskSessionDocId).
+            let confirmed;
+            try {
+                const serverSnap = await getDocFromServer(doc(db, 'tasks', docSnap.id))
+                    .catch(() => getDoc(doc(db, 'tasks', docSnap.id)));
+                confirmed = serverSnap?.exists?.() ? { id: docSnap.id, ...serverSnap.data() } : null;
+            } catch (guardErr) {
+                // Fail CLOSED like startTask/resumeTask: an unconfirmed pause is skipped rather than
+                // risk crediting stale idle time. A task left running a little longer is a repairable
+                // no-op (the next pause/recovery catches it); a wrongly-credited or clobbered session
+                // row is not.
+                logError(guardErr, { source: 'pauseOtherTasks:guardRead', userId, taskId: docSnap.id });
+                return null;
+            }
+            if (!confirmed || confirmed.timerStatus !== 'running') return null; // already paused elsewhere
+            return pauseTask(confirmed, { skipUserStatusUpdate: true });
+        });
 
-            // We use allSettled to ensure one failure doesn't stop others
-            await Promise.allSettled(pausePromises);
-        }
+        // We use allSettled to ensure one failure doesn't stop others
+        await Promise.allSettled(pausePromises);
     } catch (err) {
         // Explicitly catch everything in pauseOtherTasks so it NEVER blocks startTask.
         // Still record it durably: a failure here leaves OTHER tasks running (ghost time /

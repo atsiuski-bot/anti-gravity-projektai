@@ -48,7 +48,6 @@ const NOW = new Date('2026-06-23T12:00:00.000Z');
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 const userUpdate = (id) => updateDoc.mock.calls.find(([ref]) => ref?._path === `users/${id}`)?.[1];
-const addsTo = (col) => addDoc.mock.calls.filter(([c]) => c?._col === col).map((x) => x[1]);
 // Final secondary-session records (break/call/quick-work) are now written with setDoc under a
 // DETERMINISTIC id (sess_<kind>_<uid>_<startMs>) so the client and the server net dedup on one id
 // instead of each minting a random-id duplicate. So inspect setDoc, keyed on the ref's collection.
@@ -99,14 +98,68 @@ describe('startSession — opening a secondary session', () => {
         const u = userUpdate('u1');
         expect(u.activeSession.type).toBe('break');
         expect(u.activeSession.pausedSession.type).toBe('quickWork'); // single-level nesting
-        expect(u.activeSession.pausedSession.partialDocId).toBe('generated-id');
 
-        const partials = addsTo('work_sessions');
+        // The partial log now uses a DETERMINISTIC id (finding #3) — a VERBATIM MIRROR of the id
+        // handleLegacyLogging's eventual final write would use for this SAME session, so a final
+        // close that never actually left this startTime (the interrupting updateDoc failed)
+        // overwrites this row instead of adding a double-counted second one.
+        const expectedId = `sess_qw_ws_u1_${new Date('2026-06-23T11:30:00.000Z').getTime()}`;
+        expect(u.activeSession.pausedSession.partialDocId).toBe(expectedId);
+
+        const partials = setsTo('work_sessions');
         expect(partials).toHaveLength(1);
         expect(partials[0].isPartial).toBe(true);
         expect(partials[0].isQuickWork).toBe(true);
         expect(partials[0].durationMinutes).toBe(30); // 11:30 -> 12:00
         expect(partials[0].taskTitle).toBe('Sorting');
+
+        const partialRef = setDoc.mock.calls.find(([ref]) => ref?._col === 'work_sessions')[0];
+        expect(partialRef._id).toBe(expectedId);
+        expect(setDoc.mock.calls.find(([ref]) => ref?._col === 'work_sessions')[2]).toEqual({ merge: true });
+    });
+
+    it('a failed critical switch after the partial log: the later real close overwrites the SAME row (finding #3 fix)', async () => {
+        // Reproduces the handoff #3 failure exactly: quick-work running since 11:30 is interrupted
+        // by a call. The pre-interruption partial (30 min) is banked BEFORE the critical
+        // activeSession updateDoc — which then fails, so the switch never actually happens and the
+        // quick-work keeps running from the SAME original startTime. Without the dedup id this
+        // produced a SECOND, overlapping row when the worker later stopped it for real.
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({
+                displayName: 'Worker',
+                role: 'worker',
+                activeSession: { type: 'quickWork', startTime: '2026-06-23T11:30:00.000Z' },
+            }),
+        });
+        updateDoc.mockRejectedValueOnce(new Error('offline')); // the critical switch write fails
+
+        await expect(startSession('u1', 'call')).rejects.toThrow('offline');
+        await flush();
+
+        const partialCalls = setDoc.mock.calls.filter(([ref]) => ref?._col === 'work_sessions');
+        expect(partialCalls).toHaveLength(1);
+        const partialId = partialCalls[0][0]._id;
+
+        // The switch never actually committed, so the session the worker later closes "for real"
+        // is unchanged — same type, same original startTime.
+        setDoc.mockClear();
+        updateDoc.mockResolvedValue(undefined);
+        getLithuanianNow.mockReturnValue(new Date('2026-06-23T12:30:00.000Z')); // stopped 60 min in
+        await endSession('u1', {
+            displayName: 'Worker',
+            role: 'worker',
+            activeSession: { type: 'quickWork', startTime: '2026-06-23T11:30:00.000Z' },
+            quickWorkState: {},
+        });
+        await flush();
+
+        const finalCalls = setDoc.mock.calls.filter(([ref]) => ref?._col === 'work_sessions');
+        expect(finalCalls).toHaveLength(1); // one row, not two
+        expect(finalCalls[0][0]._id).toBe(partialId); // SAME deterministic id — an overwrite
+        expect(finalCalls[0][1].durationMinutes).toBe(60); // full 11:30->12:30 span, not 30+60
+        expect(finalCalls[0][1].isPartial).toBe(false); // the authoritative record clears the flag
+        expect(finalCalls[0][2]).toEqual({ merge: true }); // preserves a CF-stamped teamManagerIds
     });
 
     it('preserves the prior nested session on a SECOND interruption (call during a break that paused a task)', async () => {

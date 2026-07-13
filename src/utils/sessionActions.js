@@ -102,11 +102,20 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                     const interruptStart = new Date(userData.activeSession.startTime);
                     const partialDuration = clampSessionMinutes((interruptNow - interruptStart) / (1000 * 60));
                     if (partialDuration > MIN_LOGGED_SESSION_MINUTES) {
-                        // Log the partial segment and capture doc ID for later renaming
+                        // Log the partial segment and capture doc ID for later renaming.
                         const partialType = userData.activeSession.type;
                         const partialTitle = partialType === 'call' ? 'Skambutis' : (userData.activeSession.customTitle || 'Greita veikla');
+                        // DETERMINISTIC id — a VERBATIM MIRROR of the id handleLegacyLogging's
+                        // eventual final write uses for this SAME type + start instant (sess_qw_ws_/
+                        // sess_call_ws_, mirroring the break branch below). If the critical
+                        // activeSession updateDoc (below) fails, this interrupted session never
+                        // actually switches: it keeps running from this SAME startTime, and when it
+                        // is later closed for real the final write lands on this SAME id and
+                        // overwrites this partial row instead of adding a second one — closing the
+                        // double-credit gap the break branch never had.
+                        const partialSessionId = `sess_${partialType === 'call' ? 'call' : 'qw'}_ws_${userId}_${interruptStart.getTime()}`;
                         try {
-                            const partialDocRef = await addDoc(collection(db, 'work_sessions'), {
+                            await setDoc(doc(db, 'work_sessions', partialSessionId), {
                                 taskId: `${partialType}_partial_${interruptNow.getTime()}`,
                                 taskTitle: partialTitle,
                                 userId: userId,
@@ -119,9 +128,9 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                                 isQuickWork: partialType === 'quickWork',
                                 isSystemTask: partialType === 'call',
                                 isPartial: true
-                            });
+                            }, { merge: true });
                             // Store partial doc ID on the paused session so we can rename it later
-                            newPausedSession = { ...newPausedSession, partialDocId: partialDocRef.id };
+                            newPausedSession = { ...newPausedSession, partialDocId: partialSessionId };
                         } catch (e) {
                             logError(e, { source: 'writeFail:startSession.partialLog', userId });
                         }
@@ -639,6 +648,10 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 manualMinutes: durationMinutes,
                 isSystemTask: true
             }),
+            // merge:true — this id can now also be the one the interrupted-call partial log (above)
+            // already created and the create-only stamp trigger already denormalized teamManagerIds
+            // onto; a bare overwrite would drop that field and the update-rule pin on it would then
+            // reject this write outright.
             setDoc(doc(db, 'work_sessions', `sess_call_ws_${userId}_${startMs}`), {
                 taskId: "call_" + now.getTime(),
                 taskTitle: callTitle,
@@ -650,8 +663,9 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 durationMinutes: durationMinutes,
                 date: sessionDate,
                 createdAt: new Date().toISOString(),
-                isSystemTask: true
-            })
+                isSystemTask: true,
+                isPartial: false
+            }, { merge: true })
         ];
 
         // Retroactively rename the partial work_session that was logged when this call was
@@ -726,6 +740,9 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 autoStopped: autoStopped,
                 workSessionId: sessionRef.id
             }),
+            // merge:true — same rationale as the call branch above: this id can already exist (the
+            // interrupted quick-work partial log) with a CF-stamped teamManagerIds that a bare
+            // overwrite would drop and the update-rule pin would then reject.
             setDoc(sessionRef, {
                 taskId: "quick_" + now.getTime(),
                 taskTitle: title,
@@ -736,8 +753,9 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
                 durationMinutes: durationMinutes,
                 date: sessionDate,
                 createdAt: new Date().toISOString(),
-                isQuickWork: true
-            })
+                isQuickWork: true,
+                isPartial: false
+            }, { merge: true })
         ];
 
         // Notify the routed manager that quick work was completed and awaits their confirmation,
