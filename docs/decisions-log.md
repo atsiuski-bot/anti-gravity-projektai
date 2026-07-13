@@ -32,6 +32,17 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-07-13** — **Triage-sweep #12 accepted as a policy risk (no code change).** Founder
+  decision on the triage-sweep finding that `autoCloseForgottenSessions`
+  (`functions/index.js:1612`) credits an abandoned quick-work/call session up to the 16h clamp
+  with no proof-of-life check, unlike the task-timer's `autoStopForgottenTimers` (which refuses
+  to credit past the last heartbeat). Secondary sessions have no heartbeat mechanism today, so
+  closing this gap would require building one first. **Decision: keep the current
+  16h-clamped policy** as a deliberate trade-off for a low-friction one-tap quick-work flow,
+  relying on the existing manager pay review + `dailyIntegrityScan` suspicious-work-day tier as
+  the compensating control. See [`.handoffs/triage-sweep-2026-07-13.md`](../.handoffs/triage-sweep-2026-07-13.md)
+  #12 for the full finding.
+
 - **2026-07-12** — **ADR-0021 FU#4 verified + credit-integrity net widened (drafted, not deployed).**
   Verified the compensating controls that justify deferring **R-04** (see [ADR 0021](./adr/0021-server-authoritative-timer-session-write-path.md), FU#4 verification section).
   Result **partial**: `dailyIntegrityScan` catches *gross* duplication (>24h combined work+break/day)
