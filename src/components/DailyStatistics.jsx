@@ -649,31 +649,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // Calendar-day next cutoff (DST-safe), not "cutoff + 24h" — see splitTasks above.
         const nextDayCutoff = getNextDayCutoff();
 
-        // Build a set of taskIds that already have explicit work_sessions.
-        // Exclude manual-adjustment sessions: an adjustment is a correction layered on top
-        // of a task's own total (already reflected via the task's manualMinutes /
-        // timeAdjustments), not the task's primary tracked work. If an adjustment-only
-        // session marked the task as "has sessions", the task's base manualMinutes would be
-        // wrongly dropped from the daily total — counting only the correction.
-        const taskIdsWithSessions = new Set(
-            sessions.filter(s => !s.isManualAdjustment).map(s => s.taskId).filter(Boolean)
-        );
-
         return finishedTasks.filter(t => {
             if (!(showTestUsers || !testUserIds.has(resolveUserId(t)))) return false;
             if (!t.manualMinutes) return false;
 
             // Call tasks (isSystemTask) and Quick Work tasks (isQuickWork) always have
-            // a dedicated work_session logged alongside the task. Including manualMinutes
-            // from these tasks would double-count because the session already carries
-            // the same duration. The taskId on those sessions uses synthetic IDs
-            // (e.g. "call_xxx", "quick_xxx") that never match the task's Firestore ID,
-            // so the generic taskIdsWithSessions check below doesn't catch them.
+            // a dedicated work_session logged alongside the task, carrying the same
+            // duration as manualMinutes — counting both here would double it. An ordinary
+            // task's manualMinutes is separate, additive time (calculateCurrentTotalMinutes
+            // = manualMinutes + timerMinutes) and must always be counted regardless of
+            // whether any of its work_sessions happen to fall inside the viewed range —
+            // otherwise a range total silently drops it while day-by-day totals don't.
             if (t.isSystemTask || t.isQuickWork) return false;
-
-            // If this task already has real work_sessions tracked, skip it here —
-            // the sessions themselves carry the accurate split data.
-            if (taskIdsWithSessions.has(t.id)) return false;
 
             // If time was adjusted via work_sessions (timeChanged), skip to avoid double-count
             if (t.timeChanged) return false;
@@ -685,7 +672,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             return finishedDate >= cutoff && finishedDate < nextDayCutoff;
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
-    }, [finishedTasks, sessions, rangeStart, rangeEnd, showTestUsers, testUserIds]);
+    }, [finishedTasks, rangeStart, rangeEnd, showTestUsers, testUserIds]);
 
     const totalManualMinutes = manualTasks.reduce((acc, t) => acc + sanitizeReportMinutes(t.manualMinutes, { allowLarge: true }), 0);
 
