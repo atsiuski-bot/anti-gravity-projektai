@@ -111,12 +111,22 @@ export async function gatherReportData({
         const x = d.data();
         if (x.userId && wanted.has(x.userId)) ensure(x.userId).plannedShifts.push(x);
     });
+    // Dedup by doc id across archived_tasks + active done-tasks: a task mid-archive (its copy already
+    // in archived_tasks, the tasks doc not yet deleted) — or a partial-archive failure — exists in BOTH
+    // with the SAME id. Without this the aggregator counted it twice, inflating completed/approval/
+    // estimate metrics (Reports.fetchTasks and DailyStatistics both dedup by id; this path did not).
+    // The archived copy is the intended final record, so it wins and the active duplicate is skipped.
+    const seenTaskIds = new Set();
     arcS.docs.forEach((d) => {
         const x = { id: d.id, ...d.data() };
         const owner = resolveUserId(x);
-        if (wanted.has(owner)) ensure(owner).tasks.push(x);
+        if (wanted.has(owner)) {
+            ensure(owner).tasks.push(x);
+            seenTaskIds.add(d.id);
+        }
     });
     actS.docs.forEach((d) => {
+        if (seenTaskIds.has(d.id)) return;
         const x = { id: d.id, ...d.data() };
         const done = x.completed || x.status === 'completed' || x.status === 'confirmed';
         const owner = resolveUserId(x);

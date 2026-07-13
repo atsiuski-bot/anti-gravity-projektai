@@ -51,6 +51,11 @@ const RECOGNITION_FIELDS = [
 const firstOfMonthStr = (dateStr) => `${dateStr.slice(0, 7)}-01`;
 const monthKey = (dateStr) => dateStr.slice(0, 7);
 
+// Payroll-cell minutes: render a real minus for a negative (manual-deduction) total, but NO leading
+// '+' on positives — formatSignedMinutesToHHMM prefixes '+', which would clutter every normal row,
+// while plain formatMinutesToHHMM abs's the sign away and printed a deduction as if it were worked time.
+const csvMinutes = (m) => (Number.isFinite(m) && m < 0 ? `-${formatMinutesToHHMM(m)}` : formatMinutesToHHMM(m));
+
 // Scalar behind a metric value (workerStats returns {value,sub} for absenceDays, {parts} for split).
 const scalarOf = (value) =>
     value && typeof value === 'object' && 'value' in value ? value.value : value;
@@ -421,7 +426,10 @@ export function renderTimesheetCSV(workers, window, { includeEarnings = false } 
                 const d = days[date];
                 totalWork += d.work;
                 totalBreak += d.break;
-                rows.push(pad([escape(w.name), escape(date), escape(formatMinutesToHHMM(d.work)), escape(formatMinutesToHHMM(d.break)), '', '']).join(','));
+                // csvMinutes: a manual-adjustment row can drive a day's work (or break) total negative
+                // (allowLarge keeps the sign), and this is a PAYROLL sheet — a -02:00 deduction rendered
+                // as a positive 02:00 reads as two hours WORKED. Positive/zero render identically.
+                rows.push(pad([escape(w.name), escape(date), escape(csvMinutes(d.work)), escape(csvMinutes(d.break)), '', '']).join(','));
             });
 
         const planned = computePlannedMinutes(w.plannedShifts, window, w.expectedWeeklyHours);
@@ -429,7 +437,7 @@ export function renderTimesheetCSV(workers, window, { includeEarnings = false } 
         const planCovers = hasPlan && (totalWork <= 0 || planned >= TIMESHEET_PLAN_FLOOR * totalWork);
         const plannedCell = hasPlan ? formatMinutesToHHMM(planned) : '';
         const skirtumasCell = !hasPlan ? '' : planCovers ? formatSignedMinutesToHHMM(totalWork - planned) : 'Nepakanka plano';
-        const totalCells = [escape(w.name), escape('Viso'), escape(formatMinutesToHHMM(totalWork)), escape(formatMinutesToHHMM(totalBreak)), escape(plannedCell), escape(skirtumasCell)];
+        const totalCells = [escape(w.name), escape('Viso'), escape(csvMinutes(totalWork)), escape(csvMinutes(totalBreak)), escape(plannedCell), escape(skirtumasCell)];
         if (includeEarnings) {
             const earnings = hasPayRate(w.payRate)
                 ? computePeriodEarnings(w.workSessions, window, w.payRate.tiers)

@@ -281,4 +281,26 @@ describe('renderers', () => {
         expect(visoCells[6]).not.toContain('"');
         expect(visoCells[7]).not.toContain('"');
     });
+
+    // Triage sweep #9: a manual deduction can net a day/period negative; the payroll cell must show a
+    // real minus, not the abs'd positive that reads as worked time (and not a '+' on normal positives).
+    it('Timesheet CSV renders a net-negative day and total with a real minus sign', () => {
+        const deducted = baseWorker({
+            workSessions: [
+                session('2026-06-10', 1), // +1h worked
+                { date: '2026-06-10', durationMinutes: -180, isManualAdjustment: true,
+                  startTime: '2026-06-10T08:00:00.000Z', endTime: '2026-06-10T08:00:00.000Z' }, // -3h correction
+            ],
+        });
+        const lines = renderTimesheetCSV([deducted], window).split('\n');
+        expect(lines.find((l) => /,2026-06-10,/.test(l)).split(',')[2]).toBe('-02:00');
+        expect(lines.find((l) => l.includes(',Viso,')).split(',')[2]).toBe('-02:00');
+    });
+
+    it('Timesheet CSV renders a normal positive day with no leading + sign', () => {
+        const dayCells = renderTimesheetCSV([worker], window)
+            .split('\n').find((l) => /,2026-06-10,/.test(l)).split(',');
+        expect(dayCells[2]).toBe('08:00');
+        expect(dayCells[2]).not.toContain('+');
+    });
 });
