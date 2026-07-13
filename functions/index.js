@@ -1194,16 +1194,27 @@ async function scanCreditIntegrity() {
     // window; batch-get them and treat any absent task as an orphaned credit row.
     const taskIds = collectReferentialTaskIds(rows);
     const existing = new Set();
-    for (let i = 0; i < taskIds.length; i += 300) {
-        const chunk = taskIds.slice(i, i + 300);
-        try {
-            const docs = await db.getAll(...chunk.map((id) => db.collection('tasks').doc(id)));
-            docs.forEach((d) => { if (d.exists) existing.add(d.id); });
-        } catch (err) {
-            // Fail SAFE for a report-only check: on a read error treat this chunk as present so an
-            // infra hiccup never raises a false orphan alert.
-            logger.warn('scanCreditIntegrity task getAll failed', { err: err.message });
-            chunk.forEach((id) => existing.add(id));
+    // A referential row's task may legitimately live in `tasks` OR — once confirmed and archived by the
+    // daily archive job (same doc id) — in `archived_tasks`, or in `deleted_tasks` after a soft delete.
+    // Check all three before calling a row orphaned; otherwise EVERY normally-completed-then-archived
+    // task's sessions read as orphans within the 2-day window — a daily false positive that trains
+    // admins to ignore the alarm and masks a REAL fabricated-credit row when one appears. Collections
+    // are checked in order and only the still-missing ids are re-queried, so the common case (task in
+    // `tasks`) costs exactly one pass.
+    for (const coll of ['tasks', 'archived_tasks', 'deleted_tasks']) {
+        const missing = taskIds.filter((id) => !existing.has(id));
+        if (missing.length === 0) break;
+        for (let i = 0; i < missing.length; i += 300) {
+            const chunk = missing.slice(i, i + 300);
+            try {
+                const docs = await db.getAll(...chunk.map((id) => db.collection(coll).doc(id)));
+                docs.forEach((d) => { if (d.exists) existing.add(d.id); });
+            } catch (err) {
+                // Fail SAFE for a report-only check: on a read error treat this chunk as present so an
+                // infra hiccup never raises a false orphan alert.
+                logger.warn('scanCreditIntegrity task getAll failed', { err: err.message, coll });
+                chunk.forEach((id) => existing.add(id));
+            }
         }
     }
     const orphan = { checked: taskIds.length, ...findOrphanSessions(rows, existing) };
