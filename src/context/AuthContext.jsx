@@ -7,7 +7,7 @@ import {
     signOut,
     onAuthStateChanged
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, getDocFromServer, setDoc, onSnapshot } from 'firebase/firestore';
 import { logError } from '../utils/errorLog';
 import { removeFcmToken } from '../utils/messaging';
 import { setAgentsEnabled } from '../domain/agentControl';
@@ -96,7 +96,31 @@ export function AuthProvider({ children }) {
         try {
             // Check if user exists in Firestore
             const userRef = doc(db, 'users', user.uid);
-            const userSnap = await getDoc(userRef);
+            let userSnap = await getDoc(userRef);
+
+            // A cache MISS must never be mistaken for "no account". Firestore runs with
+            // persistentLocalCache (firebase.js), so getDoc() falls back to the LOCAL cache whenever
+            // the server can't be reached in time — routine for these field users (flaky mobile
+            // links, a fresh device/browser with an empty cache, or a network/extension that blocks
+            // Firestore's realtime channel while Google sign-in still succeeds on its own endpoint).
+            // On such a miss getDoc() returns exists()===false for an account that DOES exist and is
+            // active server-side. Provisioning off that false negative is the bug behind
+            // "Jūsų paskyra sukurta ir laukia patvirtinimo" shown to an already-approved user: we
+            // re-enter the new-signup path and self-write {isDisabled:true}, which the rules then
+            // reject (a worker may not disable itself), so NOTHING persists — the admin sees no new
+            // pending account while the user stays locked out. So before treating a miss as a brand
+            // new account, CONFIRM it against the server. If the server is genuinely unreachable we
+            // cannot decide safely, so surface a clear, retryable error instead of minting a phantom
+            // pending doc. An account that already exists in the cache short-circuits (no extra read).
+            if (!userSnap.exists()) {
+                try {
+                    userSnap = await getDocFromServer(userRef);
+                } catch {
+                    const offlineErr = new Error('Account state could not be verified (server unreachable)');
+                    offlineErr.code = 'app/verification-unavailable';
+                    throw offlineErr;
+                }
+            }
 
             if (!userSnap.exists()) {
 

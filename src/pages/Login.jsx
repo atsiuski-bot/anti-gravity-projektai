@@ -27,6 +27,8 @@ function loginErrorMessage(err) {
             return 'Jūsų prisijungimas užregistruotas ir laukia pakartotinio administratoriaus patvirtinimo. Kai jį patvirtins, vėl galėsite prisijungti. Norėdami paspartinti — kreipkitės į savo koordinatorių.';
         case 'app/account-disabled':
             return 'Jūsų paskyra užblokuota. Susisiekite su administratoriumi.';
+        case 'app/verification-unavailable':
+            return 'Nepavyko patikrinti paskyros būsenos — gali būti silpnas ar nestabilus ryšys. Patikrinkite interneto ryšį (pabandykite kitą tinklą ar naršyklę) ir bandykite dar kartą.';
         case 'auth/popup-blocked':
             return 'Naršyklė užblokavo prisijungimo langą. Leiskite iškylančius langus šiai svetainei ir bandykite dar kartą.';
         case 'auth/popup-closed-by-user':
