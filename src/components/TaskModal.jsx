@@ -20,6 +20,7 @@ import { parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
 import { resolveInitialTaskStatus } from '../utils/taskStatus';
+import { listPayRates, hasMultiplePayRates } from '../utils/payRate';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
 import useTaskSuggestions from '../hooks/useTaskSuggestions';
 import { useAssigneeAffinity } from '../hooks/useAssigneeAffinity';
@@ -385,6 +386,17 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             })
         : [];
 
+    // Multi-rate assignment: when the picked Meistras has 2+ pay tariffs, the manager chooses which
+    // one this task is billed by. The list comes from the assignee's own user doc (payRate); a
+    // worker with one-or-zero rates shows no picker (billed by their default). See utils/payRate.js.
+    const assigneeWorker = workers.find((w) => w.id === formData.assignedUserId) || null;
+    const assigneePayRates = assigneeWorker ? listPayRates(assigneeWorker.payRate) : [];
+    const showRatePicker = isManager && hasMultiplePayRates(assigneeWorker?.payRate);
+
+    // Assigning to a different worker invalidates any previously chosen tariff (ids are per-worker),
+    // so clear it — the manager re-picks, or the assignee's default applies.
+    const setAssignee = (val) => setFormData((prev) => ({ ...prev, assignedUserId: val, payRateId: '' }));
+
     // The unified title type-ahead source: templates first (the user's visible set — team library
     // + own personal), then the creator's own past titles each with its typical time.
     // TitleSuggestInput filters this to the typed text; picking a template applies its preset,
@@ -426,6 +438,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             setFormData({
                 title: task.title || '',
                 assignedUserId: task.assignedUserId || '',
+                payRateId: task.payRateId || '',
                 managerId: task.managerId || '',
                 priority: normalizePriority(task.priority),
                 estimatedTime: task.estimatedTime || '',
@@ -448,6 +461,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             setFormData({
                 title: d.title || '',
                 assignedUserId: d.assignedUserId || '',
+                payRateId: d.payRateId || '',
                 managerId: d.managerId || '',
                 priority: normalizePriority(d.priority),
                 estimatedTime: d.estimatedTime || '',
@@ -485,6 +499,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 setFormData({
                     title: '',
                     assignedUserId: currentUser.uid,
+                    payRateId: '',
                     managerId: defaultManagerId,
                     priority: DEFAULT_PRIORITY,
                     estimatedTime: '',
@@ -900,6 +915,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 data.estimatedTime = formData.estimatedTime || '';
                 data.description = formData.description || '';
                 data.assignedUserId = formData.assignedUserId || '';
+                data.payRateId = formData.payRateId || '';
                 data.managerId = formData.managerId || '';
                 data.deadline = formData.deadline || '';
                 // In this mode the task IS the template, so its title doubles as the template's
@@ -1036,6 +1052,9 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 if (reassignViaCommand) {
                     delete contentData.assignedUserId;
                     delete contentData.assignedAt;
+                    // The chosen tariff belongs to the assignment decision — let assignTask own its
+                    // write so the audit before/after and the field land together.
+                    delete contentData.payRateId;
                 }
 
                 await updateDoc(docRef, contentData);
@@ -1049,7 +1068,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     const w = assignableWorkers.find((x) => x.id === nextAssignee);
                     try {
                         const result = await assignTask(
-                            { task, worker: { id: nextAssignee, name: w ? formatDisplayName(w.displayName || w.email) : null } },
+                            { task, worker: { id: nextAssignee, name: w ? formatDisplayName(w.displayName || w.email) : null }, payRateId: formData.payRateId || '' },
                             {
                                 actor: humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole }),
                                 mode: MODES.COMMIT,
@@ -1618,7 +1637,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             <button
                                                 key={s.id}
                                                 type="button"
-                                                onClick={() => setFormData({ ...formData, assignedUserId: s.id })}
+                                                onClick={() => setAssignee(s.id)}
                                                 className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                             >
                                                 {s.name}
@@ -1634,7 +1653,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                         {isManager ? (
                                             <PersonSelect
                                                 value={formData.assignedUserId}
-                                                onChange={(val) => setFormData({ ...formData, assignedUserId: val })}
+                                                onChange={setAssignee}
                                                 users={assignableWorkers}
                                                 label="Meistras"
                                                 placeholder="Priskirti…"
@@ -1662,6 +1681,26 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                         />
                                     </div>
                                 </div>
+
+                                {/* Pay tariff — shown only when the chosen Meistras has several rates.
+                                    Picking one binds it to the task so the worker's earnings popup and the
+                                    reports bill by exactly this rate. "" = the worker's default tariff. */}
+                                {showRatePicker && (
+                                    <div className="mt-3">
+                                        <span className="mb-1 block text-caption font-medium text-ink-muted">Tarifas</span>
+                                        <Select
+                                            value={formData.payRateId}
+                                            onChange={(val) => setFormData({ ...formData, payRateId: val })}
+                                            options={assigneePayRates.map((r) => ({ value: r.id, label: r.label }))}
+                                            label="Tarifas"
+                                            placeholder="Pasirinkti tarifą"
+                                            ariaLabel="Meistro tarifas"
+                                            alwaysSheet
+                                            disabled={fieldsLocked}
+                                            className="min-w-0"
+                                        />
+                                    </div>
+                                )}
                             </div>
 
                             {/* Estimated time — a per-title suggestion (when history has one) leads as a

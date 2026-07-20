@@ -63,7 +63,66 @@ export const grossToNet = (gross) => (Number.isFinite(gross) ? gross * NET_RETEN
 
 // True when a config carries a usable tier table.
 export const hasPayRate = (payRate) =>
-    !!payRate && Array.isArray(payRate.tiers) && payRate.tiers.length > 0;
+    !!payRate &&
+    ((Array.isArray(payRate.tiers) && payRate.tiers.length > 0) ||
+     (Array.isArray(payRate.rates) && payRate.rates.some((r) => Array.isArray(r?.tiers) && r.tiers.length > 0)));
+
+// --- Multiple named rates -------------------------------------------------------------------
+// A worker may have SEVERAL pay tariffs (e.g. "Statyba", "Griovimas"), and the manager picks
+// which one applies when assigning a task. This is a backward-compatible extension of the single
+// `payRate.tiers` model: the legacy `tiers` field is the DEFAULT (unnamed) tariff and keeps
+// working untouched; `payRate.rates` (when present) holds the full named set. `listPayRates`
+// unifies both into one selectable list of { id, label, tiers }.
+export const DEFAULT_PAY_RATE_LABEL = 'Pagrindinis';
+
+// The selectable tariffs for a worker, newest model first: the explicit named `rates` when set,
+// otherwise the legacy single `tiers` surfaced as one default entry (id ''). Returns [] when the
+// worker has no usable rate at all.
+export const listPayRates = (payRate) => {
+    if (!payRate) return [];
+    if (Array.isArray(payRate.rates) && payRate.rates.length > 0) {
+        return payRate.rates
+            .map((r) => ({
+                id: typeof r?.id === 'string' ? r.id : '',
+                label: (r?.label && String(r.label).trim()) || DEFAULT_PAY_RATE_LABEL,
+                tiers: Array.isArray(r?.tiers) ? r.tiers : [],
+            }))
+            .filter((r) => r.tiers.length > 0);
+    }
+    if (Array.isArray(payRate.tiers) && payRate.tiers.length > 0) {
+        return [{ id: '', label: (payRate.label && String(payRate.label).trim()) || DEFAULT_PAY_RATE_LABEL, tiers: payRate.tiers }];
+    }
+    return [];
+};
+
+// True when the manager must be offered a choice (2+ tariffs). One-or-zero rates => auto, no picker.
+export const hasMultiplePayRates = (payRate) => listPayRates(payRate).length > 1;
+
+// Resolve the chosen tariff for a task: match `payRateId` against the worker's list, falling back
+// to the first (default) tariff when the id is empty, unknown, or the worker has a single rate. So
+// old tasks (no payRateId) and single-rate workers keep computing exactly as before.
+const resolvePayRate = (payRate, payRateId) => {
+    const list = listPayRates(payRate);
+    if (list.length === 0) return null;
+    const found = payRateId ? list.find((r) => r.id === payRateId) : null;
+    return found || list[0];
+};
+
+// The tier table to bill a task by (feeds marginalNetEarnings). Backward compatible: falls back to
+// the default tariff when the task carries no / an unknown payRateId.
+export const getPayRateTiers = (payRate, payRateId) => {
+    const r = resolvePayRate(payRate, payRateId);
+    return r ? r.tiers : [];
+};
+
+// The human label of the tariff a task is billed by ('' when there is only the default one — the
+// caller can hide the label in that case). Never throws.
+export const getPayRateLabel = (payRate, payRateId) => {
+    const list = listPayRates(payRate);
+    if (list.length <= 1) return '';
+    const r = resolvePayRate(payRate, payRateId);
+    return r ? r.label : '';
+};
 
 // Normalise to a clean ascending list of {fromHours, netRate}: coerce numbers, drop junk rows,
 // sort, and force the lowest tier to start at 0 so there is never an un-priced gap at the bottom.

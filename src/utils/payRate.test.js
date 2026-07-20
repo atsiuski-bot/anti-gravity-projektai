@@ -8,6 +8,11 @@ import {
     normalizeTiers,
     validateTiers,
     marginalNetEarnings,
+    listPayRates,
+    hasMultiplePayRates,
+    getPayRateTiers,
+    getPayRateLabel,
+    DEFAULT_PAY_RATE_LABEL,
 } from './payRate';
 
 // Characterization coverage for the pay-rate model (ADR 0012, 2026-06-23): the admin enters NET
@@ -77,6 +82,78 @@ describe('hasPayRate', () => {
         expect(hasPayRate({})).toBe(false);
         expect(hasPayRate({ tiers: [] })).toBe(false);
         expect(hasPayRate({ tiers: 'nope' })).toBe(false);
+    });
+
+    it('is true when the worker has a named rates set (multi-rate model)', () => {
+        expect(hasPayRate({ rates: [{ id: 'a', label: 'A', tiers: [{ fromHours: 0, netRate: 10 }] }] })).toBe(true);
+        expect(hasPayRate({ rates: [] })).toBe(false);
+        expect(hasPayRate({ rates: [{ id: 'a', label: 'A', tiers: [] }] })).toBe(false);
+    });
+});
+
+describe('listPayRates / hasMultiplePayRates', () => {
+    it('surfaces a legacy single tiers table as one default entry (id "")', () => {
+        const list = listPayRates({ tiers: [{ fromHours: 0, netRate: 10 }] });
+        expect(list).toEqual([{ id: '', label: DEFAULT_PAY_RATE_LABEL, tiers: [{ fromHours: 0, netRate: 10 }] }]);
+        expect(hasMultiplePayRates({ tiers: [{ fromHours: 0, netRate: 10 }] })).toBe(false);
+    });
+
+    it('uses the legacy label when present on the single-tier shape', () => {
+        const list = listPayRates({ label: 'Statyba', tiers: [{ fromHours: 0, netRate: 10 }] });
+        expect(list[0].label).toBe('Statyba');
+    });
+
+    it('returns the named rates when set, and flags 2+ as multiple', () => {
+        const payRate = { rates: [
+            { id: 'a', label: 'Statyba', tiers: [{ fromHours: 0, netRate: 10 }] },
+            { id: 'b', label: 'Griovimas', tiers: [{ fromHours: 0, netRate: 15 }] },
+        ] };
+        expect(listPayRates(payRate).map((r) => r.id)).toEqual(['a', 'b']);
+        expect(hasMultiplePayRates(payRate)).toBe(true);
+    });
+
+    it('drops named rates with empty tiers and defaults a blank label', () => {
+        const list = listPayRates({ rates: [
+            { id: 'a', label: '', tiers: [{ fromHours: 0, netRate: 10 }] },
+            { id: 'b', label: 'B', tiers: [] },
+        ] });
+        expect(list).toHaveLength(1);
+        expect(list[0]).toMatchObject({ id: 'a', label: DEFAULT_PAY_RATE_LABEL });
+    });
+
+    it('returns [] for no usable config', () => {
+        expect(listPayRates(null)).toEqual([]);
+        expect(listPayRates({})).toEqual([]);
+        expect(hasMultiplePayRates(null)).toBe(false);
+    });
+});
+
+describe('getPayRateTiers / getPayRateLabel', () => {
+    const multi = { tiers: [{ fromHours: 0, netRate: 10 }], label: 'Statyba', rates: [
+        { id: 'a', label: 'Statyba', tiers: [{ fromHours: 0, netRate: 10 }] },
+        { id: 'b', label: 'Griovimas', tiers: [{ fromHours: 0, netRate: 15 }] },
+    ] };
+
+    it('resolves the chosen tariff by id', () => {
+        expect(getPayRateTiers(multi, 'b')).toEqual([{ fromHours: 0, netRate: 15 }]);
+        expect(getPayRateLabel(multi, 'b')).toBe('Griovimas');
+    });
+
+    it('falls back to the first tariff for an empty or unknown id', () => {
+        expect(getPayRateTiers(multi, '')).toEqual([{ fromHours: 0, netRate: 10 }]);
+        expect(getPayRateTiers(multi, 'zzz')).toEqual([{ fromHours: 0, netRate: 10 }]);
+    });
+
+    it('bills a legacy single-rate worker by their tiers regardless of any stale payRateId', () => {
+        const legacy = { tiers: [{ fromHours: 0, netRate: 12 }] };
+        expect(getPayRateTiers(legacy, 'whatever')).toEqual([{ fromHours: 0, netRate: 12 }]);
+        // A single tariff needs no label — the picker is hidden, so the earnings popup shows none.
+        expect(getPayRateLabel(legacy, '')).toBe('');
+    });
+
+    it('returns [] tiers when the worker has no rate at all', () => {
+        expect(getPayRateTiers(null, '')).toEqual([]);
+        expect(getPayRateTiers({}, 'a')).toEqual([]);
     });
 });
 

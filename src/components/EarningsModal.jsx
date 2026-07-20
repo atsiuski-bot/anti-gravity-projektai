@@ -4,7 +4,7 @@ import { Wallet } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { getLithuanianDateString, sanitizeReportMinutes } from '../utils/timeUtils';
-import { hasPayRate, marginalNetEarnings, netToGross, EFFECTIVE_TAX_RATE } from '../utils/payRate';
+import { hasPayRate, marginalNetEarnings, netToGross, getPayRateTiers, getPayRateLabel, EFFECTIVE_TAX_RATE } from '../utils/payRate';
 import { formatEur, formatEurPerHour } from '../utils/formatters';
 import { logError } from '../utils/errorLog';
 import Modal from './ui/Modal';
@@ -60,7 +60,12 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
     const taskHours = Math.max(0, (Number(totalMinutes) || 0) / 60);
     const loading = priorMinutes === null;
     const priorHours = (priorMinutes || 0) / 60;
-    const netEarnings = marginalNetEarnings(priorHours, priorHours + taskHours, payRate?.tiers);
+    // Bill by the tariff the manager chose for THIS task (task.payRateId); falls back to the
+    // worker's default tariff when the task carries none — so old tasks and single-rate workers
+    // compute exactly as before.
+    const rateTiers = getPayRateTiers(payRate, task?.payRateId);
+    const rateLabel = getPayRateLabel(payRate, task?.payRateId);
+    const netEarnings = marginalNetEarnings(priorHours, priorHours + taskHours, rateTiers);
     const grossEarnings = netToGross(netEarnings);
     const taxPct = Math.round(EFFECTIVE_TAX_RATE * 100);
 
@@ -82,6 +87,10 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
                         <Wallet className="h-5 w-5" aria-hidden="true" />
                         <span className="text-body">{task?.title || 'Veikla'} · {formatHours(taskHours)}</span>
                     </div>
+
+                    {rateLabel && (
+                        <p className="text-center text-caption text-ink-muted">Tarifas: {rateLabel}</p>
+                    )}
 
                     <div className="rounded-card border border-line bg-surface-sunken/40 p-4 text-center">
                         <span className="block text-caption font-medium uppercase tracking-wide text-ink-muted">

@@ -38,6 +38,9 @@ const buildPlan = (input, actor) => {
     estimatedTime,
     estimatedTimeMinutes: parseTimeStringToMinutes(estimatedTime),
     assignedUserId: fields.assignedUserId || '',
+    // The pay tariff the manager chose for the assignee (WORKZ multi-rate model); '' = the
+    // worker's default tariff. Read back by EarningsModal via getPayRateTiers.
+    payRateId: fields.payRateId || '',
     comments: Array.isArray(fields.comments) ? fields.comments : [],
     links: Array.isArray(fields.links) ? fields.links : [],
     checklist: Array.isArray(fields.checklist) ? fields.checklist : [],

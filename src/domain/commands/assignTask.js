@@ -35,16 +35,25 @@ const buildPlan = (input) => {
   const fromName = task.assignedUserName || null;
   const toName = worker.name || null;
 
+  // The pay tariff the manager picked for this worker on this task (WORKZ multi-rate model): '' =
+  // the worker's default tariff. Only carried when the caller supplies it, so a plain reassignment
+  // that does not touch the rate leaves the task's existing payRateId untouched.
+  const hasPayRateId = input && Object.prototype.hasOwnProperty.call(input, 'payRateId');
+  const payRateId = hasPayRateId ? (input.payRateId || '') : undefined;
+
   return {
     targetId: task.id,
     // English (persisted to the audit log). The UI composes its own Lithuanian proposal label
     // from the structured before/after when it renders an assignment proposal card.
     summary: `Assign task "${task.title || task.id}" to ${toName || worker.id}` +
              (fromId ? ` (was ${fromName || fromId})` : ''),
-    before: { assignedUserId: fromId, assignedUserName: fromName },
-    after: { assignedUserId: worker.id, assignedUserName: toName },
+    before: { assignedUserId: fromId, assignedUserName: fromName, payRateId: task.payRateId || '' },
+    after: { assignedUserId: worker.id, assignedUserName: toName, payRateId: payRateId ?? (task.payRateId || '') },
     effect: { taskId: task.id, assignedUserId: worker.id },
-    noop: fromId === worker.id, // already assigned to this worker — apply is a harmless rewrite
+    payRateId, // undefined => leave existing task.payRateId as-is on apply
+    // A rate-only change (same worker) must still WRITE, so only treat it as a noop when the worker
+    // is unchanged AND the rate is not being (re)set.
+    noop: fromId === worker.id && payRateId === undefined,
   };
 };
 
@@ -70,6 +79,9 @@ export const assignTask = defineCommand({
         // assignedUserName is intentionally NOT persisted — it is a read-derived display field
         // everywhere else (the list loaders re-derive it from the roster; write-backs strip it), so
         // freezing it here would go stale on a rename. The audit before/after still capture it.
+        // Bind the chosen pay tariff to the assignment decision, but only when the caller set one —
+        // an omitted payRateId leaves the task's existing value untouched.
+        ...(planned.payRateId !== undefined ? { payRateId: planned.payRateId } : {}),
         assignedAt: nowIso,
         updatedAt: nowIso,
       });

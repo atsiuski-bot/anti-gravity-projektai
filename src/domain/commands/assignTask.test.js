@@ -37,8 +37,8 @@ describe('assignTask — plan', () => {
   it('captures before/after and a human-readable summary', () => {
     const p = __buildAssignPlan({ task: TASK, worker: WORKER });
     expect(p.targetId).toBe('t1');
-    expect(p.before).toEqual({ assignedUserId: 'old', assignedUserName: 'Old Worker' });
-    expect(p.after).toEqual({ assignedUserId: 'w2', assignedUserName: 'Giedrius' });
+    expect(p.before).toEqual({ assignedUserId: 'old', assignedUserName: 'Old Worker', payRateId: '' });
+    expect(p.after).toEqual({ assignedUserId: 'w2', assignedUserName: 'Giedrius', payRateId: '' });
     expect(p.summary).toContain('Giedrius');
     expect(p.noop).toBe(false);
   });
@@ -46,6 +46,25 @@ describe('assignTask — plan', () => {
   it('flags a no-op when the task is already assigned to the worker', () => {
     const p = __buildAssignPlan({ task: { id: 't1', assignedUserId: 'w2' }, worker: WORKER });
     expect(p.noop).toBe(true);
+  });
+
+  it('binds a chosen pay tariff to the assignment (multi-rate model)', () => {
+    const p = __buildAssignPlan({ task: TASK, worker: WORKER, payRateId: 'rate_b' });
+    expect(p.payRateId).toBe('rate_b');
+    expect(p.after.payRateId).toBe('rate_b');
+  });
+
+  it('a same-worker rate-only change is NOT a no-op (it must still write)', () => {
+    const p = __buildAssignPlan({ task: { id: 't1', assignedUserId: 'w2', payRateId: 'rate_a' }, worker: WORKER, payRateId: 'rate_b' });
+    expect(p.noop).toBe(false);
+    expect(p.payRateId).toBe('rate_b');
+  });
+
+  it('leaves payRateId undefined (untouched) when the caller omits it', () => {
+    const p = __buildAssignPlan({ task: { ...TASK, payRateId: 'rate_a' }, worker: WORKER });
+    expect(p.payRateId).toBeUndefined();
+    // The task's existing tariff is preserved in the after-image for the audit.
+    expect(p.after.payRateId).toBe('rate_a');
   });
 
   it('rejects missing task or worker (invalid input throws)', () => {
@@ -93,6 +112,19 @@ describe('assignTask — commit', () => {
       after: { assignedUserId: 'w2', assignedUserName: 'Giedrius' },
     });
     expect(res).toMatchObject({ ok: true, mode: 'commit', decisionId: 'op_assign_1' });
+  });
+
+  it('writes the chosen payRateId only when the caller supplies it', async () => {
+    await assignTask(
+      { task: TASK, worker: WORKER, payRateId: 'rate_b' },
+      { actor: HUMAN, mode: MODES.COMMIT },
+    );
+    expect(taskUpdate().payRateId).toBe('rate_b');
+
+    vi.clearAllMocks();
+    await assignTask({ task: TASK, worker: WORKER }, { actor: HUMAN, mode: MODES.COMMIT });
+    // Omitted => the field is left untouched on the task, not blanked.
+    expect('payRateId' in taskUpdate()).toBe(false);
   });
 
   it('an AGENT commit is REFUSED (human-only boundary) — nothing is written', async () => {

@@ -53,6 +53,12 @@ describe('createTask — plan', () => {
     expect(p.payload.creatorName).toBe('Manager');
     expect(Array.isArray(p.payload.comments)).toBe(true);
     expect(p.after).toEqual({ assignedUserId: 'w2', title: 'Roof', status: 'pending' });
+    expect(p.payload.payRateId).toBe('');              // default: worker's default tariff
+  });
+
+  it('persists a chosen pay tariff (payRateId) when the manager set one', () => {
+    const p = __buildCreatePlan({ fields: { title: 'X', estimatedTime: '1h', assignedUserId: 'w2', payRateId: 'rate_b' } }, HUMAN);
+    expect(p.payload.payRateId).toBe('rate_b');
   });
 
   it('never persists assignedUserName (read-derived) and defaults a blank title', () => {
