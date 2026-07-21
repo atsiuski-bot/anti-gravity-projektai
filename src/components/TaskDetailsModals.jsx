@@ -29,7 +29,7 @@ export function DetailsModal({ isOpen, onClose, title, icon: Icon, children }) {
             ariaLabelledby={titleId}
             size="xl"
             bare
-            className="block max-h-[80vh] overflow-y-auto"
+            className="block max-h-[80dvh] overflow-y-auto"
         >
             <div className="flex justify-between items-center p-4 border-b border-line sticky top-0 bg-surface-card z-10">
                 <div className="flex items-center gap-2">
@@ -144,8 +144,8 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
 
     return (
         <DetailsModal isOpen={isOpen} onClose={onClose} title="Komentarai" icon={MessageCircle}>
-            <div className="flex flex-col h-full max-h-[60vh]">
-                <div className="flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
+            <div className="flex flex-col h-full max-h-[60dvh]">
+                <div className="min-h-0 flex-1 overflow-y-auto space-y-3 mb-4 pr-2">
                     {displayComments.length > 0 ? (
                         displayComments.map((comment, idx) => {
                             const isEditing = editingKey === getCommentKey(comment);
