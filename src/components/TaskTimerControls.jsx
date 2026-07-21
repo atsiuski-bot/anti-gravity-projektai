@@ -4,7 +4,7 @@ import { doc, updateDoc, setDoc, getDoc, getDocFromCache } from 'firebase/firest
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
 import { startTask, pauseTask, resumeTask, taskSessionDocId } from '../utils/taskActions';
-import { isManagerRole, resolveCompletionStatus } from '../utils/formatters';
+import { resolveCompletionStatus } from '../utils/formatters';
 import { hasPayRate } from '../utils/payRate';
 import { logError } from '../utils/errorLog';
 import { notify } from '../utils/notify';
@@ -34,7 +34,9 @@ import ConfirmDialog from './ui/ConfirmDialog';
 
 // stopBreak/stopCall no longer needed — startTask/resumeTask handle session cleanup
 
-export default function TaskTimerControls({ task, onShowModal: _onShowModal, role }) {
+// `role` is the SURFACE's effective role, still passed by every list that renders this component.
+// It no longer gates the controls (assignment does — see below), so it is accepted and ignored.
+export default function TaskTimerControls({ task, onShowModal: _onShowModal, role: _role }) {
     const {
         currentUser,
         userRole,
@@ -102,9 +104,14 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         // and (re)start the ticker only on run-state change — never on bare object identity.
     }, [isRunning, task.id, task.timerStatus, task.timerStartedAt, task.timerMinutes, task.manualMinutes]);
 
-    // Only allow the assigned worker to control the task
-    // And restrict managers from controlling tasks in the Team View (where role === 'manager')
-    if (!isAssignedToMe || isManagerRole(role)) return null;
+    // Only the person the task is ASSIGNED to may control its timer. That single check already
+    // covers the team view: a manager browsing someone else's task fails isAssignedToMe and gets
+    // no controls. The old extra `isManagerRole(role)` clause was therefore redundant for other
+    // people's tasks and actively wrong for the manager's OWN — a manager who self-assigns work
+    // saw no "Pradėti" on the surface where they just created it (every ManagerView list passes
+    // role="manager"), so their timer was startable only after switching to "Mano darbai". That
+    // silently cost real worked time, so the gate is now assignment-only.
+    if (!isAssignedToMe) return null;
 
     /**
      * Issue a legacy timer write without keeping the action guard locked until Firestore receives
