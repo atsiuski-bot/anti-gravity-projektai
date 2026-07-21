@@ -7,7 +7,7 @@ import { db } from '../firebase';
 import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
-import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy } from 'lucide-react';
+import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy, CloudOff } from 'lucide-react';
 import { logCalendarChange } from '../utils/calendarNotifications';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { absenceLabel, absenceTypeForWrite, ABSENCE_GENERIC_LABEL } from '../utils/absence';
@@ -33,6 +33,21 @@ const friendlyCalendarError = (err) => {
     }
     return 'Nepavyko pateikti užklausos. Bandykite dar kartą.';
 };
+
+// How long to wait for the SERVER to acknowledge a calendar write before telling the worker it is
+// only queued on the device. Firestore's offline persistence never rejects a write it cannot send —
+// it applies it locally and leaves the promise pending indefinitely — so awaiting that promise on a
+// dead connection froze the form with no explanation while the entry sat on the calendar looking
+// saved. Racing the acknowledgement turns that indefinite wait into an honest, visible state; the
+// write itself is NOT cancelled and still flushes once connectivity returns.
+const SERVER_ACK_TIMEOUT_MS = 8000;
+
+// Resolves to 'sent' (server confirmed), 'queued' (accepted on this device only, not yet sent) or
+// 'failed' (rejected — e.g. permissions). Never rejects, so callers branch on the outcome.
+const raceServerAck = (work) => Promise.race([
+    work.then(() => 'sent', () => 'failed'),
+    new Promise((resolve) => { setTimeout(() => resolve('queued'), SERVER_ACK_TIMEOUT_MS); }),
+]);
 
 const locales = {
     'lt': lt,
@@ -201,6 +216,15 @@ export default function WorkPlanner() {
     const [manualIsWorkFromHome, setManualIsWorkFromHome] = useState(() => defaultIsWorkFromHome(userData?.defaultWorkLocation));
     const [manualIsVacation, setManualIsVacation] = useState(false);
     const [showDeleteModal, setShowDeleteModal] = useState(false);
+    // True while ANY of this user's calendar writes is still only in the on-device cache. Firestore
+    // applies a write locally the instant it is made — so an entry appearing on the calendar has
+    // never meant it reached the server. On a blocked/absent connection it can sit here for hours
+    // and be lost entirely if the cache is cleared, which is exactly how planned shifts vanished
+    // silently. The banner + per-entry marker below make that state visible instead.
+    const [hasUnsyncedWrites, setHasUnsyncedWrites] = useState(false);
+    // A write is in flight (submit disabled) — prevents a second, duplicate submit while a slow
+    // connection is still being waited on.
+    const [submitting, setSubmitting] = useState(false);
 
     // Absence (reason-agnostic "not working") sub-form. An absence may span a date RANGE — booking a
     // week off is one action — and may be marked "visą dieną" (whole-day, 00:00–24:00) so the worker
@@ -242,7 +266,11 @@ export default function WorkPlanner() {
             where('userId', '==', currentUser.uid)
         );
 
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        // includeMetadataChanges is load-bearing, not a nicety: a write that finally reaches the
+        // server changes only the snapshot METADATA (hasPendingWrites true -> false), not the
+        // document data. Without this the listener would never re-fire on that transition and the
+        // "Neišsiųsta" marker below would stay on an entry that is long since saved.
+        const unsubscribe = onSnapshot(q, { includeMetadataChanges: true }, (snapshot) => {
             const hoursData = snapshot.docs.map(doc => {
                 const data = doc.data();
                 return {
@@ -254,9 +282,14 @@ export default function WorkPlanner() {
                     isWorkFromHome: data.isWorkFromHome || false,
                     isVacation: data.isVacation || false,
                     absenceType: data.absenceType || (data.isVacation ? 'vacation' : null),
+                    // Not yet acknowledged by the server — still only on this device.
+                    pending: doc.metadata.hasPendingWrites,
                 };
             });
             setEvents(hoursData);
+            // Snapshot-level flag, not a scan of the events above: it also covers a pending DELETE,
+            // whose document has already vanished from the local view and so has no row to mark.
+            setHasUnsyncedWrites(snapshot.metadata.hasPendingWrites);
         }, (err) => {
             console.error("Error fetching work hours:", err);
             setError("Nepavyko užkrauti veiklos valandų.");
@@ -395,6 +428,7 @@ export default function WorkPlanner() {
         }
 
         let copied = 0;
+        let allSent = true;
         for (const ev of lastWeekEvents) {
             const newStart = addDays(ev.start, 7);
             const newEnd = addDays(ev.end, 7);
@@ -402,7 +436,7 @@ export default function WorkPlanner() {
             // either; we only skip a copy that lands on an entry already present this week.
             const conflict = events.some(other => newStart < other.end && newEnd > other.start);
             if (conflict) continue;
-            await executeDirectCalendarUpdate({
+            const outcome = await executeDirectCalendarUpdate({
                 type: 'add',
                 data: {
                     id: null,
@@ -414,20 +448,30 @@ export default function WorkPlanner() {
                     absenceType: absenceTypeForWrite(ev.isVacation, ev.absenceType)
                 }
             });
+            // `copied++` used to run unconditionally, so a run in which EVERY write failed still
+            // showed the green "Išsaugota" confirmation.
+            if (outcome === 'failed') { allSent = false; continue; }
+            if (outcome === 'queued') allSent = false;
             copied++;
         }
 
-        if (copied > 0) {
+        if (copied > 0 && allSent) {
             setError('');
             setFeedbackVariant('approved');
             setShowApprovalFeedback(true);
-        } else {
+        } else if (copied === 0 && allSent) {
             setError('Nėra ką kopijuoti — visi praėjusios savaitės įrašai jau turi atitikmenį šią savaitę.');
         }
+        // Anything not fully confirmed by the server stays silent here on purpose: the unsynced
+        // banner and the per-entry marker already state exactly which entries are not saved yet.
     };
 
+    // Performs a direct (auto-approved) calendar write and reports what actually happened:
+    // 'sent' | 'queued' | 'failed'. It used to swallow its own failure — the catch set an error
+    // message that every caller then wiped while resetting its form, so a rejected write closed the
+    // form silently and the worker had no way to know their shift was never recorded.
     const executeDirectCalendarUpdate = async (action) => {
-        try {
+        const run = async () => {
             if (action.type === 'add') {
                 // An add carries a synthetic id:null (a real id exists only for edit/delete). Strip it
                 // so it never lands on the work_hours doc — a future reader doing {id: doc.id, ...data}
@@ -468,15 +512,22 @@ export default function WorkPlanner() {
             await addDoc(collection(db, 'calendar_requests'), cleanRequestData);
 
             await logCalendarChange(
-                currentUser, 
-                action.type === 'edit' ? 'edit' : action.type, 
-                new Date(action.data.start), 
+                currentUser,
+                action.type === 'edit' ? 'edit' : action.type,
+                new Date(action.data.start),
                 new Date(action.data.end)
             );
-        } catch (err) {
+        };
+
+        // The whole sequence is raced as one unit. Offline, the first write parks in the local
+        // cache and the rest of the chain simply resumes from there once the connection is back —
+        // nothing is dropped, we just stop pretending the wait is instantaneous.
+        const outcome = await raceServerAck(run().catch((err) => {
             console.error("Error direct updating calendar:", err);
-            setError("Nepavyko atnaujinti kalendoriaus.");
-        }
+            throw err;
+        }));
+        if (outcome === 'failed') setError('Nepavyko išsaugoti įrašo. Bandykite dar kartą.');
+        return outcome;
     };
 
     const handleUpdateEvent = async (e) => {
@@ -530,13 +581,20 @@ export default function WorkPlanner() {
                 setPendingAction(actionDetails);
                 setShowReasonModal(true);
             } else {
-                await executeDirectCalendarUpdate(actionDetails);
+                setSubmitting(true);
+                const outcome = await executeDirectCalendarUpdate(actionDetails);
+                setSubmitting(false);
+                // A rejected write keeps the modal open with the entered values and the error
+                // visible, so the worker can retry. Previously the modal closed and the error was
+                // wiped by the setError('') below, losing both the entry and the explanation.
+                if (outcome === 'failed') return;
             }
 
             setEditingEvent(null);
             setError('');
         } catch (err) {
             console.error("Error preparing work hours:", err);
+            setSubmitting(false);
             setError("Nepavyko paruošti duomenų.");
         }
     };
@@ -569,6 +627,8 @@ export default function WorkPlanner() {
             setPendingAction(actionDetails);
             setShowReasonModal(true);
         } else {
+            // The outcome is surfaced by executeDirectCalendarUpdate itself (error on failure, the
+            // unsynced banner while queued); the confirm dialog is already closed by this point.
             await executeDirectCalendarUpdate(actionDetails);
         }
     };
@@ -611,11 +671,11 @@ export default function WorkPlanner() {
         const endDateStr = manualEndDate || manualDate;
         if (endDateStr < manualDate) {
             setError('Pabaigos data turi būti ne ankstesnė už pradžios datą.');
-            return;
+            return false;
         }
         if (!manualAllDay && (!manualStart || !manualEnd)) {
             setError('Užpildykite visus laukus.');
-            return;
+            return false;
         }
 
         // Collect each day's payload, validating clock order + overlaps against existing events AND
@@ -628,17 +688,17 @@ export default function WorkPlanner() {
             const day = buildAbsenceDayData(cursor);
             if (day.end <= day.start) {
                 setError('Pabaigos laikas turi būti vėlesnis už pradžios laiką.');
-                return;
+                return false;
             }
             const conflict = events.find((ev) => day.start < ev.end && day.end > ev.start)
                 || queued.find((q) => day.start < q.end && day.end > q.start);
             if (conflict && conflict.start !== undefined && conflict.title !== undefined) {
                 setError(overlapMessage(conflict));
-                return;
+                return false;
             }
             if (conflict) {
                 setError('Pasirinktas laikotarpis persidengia su esamu įrašu.');
-                return;
+                return false;
             }
             days.push(day);
             queued.push({ start: day.start, end: day.end });
@@ -650,7 +710,7 @@ export default function WorkPlanner() {
 
         if (days.length === 0) {
             setError('Užpildykite visus laukus.');
-            return;
+            return false;
         }
 
         // The span needs approval if ANY day touches past/current time; a fully-future span is direct.
@@ -663,18 +723,28 @@ export default function WorkPlanner() {
             setShowReasonModal(true);
             setShowManualInput(false);
         } else {
+            setSubmitting(true);
+            let allSent = true;
+            let anyFailed = false;
             for (const d of days) {
-                await executeDirectCalendarUpdate({ type: 'add', data: d.data });
+                const outcome = await executeDirectCalendarUpdate({ type: 'add', data: d.data });
+                if (outcome !== 'sent') allSent = false;
+                if (outcome === 'failed') anyFailed = true;
             }
+            setSubmitting(false);
+            // A failed span keeps the form open with its values and the error visible.
+            if (anyFailed) return false;
             setShowManualInput(false);
-            // A fully-future span is saved directly with no approval round-trip. Mirror every other
-            // direct-write path (single add, copy-last-week, batch self-approve) and surface the same
-            // success confirmation, so the worker sees their day(s) off were booked rather than getting
-            // a silent no-op.
-            setError('');
-            setFeedbackVariant('approved');
-            setShowApprovalFeedback(true);
+            // A fully-future span is saved directly with no approval round-trip. Confirm it the same
+            // way as every other direct-write path — but ONLY once the server has acknowledged every
+            // day. It used to declare "Išsaugota" even when nothing had been written at all.
+            if (allSent) {
+                setError('');
+                setFeedbackVariant('approved');
+                setShowApprovalFeedback(true);
+            }
         }
+        return true;
     };
 
     const handleManualSubmit = async (e) => {
@@ -689,7 +759,10 @@ export default function WorkPlanner() {
                     setError('Užpildykite visus laukus.');
                     return;
                 }
-                await handleAbsenceSubmit();
+                // Only clear the form once the span was actually accepted. The unconditional reset
+                // that used to follow also wiped the error handleAbsenceSubmit had just set, so a
+                // rejected or invalid span emptied the form and explained nothing.
+                if (!(await handleAbsenceSubmit())) return;
                 // Reset form
                 setManualDate('');
                 setManualEndDate('');
@@ -744,7 +817,11 @@ export default function WorkPlanner() {
                 setShowReasonModal(true);
                 setShowManualInput(false);
             } else {
-                await executeDirectCalendarUpdate(actionDetails);
+                setSubmitting(true);
+                const outcome = await executeDirectCalendarUpdate(actionDetails);
+                setSubmitting(false);
+                // A rejected write leaves the form open, filled and explained, so it can be retried.
+                if (outcome === 'failed') return;
                 setShowManualInput(false);
             }
 
@@ -759,6 +836,7 @@ export default function WorkPlanner() {
             setError('');
         } catch (err) {
             console.error("Error preparing manual work hours:", err);
+            setSubmitting(false);
             setError("Nepavyko paruošti duomenų.");
         }
     };
@@ -954,7 +1032,15 @@ export default function WorkPlanner() {
             const isWfh = !isVacation && event.isWorkFromHome;
             const absLabel = absenceLabel(event) || ABSENCE_GENERIC_LABEL;
             const stateLabel = isVacation ? absLabel : workLocationLabel(isWfh);
-            const eventAriaLabel = `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, redaguoti`;
+            // Still only on this device. Shown as its own state — warning tint AND an icon AND the
+            // word "Neišsiųsta" (never colour alone, §5) — because an entry that merely LOOKS like
+            // every other one is exactly how a worker concludes their shift was recorded when it
+            // was not. The state label is replaced, not appended: what matters here is that this
+            // row is not saved, not whether it is work or an absence.
+            const isPending = event.pending;
+            const eventAriaLabel = isPending
+                ? `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, neišsiųsta į serverį, redaguoti`
+                : `${stateLabel} ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}, redaguoti`;
             return (
                 <div
                     role="button"
@@ -974,14 +1060,21 @@ export default function WorkPlanner() {
                         // text-brand (not -hover) so the dark-theme foreground-decoupling in
                         // index.css lightens it to indigo-300 — indigo-700 was illegible on the
                         // dark indigo-950 brand-soft wash. Light theme keeps indigo-600 on indigo-50.
-                        isVacation ? 'bg-brand-soft text-brand' : 'text-white'
+                        isPending
+                            ? 'bg-feedback-warning-soft text-feedback-warning-text ring-1 ring-inset ring-feedback-warning-border'
+                            : isVacation ? 'bg-brand-soft text-brand' : 'text-white'
                     )}
                 >
                     <span className="text-caption font-mono font-semibold tabular-nums">
                         {format(event.start, 'HH:mm')}
                     </span>
                     <span className="flex items-center gap-1 text-caption font-semibold">
-                        {isVacation ? (
+                        {isPending ? (
+                            <>
+                                <CloudOff className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                                <span>Neišsiųsta</span>
+                            </>
+                        ) : isVacation ? (
                             <>
                                 <Palmtree className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
                                 <span>{absLabel}</span>
@@ -1022,6 +1115,27 @@ export default function WorkPlanner() {
                     <AlertCircle className="w-5 h-5 shrink-0 text-feedback-danger" aria-hidden="true" />
                     <p className="text-body text-feedback-danger">
                         <span className="font-semibold">Klaida: </span>{error}
+                    </p>
+                </div>
+            )}
+
+            {/* Unsynced-writes banner. The failure this addresses is silent by construction:
+                Firestore applies a write to the on-device cache immediately, so the entry appears
+                on the calendar whether or not it ever reaches the server — and if it never does,
+                the shift is simply absent for the manager and lost when the cache is cleared.
+                Naming that state is the whole point; without it "I can see it" is the only signal
+                a worker has, and it is not a truthful one. */}
+            {hasUnsyncedWrites && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    className="mb-3 flex items-start gap-2 rounded-card border-l-4 border-feedback-warning bg-feedback-warning-soft p-3"
+                >
+                    <CloudOff className="w-5 h-5 shrink-0 text-feedback-warning-text" aria-hidden="true" />
+                    <p className="text-body text-feedback-warning-text">
+                        <span className="font-semibold">Dalis įrašų dar neišsiųsta. </span>
+                        Jie išsaugoti tik šiame telefone ir vadovui kol kas nematomi. Patikrinkite
+                        interneto ryšį ir neuždarykite programėlės, kol žymė „Neišsiųsta“ neišnyks.
                     </p>
                 </div>
             )}
@@ -1132,7 +1246,7 @@ export default function WorkPlanner() {
                         </div>
                     )}
                     <div className="flex gap-2 mt-4">
-                        <Button type="submit" variant="primary" size="md">
+                        <Button type="submit" variant="primary" size="md" loading={submitting} disabled={submitting}>
                             {manualNeedsApproval ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
                         </Button>
                         <Button type="button" variant="secondary" size="md" onClick={() => setShowManualInput(false)}>
@@ -1311,7 +1425,7 @@ export default function WorkPlanner() {
                                                 Atšaukti
                                             </Button>
                                         )}
-                                        <Button type="submit" variant="primary" size="md">
+                                        <Button type="submit" variant="primary" size="md" loading={submitting} disabled={submitting}>
                                             {editNeedsApproval ? 'Pateikti tvirtinimui' : 'Išsaugoti'}
                                         </Button>
                                     </div>
