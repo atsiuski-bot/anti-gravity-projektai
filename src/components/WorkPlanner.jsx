@@ -918,62 +918,85 @@ export default function WorkPlanner() {
                 originalEvent: pendingAction.originalEvent || null
             };
 
-            // If user is manager/admin and approving themselves
-            let isAutoApproved = false;
-            if (isManagerOrAdmin && managerId === currentUser.uid) {
-                // Auto-approve logic
-                if (pendingAction.type === 'add') {
-                    // Strip the synthetic id:null (see executeDirectCalendarUpdate) before it lands on the doc.
-                    const addData = { ...pendingAction.data, userId: currentUser.uid, type: 'planned' };
-                    delete addData.id;
-                    await addDoc(collection(db, 'work_hours'), addData);
-                } else if (pendingAction.type === 'edit') {
-                    await updateDoc(doc(db, 'work_hours', pendingAction.data.id), {
-                        start: pendingAction.data.start,
-                        end: pendingAction.data.end,
-                        title: pendingAction.data.title,
-                        isWorkFromHome: pendingAction.data.isWorkFromHome,
-                        isVacation: pendingAction.data.isVacation,
-                        absenceType: pendingAction.data.absenceType ?? null
-                    });
-                } else if (pendingAction.type === 'delete') {
-                    await deleteDoc(doc(db, 'work_hours', pendingAction.data.id));
-                }
-                
+            // Whether this submission self-approves is a PURE decision (role + owning the approval),
+            // so resolve it before any write. It used to be set after the auto-approve awaits, which
+            // meant a write that had not been acknowledged yet left it false and the worker was shown
+            // "Užklausa išsiųsta" for something that was actually already approved.
+            const isAutoApproved = isManagerOrAdmin && managerId === currentUser.uid;
+            if (isAutoApproved) {
                 requestData.status = 'approved';
                 requestData.approvedAt = new Date().toISOString();
                 requestData.approvedBy = currentUser.uid;
-                isAutoApproved = true;
             }
 
-            // Clean data of undefined fields to prevent Firebase errors
-            const cleanRequestData = JSON.parse(JSON.stringify(requestData));
-            await addDoc(collection(db, 'calendar_requests'), cleanRequestData);
+            const run = async () => {
+                if (isAutoApproved) {
+                    // Auto-approve logic
+                    if (pendingAction.type === 'add') {
+                        // Strip the synthetic id:null (see executeDirectCalendarUpdate) before it lands on the doc.
+                        const addData = { ...pendingAction.data, userId: currentUser.uid, type: 'planned' };
+                        delete addData.id;
+                        await addDoc(collection(db, 'work_hours'), addData);
+                    } else if (pendingAction.type === 'edit') {
+                        await updateDoc(doc(db, 'work_hours', pendingAction.data.id), {
+                            start: pendingAction.data.start,
+                            end: pendingAction.data.end,
+                            title: pendingAction.data.title,
+                            isWorkFromHome: pendingAction.data.isWorkFromHome,
+                            isVacation: pendingAction.data.isVacation,
+                            absenceType: pendingAction.data.absenceType ?? null
+                        });
+                    } else if (pendingAction.type === 'delete') {
+                        await deleteDoc(doc(db, 'work_hours', pendingAction.data.id));
+                    }
+                }
 
-            if (isAutoApproved) {
-                // Legacy logging
-                await logCalendarChange(
-                    currentUser, 
-                    pendingAction.type === 'edit' ? 'edit' : pendingAction.type, 
-                    new Date(pendingAction.data.start), 
-                    new Date(pendingAction.data.end)
-                );
+                // Clean data of undefined fields to prevent Firebase errors
+                const cleanRequestData = JSON.parse(JSON.stringify(requestData));
+                await addDoc(collection(db, 'calendar_requests'), cleanRequestData);
 
-                // Instantly clean up
+                if (isAutoApproved) {
+                    // Legacy logging
+                    await logCalendarChange(
+                        currentUser,
+                        pendingAction.type === 'edit' ? 'edit' : pendingAction.type,
+                        new Date(pendingAction.data.start),
+                        new Date(pendingAction.data.end)
+                    );
+                }
+            };
+
+            // Raced as one unit, exactly like executeDirectCalendarUpdate: offline the first write
+            // parks in the local cache and the rest of the chain resumes from there on reconnect.
+            // Awaiting the acknowledgement instead left this handler hanging with the reason modal
+            // still open and the submit button live, so an impatient worker re-submitted and filed
+            // the same request two or three times.
+            // Keep the thrown error so the failure path can still map it to the specific friendly
+            // Lithuanian copy — racing must not downgrade a permission/quota failure to a generic
+            // "try again", which is all the caller would otherwise have left to show.
+            let writeError = null;
+            const outcome = await raceServerAck(run().catch((err) => {
+                console.error("Error submitting calendar request:", err);
+                writeError = err;
+                throw err;
+            }));
+
+            if (outcome === 'failed') {
+                setError(friendlyCalendarError(writeError));
                 setShowReasonModal(false);
                 setReasonValue('');
-                setPendingAction(null);
-                setError('');
-                // Accessible confirmation instead of a banned window.alert (§10).
-                setFeedbackVariant('approved');
-                setShowApprovalFeedback(true);
-            } else {
-                setShowReasonModal(false);
-                setReasonValue('');
-                setPendingAction(null);
-                setFeedbackVariant('sent');
-                setShowApprovalFeedback(true);
+                return;
             }
+
+            // Close up on 'sent' AND on 'queued' — the write is safely in the local cache either
+            // way, so the worker must not be left staring at a modal that cannot resolve.
+            setShowReasonModal(false);
+            setReasonValue('');
+            setPendingAction(null);
+            if (isAutoApproved) setError('');
+            // Accessible confirmation instead of a banned window.alert (§10).
+            setFeedbackVariant(isAutoApproved ? 'approved' : 'sent');
+            setShowApprovalFeedback(true);
         } catch (err) {
             console.error("Error submitting calendar request:", err);
             setError(friendlyCalendarError(err));

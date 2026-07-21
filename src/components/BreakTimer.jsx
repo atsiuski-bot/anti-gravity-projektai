@@ -17,6 +17,7 @@ import {
 } from '../utils/timerTransitionPlan';
 import { logError } from '../utils/errorLog';
 import SessionToggleButton from './ui/SessionToggleButton';
+import { COMMIT_CONFIRM_TIMEOUT_MS } from './taskTimerSafety';
 
 const idFor = (prefix) => {
     const random = globalThis.crypto?.randomUUID?.()
@@ -170,6 +171,16 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
 
+        // Release the control on a BOUNDED race, not on write acknowledgement. Firestore mutation
+        // promises resolve only after the backend acks; offline the SDK applies the write locally
+        // and leaves the promise pending indefinitely, so the `finally` below could not run. That
+        // latched this guard for the rest of the app session: one tap out of coverage left the
+        // Pertrauka button silently, permanently dead — the worker could neither end the break they
+        // had just started nor take another one, with no error and no spinner to explain it.
+        // Same 8 s budget the timer controls use for the same "treat it as locally queued" call.
+        const releaseGuard = () => { actionInFlightRef.current = false; };
+        const guardTimer = setTimeout(releaseGuard, COMMIT_CONFIRM_TIMEOUT_MS);
+
         setError('');
         try {
             if (await tryRevisionedBreakToggle()) return;
@@ -238,7 +249,10 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             setPendingSessionProjection(null);
             setError("Nepavyko pakeisti pertraukos būsenos. Bandykite dar kartą.");
         } finally {
-            actionInFlightRef.current = false;
+            // Happy path: the write settled well inside the budget, so cancel the backstop and
+            // release immediately — online behaviour is unchanged.
+            clearTimeout(guardTimer);
+            releaseGuard();
         }
     };
 

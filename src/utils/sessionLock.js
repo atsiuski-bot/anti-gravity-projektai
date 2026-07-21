@@ -24,6 +24,8 @@
  * - Different users never block each other — the queue is keyed by `userId`.
  * - A rejection in one critical section does NOT wedge the next one for that user; the chain
  *   advances on failure exactly as on success (so a failed `startSession` cannot freeze the queue).
+ * - Neither does a critical section that NEVER SETTLES: the hold is bounded (see
+ *   `LOCK_MAX_HOLD_MS`), so an unacknowledged offline write cannot freeze the queue either.
  * - The caller still receives the real result OR rejection of its own `fn` (the swallow applies
  *   only to the internal tail that the next waiter chains onto).
  * - DEADLOCK-SAFETY: a locked function must never `await` another acquisition of the SAME user's
@@ -37,6 +39,33 @@
 // userId -> a promise that settles when that user's currently-queued critical sections are done.
 // The stored promise never rejects (see below), so chaining onto it can never throw.
 const chains = new Map();
+
+/**
+ * How long ONE critical section may hold this user's queue before the next waiter is released.
+ *
+ * WHY A BOUND IS NEEDED AT ALL. Firestore Web mutation promises resolve only after BACKEND
+ * acknowledgement. Offline — or on the half-open link a phone gets at the edge of coverage — the
+ * SDK applies the write to the local cache and leaves that promise pending INDEFINITELY; the
+ * repo's own emulator oracle asserts exactly this behaviour (see
+ * `src/integration/firestore/pendingWrites.integration.test.js`). A locked section that awaits
+ * such a write therefore never settles, and the tail stored above never settled either: the very
+ * first offline timer action wedged the queue, so every later start / pause / resume / end for
+ * that worker silently never ran — while the UI cheerfully reported "Išsaugota telefone". The
+ * rejection-safety above does not help, because the promise never rejects; it simply never
+ * finishes.
+ *
+ * WHY RELEASING EARLY IS STILL SAFE. The race this lock exists to prevent is the SAME-TICK
+ * double-tap (see THE PROBLEM above): two mutations issued inside one synchronous tick that both
+ * read the same pre-write snapshot. That window is milliseconds — a normal-speed tap already lands
+ * a re-render between the two. 8 s is three orders of magnitude beyond it, so the protection the
+ * lock was actually built for is fully retained; all we give up is the guarantee that an
+ * *unacknowledged* write finishes before the next action starts, which offline was never a
+ * guarantee, only a hang.
+ *
+ * The budget matches `COMMIT_CONFIRM_TIMEOUT_MS` (components/taskTimerSafety.js) — the same
+ * "waited long enough, treat it as locally queued" decision the timer UI already makes.
+ */
+export const LOCK_MAX_HOLD_MS = 8000;
 
 /**
  * Run `fn` as a critical section serialized against every other `withUserLock` call for the same
@@ -58,12 +87,23 @@ export const withUserLock = (userId, fn) => {
     // The promise we STORE as the tail must never reject — a rejected stored promise would surface
     // as an unhandled rejection the moment the next waiter chains onto it. Swallow on this copy
     // only; `run` still carries the genuine outcome back to the caller.
-    const tail = run.then(() => {}, () => {});
+    //
+    // It must also never HANG: race the swallowed copy against the hold bound so a section still
+    // waiting on an unacknowledged write releases the next waiter instead of wedging this user's
+    // queue for the rest of the app session. Only the QUEUE is released — `run` keeps running and
+    // still delivers its real result (and its real timing) to its own caller.
+    let releaseTimer;
+    const tail = Promise.race([
+        run.then(() => {}, () => {}),
+        new Promise((resolve) => { releaseTimer = setTimeout(resolve, LOCK_MAX_HOLD_MS); }),
+    ]);
     chains.set(userId, tail);
     // Drop the Map entry once this tail is the last one queued, so the map doesn't grow per user
     // unboundedly. If a newer op chained on in the meantime, the Map holds that newer tail and we
-    // leave it in place.
+    // leave it in place. Clearing the timer keeps a settled section from leaving a stray pending
+    // timeout behind (which would otherwise hold the event loop open in tests).
     tail.then(() => {
+        clearTimeout(releaseTimer);
         if (chains.get(userId) === tail) chains.delete(userId);
     });
     return run;

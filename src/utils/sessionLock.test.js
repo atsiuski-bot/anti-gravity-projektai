@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { withUserLock } from './sessionLock';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { withUserLock, LOCK_MAX_HOLD_MS } from './sessionLock';
 
 // A manually-settleable promise so a test can hold a critical section open and assert that the
 // next one for the same user has NOT started yet.
@@ -15,6 +15,11 @@ const flushMicrotasks = async () => {
 };
 
 describe('withUserLock — per-user serialization of the activeSession write path', () => {
+    // Several tests below drive the hold bound with fake timers; make sure the real clock is
+    // restored so the surrounding (timer-free) cases are unaffected.
+    afterEach(() => { vi.useRealTimers(); });
+
+
     it('runs two operations for the SAME user strictly one-at-a-time (the lost-update fix)', async () => {
         const order = [];
         const hold = deferred();
@@ -70,6 +75,40 @@ describe('withUserLock — per-user serialization of the activeSession write pat
 
     it('runs immediately with no userId (nothing to serialize on)', async () => {
         await expect(withUserLock(null, async () => 'ok')).resolves.toBe('ok');
+    });
+
+    it('a NEVER-SETTLING critical section (unacknowledged offline write) does not wedge the queue', async () => {
+        // The offline shape: Firestore applied the write locally but the mutation promise stays
+        // pending until connectivity returns, so the critical section never finishes. Before the
+        // hold bound this stalled EVERY later timer action for that worker, silently.
+        vi.useFakeTimers();
+        const order = [];
+        const neverSettles = new Promise(() => {});
+
+        withUserLock('u1', async () => { order.push('offline-break:start'); await neverSettles; });
+        const pB = withUserLock('u1', async () => { order.push('later-task-start'); });
+
+        // The first section is stuck and B is correctly still queued behind it.
+        await vi.advanceTimersByTimeAsync(LOCK_MAX_HOLD_MS - 1);
+        expect(order).toEqual(['offline-break:start']);
+
+        // Once the hold budget is spent the queue moves on, even though A never settled.
+        await vi.advanceTimersByTimeAsync(2);
+        await pB;
+        expect(order).toEqual(['offline-break:start', 'later-task-start']);
+    });
+
+    it('a settled section releases the next waiter immediately, not after the hold bound', async () => {
+        // The bound is a backstop, never the normal path: online work must not wait 8 s.
+        vi.useFakeTimers();
+        const order = [];
+
+        const pA = withUserLock('u1', async () => { order.push('A'); });
+        const pB = withUserLock('u1', async () => { order.push('B'); });
+
+        // No timer advancement at all — just let the microtask queue drain.
+        await Promise.all([pA, pB]);
+        expect(order).toEqual(['A', 'B']);
     });
 
     it('serializes a long same-user backlog in FIFO order', async () => {
