@@ -4,6 +4,37 @@ import { db } from '../firebase';
 import { logError } from '../utils/errorLog';
 
 /**
+ * Does this task belong in the "describe your quick work" prompt?
+ *
+ * `autoStopped` ALONE IS NOT ENOUGH — and getting this wrong destroys data. Two unrelated server
+ * paths write `autoStopped: true` onto a task:
+ *   1. the quick-work closers (utils/sessionActions.js + the `autoCloseForgottenSessions` half of
+ *      functions/index.js), which create a NEW placeholder task and always stamp `isQuickWork: true`;
+ *   2. `autoStopForgottenTimers` (functions/index.js), which UPDATES an ordinary, manager-authored
+ *      task whose timer ran past the 16 h cutoff — it never sets `isQuickWork`.
+ *
+ * Without the `isQuickWork` discriminator, case 2 surfaced in the worker's prompt: answering it
+ * called addQuickWorkDescription, which rewrites `title` and `description` on the durable task
+ * record. A worker who simply forgot to stop a timer was invited to "describe" a real task and
+ * silently renamed it — no history, no undo, and the manager saw their task turn into a sentence.
+ *
+ * The check is deliberately a POSITIVE match on `isQuickWork` rather than an exclusion of case 2's
+ * `autoStopReason`, because the failure modes are asymmetric: excluding a genuine quick-work entry
+ * only costs the worker a retroactive rename (visible, recoverable), whereas admitting an ordinary
+ * task destroys a manager's data (invisible, unrecoverable). Fail closed.
+ *
+ * @param {Object} task
+ * @returns {boolean}
+ */
+export const isUndescribedQuickWork = (task) => (
+    !!task
+    && task.autoStopped === true
+    && task.isQuickWork === true
+    && !task.isDeleted
+    && task.status !== 'deleted'
+);
+
+/**
  * Subscribe to the current user's auto-stopped quick-work tasks that still need a description.
  *
  * A quick-work session ended remotely is logged with a generic title and `autoStopped: true`,
@@ -38,7 +69,7 @@ export function useUndescribedQuickWork(currentUser) {
             (snapshot) => {
                 const list = snapshot.docs
                     .map((d) => ({ id: d.id, ...d.data() }))
-                    .filter((t) => t.autoStopped === true && !t.isDeleted && t.status !== 'deleted')
+                    .filter(isUndescribedQuickWork)
                     .sort((a, b) => new Date(b.completedAt || 0) - new Date(a.completedAt || 0));
                 setItems(list);
             },

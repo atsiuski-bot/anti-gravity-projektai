@@ -557,9 +557,18 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     const archiveCardProps = (task) => {
         const deleted = task.isDeleted || task.status === 'deleted';
         const canAccept = isManagerOrAdmin && task.status === 'completed' && !deleted;
+        // "Grąžinti" un-archives the task back onto the active board — and on an already-ACCEPTED
+        // task that also discards the manager's priėmimas (confirmRestore recreates it as
+        // in-progress with confirmedBy cleared and the timer re-armed). That is manager authority,
+        // the same authority `canRevertTask` carries on every other surface. It used to be pushed
+        // unconditionally while its three siblings here were all role-gated, so a worker viewing
+        // their own archived work in Ataskaitos could silently un-accept it and log more hours
+        // against it; the rules cannot catch that, because the create-rule only requires the task
+        // be assigned to the caller and `changesApprovalFields()` guards UPDATE, never CREATE.
+        const canRestore = isManagerOrAdmin;
         const acts = [];
         if (canAccept) acts.push({ key: 'confirm', label: 'Priimti', icon: UserCheck, variant: 'success', onClick: () => handleConfirm(task) });
-        acts.push({ key: 'restore', label: 'Grąžinti', icon: RotateCcw, variant: 'secondary', onClick: () => handleRestore(task) });
+        if (canRestore) acts.push({ key: 'restore', label: 'Grąžinti', icon: RotateCcw, variant: 'secondary', onClick: () => handleRestore(task) });
         // Delete is NOT a row action — it lives in the task detail sheet (open on card tap).
         return {
             actions: acts,
@@ -567,7 +576,9 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 canManage: isManagerOrAdmin,
                 canDelete: isManagerOrAdmin,
                 onConfirm: canAccept ? () => handleConfirm(task) : undefined,
-                onRevert: () => handleRestore(task),
+                // Gated in lockstep with the row button above — the detail sheet must never offer
+                // an authority the card withholds.
+                onRevert: canRestore ? () => handleRestore(task) : undefined,
                 onDelete: isManagerOrAdmin ? () => handleDelete(task) : undefined,
             },
         };
