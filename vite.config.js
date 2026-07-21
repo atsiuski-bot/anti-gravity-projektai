@@ -9,8 +9,25 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'prompt',
+      // The worker is hand-written (src/sw.js) rather than generated, because `generateSW` cannot
+      // express a catch handler for the navigation route — and without one a failed navigation
+      // rejects into the browser as ERR_FAILED, i.e. the app appears dead instead of offline.
+      // See src/sw.js for the full reasoning.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.js',
       includeAssets: ['logo-mark.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-192x192-maskable.png', 'pwa-512x512-maskable.png'],
-      workbox: {
+      injectManifest: {
+        // Bundle the worker as a CLASSIC script, not an ES module. Module service workers need
+        // Chrome 91+ / Safari 15.4+ / Firefox 114+, which is far above this app's support floor
+        // (see package.json browserslist — iOS 14). A module worker would simply fail to register
+        // on those phones, silently removing offline support from exactly the field devices that
+        // need it. The generated worker was classic; this keeps it that way.
+        rollupFormat: 'iife',
+        // The app shell. The icons and the web manifest are NOT listed here on purpose — they
+        // reach the precache through `includeAssets` above, and matching them twice would put
+        // duplicate entries in the manifest.
+        globPatterns: ['**/*.{js,css,html}'],
         // The FCM service worker is a SEPARATE worker (registered by the messaging SDK at its own
         // scope). Keep Workbox from precaching/serving it so the two never collide. Also skip the
         // iOS splash set — 20 device-specific PNGs of which any one device only ever uses one, so
@@ -44,7 +61,9 @@ export default defineConfig({
         ]
       },
       devOptions: {
-        enabled: true
+        enabled: true,
+        // The hand-written worker is an ES module (it imports workbox), so dev must serve it as one.
+        type: 'module'
       }
     })
   ],
