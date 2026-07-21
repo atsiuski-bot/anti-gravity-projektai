@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor, BarChart3, Briefcase, Home, Zap, Plus, X, BatteryWarning } from 'lucide-react';
+import { ArrowLeft, Camera, LogOut, Bell, ChevronRight, Loader2, Download, Sun, Moon, Monitor, BarChart3, Briefcase, Home, Zap, Plus, X, BatteryWarning, RefreshCw } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc } from 'firebase/firestore';
 import { storage, db } from '../firebase';
@@ -14,6 +14,7 @@ import { compressImage } from '../utils/imageUtils';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
 import { normalizeWorkLocation } from '../utils/workLocation';
+import { forceAppUpdate } from '../utils/appUpdate';
 import { normalizeUserTemplates, MAX_USER_TEMPLATES, MAX_TEMPLATE_LABEL } from '../utils/quickWorkTemplates';
 import { BADGE_ICONS, BADGE_CATALOG, tierKey } from '../utils/badgeCatalog';
 import { formatStatValue } from '../utils/workerStats';
@@ -164,6 +165,14 @@ export default function ProfilePage() {
     const [showInstall, setShowInstall] = useState(false);
     const [showNotifHelp, setShowNotifHelp] = useState(false);
     const [selectedBadge, setSelectedBadge] = useState(null);
+    // Forced app update in flight. It always ends in a page reload, so this only ever needs to
+    // hold long enough to show the row is working — it is never reset.
+    const [updatingApp, setUpdatingApp] = useState(false);
+
+    const handleForceUpdate = () => {
+        setUpdatingApp(true);
+        forceAppUpdate();
+    };
 
     // Personal quick-work templates (users/{uid}.quickWorkTemplates) — the worker's own one-tap
     // categories appended to the built-ins in the finish modal. Mirrored locally for instant
@@ -738,6 +747,33 @@ export default function ProfilePage() {
                         <p className="text-body font-medium text-ink-strong">Negaunate pranešimų?</p>
                         <p className="text-caption text-ink-muted">
                             Kaip leisti programėlei veikti fone, kad pranešimai nedingtų
+                        </p>
+                    </div>
+                    <ChevronRight className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
+                </button>
+
+                {/* Forced update — the manual counterpart to the automatic update prompt. An
+                    installed PWA can keep running an old build indefinitely if the browser never
+                    notices a new worker, and nothing on screen reveals that: the app simply keeps
+                    behaving by superseded rules. This makes "reinstall it" a one-tap action instead
+                    of a support conversation. */}
+                <button
+                    type="button"
+                    onClick={handleForceUpdate}
+                    disabled={updatingApp}
+                    className="flex w-full items-center gap-3 border-b border-line p-4 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand disabled:opacity-60"
+                >
+                    {updatingApp ? (
+                        <Loader2 className="h-5 w-5 shrink-0 animate-spin text-brand" aria-hidden="true" />
+                    ) : (
+                        <RefreshCw className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
+                    )}
+                    <div className="min-w-0 flex-1">
+                        <p className="text-body font-medium text-ink-strong">
+                            {updatingApp ? 'Atnaujinama…' : 'Atnaujinti programėlę'}
+                        </p>
+                        <p className="text-caption text-ink-muted">
+                            Įkelia naujausią versiją, jei kas nors veikia ne taip
                         </p>
                     </div>
                     <ChevronRight className="h-5 w-5 shrink-0 text-ink-muted" aria-hidden="true" />
