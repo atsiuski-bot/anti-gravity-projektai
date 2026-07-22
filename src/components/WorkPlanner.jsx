@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
-import { format, parse, startOfWeek, getDay, endOfWeek, subWeeks, addDays } from 'date-fns';
+import { format, parse, startOfWeek, getDay, endOfWeek, addDays } from 'date-fns';
 import { lt } from 'date-fns/locale';
 import { db } from '../firebase';
-import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, updateDoc, doc, query, where, onSnapshot, writeBatch } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { isManagerRole } from '../utils/formatters';
 import { Clock, Plus, Trash2, AlertCircle, ChevronLeft, ChevronRight, Home, Palmtree, CheckCircle2, Copy, CloudOff } from 'lucide-react';
@@ -49,6 +49,19 @@ const raceServerAck = (work) => Promise.race([
     new Promise((resolve) => { setTimeout(() => resolve('queued'), SERVER_ACK_TIMEOUT_MS); }),
 ]);
 
+// True when an entry covers the WHOLE local day — the shape every "Nedirbu · visą dieną" booking is
+// written in (00:00 → next local midnight, see buildAbsenceDayData). Derived from the day boundary
+// rather than a fixed 24h span so it still holds on the 23h/25h DST days. A sibling copy lives in
+// AllUsersCalendar (the team timeline needs the same shape check) — keep the two in step.
+const isAllDaySpan = (start, end) => {
+    if (!(start instanceof Date) || !(end instanceof Date)) return false;
+    if (start.getHours() !== 0 || start.getMinutes() !== 0) return false;
+    const nextMidnight = new Date(start);
+    nextMidnight.setHours(0, 0, 0, 0);
+    nextMidnight.setDate(nextMidnight.getDate() + 1);
+    return end.getTime() >= nextMidnight.getTime();
+};
+
 const locales = {
     'lt': lt,
 };
@@ -65,13 +78,13 @@ const CustomToolbar = (toolbar) => {
     const goToToday = () => { toolbar.onNavigate('TODAY'); };
     const toggleView = (view) => { toolbar.onView(view); };
 
-    // Copy-last-week only works inside the planning window (Fri 13:00–Sun 21:00); the parent
+    // Copy-week-forward only works inside the planning window (Fri 13:00–Sun 21:00); the parent
     // passes copyDisabled=true during the work week. It used to render disabled the rest of the
     // week with a title= explaining when it unlocks — but title tooltips never fire on touch
     // (§7), so on a phone it was a dead, unexplained button hogging vertical space. We surface it
     // ONLY when it can actually run, as a clear full-width CTA, keeping the off-window toolbar to
     // two compact rows.
-    const showCopy = Boolean(toolbar.onCopyLastWeek) && !toolbar.copyDisabled;
+    const showCopy = Boolean(toolbar.onCopyWeekForward) && !toolbar.copyDisabled;
 
     // Each control is defined once and reused by both layouts below, so the two
     // arrangements (stacked on phones, single row on desktop) never drift apart.
@@ -186,18 +199,19 @@ const CustomToolbar = (toolbar) => {
                 {addButton}
             </div>
 
-            {/* Copy last week's plan — only rendered while it can actually run (planning window),
-                as a clear full-width CTA exactly when planning is open. */}
+            {/* Copy this week's plan into the UPCOMING week — only rendered while it can actually
+                run (planning window), as a clear full-width CTA exactly when planning is open. The
+                label names the destination week, because that is the week being planned. */}
             {showCopy && (
                 <Button
                     variant="secondary"
                     size="md"
                     icon={Copy}
                     fullWidth
-                    onClick={toolbar.onCopyLastWeek}
-                    title="Nukopijuoti praėjusios savaitės veiklų grafiką į šią savaitę"
+                    onClick={toolbar.onCopyWeekForward}
+                    title="Nukopijuoti šios savaitės veiklų grafiką į kitą savaitę"
                 >
-                    Kopijuoti praeitą savaitę
+                    Kopijuoti grafiką į kitą savaitę
                 </Button>
             )}
         </div>
@@ -330,6 +344,13 @@ export default function WorkPlanner() {
             dateStr: format(event.start, 'yyyy-MM-dd'),
             startStr: format(event.start, 'HH:mm'),
             endStr: format(event.end, 'HH:mm'),
+            // Flattening an event onto ONE date throws away the END's day. For an all-day absence
+            // (00:00 → next local midnight) that made both instants rebuild on the same date, so
+            // every save tripped "Pabaigos laikas turi būti vėlesnis už pradžios laiką" — a false
+            // error with no cure, since the 24h Selects cannot express "until next midnight" and the
+            // only escape was delete + re-create (a manager approval round-trip once the day is
+            // past). Carry the SHAPE instead and rebuild the span from the day boundary on save.
+            isAllDay: isAllDaySpan(event.start, event.end),
             isWorkFromHome: event.isWorkFromHome || false,
             isVacation: event.isVacation || false,
             absenceType: event.absenceType || 'vacation'
@@ -406,10 +427,10 @@ export default function WorkPlanner() {
     };
     const overlapMessage = (ev) => `Pasirinktas laikas persidengia su įrašu: ${describeEvent(ev)}.`;
 
-    // Copy last week's plan into the current week (each entry shifted +7 days). Available only
+    // Copy the ENDING week's plan into the upcoming one (each entry shifted +7 days). Available only
     // during the free-planning window (approval inactive): copies are direct, auto-approved
     // adds, so allowing them mid-week would bypass the per-change approval the workflow requires.
-    const handleCopyLastWeek = async () => {
+    const handleCopyWeekForward = async () => {
         if (!currentUser) return;
         if (isApprovalFeatureActive()) {
             setError('Kopijuoti galima tik planavimo metu (penktadienį nuo 13:00 iki sekmadienio 21:00).');
@@ -417,23 +438,28 @@ export default function WorkPlanner() {
         }
 
         const now = new Date();
-        const thisWeekStart = startOfWeek(now, { weekStartsOn: 1 });
-        const lastWeekStart = subWeeks(thisWeekStart, 1);
-        const lastWeekEnd = endOfWeek(lastWeekStart, { weekStartsOn: 1 });
+        // The planning window (Fri 13:00 → Sun 21:00) lies ENTIRELY inside the week that is ending,
+        // so startOfWeek(now) IS that ending week — never the week being planned. Copying the week
+        // before it forward by 7 days therefore wrote into days that had already been worked: either
+        // every copy collided and the run reported "nothing to copy", or planned hours appeared
+        // retroactively on a closed week and inflated its Planuota column. The source is the week
+        // now ending; the destination is the upcoming one.
+        const sourceWeekStart = startOfWeek(now, { weekStartsOn: 1 });
+        const sourceWeekEnd = endOfWeek(sourceWeekStart, { weekStartsOn: 1 });
 
-        const lastWeekEvents = events.filter(ev => ev.start >= lastWeekStart && ev.start <= lastWeekEnd);
-        if (lastWeekEvents.length === 0) {
-            setError('Praėjusią savaitę nėra įrašų, kuriuos būtų galima kopijuoti.');
+        const sourceWeekEvents = events.filter(ev => ev.start >= sourceWeekStart && ev.start <= sourceWeekEnd);
+        if (sourceWeekEvents.length === 0) {
+            setError('Šią savaitę nėra įrašų, kuriuos būtų galima kopijuoti.');
             return;
         }
 
         let copied = 0;
         let allSent = true;
-        for (const ev of lastWeekEvents) {
+        for (const ev of sourceWeekEvents) {
             const newStart = addDays(ev.start, 7);
             const newEnd = addDays(ev.end, 7);
             // Sources never overlap each other (the add path forbids it), so the +7 copies don't
-            // either; we only skip a copy that lands on an entry already present this week.
+            // either; we only skip a copy that lands on an entry already present next week.
             const conflict = events.some(other => newStart < other.end && newEnd > other.start);
             if (conflict) continue;
             const outcome = await executeDirectCalendarUpdate({
@@ -460,7 +486,7 @@ export default function WorkPlanner() {
             setFeedbackVariant('approved');
             setShowApprovalFeedback(true);
         } else if (copied === 0 && allSent) {
-            setError('Nėra ką kopijuoti — visi praėjusios savaitės įrašai jau turi atitikmenį šią savaitę.');
+            setError('Nėra ką kopijuoti — visi šios savaitės įrašai jau turi atitikmenį kitą savaitę.');
         }
         // Anything not fully confirmed by the server stays silent here on purpose: the unsynced
         // banner and the per-entry marker already state exactly which entries are not saved yet.
@@ -535,8 +561,16 @@ export default function WorkPlanner() {
         if (!currentUser || !editingEvent) return;
 
         try {
-            const startDateTime = new Date(`${editingEvent.dateStr}T${editingEvent.startStr}`);
-            const endDateTime = new Date(`${editingEvent.dateStr}T${editingEvent.endStr}`);
+            // An all-day absence keeps the whole-day span (00:00 → next local midnight) the manual
+            // "Visą dieną" form writes; only a timed entry is built from the two clock Selects.
+            const allDay = Boolean(editingEvent.isVacation && editingEvent.isAllDay);
+            const startDateTime = allDay
+                ? new Date(`${editingEvent.dateStr}T00:00`)
+                : new Date(`${editingEvent.dateStr}T${editingEvent.startStr}`);
+            const endDateTime = allDay
+                ? new Date(`${editingEvent.dateStr}T00:00`)
+                : new Date(`${editingEvent.dateStr}T${editingEvent.endStr}`);
+            if (allDay) endDateTime.setDate(endDateTime.getDate() + 1); // exclusive end at next local midnight
 
             if (endDateTime <= startDateTime) {
                 setError('Pabaigos laikas turi būti vėlesnis už pradžios laiką.');
@@ -873,28 +907,61 @@ export default function WorkPlanner() {
                     createdAt: new Date().toISOString(),
                     originalEvent: null,
                 };
+                // The span commits as ONE batch: every day's work_hours doc and every day's
+                // calendar_request land together, or nothing does. Writing them one at a time meant a
+                // rejection halfway through (rule denial, quota, transient) left a TRUNCATED absence —
+                // the tail days read as available — while the banner said only "something failed".
+                // Re-submitting the same range was then blocked by the per-day overlap guard against
+                // the days that HAD landed, so the worker had to work out by hand which days were
+                // missing. All-or-nothing makes the obvious retry the correct one. (Firestore caps a
+                // batch at 500 writes; a span long enough to exceed that now fails closed with
+                // nothing written, rather than landing half-applied.)
+                const batch = writeBatch(db);
                 for (const dayData of pendingAction.data) {
                     const req = { ...baseRequest, requestedEvent: dayData };
                     if (selfApprove) {
                         const addData = { ...dayData, userId: currentUser.uid, type: 'planned' };
                         delete addData.id;
-                        await addDoc(collection(db, 'work_hours'), addData);
+                        batch.set(doc(collection(db, 'work_hours')), addData);
                         req.status = 'approved';
                         req.approvedAt = new Date().toISOString();
                         req.approvedBy = currentUser.uid;
                     } else {
                         req.status = 'pending';
                     }
-                    await addDoc(collection(db, 'calendar_requests'), JSON.parse(JSON.stringify(req)));
-                    if (selfApprove) {
-                        await logCalendarChange(
-                            currentUser,
-                            'add',
-                            new Date(dayData.start),
-                            new Date(dayData.end)
-                        );
-                    }
+                    batch.set(doc(collection(db, 'calendar_requests')), JSON.parse(JSON.stringify(req)));
                 }
+
+                // Raced like every other calendar write: offline the batch parks in the local cache
+                // and flushes on reconnect, so the worker is never left on a modal that cannot resolve.
+                let batchError = null;
+                const batchOutcome = await raceServerAck((async () => {
+                    await batch.commit();
+                    if (selfApprove) {
+                        for (const dayData of pendingAction.data) {
+                            await logCalendarChange(
+                                currentUser,
+                                'add',
+                                new Date(dayData.start),
+                                new Date(dayData.end)
+                            );
+                        }
+                    }
+                })().catch((err) => {
+                    console.error("Error submitting calendar request batch:", err);
+                    batchError = err;
+                    throw err;
+                }));
+
+                if (batchOutcome === 'failed') {
+                    // Nothing was written, so the same range can simply be submitted again.
+                    setError(friendlyCalendarError(batchError));
+                    setShowReasonModal(false);
+                    setReasonValue('');
+                    setPendingAction(null);
+                    return;
+                }
+
                 setShowReasonModal(false);
                 setReasonValue('');
                 setPendingAction(null);
@@ -1002,6 +1069,9 @@ export default function WorkPlanner() {
             setError(friendlyCalendarError(err));
             setShowReasonModal(false);
             setReasonValue('');
+            // Drop the failed action too: leaving it armed kept a stale span in state that no longer
+            // matches anything the worker can see or resubmit.
+            setPendingAction(null);
         }
     };
 
@@ -1036,8 +1106,11 @@ export default function WorkPlanner() {
         : false;
 
     const editType = editingEvent?.id ? 'edit' : 'add';
-    const editStartDate = (editingEvent?.dateStr && editingEvent?.startStr)
-        ? new Date(`${editingEvent.dateStr}T${editingEvent.startStr}`)
+    // An all-day absence really starts at 00:00, so the approval preview must read that instant too
+    // — otherwise the button could promise "Išsaugoti" while the save opens the reason modal.
+    const editIsAllDay = Boolean(editingEvent?.isVacation && editingEvent?.isAllDay);
+    const editStartDate = (editingEvent?.dateStr && (editIsAllDay || editingEvent?.startStr))
+        ? new Date(`${editingEvent.dateStr}T${editIsAllDay ? '00:00' : editingEvent.startStr}`)
         : null;
     const editOriginalStart = editingEvent?.start instanceof Date
         ? editingEvent.start
@@ -1123,7 +1196,7 @@ export default function WorkPlanner() {
                     if (next) setManualIsWorkFromHome(defaultIsWorkFromHome(userData?.defaultWorkLocation));
                     setShowManualInput(next);
                 }}
-                onCopyLastWeek={handleCopyLastWeek}
+                onCopyWeekForward={handleCopyWeekForward}
                 copyDisabled={approvalActive}
             />
         )
@@ -1353,6 +1426,10 @@ export default function WorkPlanner() {
                                             onChange={(v) => setEditingEvent({ ...editingEvent, dateStr: v })}
                                         />
                                     </div>
+                                    {/* Clock fields are irrelevant for an all-day absence — it spans
+                                        the whole day by definition, and the 24h Selects have no value
+                                        that expresses "until next midnight". */}
+                                    {!editIsAllDay && (
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <label htmlFor="editStart" className="block text-caption font-bold text-ink-muted uppercase tracking-wider mb-1">Pradžia</label>
@@ -1379,6 +1456,7 @@ export default function WorkPlanner() {
                                             />
                                         </div>
                                     </div>
+                                    )}
                                 </div>
                                 <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2">
                                     <label className="flex min-h-touch items-center gap-2 cursor-pointer">
@@ -1413,6 +1491,24 @@ export default function WorkPlanner() {
                                     </label>
                                 </div>
 
+                                {/* Same "Visą dieną" control as the manual form. Without it an absence
+                                    booked for the whole day could only be deleted and re-created:
+                                    the two clock Selects have no value that means "until next
+                                    midnight", so every save failed. Unticking it reveals the clock
+                                    fields, which is how a day off is turned into a timed entry. */}
+                                {editingEvent.isVacation && (
+                                    <div className="mt-3">
+                                        <label className="flex min-h-touch w-fit items-center gap-2 cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={Boolean(editingEvent.isAllDay)}
+                                                onChange={(e) => setEditingEvent({ ...editingEvent, isAllDay: e.target.checked })}
+                                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
+                                            />
+                                            <span className="text-body font-medium text-ink">Visą dieną</span>
+                                        </label>
+                                    </div>
+                                )}
 
                                 <div className="flex items-center justify-between gap-3 pt-4">
                                     {editingEvent.id ? (

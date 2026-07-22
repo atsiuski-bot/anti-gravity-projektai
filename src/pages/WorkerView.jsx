@@ -267,6 +267,18 @@ export default function WorkerView() {
         return result;
     }, [tasks, filterTag, debouncedSearch, pendingApprovalIds]);
 
+    // The roster handed to Reports must be the FIRESTORE user document, never the Firebase Auth
+    // object. Every consumer keys on the Firestore shape: DailyStatistics derives the live "⏳
+    // (Vykdoma)" band from `u.activeSession` matched by `u.id`, and reportData/Reports look up
+    // `weeklyExpectedHours` + `payRate` by `id`. The Auth object carries only uid/displayName/email,
+    // so passing it silently blanked all of those — a worker's currently-running task had no live
+    // band and the gap-filler painted that stretch as "Neaktyvus" (their own work shown as idle),
+    // while Planuota/Skirtumas fell back to 0 for anyone whose plan comes from the baseline.
+    const reportUsers = useMemo(
+        () => (currentUser?.uid && usersMap[currentUser.uid] ? [usersMap[currentUser.uid]] : []),
+        [usersMap, currentUser?.uid]
+    );
+
     return (
         <div className="pt-1">
             {error && (
@@ -400,7 +412,7 @@ export default function WorkerView() {
             <div className={activeTab === 'reports' ? 'block' : 'hidden'}>
                 <ErrorBoundary boundaryName="worker:reports" resetKeys={[activeTab]}>
                     <React.Suspense fallback={<Spinner />}>
-                        <Reports users={[currentUser]} />
+                        <Reports users={reportUsers} />
                     </React.Suspense>
                 </ErrorBoundary>
             </div>

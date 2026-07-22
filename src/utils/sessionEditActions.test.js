@@ -628,6 +628,61 @@ describe('reconcileTaskTimerFromSessions (work_sessions is canonical → re-deri
         expect(call[1].timerMinutes).toBe(30);
     });
 
+    // The work_sessions read rule needs the caller proved as owner (or whole-team). A taskId-ONLY
+    // query proves neither, so Firestore denies it for a plain worker — which silently disabled
+    // reconciliation on every worker-facing correction path. The owner uid makes the retry legal.
+    it('retries with the owner-scoped query when the taskId-only read is denied, but NEVER writes that partial sum back', async () => {
+        const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+        getDocs
+            .mockRejectedValueOnce(denied)
+            .mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 25 }, { durationMinutes: 35 }]));
+        getDoc.mockResolvedValueOnce({ exists: () => true });
+
+        const res = await reconcileTaskTimerFromSessions('t-real', 'worker-1');
+
+        expect(getDocs).toHaveBeenCalledTimes(2);
+        // The retry carries BOTH equality filters, so the row set is provably the caller's own.
+        const retryFilters = getDocs.mock.calls[1][0]._query.slice(1);
+        expect(retryFilters).toEqual([
+            { field: 'userId', op: '==', value: 'worker-1' },
+            { field: 'taskId', op: '==', value: 't-real' },
+        ]);
+        // ...and precisely BECAUSE it is scoped to the caller, it cannot see sessions owned by
+        // anyone else — the normal state after a reassignment, and for legacy workerId-only rows.
+        // The counter is overwritten wholesale, so writing this sum would SHRINK it and destroy
+        // credited time. Fail closed: report 'partial' and leave the (visible, repairable) drift.
+        expect(res).toEqual({ ok: false, error: 'partial' });
+        expect(taskWrite()).toBeUndefined();
+    });
+
+    it('reports the denial instead of swallowing it when no owner uid is known', async () => {
+        const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+        getDocs.mockRejectedValueOnce(denied);
+
+        const res = await reconcileTaskTimerFromSessions('t-real');
+
+        expect(res).toEqual({ ok: false, error: 'denied' });
+        expect(getDocs).toHaveBeenCalledTimes(1); // no owner uid ⇒ nothing to retry with
+        expect(taskWrite()).toBeUndefined();      // and never a partial write-back
+    });
+
+    it('claimRecoveredGap reconciles under the claiming worker\'s own uid', async () => {
+        getDocs.mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 20 }]));
+        getDoc.mockResolvedValueOnce({ exists: () => true });
+
+        await claimRecoveredGap({
+            task: { id: 't-real', title: 'Kostiumai' },
+            worker: { uid: 'u1', displayName: 'Simona' },
+            startTime: '2026-06-23T11:00:00.000Z',
+            endTime: '2026-06-23T11:20:00.000Z',
+        });
+
+        // Broad read first (it is the only one that also sees legacy workerId rows); the owner uid
+        // is carried so the denied case can retry rather than leaving the task counter stale.
+        expect(getDocs).toHaveBeenCalledTimes(1);
+        expect(taskWrite()[1].timerMinutes).toBe(20);
+    });
+
     it('editWorkSession re-derives the linked task counter after the correction', async () => {
         // The session edit itself succeeds; reconcile then sums the task's sessions and writes back.
         getDocs.mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 40 }]));

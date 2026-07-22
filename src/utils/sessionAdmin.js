@@ -1,4 +1,4 @@
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask } from './taskActions';
 import { logError } from './errorLog';
@@ -29,6 +29,17 @@ import { planManagerForceEnd } from './timerTransitionPlan';
 export const endSessionForUser = async (user, { actorId = null } = {}) => {
     if (!user?.id) return { status: 'skipped' };
     try {
+        // Re-read the target SERVER-FIRST and settle THAT copy, never the caller's snapshot. The
+        // oversight panel captures the user doc when the manager taps the icon and calls this an
+        // arbitrary time later, from behind a confirm dialog — long enough for the worker to reopen
+        // the app, end the stuck session and start a new task. Acting on the frozen copy resolved
+        // the OLD (already paused) task, skipped pauseTask, and then blind-cleared the user doc:
+        // the new task kept timerStatus:'running' with nobody's session pointing at it, so the next
+        // pause credited the whole stretch. Fall back to the passed-in copy only when the read
+        // fails, so a flaky manager connection still settles a genuinely stuck worker.
+        const freshSnap = await getDocFromServer(doc(db, 'users', user.id)).catch(() => null);
+        const target = freshSnap?.exists?.() ? { id: user.id, ...freshSnap.data() } : user;
+
         const activeSessionSnap = await getDoc(doc(db, 'active_sessions', user.id));
         const activeRecord = activeSessionSnap.exists() ? activeSessionSnap.data() : null;
         if (activeRecord?.status === 'active') {
@@ -42,7 +53,7 @@ export const endSessionForUser = async (user, { actorId = null } = {}) => {
                 activeTask = { id: taskSnap.id, ...taskSnap.data() };
             }
             const plan = planManagerForceEnd({
-                targetUser: user,
+                targetUser: target,
                 actorId,
                 activeRecord,
                 activeTask,
@@ -56,7 +67,7 @@ export const endSessionForUser = async (user, { actorId = null } = {}) => {
             };
         }
 
-        const activeTaskId = user.activeSession?.taskId || user.workStatus?.activeTaskId;
+        const activeTaskId = target.activeSession?.taskId || target.workStatus?.activeTaskId;
         if (activeTaskId) {
             const taskSnap = await getDoc(doc(db, 'tasks', activeTaskId));
             if (taskSnap.exists()) {

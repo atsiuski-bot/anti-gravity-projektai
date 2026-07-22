@@ -57,6 +57,40 @@ export const deriveSessionFields = (startISO, endISO) => {
     };
 };
 
+// Read a task's work_sessions the way THIS caller is actually allowed to read them.
+//
+// The work_sessions read rule grants a row to a whole-team viewer, to the row's owner, or to a
+// scoped overseer of that owner. A query constrained only by `taskId` proves none of those, so
+// Firestore rejects it outright for a plain worker — which silently disabled reconciliation on
+// exactly the worker-facing correction paths ("Buvau darbe", "Nedirbau", the trusted backdate):
+// the session was written, the denial was swallowed, and the task's cached counter never moved.
+//
+// The broad query is still TRIED FIRST, because it is the only one that also picks up
+// pre-migration rows that carry the legacy `workerId` instead of `userId`; narrowing a whole-team
+// viewer's read would drop those from the sum and write back a SMALLER total — destroying credited
+// time. Only when Firestore denies the broad read do we fall back to the owner-constrained one,
+// which is provably in-scope for the worker. (Two equality filters need no composite index —
+// Firestore merges the automatic single-field ones.) A scoped/senior manager is provable by
+// neither form, so their reconcile still reports failure rather than writing a partial sum.
+// Returns { snap, partial }. `partial: true` means the broad by-taskId read was denied and we fell
+// back to the caller's OWN rows — a sum that provably cannot see sessions owned by anyone else, so
+// it must never be treated as the task's complete credited time. See the completeness guard in
+// reconcileTaskTimerFromSessions.
+const readTaskSessions = async (taskId, ownerUid) => {
+    try {
+        const snap = await getDocs(query(collection(db, 'work_sessions'), where('taskId', '==', taskId)));
+        return { snap, partial: false };
+    } catch (err) {
+        if (!ownerUid || err?.code !== 'permission-denied') throw err;
+        const snap = await getDocs(query(
+            collection(db, 'work_sessions'),
+            where('userId', '==', ownerUid),
+            where('taskId', '==', taskId)
+        ));
+        return { snap, partial: true };
+    }
+};
+
 // ── Counter reconciliation ──────────────────────────────────────────────────────────────────
 // A task carries a DENORMALISED time counter (timerMinutes + manualMinutes) that the task detail
 // sheet, the earnings popup and the time-limit monitor all read via calculateCurrentTotalMinutes.
@@ -73,12 +107,29 @@ export const deriveSessionFields = (startISO, endISO) => {
 // taskId==syntheticId finds ZERO, so we must never write that back. The `doc must exist` check does
 // exactly this: a synthetic taskId resolves to no task/archived_tasks doc, and reconciliation skips.
 // Best-effort: the session write already succeeded, so a reconcile failure (e.g. a worker path the
-// task rules don't permit) is swallowed — it only leaves the pre-existing drift, never worse.
-export const reconcileTaskTimerFromSessions = async (taskId) => {
-    if (!taskId) return;
+// task rules don't permit) is swallowed — it only leaves the pre-existing drift, never worse. The
+// returned { ok } flag says whether the counter actually moved, so a caller can eventually tell the
+// worker their task total is stale instead of the failure being invisible.
+//
+// `ownerUid` is the uid the task's sessions are owned by (always the ASSIGNEE — every work_sessions
+// writer stamps userId: task.assignedUserId, never the actor). It is what makes the read possible at
+// all for a non-manager: see readTaskSessions above.
+export const reconcileTaskTimerFromSessions = async (taskId, ownerUid) => {
+    if (!taskId) return { ok: true };
     try {
         // Sum this task's non-deleted logged sessions — the canonical credited time.
-        const snap = await getDocs(query(collection(db, 'work_sessions'), where('taskId', '==', taskId)));
+        const { snap, partial } = await readTaskSessions(taskId, ownerUid);
+
+        // COMPLETENESS GUARD. The counter is overwritten wholesale below, so a sum that cannot see
+        // every session would not "correct" the total — it would SHRINK it, destroying credited
+        // time. The narrow fallback reads only the owner's own rows, and a task legitimately carries
+        // rows under another uid after a reassignment (work_sessions stamp userId at pause time,
+        // while assignTask repoints assignedUserId later), as do legacy `workerId`-only rows. For a
+        // plain worker the broad read is ALWAYS denied, so this is the normal path for them, not an
+        // edge case. Bail out before writing: the pre-existing drift stays visible and repairable,
+        // which is strictly better than a confidently wrong smaller number in reports and pay.
+        if (partial) return { ok: false, error: 'partial' };
+
         let total = 0;
         snap.forEach((d) => {
             const s = d.data();
@@ -94,7 +145,7 @@ export const reconcileTaskTimerFromSessions = async (taskId) => {
             ref = doc(db, 'archived_tasks', taskId);
             taskSnap = await getDoc(ref);
         }
-        if (!taskSnap.exists()) return;
+        if (!taskSnap.exists()) return { ok: true };
 
         // Collapse the credited time into timerMinutes and zero manualMinutes so
         // calculateCurrentTotalMinutes (manual + timer + timeAdjustments) equals the summed
@@ -107,8 +158,10 @@ export const reconcileTaskTimerFromSessions = async (taskId) => {
             timeChanged: true,
             updatedAt: new Date().toISOString(),
         });
+        return { ok: true };
     } catch (err) {
         logError(err, { source: 'writeFail:reconcileTaskTimerFromSessions', taskId });
+        return { ok: false, error: err?.code === 'permission-denied' ? 'denied' : 'write' };
     }
 };
 
@@ -149,8 +202,9 @@ export const editWorkSession = async (session, { startTime, endTime, reason, edi
     try {
         await updateDoc(doc(db, 'work_sessions', session.id), updates);
         // Re-derive the linked task's cached counter from its sessions so the task sheet / earnings /
-        // monitor match the report after this correction (no-op for a synthetic-id session).
-        await reconcileTaskTimerFromSessions(session.taskId);
+        // monitor match the report after this correction (no-op for a synthetic-id session). The
+        // session's OWNER (not the editing admin) is what makes the sessions query readable.
+        await reconcileTaskTimerFromSessions(session.taskId, session.userId);
         // Tell the worker their PAID time was corrected by an admin. The notify() recipient===actor
         // guard drops an admin editing their OWN session, so this never self-notifies. Best-effort:
         // a notification failure must never undo the (already-persisted) correction, so it is fired
@@ -197,7 +251,7 @@ export const deleteWorkSession = async (session, { reason, editor } = {}) => {
         await updateDoc(doc(db, 'work_sessions', session.id), updates);
         // The removed session no longer counts toward the report — re-derive the task counter so its
         // sheet/earnings/monitor drop the same time (no-op for a synthetic-id session).
-        await reconcileTaskTimerFromSessions(session.taskId);
+        await reconcileTaskTimerFromSessions(session.taskId, session.userId);
         // Tell the worker an admin removed one of their logged (paid) sessions. Same self-edit guard
         // and best-effort posture as editWorkSession. The day comes from the stored bucket (or the
         // session's start), so the worker knows which day's total changed.
@@ -327,8 +381,9 @@ export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTi
     try {
         const ref = await addDoc(collection(db, 'work_sessions'), payload);
         // The new backdated session counts toward the report — re-derive the task counter so its
-        // sheet/earnings/monitor include the same time. Best-effort (worker path; rules may deny).
-        await reconcileTaskTimerFromSessions(task.id);
+        // sheet/earnings/monitor include the same time. Best-effort; the worker's own uid keeps the
+        // sessions read inside what the rules grant them (a taskId-only query would be denied).
+        await reconcileTaskTimerFromSessions(task.id, worker.uid);
         // FYI to every admin that an approval-free backdated entry was logged. notifyMany dedupes and
         // drops the actor, so a backdating admin never self-notifies. userId == the worker's uid
         // satisfies the rules' provenance check on a worker-authored notification.
@@ -398,8 +453,9 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
         const ref = doc(db, 'work_sessions', `sess_gap_${task.id}_${new Date(startTime).getTime()}`);
         await setDoc(ref, payload, { merge: true });
         // Fold the just-claimed offline gap into the task counter so its sheet/earnings/monitor match
-        // the report (recovery already credited the pre-gap segments; this adds the remainder).
-        await reconcileTaskTimerFromSessions(task.id);
+        // the report (recovery already credited the pre-gap segments; this adds the remainder). The
+        // worker's own uid keeps the sessions read inside what the rules grant them.
+        await reconcileTaskTimerFromSessions(task.id, worker.uid);
         return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
     } catch (err) {
         logError(err, { source: 'writeFail:claimRecoveredGap' });
@@ -416,15 +472,29 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
  *
  * @param {Object} args - { sessionId, taskId } sessionId is the work_sessions id returned by
  *   claimRecoveredGap; taskId (optional) is the gap's task, so the counter can be re-derived after
- *   the gap is removed (omit for a synthetic/unknown task — reconciliation then no-ops).
+ *   the gap is removed (omit for a synthetic/unknown task — reconciliation then no-ops). The
+ *   session's owner uid is read off the row itself, so the caller does not have to supply it.
  * @returns {Promise<{ok:boolean, error?:string}>}
  */
 export const discardRecoveredGap = async ({ sessionId, taskId } = {}) => {
     if (!sessionId) return { ok: false, error: 'session' };
+    const ref = doc(db, 'work_sessions', sessionId);
     try {
-        await deleteDoc(doc(db, 'work_sessions', sessionId));
+        // Read the row BEFORE deleting it, purely to learn its OWNER: the recovery banner only knows
+        // the session + task ids, and without the owner uid the reconcile query below is denied for a
+        // plain worker — which is how "Nedirbau" used to drop the session from the reports while
+        // leaving the credited minutes sitting on the task card. Best-effort: an unreadable row just
+        // reconciles without the hint, exactly as before.
+        let ownerUid = null;
+        try {
+            const snap = await getDoc(ref);
+            if (snap.exists()) ownerUid = snap.data()?.userId || null;
+        } catch {
+            // ignore — removing the gap is the operation that must not be blocked
+        }
+        await deleteDoc(ref);
         // The gap is gone — re-derive the task counter so its sheet/earnings/monitor drop it too.
-        await reconcileTaskTimerFromSessions(taskId);
+        await reconcileTaskTimerFromSessions(taskId, ownerUid);
         return { ok: true };
     } catch (err) {
         logError(err, { source: 'writeFail:discardRecoveredGap' });

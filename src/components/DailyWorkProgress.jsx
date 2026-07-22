@@ -4,8 +4,27 @@ import { collection, query, where, onSnapshot, doc } from 'firebase/firestore';
 import { startOfWeek, endOfWeek, eachDayOfInterval, format, isSameDay } from 'date-fns';
 import { Sun, CalendarDays, CheckCircle2 } from 'lucide-react';
 import { cn } from '../utils/cn';
+import { getLithuanianDateString, formatMinutesToTimeString } from '../utils/timeUtils';
 
 export default function DailyWorkProgress({ currentUser, tasks = [] }) {
+    // The day this card reports on, as the canonical Vilnius date string the session docs are
+    // keyed by. It MUST be state rather than a value captured when the listeners were set up: a
+    // worker who leaves the PWA open across midnight (normal here — the work day runs to 03:00)
+    // otherwise keeps seeing YESTERDAY's "Šiandien" hours, because the effect below never re-armed,
+    // while the break half further down recomputed the day on every render — the two halves of one
+    // card describing different days. Re-checked every minute, and used by BOTH halves, so the
+    // queries and both comparisons flip together.
+    const [todayStr, setTodayStr] = useState(() => getLithuanianDateString());
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setTodayStr((prev) => {
+                const next = getLithuanianDateString();
+                return next === prev ? prev : next; // keep identity stable so the listeners only re-arm on a real day change
+            });
+        }, 60000);
+        return () => clearInterval(interval);
+    }, []);
+
     const [dayPlanned, setDayPlanned] = useState(0);
     const [dayWorked, setDayWorked] = useState(0);
     const [weekPlanned, setWeekPlanned] = useState(0);
@@ -47,7 +66,6 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
         const now = new Date();
         const weekStart = startOfWeek(now, { weekStartsOn: 1 }); // Monday start
         const weekEnd = endOfWeek(now, { weekStartsOn: 1 });
-        const todayStr = format(now, 'yyyy-MM-dd');
 
         // Generate array of date strings for the week to use in 'in' query
         const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd })
@@ -122,7 +140,10 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
             unsubSessions();
             unsubPlanned();
         };
-    }, [currentUser]);
+        // todayStr is a dependency so the whole window (the week's `in` list AND the day bucket)
+        // is rebuilt when the day rolls over — including the Sunday→Monday flip, where the captured
+        // weekDays list would otherwise exclude the new week entirely.
+    }, [currentUser, todayStr]);
 
     // 3. Fetch Break Sessions (for historical breaks throughout the week)
     const [breakSessions, setBreakSessions] = useState([]);
@@ -174,10 +195,11 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
             unsubBreaks();
             unsubUser();
         };
-    }, [currentUser]);
+        // Re-armed on the day flip for the same reason as the sessions effect above.
+    }, [currentUser, todayStr]);
 
-    // Calculate break hours from sessions
-    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    // Calculate break hours from sessions — bucketed against the SAME todayStr the worked hours
+    // use, so the two halves of the card can never describe different days.
     const dayBreakMinutes = breakSessions
         .filter(s => s.date === todayStr)
         .reduce((acc, s) => acc + (s.durationMinutes || 0), 0);
@@ -187,11 +209,13 @@ export default function DailyWorkProgress({ currentUser, tasks = [] }) {
     const dayBreakHours = (dayBreakMinutes + currentBreakMinutes) / 60;
     const weekBreakHours = (weekBreakMinutes + currentBreakMinutes) / 60;
 
-    const formatTime = (decimalHours) => {
-        const h = Math.floor(decimalHours);
-        const m = Math.round((decimalHours - h) * 60);
-        return `${h}h ${m}m`;
-    };
+    // Decimal hours -> readable duration, via the shared, unit-tested minute formatter. The old
+    // local copy floored the hour and rounded the minutes INDEPENDENTLY, so any value whose
+    // fraction landed in [59.5/60, 1) printed an impossible minute: 119.6 logged minutes
+    // (1.99333h) read as "1h 60m", and a worker just short of the goal was told "Liko 0h 60m".
+    // timeUtils rounds to whole minutes ONCE before splitting hour/minute — the same ":60" carry
+    // fix formatMinutesToHHMM carries, and which timeUtils.test.js asserts against.
+    const formatTime = (decimalHours) => formatMinutesToTimeString(decimalHours * 60);
 
     // The progress bars measure WORKED time against the planned goal, so they must NOT
     // include breaks: planned hours never contain breaks, so folding break minutes into the

@@ -22,7 +22,7 @@ import { logError } from '../utils/errorLog';
 import { Calendar, Clock, Coffee, User, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, CheckCircle2, X, Pencil, Plus, Flag } from 'lucide-react';
 import clsx from 'clsx';
 import { CommentsModal } from './TaskDetailsModals';
-import TaskHistory from './TaskHistory';
+import TaskHistory, { buildRestoredTaskPayload } from './TaskHistory';
 import SessionTypeIcon from './SessionTypeIcon';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -684,9 +684,18 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
     // Merge sessions and manual tasks for Timeline
     const combinedTimelineItems = useMemo(() => {
+        // Index the deleted tasks ONCE instead of re-scanning finishedTasks for every session.
+        // The period picker offers "Šie metai", which loads a year of sessions (tens of thousands)
+        // against thousands of tasks — a linear .find per session is ~10^7+ comparisons run
+        // synchronously, and the memo re-runs on every live snapshot (any teammate touching a task
+        // re-delivers `tasks`). That is what froze the report for seconds at a time on a phone.
+        const deletedTaskById = new Map(
+            finishedTasks.filter(t => t.isDeleted).map(t => [t.id, t])
+        );
+
         const items = allValidSessions.map(s => {
             // Check if this session belongs to a deleted task
-            const deletedTask = finishedTasks.find(t => t.id === s.taskId && t.isDeleted);
+            const deletedTask = deletedTaskById.get(s.taskId);
             let title = s.isActive ? `⏳ (Vykdoma) ${s.taskTitle}` : s.taskTitle;
             if (deletedTask) {
                 title = `Ištrinta užduotis: ${deletedTask.title}`;
@@ -993,21 +1002,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         if (!task) return;
         setRestoring(true);
         try {
-            const restoredTask = {
-                ...task,
-                status: 'in-progress',
-                timerStatus: 'paused',
-                completed: false,
-                completedAt: null,
-                confirmedAt: null,
-                confirmedBy: null,
-                archivedAt: null,
-                archivedBy: null,
-                isDeleted: false,
-                deletedAt: null,
-                deletedBy: null,
-                updatedAt: new Date().toISOString()
-            };
+            // Shared with the Užduočių istorija restore so both paths write the same canonicalized
+            // shape — an archived row spread verbatim is rejected by the /tasks priority guard
+            // (see buildRestoredTaskPayload in TaskHistory.jsx).
+            const restoredTask = buildRestoredTaskPayload(task);
 
             // Determine collection based on whether it's archived
             const sourceCollection = task.archivedAt ? 'archived_tasks' : 'tasks';

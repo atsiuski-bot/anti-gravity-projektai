@@ -91,6 +91,58 @@ describe('buildReport — period earnings (marginal over cumulative monthly hour
     });
 });
 
+describe('buildReport — multi-tariff earnings (bill each task by the tariff the manager chose)', () => {
+    // A meistras with two NAMED tariffs. PayRateModal mirrors the FIRST one into the legacy `tiers`
+    // field, so `payRate.tiers` is the default/cheap table — pricing a period off it under-paid
+    // every hour worked on a task the manager assigned the expensive tariff to.
+    const multiRate = {
+        tiers: [{ fromHours: 0, netRate: 10 }], // legacy mirror of rates[0]
+        rates: [
+            { id: 'r-statyba', label: 'Statyba', tiers: [{ fromHours: 0, netRate: 10 }] },
+            { id: 'r-griovimas', label: 'Griovimas', tiers: [{ fromHours: 0, netRate: 25 }] },
+        ],
+    };
+    const window = { startStr: '2026-06-01', endStr: '2026-06-30' };
+    const prevWindow = { startStr: '2026-05-02', endStr: '2026-05-31' };
+
+    it('prices demolition hours at the demolition tariff, not the default one', () => {
+        const worker = baseWorker({
+            payRate: multiRate,
+            workSessions: [{ ...session('2026-06-10', 10), taskId: 'task-demo' }],
+            taskPayRateIds: { 'task-demo': 'r-griovimas' },
+        });
+        const report = buildOne(worker, window, prevWindow);
+        expect(report.workers[0].earnings.netEur).toBe(250); // 10 h @ €25, NOT 10 h @ €10
+    });
+
+    it('mixes tariffs within one month and leaves an unknown task on the default tariff', () => {
+        // 4 h demolition (@25 = 100) + 4 h on a task with no chosen tariff (@10 = 40) = 140 €.
+        const worker = baseWorker({
+            payRate: multiRate,
+            workSessions: [
+                { ...session('2026-06-10', 4), taskId: 'task-demo' },
+                { ...session('2026-06-11', 4), taskId: 'quick_1720000000000' },
+            ],
+            taskPayRateIds: { 'task-demo': 'r-griovimas' },
+        });
+        const report = buildOne(worker, window, prevWindow);
+        expect(report.workers[0].earnings.netEur).toBe(140);
+    });
+
+    it('carries the same per-task tariff into the payroll CSV money column', () => {
+        const worker = baseWorker({
+            payRate: multiRate,
+            workSessions: [{ ...session('2026-06-10', 10), taskId: 'task-demo' }],
+            taskPayRateIds: { 'task-demo': 'r-griovimas' },
+        });
+        const visoCells = renderTimesheetCSV([worker], window, { includeEarnings: true })
+            .split('\n')
+            .find((l) => l.includes(',Viso,'))
+            .split(',');
+        expect(visoCells[6]).toBe('250');
+    });
+});
+
 describe('buildReport — data trust + manifest', () => {
     it('counts edited and implausible sessions inside the window', () => {
         const worker = baseWorker({
@@ -295,6 +347,34 @@ describe('renderers', () => {
         const lines = renderTimesheetCSV([deducted], window).split('\n');
         expect(lines.find((l) => /,2026-06-10,/.test(l)).split(',')[2]).toBe('-02:00');
         expect(lines.find((l) => l.includes(',Viso,')).split(',')[2]).toBe('-02:00');
+    });
+
+    // A plain task's hand-entered manualMinutes is additive worked time with no work_sessions row.
+    // The on-screen day view has always counted it; the payroll CSV summed sessions only, so the
+    // downloaded timesheet reported fewer hours than the screen it was exported from.
+    it('Timesheet CSV counts a finished plain task\'s manualMinutes on its finish day', () => {
+        const withManual = baseWorker({
+            workSessions: [session('2026-06-10', 2)],
+            tasks: [{ id: 'tm1', manualMinutes: 90, completedAt: '2026-06-10T12:00:00.000Z' }],
+        });
+        const lines = renderTimesheetCSV([withManual], window).split('\n');
+        expect(lines.find((l) => /,2026-06-10,/.test(l)).split(',')[2]).toBe('03:30'); // 2h + 1h30
+        expect(lines.find((l) => l.includes(',Viso,')).split(',')[2]).toBe('03:30');
+    });
+
+    it('Timesheet CSV never double-counts quick-work / re-derived task minutes', () => {
+        // Quick-work and call tasks already log a dedicated work_session of the same length, and a
+        // timeChanged task had its time re-derived INTO work_sessions — counting either again doubles it.
+        const noDouble = baseWorker({
+            workSessions: [session('2026-06-10', 2)],
+            tasks: [
+                { id: 'q1', manualMinutes: 45, isQuickWork: true, completedAt: '2026-06-10T12:00:00.000Z' },
+                { id: 'c1', manualMinutes: 20, isSystemTask: true, completedAt: '2026-06-10T12:00:00.000Z' },
+                { id: 'e1', manualMinutes: 60, timeChanged: true, completedAt: '2026-06-10T12:00:00.000Z' },
+            ],
+        });
+        const lines = renderTimesheetCSV([noDouble], window).split('\n');
+        expect(lines.find((l) => l.includes(',Viso,')).split(',')[2]).toBe('02:00');
     });
 
     it('Timesheet CSV renders a normal positive day with no leading + sign', () => {

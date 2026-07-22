@@ -216,6 +216,22 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     message: 'Veiksmas nepriimtas. Bandykite dar kartą.',
                 });
             }
+        }).catch((error) => {
+            // The settlement can REJECT outright (not merely resolve to a failed outcome) when the
+            // local outbox write fails after its initial open — Firefox private mode, storage
+            // pressure. Without this handler nothing observed it: the 'Sinchronizuojama…' pill span
+            // forever on a batch that may well have committed, and the rejection surfaced as an
+            // unhandled promise. Every sibling call site (BreakTimer.trackRevisionedBreak,
+            // useTaskTimeMonitor's limit pause/finish) already attaches this catch.
+            logError(error, {
+                source: 'TaskTimerControls.settlement',
+                taskId: task.id,
+                commandId: issued.commandId,
+            });
+            setCommandOutcome({
+                status: 'rejected',
+                message: 'Veiksmas nepriimtas. Bandykite dar kartą.',
+            });
         });
         return issued;
     };
@@ -640,18 +656,39 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             // whole finish failed with "Nepavyko užbaigti". When that exact denial happens we fall
             // back to 'completed' (a write the assignee is always permitted): the task is still
             // finished, and simply waits for its proper overseer's priėmimas instead of breaking.
-            try {
-                await updateDoc(doc(db, 'tasks', task.id), taskData);
-            } catch (writeErr) {
-                if (isConfirmed && writeErr?.code === 'permission-denied') {
-                    isConfirmed = false;
-                    finishStatus = 'completed';
-                    Object.assign(taskData, { status: 'completed', confirmedBy: null, confirmedAt: null });
-                    await updateDoc(doc(db, 'tasks', task.id), taskData);
-                } else {
+            //
+            // The acknowledgement is RACED against COMMIT_CONFIRM_TIMEOUT_MS — the same budget
+            // handleStart/handlePause use — instead of being awaited outright. Firestore applies this
+            // write to the LOCAL cache instantly (the card flips to completed and this component
+            // early-returns), but on an offline or half-open link the returned promise stays pending
+            // until connectivity comes back. Awaiting it therefore ran NOTHING below: the worker kept
+            // an active "still working" session pointing at the finished task, got no undo window and
+            // no completion-photo prompt, and the manager's priėmimas queue never heard about it —
+            // and Android then killed the backgrounded PWA, losing that continuation for good.
+            let writeError = null;
+            const taskWrite = updateDoc(doc(db, 'tasks', task.id), taskData)
+                .catch((writeErr) => {
+                    if (isConfirmed && writeErr?.code === 'permission-denied') {
+                        isConfirmed = false;
+                        finishStatus = 'completed';
+                        Object.assign(taskData, { status: 'completed', confirmedBy: null, confirmedAt: null });
+                        return updateDoc(doc(db, 'tasks', task.id), taskData);
+                    }
                     throw writeErr;
-                }
-            }
+                });
+            const settled = taskWrite.then(() => {}, (err) => { writeError = err; });
+            await Promise.race([
+                settled,
+                new Promise((resolve) => setTimeout(resolve, COMMIT_CONFIRM_TIMEOUT_MS)),
+            ]);
+            if (writeError) throw writeError;
+            // Past the budget the write is queued, so we continue and tell the worker it is done. A
+            // LATE failure must not stay silent — surface it durably and on screen when it lands.
+            settled.then(() => {
+                if (!writeError) return;
+                logError(writeError, { source: 'writeFail:finishTask.queued', taskId: task.id, code: writeError?.code });
+                showToast('Nepavyko išsaugoti užbaigimo. Bandykite dar kartą.', { tone: 'warning', duration: 6000 });
+            });
 
             if (task.assignedUserId === currentUser.uid) {
                 // Determine if this task was the user's active one based on stale closure
@@ -683,7 +720,11 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                 }
 
                 if (shouldClearUserSession) {
-                    await updateDoc(doc(db, 'users', currentUser.uid), {
+                    // Not awaited, for the same reason as the task write above: offline this ack
+                    // never arrives, and blocking on it kept the finished task's session alive AND
+                    // hid the undo toast / photo prompt / manager notice behind it. The write hits the
+                    // local cache at once and flushes when the link returns; a failure is durable-logged.
+                    updateDoc(doc(db, 'users', currentUser.uid), {
                         workStatus: {
                             isWorking: false,
                             status: 'idle',
@@ -691,35 +732,35 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                             lastUpdated: new Date().toISOString()
                         },
                         activeSession: null
-                    });
+                    }).catch(clearErr => logError(clearErr, { source: 'writeFail:finishTask.clearSession', taskId: task.id }));
                 }
             }
 
             // Send task_completion notification to manager (only when the task lands 'completed' and
             // still needs a real manager's priėmimas — a role-manager's own finish auto-confirms).
             if (!isConfirmed) {
-                try {
-                    // Determine recipient: task manager, fallback to user's defaultManager
-                    let recipientId = task.managerId || null;
-                    if (!recipientId || recipientId === currentUser.uid) {
-                        recipientId = userData?.defaultManager || null;
-                    }
-                    if (recipientId && recipientId !== currentUser.uid) {
-                        // Worker-authored (userId = caller); notify() stamps provenance + registry category.
-                        await notify({
-                            recipientId,
-                            type: 'task_completion',
-                            taskId: task.id,
-                            taskTitle: task.title || 'Užduotis',
-                            actualTime: formattedTime,
-                            actualMinutes: totalMinutes,
-                            userName: currentUser.displayName || currentUser.email || 'Meistras',
-                            userId: currentUser.uid,
-                            completedAt: now.toISOString(),
-                        });
-                    }
-                } catch (notifErr) {
-                    console.error('Failed to send task completion notification:', notifErr);
+                // Determine recipient: task manager, fallback to user's defaultManager
+                let recipientId = task.managerId || null;
+                if (!recipientId || recipientId === currentUser.uid) {
+                    recipientId = userData?.defaultManager || null;
+                }
+                if (recipientId && recipientId !== currentUser.uid) {
+                    // Worker-authored (userId = caller); notify() stamps provenance + registry category.
+                    // Fire-and-forget: offline its addDoc never acknowledges either, and awaiting it
+                    // withheld the undo toast and the completion-photo prompt from the worker.
+                    notify({
+                        recipientId,
+                        type: 'task_completion',
+                        taskId: task.id,
+                        taskTitle: task.title || 'Užduotis',
+                        actualTime: formattedTime,
+                        actualMinutes: totalMinutes,
+                        userName: currentUser.displayName || currentUser.email || 'Meistras',
+                        userId: currentUser.uid,
+                        completedAt: now.toISOString(),
+                    }).catch((notifErr) => {
+                        console.error('Failed to send task completion notification:', notifErr);
+                    });
                 }
             }
 

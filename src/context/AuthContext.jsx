@@ -46,6 +46,10 @@ export function AuthProvider({ children }) {
     // approve, and the real "pending approval" reason is masked by a generic error. (Same race
     // also broke the existing-disabled read: signOut beat getDoc, so the coded message was lost.)
     const isProvisioning = useRef(false);
+    // Latched the moment this auth session has actually SEEN its own user document exist. A later
+    // "document missing" snapshot then cannot be a first login — it means the record was REMOVED —
+    // so the listener below must tear the session down instead of self-provisioning a new one.
+    const hasSeenUserDoc = useRef(false);
 
     // Helper function to detect Opera browser
     function isOperaBrowser() {
@@ -77,13 +81,13 @@ export function AuthProvider({ children }) {
 
         } catch (error) {
             console.error("Auth: Login Error:", error.code, error.message);
-            if (error.code === 'auth/popup-closed-by-user') {
-                console.log('Login cancelled by user');
-            } else {
-                // Let the Login page map this to friendly Lithuanian copy (loginErrorMessage).
-                // The previous window.alert was banned (§) and its English text bypassed that.
-                throw error;
-            }
+            // EVERY failure must reach the caller — including auth/popup-closed-by-user. Swallowing
+            // that one made login() resolve normally, so Login.handleLogin's catch never ran and its
+            // `loading` flag stayed true: the app's only sign-in button stayed disabled on
+            // "Jungiamasi…" forever, and only a full page reload recovered — which a standalone PWA
+            // barely offers. Login already maps this code to "Prisijungimas nutrauktas. Bandykite
+            // dar kartą." (loginErrorMessage), which the swallow made unreachable.
+            throw error;
         }
     }
 
@@ -275,9 +279,13 @@ export function AuthProvider({ children }) {
                 }
                 const userRef = doc(db, 'users', user.uid);
 
+                // Fresh listener, fresh session: nothing has been observed yet for THIS identity.
+                hasSeenUserDoc.current = false;
+
                 // We use onSnapshot to get real-time updates for role and break status
                 unsubscribeSnapshot = onSnapshot(userRef, { includeMetadataChanges: true }, async (docSnap) => {
                     if (docSnap.exists()) {
+                        hasSeenUserDoc.current = true;
                         const data = docSnap.data();
                         const metadata = {
                             fromCache: docSnap.metadata.fromCache,
@@ -329,6 +337,26 @@ export function AuthProvider({ children }) {
 
                         setCurrentUser(user);
                         setLoading(false);
+                    } else if (hasSeenUserDoc.current) {
+                        // The document existed earlier in THIS session and is gone now: an admin
+                        // pressed Ištrinti while this phone still had the app open. Re-running the
+                        // sign-up path here would setDoc a fresh {status:'pending'} record within a
+                        // second — resurrecting the account the delete dialog just promised could
+                        // not be undone, floating it back to the top of the roster as a brand-new
+                        // applicant and fanning an approval notification to every admin. So tear
+                        // this session down instead; re-applying must be the user's own deliberate
+                        // sign-in, not an echo of the listener that outlived their record.
+                        console.log("Auth: User document was removed, logging out...");
+                        setCurrentUser(null);
+                        setUserRole(null);
+                        setUserData(null);
+                        setConfirmedUserData(null);
+                        setPendingSessionProjection(null);
+                        setBreakState(null);
+                        setWorkStatus(null);
+                        setLoading(false);
+                        await signOut(auth);
+                        return;
                     } else {
 
                         // Document doesn't exist - create it if not already processing redirect

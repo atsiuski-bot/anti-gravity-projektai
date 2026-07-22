@@ -243,7 +243,19 @@ export function useTaskTimeMonitor(tasks) {
                     try {
                         await pauseTask(task);
                     } catch (e) {
-                        console.error('Failed to auto-pause task at time limit:', e);
+                        // Mirror the revisioned branch above: a FAILED stop must not leave the latch
+                        // set. The latch is keyed by this stretch's timerStartedAt, which a failed
+                        // pause leaves untouched — so every later 10s tick matched the same key and
+                        // skipped the 100% block forever. The code then went on to write
+                        // timeLimitReached, open the forced popup and raise the notification that
+                        // literally says "Veikla sustabdyta", while timerStatus was still 'running':
+                        // the clock kept accruing behind a popup claiming it had stopped, and the
+                        // whole silent overrun was later credited as one stretch. Release the latch,
+                        // record the failure durably (console alone left no trace), and return so the
+                        // next tick retries the stop instead of latching a lie.
+                        limitReachedRef.current.delete(taskId);
+                        logError(e, { source: 'useTaskTimeMonitor.limitPause', taskId, code: e?.code });
+                        return;
                     }
 
                     // 2. Mark on Firestore (idempotent — survives reload, gates the on_estimate badge).

@@ -447,7 +447,11 @@ export default function ProfilePage() {
             {/* Achievements — the full ladder. The owner sees every badge, earned ones in their
                 metal color first, then the still-locked ones; tapping any tile opens what earns
                 it. (Peer profiles stay earned-only — guardrail W4.) */}
-            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Pasiekimai</h2>
+            {/* wz-on-shell: these section headings sit BARE on the whole-screen session shell, not
+                on a card. `text-ink-muted` is a white-surface token (tokens.md) — on the quick-work
+                red shell it reads 1.3:1 and effectively disappears. The class pins a fixed legible
+                colour keyed off data-session-shell/data-theme; idle (no shell) keeps ink-muted. */}
+            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted wz-on-shell">Pasiekimai</h2>
             <Card className="mb-4 p-4">
                 <p className="mb-3 text-caption text-ink-muted">
                     Bakstelėkite ženkliuką ir pamatysite, už ką jis skiriamas.
@@ -477,7 +481,7 @@ export default function ProfilePage() {
             {/* Self-insight — a few plain headline numbers from the owner's OWN data (the same
                 compute engine the manager panel uses, scoped to the worker). No comparison to
                 anyone else; a calm note stands in until there is enough data to read. */}
-            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Mano rodikliai</h2>
+            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted wz-on-shell">Mano rodikliai</h2>
             <Card className="mb-4 p-4">
                 {statsError ? (
                     <EmptyState
@@ -513,7 +517,7 @@ export default function ProfilePage() {
             {/* Personal quick-work templates — the worker's own one-tap categories that appear in
                 the "Greitos veiklos pabaiga" modal, on top of the built-in ones (Tvarkos,
                 Administracija, Auto darbai, Pagalba). Picking one there becomes the session title. */}
-            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted">Greitos veiklos šablonai</h2>
+            <h2 className="mb-2 px-1 text-caption font-medium text-ink-muted wz-on-shell">Greitos veiklos šablonai</h2>
             <Card className="mb-4 p-4">
                 <p className="mb-3 flex items-start gap-2 text-caption text-ink-muted">
                     <Zap className="mt-0.5 h-4 w-4 shrink-0 text-session-quickWork-accent" aria-hidden="true" />
@@ -524,17 +528,22 @@ export default function ProfilePage() {
                     <ul className="mb-3 flex flex-wrap gap-2">
                         {quickTemplates.map((label) => (
                             <li key={label}>
-                                <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-sunken py-1 pl-3 pr-1 text-body text-ink">
+                                {/* Vertical padding trimmed to 0.5 so the chip stays compact now that
+                                    the remove control is a full 44px IconButton. */}
+                                <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-surface-sunken py-0.5 pl-3 pr-0.5 text-body text-ink">
                                     {label}
-                                    <button
-                                        type="button"
+                                    {/* Canonical IconButton, not a 28px ad-hoc one: removal is
+                                        destructive and these chips wrap onto several rows, so a
+                                        sub-44px target (DESIGN_SYSTEM §7) let a gloved worker miss
+                                        — or hit the neighbouring chip's X. */}
+                                    <IconButton
+                                        icon={X}
+                                        label={`Pašalinti šabloną „${label}“`}
+                                        variant="danger"
                                         onClick={() => handleRemoveTemplate(label)}
                                         disabled={savingTemplates}
-                                        aria-label={`Pašalinti šabloną „${label}“`}
-                                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-ink-muted transition-colors hover:bg-feedback-danger-soft hover:text-feedback-danger-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
-                                    >
-                                        <X className="h-4 w-4" aria-hidden="true" />
-                                    </button>
+                                        className="rounded-full"
+                                    />
                                 </span>
                             </li>
                         ))}

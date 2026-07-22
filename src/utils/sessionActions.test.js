@@ -48,6 +48,9 @@ const NOW = new Date('2026-06-23T12:00:00.000Z');
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 const userUpdate = (id) => updateDoc.mock.calls.find(([ref]) => ref?._path === `users/${id}`)?.[1];
+// Every write aimed at the user doc, in order — the retract-projection path issues a SECOND one
+// after the critical write, so a test that cares about the final state must look at the last.
+const userUpdates = (id) => updateDoc.mock.calls.filter(([ref]) => ref?._path === `users/${id}`).map((x) => x[1]);
 // Final secondary-session records (break/call/quick-work) are now written with setDoc under a
 // DETERMINISTIC id (sess_<kind>_<uid>_<startMs>) so the client and the server net dedup on one id
 // instead of each minting a random-id duplicate. So inspect setDoc, keyed on the ref's collection.
@@ -238,6 +241,33 @@ describe('startSession — opening a secondary session', () => {
         expect(u.activeSession.pausedSession.type).toBe('task'); // the task session is nested
     });
 
+    it('ABORTS the session start when the interrupted task fails to pause (fail CLOSED)', async () => {
+        // The pause is a precondition, not a parallel nicety. When it fails, a committed break on
+        // top of a still-running task timer gets counted TWICE — once as the break, once inside the
+        // single work_sessions segment the task's next pause writes across the whole stretch.
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path?.startsWith('users/')) {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => ({ activeSession: { type: 'task', taskId: 'tk1', taskTitle: 'Dig' } }),
+                });
+            }
+            return Promise.resolve({ exists: () => true, id: ref._id, data: () => ({ timerStatus: 'running' }) });
+        });
+        pauseTask.mockRejectedValueOnce(new Error('permission-denied'));
+
+        await expect(startSession('u1', 'break')).rejects.toThrow('permission-denied');
+        await flush();
+
+        // Nothing was committed: no break on the user doc, so the worker sees the failure and the
+        // task timer is still the only thing running.
+        expect(userUpdate('u1')).toBeUndefined();
+        expect(logError).toHaveBeenCalledWith(
+            expect.any(Error),
+            expect.objectContaining({ source: 'pauseFail:startSession.taskPause' })
+        );
+    });
+
     it('logs durably and rethrows when the critical user write fails', async () => {
         getDoc.mockResolvedValue({ exists: () => true, data: () => ({}) });
         updateDoc.mockRejectedValue(new Error('permission-denied'));
@@ -298,6 +328,12 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
         expect(breaks).toHaveLength(1);
         expect(breaks[0].durationMinutes).toBe(60);
         expect(breaks[0].date).toBe('2026-06-23');
+        // MERGE, like the call/quick-work branches: two independent closers converge on this one
+        // deterministic id, so the second write is an UPDATE. A bare overwrite drops the
+        // CF-stamped teamManagerIds and the update-rule pin on that field rejects it outright —
+        // silently, since the caller only logs the failure.
+        const breakCall = setDoc.mock.calls.find(([ref]) => ref?._col === 'break_sessions');
+        expect(breakCall[2]).toEqual({ merge: true });
     });
 
     it('credits only up to endAt (heartbeat) when given, not up to now', async () => {
@@ -403,6 +439,142 @@ describe('endSession — orphan recovery path (useOrphanedSessionRecovery)', () 
         expect(u['breakState.dailyAccumulatedMinutes']).toBe(MAX_SESSION_MINUTES); // clamped, not the offline gap
         expect(resumeTask).not.toHaveBeenCalled();
         expect(pauseTask).not.toHaveBeenCalled();
+    });
+});
+
+describe('endSession — legacy-flag-only orphan honours the heartbeat bound', () => {
+    // The activeSession path already cuts an abandoned session at its last proof of life
+    // ("credits only up to endAt" above). A session held ONLY in the per-type flags — reachable
+    // because pauseTask nulls activeSession without clearing them — short-circuits into
+    // endLegacySession, which used to recompute "now" and throw the override away, crediting the
+    // whole dead offline gap (clamped to 16h) for exactly the sessions recovery exists to cut.
+
+    it('credits a quick-work orphan only up to endAt, not up to the reopen instant', async () => {
+        // Started 18:00, last heartbeat 18:07, phone died, app reopened 08:00 the next morning.
+        getLithuanianNow.mockReturnValue(new Date('2026-06-24T08:00:00.000Z'));
+        const userData = {
+            displayName: 'Worker',
+            role: 'worker',
+            quickWorkState: { isQuickWorking: true, lastStartedAt: '2026-06-23T18:00:00.000Z' },
+        };
+        const lastBeat = new Date('2026-06-23T18:07:00.000Z').getTime();
+
+        const result = await endSession('u1', userData, { endAt: lastBeat }, true);
+        await flush();
+
+        expect(result).toMatchObject({ type: 'quickWork', wasCapped: false });
+        expect(result.creditedMinutes).toBe(7); // NOT 840 clamped to 960
+
+        const ws = setsTo('work_sessions');
+        expect(ws).toHaveLength(1);
+        expect(ws[0].durationMinutes).toBe(7);
+        expect(ws[0].endTime).toBe('2026-06-23T18:07:00.000Z');
+        expect(ws[0].date).toBe('2026-06-23'); // the day it was actually worked, not the reopen day
+        expect(setsTo('tasks')[0].manualMinutes).toBe(7);
+    });
+
+    it('folds only the beat-bounded minutes into the daily break total', async () => {
+        getLithuanianNow.mockReturnValue(new Date('2026-06-24T08:00:00.000Z'));
+        const userData = {
+            breakState: { isTakingBreak: true, lastStartedAt: '2026-06-23T18:00:00.000Z', dailyAccumulatedMinutes: 10 },
+        };
+
+        await endSession('u1', userData, { endAt: new Date('2026-06-23T18:07:00.000Z').getTime() }, true);
+        await flush();
+
+        expect(userUpdate('u1')['breakState.dailyAccumulatedMinutes']).toBe(17); // 10 + 7, not 10 + 960
+        expect(setsTo('break_sessions')[0].durationMinutes).toBe(7);
+    });
+
+    it('still ends at NOW when no endAt is supplied (unchanged fallback)', async () => {
+        const userData = {
+            callState: { isCalling: true, lastStartedAt: '2026-06-23T11:30:00.000Z' }, // 30 min to NOW
+        };
+
+        const result = await endSession('u1', userData, {}, true);
+        await flush();
+
+        expect(result.creditedMinutes).toBe(30);
+    });
+});
+
+describe('endSession — an unresumable restored task must not leave a phantom "running" user', () => {
+    it('retracts the activeSession/workStatus projection when the task was confirmed meanwhile', async () => {
+        // A manager accepted the task while the worker was on a break. endSession has ALREADY
+        // written activeSession {type:'task'} + workStatus 'running' to the user doc before the
+        // resume is attempted, and the resume can never happen. Nothing else clears that: the
+        // worker reads "dirba" forever and DailyStatistics synthesizes a live row (and team
+        // minutes) from activeSession alone, with no work_sessions row behind it.
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'users/u1') {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => ({ activeSession: { type: 'task', taskId: 'tk1' } }),
+                });
+            }
+            if (ref?._path === 'tasks/tk1') {
+                return Promise.resolve({
+                    exists: () => true,
+                    id: 'tk1',
+                    data: () => ({ timerStatus: 'paused', status: 'confirmed' }),
+                });
+            }
+            return Promise.resolve({ exists: () => false, data: () => ({}) });
+        });
+
+        await endSession('u1', {
+            activeSession: {
+                type: 'break',
+                startTime: '2026-06-23T11:00:00.000Z',
+                pausedSession: { type: 'task', taskId: 'tk1', taskTitle: 'Dig' },
+            },
+            breakState: { dailyAccumulatedMinutes: 0 },
+        });
+        await flush();
+
+        const writes = userUpdates('u1');
+        expect(writes[0].activeSession.type).toBe('task'); // the projection was written first
+        expect(resumeTask).not.toHaveBeenCalled();         // ...but the resume was impossible
+
+        const retract = writes[writes.length - 1];
+        expect(retract.activeSession).toBeNull();
+        expect(retract['workStatus.status']).toBe('idle');
+        expect(retract['workStatus.activeTaskId']).toBeNull();
+    });
+
+    it('leaves the user doc alone when a NEW session superseded the projection', async () => {
+        // The worker started a quick work right after the break ended. That live session owns the
+        // user doc — retracting here would wipe it, the very data loss doResume already guards.
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'users/u1') {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => ({ activeSession: { type: 'quickWork', startTime: '2026-06-23T11:59:00.000Z' } }),
+                });
+            }
+            if (ref?._path === 'tasks/tk1') {
+                return Promise.resolve({
+                    exists: () => true,
+                    id: 'tk1',
+                    data: () => ({ timerStatus: 'paused', status: 'confirmed' }),
+                });
+            }
+            return Promise.resolve({ exists: () => false, data: () => ({}) });
+        });
+
+        await endSession('u1', {
+            activeSession: {
+                type: 'break',
+                startTime: '2026-06-23T11:00:00.000Z',
+                pausedSession: { type: 'task', taskId: 'tk1', taskTitle: 'Dig' },
+            },
+            breakState: { dailyAccumulatedMinutes: 0 },
+        });
+        await flush();
+
+        const writes = userUpdates('u1');
+        expect(writes).toHaveLength(1); // only the critical write; no retract
+        expect(resumeTask).not.toHaveBeenCalled();
     });
 });
 

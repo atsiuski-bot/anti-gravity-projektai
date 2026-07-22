@@ -3,6 +3,7 @@ import { Clock, AlertTriangle } from 'lucide-react';
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import DatePicker from './ui/DatePicker';
+import Select from './ui/Select';
 import {
     formatMinutesToTimeString,
     getLithuanianDateString,
@@ -180,18 +181,20 @@ export default function BackdateTimeModal({ open, onClose, task, taskOptions, in
                         >
                             Kurią užduotį dirbote?
                         </label>
-                        <select
+                        {/* Canonical Select, never a native <select> (DESIGN_SYSTEM §8): the browser
+                            draws a native option panel at a width and position we do not control, so
+                            long Lithuanian task titles truncate differently per engine — on the one
+                            screen where picking the wrong task logs work time against the wrong
+                            record. `alwaysSheet` because this trigger lives inside a scrollable
+                            modal, where an anchored panel would clip. */}
+                        <Select
                             id={`${fieldId}-task`}
                             value={selectedTaskId}
-                            onChange={(e) => setSelectedTaskId(e.target.value)}
-                            className={inputClass}
-                        >
-                            {taskOptions.map((t) => (
-                                <option key={t.id} value={t.id}>
-                                    {t.title || 'Užduotis'}
-                                </option>
-                            ))}
-                        </select>
+                            onChange={setSelectedTaskId}
+                            options={taskOptions.map((t) => ({ value: t.id, label: t.title || 'Užduotis' }))}
+                            label="Kurią užduotį dirbote?"
+                            alwaysSheet
+                        />
                     </div>
                 ) : (
                     <p className="text-body text-ink-muted">

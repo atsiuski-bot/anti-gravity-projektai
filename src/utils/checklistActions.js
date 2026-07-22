@@ -15,6 +15,9 @@ import { db } from '../firebase';
  *
  * Every mutation rewrites the whole `checklist` array and bumps `updatedAt` so
  * the live snapshot (and the TaskCard memo, which compares `updatedAt`) refreshes.
+ * Because it is a whole-array write, the per-item mutations re-read the live array
+ * inside a transaction first — otherwise one side's snapshot silently erases the
+ * other's ticks (see toggleChecklistItem).
  *
  * Items are keyed by a stable `id` (not array index) so a concurrent add/remove
  * cannot make a toggle hit the wrong row.
@@ -63,6 +66,42 @@ export const addChecklistItem = async (taskId, text, currentChecklist = [], coll
 };
 
 /**
+ * Apply ONE item's done-flip to a checklist array, keyed by id; every other item is passed
+ * through untouched. Pure + exported so the merge rule is unit-testable without Firestore —
+ * the mutations below apply it to the LIVE array read inside a transaction, never to the
+ * caller's snapshot.
+ * @param {Array} checklist
+ * @param {string} itemId
+ * @param {Object} currentUser - { uid, displayName, email }
+ * @param {string} [nowIso] - injectable timestamp
+ */
+export const applyChecklistToggle = (checklist, itemId, currentUser, nowIso = new Date().toISOString()) =>
+    (Array.isArray(checklist) ? checklist : []).map((item) => {
+        if (item.id !== itemId) return item;
+        const nowDone = !item.done;
+        return {
+            ...item,
+            done: nowDone,
+            doneBy: nowDone ? (currentUser?.uid || null) : null,
+            doneByName: nowDone ? (currentUser?.displayName || currentUser?.email || null) : null,
+            doneAt: nowDone ? nowIso : null
+        };
+    });
+
+/** Drop ONE item by id, passing every other item through untouched. Pure (see applyChecklistToggle). */
+export const applyChecklistDelete = (checklist, itemId) =>
+    (Array.isArray(checklist) ? checklist : []).filter((item) => item.id !== itemId);
+
+// A transaction needs a server round-trip, so it cannot run offline — and the SDK does not fail
+// fast: it classifies `unavailable` as RETRYABLE and burns all five attempts with exponential
+// backoff before rejecting. Going through it while we already know we are offline would freeze a
+// checkbox for ~8s on the exact device profile that is offline most often (a worker in the field).
+// When the browser already says there is no link, skip straight to the queued single-doc write.
+// `navigator.onLine === false` is only trusted in the NEGATIVE direction — a true value can lie
+// about a captive portal, and that case is handled by the catch fallbacks below.
+const knownOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+
+/**
  * Flip an item's done state. Marking done stamps who/when; un-marking clears it.
  * @param {string} taskId
  * @param {string} itemId
@@ -72,25 +111,41 @@ export const addChecklistItem = async (taskId, text, currentChecklist = [], coll
  */
 export const toggleChecklistItem = async (taskId, itemId, currentUser, currentChecklist = [], collectionName = 'tasks') => {
     if (!currentChecklist || currentChecklist.length === 0) return;
-    try {
-        const next = currentChecklist.map((item) => {
-            if (item.id !== itemId) return item;
-            const nowDone = !item.done;
-            return {
-                ...item,
-                done: nowDone,
-                doneBy: nowDone ? (currentUser?.uid || null) : null,
-                doneByName: nowDone ? (currentUser?.displayName || currentUser?.email || null) : null,
-                doneAt: nowDone ? new Date().toISOString() : null
-            };
-        });
-        await updateDoc(doc(db, collectionName, taskId), {
-            checklist: next,
+    const ref = doc(db, collectionName, taskId);
+    if (knownOffline()) {
+        // Offline the concurrency race cannot be arbitrated anyway; keep the tap instant and let
+        // the queued write land on reconnect (last-write-wins — the pre-existing behaviour).
+        await updateDoc(ref, {
+            checklist: applyChecklistToggle(currentChecklist, itemId, currentUser),
             updatedAt: new Date().toISOString()
         });
+        return;
+    }
+    try {
+        // Re-read the LIVE array inside a transaction and flip only this one item. Worker (task
+        // card / detail sheet) and manager (TaskDetailModal) both tick items on the same task, each
+        // from their own snapshot — and every mutation here rewrites the WHOLE array. Computing it
+        // from a stale snapshot erased the other side's tick along with its doneBy/doneAt
+        // attribution, silently, so completed sub-tasks un-ticked themselves and the finish-time
+        // checklist warning fired on work that was actually done. Same discipline reconcileChecklist
+        // already applies to the manager's modal save.
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists()) return;
+            tx.update(ref, {
+                checklist: applyChecklistToggle(snap.data().checklist, itemId, currentUser),
+                updatedAt: new Date().toISOString()
+            });
+        });
     } catch (err) {
-        console.error('Error toggling checklist item:', err);
-        throw err;
+        // A transaction needs a server round-trip, so it CANNOT run offline — and these ticks are
+        // made by field workers with no signal. Fall back to the queued single-doc write from the
+        // caller's snapshot: last-write-wins, i.e. exactly the previous behaviour, never worse.
+        console.error('Error toggling checklist item (falling back to a queued write):', err);
+        await updateDoc(ref, {
+            checklist: applyChecklistToggle(currentChecklist, itemId, currentUser),
+            updatedAt: new Date().toISOString()
+        });
     }
 };
 
@@ -99,15 +154,33 @@ export const toggleChecklistItem = async (taskId, itemId, currentUser, currentCh
  */
 export const deleteChecklistItem = async (taskId, itemId, currentChecklist = [], collectionName = 'tasks') => {
     if (!currentChecklist) return;
-    try {
-        const next = currentChecklist.filter((item) => item.id !== itemId);
-        await updateDoc(doc(db, collectionName, taskId), {
-            checklist: next,
+    const ref = doc(db, collectionName, taskId);
+    if (knownOffline()) {
+        // See toggleChecklistItem — no transaction while known-offline, so the tap stays instant.
+        await updateDoc(ref, {
+            checklist: applyChecklistDelete(currentChecklist, itemId),
             updatedAt: new Date().toISOString()
         });
+        return;
+    }
+    try {
+        // Transactional for the same reason as the toggle above: filtering a STALE array writes
+        // every OTHER item back as the caller last saw it, undoing a concurrent tick or addition.
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists()) return;
+            tx.update(ref, {
+                checklist: applyChecklistDelete(snap.data().checklist, itemId),
+                updatedAt: new Date().toISOString()
+            });
+        });
     } catch (err) {
-        console.error('Error deleting checklist item:', err);
-        throw err;
+        // Offline fallback — see toggleChecklistItem.
+        console.error('Error deleting checklist item (falling back to a queued write):', err);
+        await updateDoc(ref, {
+            checklist: applyChecklistDelete(currentChecklist, itemId),
+            updatedAt: new Date().toISOString()
+        });
     }
 };
 

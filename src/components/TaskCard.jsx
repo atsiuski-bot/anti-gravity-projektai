@@ -13,6 +13,7 @@ import { getChecklistProgress } from '../utils/checklistActions';
 import { isManagerRole } from '../utils/formatters';
 import { canEditTask } from '../utils/taskPermissions';
 import { canApproveTask, canConfirmTask, canRevertTask } from '../utils/taskActionVisibility';
+import { canSeeWholeTeam } from '../utils/teamScope';
 import TaskActionRow from './task/TaskActionRow';
 import ConfirmDialog from './ui/ConfirmDialog';
 import PriorityBadge from './task/PriorityBadge';
@@ -281,7 +282,19 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
     // Manager sign-off actions, mirroring TaskDetailModal so the card and the preview agree:
     // a finished task ("Laukia priėmimo") can be accepted OR sent back, an unapproved task can be
     // approved, and any finished/deleted task can be reverted.
-    const canConfirm = canConfirmTask({ task, role, userRole });
+    //
+    // "Priimti" additionally asks whether the caller may flip the approval fields on THIS task, not
+    // just whether they hold a manager role. The rules allow that for a whole-team viewer (admin /
+    // unscoped manager), the task's named vadovas / auditor, or an overseer inside whose closure the
+    // row sits (teamManagerIds) — and block the assignee branch outright (changesApprovalFields). A
+    // scoped or SENIOR manager's OWN task, assigned to them by someone else, matches none of them, so
+    // offering the button there produced a permission-denied and a generic "bandykite dar kartą"
+    // toast, leaving the task stuck in "Laukia priėmimo" forever. Show it only when it can land.
+    const canSignOffTask = canSeeWholeTeam(userData)
+        || task.managerId === currentUser?.uid
+        || task.taskAuditor === currentUser?.uid
+        || (Array.isArray(task.teamManagerIds) && task.teamManagerIds.includes(currentUser?.uid));
+    const canConfirm = canConfirmTask({ task, role, userRole }) && canSignOffTask;
     const canApprove = canApproveTask({ task, role, userRole });
     const canRevert = canRevertTask({ task, role, userRole });
 
@@ -323,7 +336,9 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
         onDelete: () => handleDeleteTask(),
         onRevert: () => { setRevertError(''); setConfirmRevert(true); },
         onApprove: () => performApprove(),
-        onConfirm: isManager ? () => performConfirm() : undefined,
+        // Same gate as the footer's "Priimti" — otherwise the identical dead button just moves into
+        // the preview sheet and fails there instead.
+        onConfirm: isManager && canSignOffTask ? () => performConfirm() : undefined,
     };
 
     const openDetail = () => setShowDetail(true);

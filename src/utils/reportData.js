@@ -63,8 +63,20 @@ export async function gatherReportData({
     );
     const arcQ = query(collection(db, 'archived_tasks'), where('archivedAt', '>=', prev.startStr), ...taskScope);
     const actQ = taskScope.length ? query(collection(db, 'tasks'), ...taskScope) : query(collection(db, 'tasks'));
-    // work_hours is world-readable and has no 'date' field; read it and bucket client-side by userId.
-    const whQ = query(collection(db, 'work_hours'));
+    // work_hours is world-readable and has no 'date' field, but `start` is an ISO timestamp string,
+    // so a lexicographic range on it bounds the read to the fetch window on the automatic
+    // single-field index (same shape ActiveWorkSessions already uses). Unbounded, this pulled EVERY
+    // planned shift ever written, company-wide, on every period change — a download that grows
+    // linearly with the product's calendar age and is ~99% discarded for a one-week window.
+    // The lower bound is padded by a day because `start` is UTC while the plan is bucketed by its
+    // VILNIUS day: a shift on day D can start at D-1T21:00Z, and an exact bound would drop it.
+    const whFrom = `${addDaysToDateString(fetchStart, -1)}T00:00:00`;
+    const whTo = `${endStr}T23:59:59`;
+    const whQ = query(
+        collection(db, 'work_hours'),
+        where('start', '>=', whFrom),
+        where('start', '<=', whTo)
+    );
 
     const [wsS, bsS, arcS, actS, whS] = await Promise.all([
         getDocs(wsQ),
@@ -88,7 +100,7 @@ export async function gatherReportData({
     const buckets = {};
     const ensure = (id) => {
         if (!buckets[id]) {
-            buckets[id] = { workSessions: [], breakSessions: [], plannedShifts: [], tasks: [], calendarRequests: [] };
+            buckets[id] = { workSessions: [], breakSessions: [], plannedShifts: [], tasks: [], calendarRequests: [], taskPayRateIds: {} };
         }
         return buckets[id];
     };
@@ -116,11 +128,18 @@ export async function gatherReportData({
     // with the SAME id. Without this the aggregator counted it twice, inflating completed/approval/
     // estimate metrics (Reports.fetchTasks and DailyStatistics both dedup by id; this path did not).
     // The archived copy is the intended final record, so it wins and the active duplicate is skipped.
+    //
+    // The tariff lookup (taskPayRateIds) is recorded for EVERY fetched task, not just the finished
+    // ones that land in `tasks`: a period's work_sessions mostly belong to tasks still in progress,
+    // and earnings must bill each of them by the tariff the manager actually chose (task.payRateId).
+    // Without it a multi-tariff meistras' whole period was priced at their default (usually cheapest)
+    // rate, so the payroll export and the worker's own earnings popup disagreed about the same work.
     const seenTaskIds = new Set();
     arcS.docs.forEach((d) => {
         const x = { id: d.id, ...d.data() };
         const owner = resolveUserId(x);
         if (wanted.has(owner)) {
+            if (x.payRateId) ensure(owner).taskPayRateIds[x.id] = x.payRateId;
             ensure(owner).tasks.push(x);
             seenTaskIds.add(d.id);
         }
@@ -130,7 +149,9 @@ export async function gatherReportData({
         const x = { id: d.id, ...d.data() };
         const done = x.completed || x.status === 'completed' || x.status === 'confirmed';
         const owner = resolveUserId(x);
-        if (done && wanted.has(owner)) ensure(owner).tasks.push(x);
+        if (!wanted.has(owner)) return;
+        if (x.payRateId) ensure(owner).taskPayRateIds[x.id] = x.payRateId;
+        if (done) ensure(owner).tasks.push(x);
     });
     crDocs.forEach((x) => {
         if (x.userId && wanted.has(x.userId)) ensure(x.userId).calendarRequests.push(x);
@@ -160,6 +181,7 @@ export async function gatherReportData({
             plannedShifts: [],
             tasks: [],
             calendarRequests: [],
+            taskPayRateIds: {},
         };
         return {
             userId: id,

@@ -257,7 +257,22 @@ export default function DatePicker({
                     aria-modal="false"
                     aria-label="Pasirinkite datą"
                     className={cn(
-                        'absolute left-0 top-full z-toast mt-1 w-[22rem] max-w-[calc(100vw-1rem)]',
+                        // WIDTH FLOOR IS LOAD-BEARING, not decoration. The day grid is grid-cols-7
+                        // with gap-0.5 inside p-3, and each day is `h-11 w-full` — so only the WIDTH
+                        // is elastic and 7×44px + 6×2px + 24px = 344px is the narrowest the popover
+                        // can be while a day is still a 44px touch target (DESIGN_SYSTEM §7).
+                        // `max-w-full` must NOT be used here: on an absolutely-positioned element
+                        // it resolves against the containing block — the `relative` field wrapper —
+                        // and most call sites put this field in a grid cell (~224px in the sm:grid-cols-2
+                        // backdate/session dialogs, less in WorkPlanner's 3/4-column ones), which
+                        // collapses the cells to ~27px. Mis-tapping a day here writes work time onto
+                        // the wrong date, so the floor wins over the container fit.
+                        // KNOWN GAP (follow-up): because the popover is left-anchored to the field,
+                        // a field in the right half of a narrow card can still overhang. The real
+                        // fix is to route the calendar through the canonical centred Modal sheet
+                        // when it does not fit, mirroring Select's `alwaysSheet` path — not a width
+                        // clamp, which cannot express "anchor elsewhere".
+                        'absolute left-0 top-full z-toast mt-1 w-[22rem] min-w-[21.5rem] max-w-[calc(100vw-1rem)]',
                         'rounded-card border border-line bg-surface-card p-3 shadow-lg',
                         'animate-in fade-in slide-in-from-top-2 duration-150'
                     )}

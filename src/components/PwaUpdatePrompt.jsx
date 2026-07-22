@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { RefreshCw, CheckCircle2, X } from 'lucide-react';
 import Button from './ui/Button';
@@ -25,6 +25,9 @@ const OFFLINE_READY_MS = 6000;
  */
 export default function PwaUpdatePrompt() {
     const [reloading, setReloading] = useState(false);
+    // Held so the hourly poll can be stopped when this component goes away — an interval closed
+    // over a stale registration would otherwise keep firing for the life of the document.
+    const updateCheckRef = useRef(null);
 
     const {
         needRefresh: [needRefresh, setNeedRefresh],
@@ -33,12 +36,24 @@ export default function PwaUpdatePrompt() {
     } = useRegisterSW({
         onRegisteredSW(_swUrl, registration) {
             if (!registration) return;
-            setInterval(() => {
+            if (updateCheckRef.current) clearInterval(updateCheckRef.current);
+            updateCheckRef.current = setInterval(() => {
                 if (registration.installing || !navigator.onLine) return;
-                registration.update();
+                // Best-effort, exactly like appUpdate.js: update() REJECTS when the worker-script
+                // fetch fails, which is routine on the half-open / captive-portal links these
+                // phones sit on all day (navigator.onLine is still true there). Unhandled, that
+                // rejection reaches the global 'unhandledrejection' hook in main.jsx and writes a
+                // bogus error_logs row every hour — burying the real timer failures an admin reads
+                // that log to find. A missed check just means the update prompt appears later.
+                registration.update().catch(() => { /* offline / flaky link — retry next tick */ });
             }, UPDATE_CHECK_MS);
         },
     });
+
+    // Stop the hourly poll on unmount.
+    useEffect(() => () => {
+        if (updateCheckRef.current) clearInterval(updateCheckRef.current);
+    }, []);
 
     // Auto-dismiss the offline-ready confirmation — it's reassurance, not a task.
     useEffect(() => {

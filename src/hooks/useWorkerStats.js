@@ -10,6 +10,20 @@ import { logError } from '../utils/errorLog';
 /** Drop soft-deleted (voided) session docs — mirrors Reports.jsx / reportData.js. */
 export const excludeDeleted = (docs) => docs.filter((x) => !x.isDeleted);
 
+/**
+ * Merge the two task sources into one list, the ARCHIVED copy winning on a shared doc id.
+ *
+ * The nightly archiver copies a finished task into `archived_tasks` under the SAME id and only
+ * then deletes the `tasks` doc, so between those two writes — or permanently, after a partial
+ * archive — the same task comes back from BOTH queries. Concatenating them counted it twice:
+ * throughput, durations, estimate samples and approval all doubled for exactly the newest tasks,
+ * which is what a manager looks at. Mirrors the dedup reportData.js already does.
+ */
+export const mergeTaskSources = (archivedTasks, activeTasks) => {
+    const archivedIds = new Set(archivedTasks.map((t) => t.id));
+    return [...archivedTasks, ...activeTasks.filter((t) => !archivedIds.has(t.id))];
+};
+
 /** Inclusive day count of a YYYY-MM-DD window (UTC calendar arithmetic, DST-independent). */
 const dayCount = (startStr, endStr) =>
     Math.round((Date.parse(`${endStr}T00:00:00Z`) - Date.parse(`${startStr}T00:00:00Z`)) / 86400000) + 1;
@@ -48,6 +62,14 @@ export function useWorkerStats({ userId, viewerData, viewerUid, viewerRole, expe
     const [state, setState] = useState({ loading: true, error: false, current: null, previous: null });
     const startStr = period?.startStr;
     const endStr = period?.endStr;
+    // The only two fields of `viewerData` this fetch actually depends on (privateScopeConstraints
+    // reads nothing else). `viewerData` is AuthContext's user doc, so its OBJECT identity changes on
+    // every snapshot of that doc — and a running session rewrites its own heartbeat once a minute.
+    // Depending on the object therefore re-issued all five getDocs and dropped the panel back to its
+    // spinner about once a minute; depending on the scope primitives re-fetches only when the
+    // viewer's scope really changes.
+    const viewerScopeRole = viewerData?.role;
+    const viewerScoped = viewerData?.scopedManager === true;
 
     useEffect(() => {
         if (!enabled || !userId || !startStr || !endStr) return undefined;
@@ -97,7 +119,7 @@ export function useWorkerStats({ userId, viewerData, viewerUid, viewerRole, expe
                 const activeCompleted = pick(actS.docs, (x) => x.assignedUserId).filter(
                     (t) => t.completed || t.status === 'completed' || t.status === 'confirmed'
                 );
-                const tasks = [...archivedTasks, ...activeCompleted];
+                const tasks = mergeTaskSources(archivedTasks, activeCompleted);
                 const plannedShifts = whS.docs.map((d) => d.data());
 
                 const raw = { workSessions, breakSessions, tasks, plannedShifts, calendarRequests };
@@ -116,7 +138,10 @@ export function useWorkerStats({ userId, viewerData, viewerUid, viewerRole, expe
         return () => {
             cancelled = true;
         };
-    }, [userId, viewerUid, viewerRole, expectedWeeklyHours, startStr, endStr, enabled, viewerData]);
+        // viewerData is read through its scope primitives (viewerScopeRole/viewerScoped); depending
+        // on the object itself re-fetched on every user-doc snapshot.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [userId, viewerUid, viewerRole, expectedWeeklyHours, startStr, endStr, enabled, viewerScopeRole, viewerScoped]);
 
     return state;
 }

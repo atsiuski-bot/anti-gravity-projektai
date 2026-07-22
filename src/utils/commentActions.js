@@ -1,4 +1,4 @@
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../firebase';
 import { notifyMany } from './notify';
 
@@ -18,23 +18,19 @@ export const getCommentKey = (comment) => comment?.id ?? comment?.createdAt;
  * @param {string} taskId 
  * @param {string} text 
  * @param {Object} currentUser 
- * @param {Array} currentComments - Optional, if known, to avoid fetching
+ * @param {Array} _currentComments - the caller's snapshot of the thread. Deliberately UNUSED: the
+ *   write appends server-side (see arrayUnion below). Kept in the signature so the existing
+ *   positional call sites stay valid.
  * @returns {Promise<void>}
  */
-export const addComment = async (taskId, text, currentUser, currentComments = null, collectionName = 'tasks') => {
+export const addComment = async (taskId, text, currentUser, _currentComments = null, collectionName = 'tasks') => {
     try {
-        let comments = currentComments;
+        // Read the task only for the notification below (title + the two parties). The comment
+        // WRITE deliberately does not depend on this read — see arrayUnion.
         let taskData = null;
-
-        // If comments not provided, fetch current task data
         const taskDoc = await getDoc(doc(db, collectionName, taskId));
         if (taskDoc.exists()) {
             taskData = taskDoc.data();
-            if (!comments) {
-                comments = taskData.comments || [];
-            }
-        } else {
-            if (!comments) comments = [];
         }
 
         const newComment = {
@@ -49,7 +45,12 @@ export const addComment = async (taskId, text, currentUser, currentComments = nu
 
         const taskRef = doc(db, collectionName, taskId);
         await updateDoc(taskRef, {
-            comments: [...comments, newComment],
+            // APPEND server-side — never rewrite the array. Every caller hands us a `comments`
+            // snapshot frozen when its view rendered (a modal opened minutes ago, a list row), so
+            // writing that array back DELETES whatever the other party posted meanwhile — a
+            // message the recipient was already notified about, gone with no error on either side.
+            // arrayUnion cannot clobber, keeps append order, and still queues correctly offline.
+            comments: arrayUnion(newComment),
             updatedAt: new Date().toISOString()
         });
 

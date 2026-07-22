@@ -796,7 +796,25 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
     // workers is provided by context
 
     const handleFileSelect = (e) => {
-        const files = Array.from(e.target.files);
+        // `accept="image/*"` is only a HINT to the picker — Android's document browser happily returns
+        // a PDF through it. A non-image passes through compressImage untouched (it bails on anything
+        // that isn't an image), is uploaded with its own contentType, and is then REJECTED by the
+        // Storage rules (which require image/*) — surfacing as the opaque "couldn't save the task",
+        // with no clue that a file caused it. Filter here, exactly like every sibling picker does.
+        const picked = Array.from(e.target.files || []);
+        const files = picked.filter((f) => f.type.startsWith('image/'));
+        const skipped = picked.length - files.length;
+        // Reset so re-selecting the SAME photo (after removing it from the strip) still fires onChange
+        // — the input otherwise keeps that file in its FileList and the browser emits no change event,
+        // making the tap look dead. Done before every early return so it also resets on a rejection.
+        e.target.value = '';
+
+        if (files.length === 0) {
+            // Nothing usable: either the picker was cancelled (stay silent) or every file was rejected.
+            if (skipped > 0) setFormError('Pridėti galima tik nuotraukas.');
+            return;
+        }
+
         const currentCount = (formData.attachmentUrls?.length || 0) + selectedFiles.length + files.length;
 
         if (currentCount > 8) {
@@ -804,7 +822,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
             return;
         }
 
-        setFormError('');
+        setFormError(skipped > 0 ? `Pridėti galima tik nuotraukas (praleista: ${skipped}).` : '');
         setSelectedFiles(prev => [...prev, ...files]);
     };
 
@@ -849,11 +867,15 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                             reject(new Error(`Nepavyko įkelti ${file.name}: ${error.message}`));
                     }
                 },
+                // The URL fetch needs its OWN rejection path: without the .catch this promise could
+                // end up neither resolved nor rejected (bytes uploaded, but the token/metadata read
+                // failed on a flaky mobile link), and handleSubmit's `await Promise.all(...)` would
+                // then hang FOREVER — its catch/finally never run, so the save button stays stuck on
+                // "Saugoma…" with no error and nothing saved. Mirrors utils/attachmentUpload.js.
                 () => {
-                    getDownloadURL(uploadTask.snapshot.ref).then((downloadURL) => {
-
-                        resolve(downloadURL);
-                    });
+                    getDownloadURL(uploadTask.snapshot.ref)
+                        .then(resolve)
+                        .catch(() => reject(new Error(`Nepavyko gauti nuorodos į ${file.name}`)));
                 }
             );
         });
@@ -958,6 +980,10 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         try {
             const selectedManager = workers.find(w => w.id === formData.managerId);
             let currentAttachmentUrls = [...(formData.attachmentUrls || [])];
+            // Tracked separately from the list above so the edit-path merge can append ONLY what
+            // this save actually uploaded — appending the whole list would re-add a photo someone
+            // else deleted while this modal sat open. See the merge below.
+            let uploadedUrls = [];
 
             // 1. Upload all new selected files
             if (selectedFiles.length > 0) {
@@ -981,6 +1007,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 );
                 const newUrls = await Promise.all(uploadPromises);
 
+                uploadedUrls = newUrls;
                 currentAttachmentUrls = [...currentAttachmentUrls, ...newUrls];
             }
 
@@ -1055,6 +1082,52 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     // The chosen tariff belongs to the assignment decision — let assignTask own its
                     // write so the audit before/after and the field land together.
                     delete contentData.payRateId;
+                }
+
+                // The same clobber the checklist merge above defends against, for the three fields the
+                // form merely CARRIES but never edits. They are seeded from the task when the modal
+                // opens and would be written back verbatim minutes later, undoing whatever happened in
+                // between: `status`/`completed` would UN-FINISH a task the worker just finished (it is
+                // already in the manager's priėmimas queue), and `comments` would delete every comment
+                // posted since the form opened. All three belong to the lifecycle and comment paths,
+                // which own their own writes — a content edit must never touch them.
+                delete contentData.status;
+                delete contentData.completed;
+                delete contentData.comments;
+
+                // Attachments the form DOES own (it can remove them), but its list is still the
+                // modal-open snapshot — so writing it verbatim would drop a photo the worker attached
+                // from the task sheet meanwhile. Merge against a fresh read the way reconcileChecklist
+                // does for the checklist: keep everything that is live now EXCEPT the URLs this editor
+                // explicitly removed, then append the ones just uploaded. A failed read is ambiguous,
+                // so it fails CLOSED — abort before writing rather than risk deleting someone's photo.
+                const openedUrls = (task.attachmentUrls && task.attachmentUrls.length > 0)
+                    ? task.attachmentUrls
+                    : (task.attachmentUrl ? [task.attachmentUrl] : []);
+                const removedUrls = new Set(openedUrls.filter((url) => !(formData.attachmentUrls || []).includes(url)));
+                try {
+                    const liveSnap = await getDoc(docRef);
+                    if (liveSnap.exists()) {
+                        const live = liveSnap.data();
+                        const liveUrls = (Array.isArray(live.attachmentUrls) && live.attachmentUrls.length > 0)
+                            ? live.attachmentUrls
+                            : (live.attachmentUrl ? [live.attachmentUrl] : []);
+                        const mergedUrls = liveUrls.filter((url) => !removedUrls.has(url));
+                        // Append ONLY what this save uploaded. Appending `currentAttachmentUrls`
+                        // would also re-add every url from the modal-open snapshot — resurrecting a
+                        // photo another person deleted from the task sheet while this modal was
+                        // open, which is the same lost-update this merge exists to prevent, just in
+                        // the other direction.
+                        for (const url of uploadedUrls) {
+                            if (!mergedUrls.includes(url)) mergedUrls.push(url);
+                        }
+                        contentData.attachmentUrls = mergedUrls;
+                        contentData.attachmentUrl = mergedUrls[0] || '';
+                    }
+                } catch (mergeErr) {
+                    logError(mergeErr, { source: 'TaskModal.handleSubmit.mergeAttachments' });
+                    setFormError('Nepavyko patikrinti naujausios užduoties versijos. Bandykite išsaugoti dar kartą.');
+                    return;
                 }
 
                 await updateDoc(docRef, contentData);

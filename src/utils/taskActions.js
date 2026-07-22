@@ -77,6 +77,10 @@ const startTaskImpl = async (task, userId) => {
         // 1. Pause others (must complete before starting new task)
         await pauseOtherTasks(userId, task.id);
 
+        // 1b. Bank any stretch THIS task is still running on the server before re-anchoring it —
+        // pauseOtherTasks skips the current task, so nothing else covers this document.
+        if (!(await closeRunningStretchOnTarget(task, userId, 'startTask'))) return;
+
         const now = new Date().toISOString();
 
         // 2. Update Task + User Status + activeSession in PARALLEL
@@ -150,11 +154,36 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
     pauseInFlight.add(task.id);
 
     try {
+        // Re-confirm THIS task before crediting anything — the same staleness guard pauseOtherTasks
+        // performs on every OTHER task. The caller's snapshot can be a silently stale cache copy: a
+        // backgrounded second device (the time-limit monitor's activeTaskRef, a manager's table row)
+        // keeps replaying `timerStatus:'running'` long after the phone already paused the task. Acting
+        // on it credited [old timerStartedAt → now] onto a stale timerMinutes base, and — via the
+        // deterministic taskSessionDocId — overwrote the real session row with a later endTime.
+        // `getDoc` (not getDocFromServer) on purpose: its default source reads the server when online
+        // and falls back to the cache when not, so a worker pausing offline in the field still works.
+        // A read that fails, or a doc the read cannot see, proves NOTHING about the stretch, so we
+        // keep the caller's snapshot there rather than strand a running timer; the guard exists to act
+        // on positive server proof that the stretch already ended or was re-anchored elsewhere.
+        let live = task;
+        try {
+            const snap = await getDoc(doc(db, 'tasks', task.id));
+            const server = snap?.exists?.() ? { id: task.id, ...snap.data() } : null;
+            if (server) {
+                if (server.timerStatus !== 'running' || server.timerStartedAt !== task.timerStartedAt) {
+                    return null; // already closed (or re-anchored) elsewhere — nothing of ours to credit
+                }
+                live = server;
+            }
+        } catch (guardErr) {
+            logError(guardErr, { source: 'pauseTask:guardRead', taskId: task.id });
+        }
+
         // The instant the credited stretch ENDS. Defaults to now (a normal pause), but the
         // heartbeat recovery passes the last-heartbeat instant so an abandoned timer is credited
         // only up to its last proof of life — not up to the (possibly much later) reopen.
         const endMoment = endTime != null ? new Date(endTime) : getLithuanianNow();
-        const start = new Date(task.timerStartedAt);
+        const start = new Date(live.timerStartedAt);
         // Raw (unclamped) wall-clock delta, kept ONLY so the caller can tell whether the clamp
         // below actually had to cut the credited time down — that is what the crash-recovery
         // notice reports as "the 16h cap fired". It is never used as a credited or logged value.
@@ -177,16 +206,17 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
             ? elapsedMinutes > 0
             : elapsedMinutes > MIN_LOGGED_SESSION_MINUTES;
 
-        // 1. Get current Timer Minutes
-        const currentTimerMinutes = task.timerMinutes || 0;
+        // 1. Get current Timer Minutes (from the CONFIRMED copy — a stale base would under- or
+        // over-credit the running total the moment another device already banked a stretch).
+        const currentTimerMinutes = live.timerMinutes || 0;
         const newTimerMinutes = shouldCredit
             ? currentTimerMinutes + elapsedMinutes
             : currentTimerMinutes;
 
         // 2. Get current Manual Minutes (backwards compat)
-        const totalCurrentMinutes = parseTimeStringToMinutes(task.actualTime || '0m');
-        const currentManualMinutes = task.manualMinutes !== undefined
-            ? task.manualMinutes
+        const totalCurrentMinutes = parseTimeStringToMinutes(live.actualTime || '0m');
+        const currentManualMinutes = live.manualMinutes !== undefined
+            ? live.manualMinutes
             : Math.max(0, totalCurrentMinutes - currentTimerMinutes);
 
         // Run task update, user status update, and work session log in PARALLEL
@@ -202,12 +232,30 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
 
         // Update User Status to Paused — SKIP when called from pauseOtherTasks
         // because startTask/resumeTask will immediately overwrite this to 'running'.
-        if (!skipUserStatusUpdate) {
-            parallelOps.push(updateUserWorkStatus(task.assignedUserId, false, 'paused', task.id));
-            // Also clear activeSession so ActiveWorkSessions stops showing user as busy
-            if (task.assignedUserId) {
+        if (!skipUserStatusUpdate && live.assignedUserId) {
+            // ...but only while the owner's live session STILL points at THIS task — the same guard
+            // performFinish already carries. A pause issued from a second device (or the time-limit
+            // monitor on a backgrounded one) can land after the worker has already started ANOTHER
+            // task on their phone; blindly writing activeSession:null then WIPED that live session
+            // while the other task's timer kept accruing, blanking both the screen-colour session
+            // indicator and the manager's "Aktyvi veikla" panel until orphan recovery cleaned up.
+            let ownsLiveSession = true;
+            try {
+                const userSnap = await getDoc(doc(db, 'users', live.assignedUserId));
+                const activeTaskId = userSnap?.exists?.()
+                    ? (userSnap.data()?.activeSession?.taskId || userSnap.data()?.workStatus?.activeTaskId)
+                    : null;
+                ownsLiveSession = !activeTaskId || activeTaskId === task.id;
+            } catch (readErr) {
+                // Unreadable user doc → keep the old behaviour (clear it), exactly as performFinish
+                // falls back: a stuck "still working" banner is worse than a redundant clear.
+                logError(readErr, { source: 'pauseTask:userSessionRead', taskId: task.id });
+            }
+            if (ownsLiveSession) {
+                parallelOps.push(updateUserWorkStatus(live.assignedUserId, false, 'paused', task.id));
+                // Also clear activeSession so ActiveWorkSessions stops showing user as busy
                 parallelOps.push(
-                    updateDoc(doc(db, 'users', task.assignedUserId), { activeSession: null })
+                    updateDoc(doc(db, 'users', live.assignedUserId), { activeSession: null })
                 );
             }
         }
@@ -227,9 +275,9 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
             parallelOps.push(
                 setDoc(doc(db, 'work_sessions', taskSessionDocId(task.id, start.getTime())), {
                     taskId: task.id,
-                    taskTitle: task.title || 'Nežinoma užduotis',
-                    userId: task.assignedUserId,
-                    userName: task.assignedUserName || null,
+                    taskTitle: live.title || 'Nežinoma užduotis',
+                    userId: live.assignedUserId,
+                    userName: live.assignedUserName || null,
                     startTime: start.toISOString(),
                     endTime: endMoment.toISOString(),
                     durationMinutes: elapsedMinutes,
@@ -260,6 +308,63 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
     } finally {
         pauseInFlight.delete(task.id);
     }
+};
+
+/**
+ * Close an already-running stretch on the task we are about to (RE-)ANCHOR.
+ *
+ * `pauseOtherTasks` deliberately skips the task being started — so the ONE document whose
+ * timerStartedAt this write is about to overwrite was the only one nobody confirmed. When the
+ * caller's snapshot is a stale cache copy (a backgrounded tablet still showing 'paused' for a task
+ * the phone has been running since 08:00), tapping Pradėti/Tęsti re-anchored timerStartedAt to now
+ * and the whole 08:00→now stretch vanished: no work_sessions row, no timerMinutes credit, no error.
+ * So: read the task server-first, and if the server says it is STILL running, bank that stretch
+ * through pauseTask first (deterministic taskSessionDocId, so a concurrent closer converges on the
+ * same row) and only then let the caller re-anchor.
+ *
+ * Fails CLOSED — an unconfirmed or unbanked stretch aborts the start. A start that did not happen is
+ * a repeatable tap; worked time discarded by a re-anchor is unrecoverable.
+ *
+ * @returns {Promise<boolean>} true when it is safe to proceed with the re-anchor.
+ */
+const closeRunningStretchOnTarget = async (task, userId, source) => {
+    let confirmed;
+    try {
+        const snap = await getDocFromServer(doc(db, 'tasks', task.id))
+            .catch(() => getDoc(doc(db, 'tasks', task.id)));
+        confirmed = snap?.exists?.() ? { id: task.id, ...snap.data() } : null;
+    } catch (guardErr) {
+        logError(guardErr, { source: `${source}:targetGuardRead`, userId, taskId: task.id });
+        return false;
+    }
+    // Nothing running on the server (the normal case) → nothing to bank, proceed.
+    if (!confirmed || confirmed.timerStatus !== 'running' || !confirmed.timerStartedAt) return true;
+    try {
+        // Credit only up to the last PROOF OF LIFE, never to `now`.
+        //
+        // The precondition this helper fires on — server says 'running', this client believed
+        // 'paused' — is the very same state an abandoned or crashed timer leaves behind. A bare
+        // pause credits [timerStartedAt → now] clamped to MAX_SESSION_MINUTES (16h), so on the
+        // orphan reading it would silently INVENT the whole dead offline gap as paid work; see the
+        // identical hazard spelled out on isPreBootOrphanTask (hooks/useTaskTimeMonitor.js), which
+        // exists so the 100% monitor yields rather than does exactly this. Discarding worked time
+        // and inventing it are both wrong numbers, and the invented one reaches reports and pay.
+        //
+        // The heartbeat is already on the doc we just read server-first, so bounding the credit to
+        // it costs nothing and needs no cross-layer import (utils never imports from hooks, and
+        // useOrphanedTaskRecovery imports pauseTask from here — that direction would be a cycle).
+        // Anything past the last beat stays untracked and is left to the recovery flow's opt-in
+        // "Buvau darbe" claim rather than being auto-credited here.
+        const startedMs = new Date(confirmed.timerStartedAt).getTime();
+        const beatMs = confirmed.timerLastHeartbeat ? new Date(confirmed.timerLastHeartbeat).getTime() : NaN;
+        const creditTo = Number.isFinite(beatMs) && beatMs > startedMs ? new Date(beatMs).toISOString() : null;
+        // skipUserStatusUpdate: the caller overwrites the user doc to 'running' immediately after.
+        await pauseTask(confirmed, { skipUserStatusUpdate: true, endTime: creditTo });
+    } catch (pauseErr) {
+        logError(pauseErr, { source: `${source}:closeRunningStretch`, userId, taskId: task.id });
+        return false;
+    }
+    return true;
 };
 
 /**
@@ -303,6 +408,10 @@ const resumeTaskImpl = async (task, userId) => {
 
         // 1. Pause others (must complete before resuming)
         await pauseOtherTasks(userId, task.id);
+
+        // 1b. Same as startTask: a resume tapped from a stale 'paused' snapshot would otherwise
+        // re-anchor over a stretch that is still running on the server and discard it silently.
+        if (!(await closeRunningStretchOnTarget(task, userId, 'resumeTask'))) return;
 
         const now = new Date().toISOString();
 
@@ -598,8 +707,12 @@ export const updateTaskTemplate = async (templateId, templateName, selectedData,
 /**
  * Sets (or clears) a template's recurrence descriptor — the WHEN that turns a plain template into a
  * recurring job the scheduled generator materializes. Pass the full recurrence object (see
- * utils/recurrence.js) or null to make the template non-recurring. Manager/admin-writable per the
- * task_templates rules (no new rule needed).
+ * utils/recurrence.js) or null to make the template non-recurring.
+ *
+ * WRITE SCOPE (this used to claim "manager/admin-writable — no new rule needed", which is FALSE and
+ * cost managers unexplained 'Nepavyko išsaugoti.' failures): the task_templates update rule admits
+ * only an ADMIN or the template's own `createdBy`. A plain manager editing someone else's template
+ * is denied by the rules, however manager-shaped the surface calling this looks.
  *
  * @param {string} templateId
  * @param {Object|null} recurrence
@@ -866,11 +979,34 @@ export const completeTaskAtLimit = async (task, { currentUser, userData, userRol
         email: currentUser?.email,
         role: userRole
     });
-    const result = await completeTask({ task }, {
-        actor,
-        mode: MODES.COMMIT,
-        reason: 'finished from time-limit popup'
-    });
+    let result;
+    try {
+        result = await completeTask({ task }, {
+            actor,
+            mode: MODES.COMMIT,
+            reason: 'finished from time-limit popup'
+        });
+    } catch (err) {
+        // A manager-shaped role auto-confirms (resolveCompletionStatus), but the deployed rules only
+        // let a manager flip the approval fields on a task they actually OVERSEE — a whole-team
+        // viewer, the task's named vadovas/auditor, or a scoped overseer whose closure holds the row.
+        // A scoped or SENIOR manager finishing their OWN task, assigned to them by someone else,
+        // matches none of those (the assignee branch is blocked by changesApprovalFields), so the
+        // 'confirmed' write is denied. This door has no other exit: the caller stops the repeating
+        // alarm and closes the forced popup only AFTER this resolves, so the throw trapped the worker
+        // with a sounding alarm and a modal that would not close. On that exact denial re-issue the
+        // completion as a NON-manager one — the identical payload with status 'completed', a write the
+        // assignee is always permitted — so the task finishes and simply waits for its real overseer's
+        // priėmimas. The same fallback TaskTimerControls.performFinish already performs. Only the ROLE
+        // the status rule reads is downgraded; the decision_log still stamps the real actor.
+        if (err?.code !== 'permission-denied' || !isManagerRole(userRole)) throw err;
+        logError(err, { source: 'completeTaskAtLimit.autoConfirmDenied', taskId: task.id });
+        result = await completeTask({ task }, {
+            actor: { ...actor, role: null },
+            mode: MODES.COMMIT,
+            reason: 'finished from time-limit popup (auto-confirm denied — awaiting overseer acceptance)'
+        });
+    }
     // The command reports the resulting status: 'confirmed' = a manager/own-manager auto-confirmed
     // (no review needed), 'completed' = a worker's task now awaiting the manager's acceptance.
     const isManagerOrAdmin = result?.effect?.after?.status === 'confirmed';

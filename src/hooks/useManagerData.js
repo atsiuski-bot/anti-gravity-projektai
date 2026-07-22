@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot, query, orderBy, where } from 'firebase/firestore';
 import { useUsers } from '../context/UsersContext';
@@ -13,7 +13,9 @@ export const useManagerData = (currentUser) => {
     // teamManagerIds); admins and unscoped managers keep the broad team-wide read.
     const scoped = isScopedOverseer(userData);
     const uid = currentUser?.uid;
-    const [tasks, setTasks] = useState([]);
+    // Raw task docs, exactly as the listener delivered them. Name/colour enrichment happens in a
+    // memo below, NOT inside the snapshot callback — see the subscription's dependency note.
+    const [rawTasks, setRawTasks] = useState([]);
     const [ownTasks, setOwnTasks] = useState([]);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -31,26 +33,10 @@ export const useManagerData = (currentUser) => {
                 ? query(collection(db, 'tasks'), scope, orderBy('createdAt', 'desc'))
                 : query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
             unsubscribe = onSnapshot(q, (snapshot) => {
-                let tasksData = snapshot.docs.map(doc => ({
+                setRawTasks(snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
-                }));
-
-                // Enrich tasks with worker names and colors
-                tasksData = tasksData.map(task => ({
-                    ...task,
-                    assignedUserName: task.assignedUserId && usersMap[task.assignedUserId]
-                        ? (usersMap[task.assignedUserId].displayName || usersMap[task.assignedUserId].email)
-                        : null,
-                    assignedWorkerColor: task.assignedUserId && usersMap[task.assignedUserId]
-                        ? (usersMap[task.assignedUserId].color || null)
-                        : null,
-                    creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
-                        ? (usersMap[task.createdBy].displayName || usersMap[task.createdBy].email)
-                        : null)
-                }));
-
-                setTasks(tasksData);
+                })));
                 setError(null);
                 setLoading(false);
             }, (err) => {
@@ -65,7 +51,30 @@ export const useManagerData = (currentUser) => {
         }
 
         return () => unsubscribe();
-    }, [usersLoading, usersMap, scoped, uid]);
+        // usersMap is deliberately NOT a dependency. UsersContext rebuilds it as a brand-new object
+        // inside its whole-collection onSnapshot, so its identity changes on EVERY write to ANY user
+        // doc — and a running session heartbeats its user doc once a minute. Depending on it tore
+        // down and re-created this broad tasks listener several times a minute per connected device;
+        // Firestore bills the initial snapshot of each new listener, so a manager re-read the entire
+        // tasks collection because an unrelated worker's timer ticked, and `loading` flipped back to
+        // true each time (visible flicker). The names it supplies are applied in the memo below,
+        // which is free to re-run on every users change.
+    }, [usersLoading, scoped, uid]);
+
+    // Enrich tasks with worker names and colors. Pure derivation over the raw docs, so a users
+    // change re-labels the list without touching the subscription.
+    const tasks = useMemo(() => rawTasks.map(task => ({
+        ...task,
+        assignedUserName: task.assignedUserId && usersMap[task.assignedUserId]
+            ? (usersMap[task.assignedUserId].displayName || usersMap[task.assignedUserId].email)
+            : null,
+        assignedWorkerColor: task.assignedUserId && usersMap[task.assignedUserId]
+            ? (usersMap[task.assignedUserId].color || null)
+            : null,
+        creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
+            ? (usersMap[task.createdBy].displayName || usersMap[task.createdBy].email)
+            : null)
+    })), [rawTasks, usersMap]);
 
     // The manager's OWN tasks (the "Mano" section). A scoped manager's team listener above is
     // array-contains(me), which by design does NOT include the manager's own rows (those carry

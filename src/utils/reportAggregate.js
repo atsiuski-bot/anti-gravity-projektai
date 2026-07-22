@@ -19,7 +19,7 @@ import {
     STAT_GROUPS,
     ON_TIME_GRACE_MIN,
 } from './workerStats';
-import { marginalNetEarnings, netToGross, EFFECTIVE_TAX_RATE, hasPayRate } from './payRate';
+import { marginalNetEarnings, netToGross, EFFECTIVE_TAX_RATE, hasPayRate, getPayRateTiers } from './payRate';
 import {
     sanitizeReportMinutes,
     isImplausibleSessionMinutes,
@@ -75,17 +75,26 @@ function formatMetric(value, kind) {
 // for the start month the pre-period hours seed the tier walk, later months start at zero. A naive
 // period-sum would silently misprice the tier — so we never do that.
 //
+// TARIFF: a meistras may carry SEVERAL named pay rates and the manager picks one per task
+// (`task.payRateId`), which EarningsModal already honours. Pricing the whole period off
+// `payRate.tiers` (the DEFAULT tariff) billed every hour of a multi-tariff worker at their cheapest
+// rate — so the payroll CSV and the worker's own app showed different money for identical work.
+// Each in-window session is therefore priced with the tier table of ITS task, walked in date order
+// on the month's shared cumulative-hours counter (exactly how EarningsModal stacks one finished task
+// on top of the month so far). For a single-tariff worker this is arithmetically identical to the
+// old single walk — marginal pricing over contiguous slices is additive — so nothing moves for them.
+//
 // Clamp policy MUST match the report's displayed "Viso dirbta" total (computeWorkerStats clamps
 // every session to [0, 16h] with no allowLarge exemption). So we deliberately do NOT pass
 // allowLarge here: a legacy isManualAdjustment row over 16h, or a negative correction, is bounded
 // to [0, 16h] before it can seed or be priced — otherwise earnings would over-pay (un-clamped
 // magnitude) or under-price (a negative prior-month row lowering the cumulative tier seed), and
 // disagree with both the report's own hours total and the worker-facing EarningsModal.
-function computePeriodEarnings(workSessions, window, tiers) {
+function computePeriodEarnings(workSessions, window, payRate, taskPayRateIds = {}) {
     const { startStr, endStr } = window;
     const monthFloor = firstOfMonthStr(startStr);
     const prior = {}; // month -> worked minutes before the window, within the start month
-    const inPeriod = {}; // month -> worked minutes inside the window
+    const inPeriod = {}; // month -> [{ date, startTime, minutes, payRateId }] inside the window
 
     for (const s of workSessions) {
         const d = s.date;
@@ -94,15 +103,32 @@ function computePeriodEarnings(workSessions, window, tiers) {
         if (d >= monthFloor && d < startStr) {
             prior[monthKey(d)] = (prior[monthKey(d)] || 0) + min;
         } else if (d >= startStr && d <= endStr) {
-            inPeriod[monthKey(d)] = (inPeriod[monthKey(d)] || 0) + min;
+            const m = monthKey(d);
+            if (!inPeriod[m]) inPeriod[m] = [];
+            inPeriod[m].push({
+                date: d,
+                startTime: s.startTime || '',
+                minutes: min,
+                // Unknown taskId (quick-work/call/manual synthetic ids, or a task the viewer did not
+                // fetch) resolves to the worker's default tariff — the pre-existing behaviour.
+                payRateId: taskPayRateIds[s.taskId] || '',
+            });
         }
     }
 
     let net = 0;
     for (const m of Object.keys(inPeriod)) {
-        const priorHours = (prior[m] || 0) / 60;
-        const toHours = priorHours + inPeriod[m] / 60;
-        net += marginalNetEarnings(priorHours, toHours, tiers);
+        // Chronological so the cumulative position of each priced slice is deterministic and
+        // matches the order the work was actually done (and billed in EarningsModal).
+        const slices = inPeriod[m].sort((a, b) =>
+            a.date === b.date ? String(a.startTime).localeCompare(String(b.startTime)) : a.date < b.date ? -1 : 1
+        );
+        let cumHours = (prior[m] || 0) / 60;
+        for (const slice of slices) {
+            const toHours = cumHours + slice.minutes / 60;
+            net += marginalNetEarnings(cumHours, toHours, getPayRateTiers(payRate, slice.payRateId));
+            cumHours = toHours;
+        }
     }
     if (!(net > 0)) return null;
     return {
@@ -137,7 +163,7 @@ function computeDataTrust(workSessions, breakSessions, window) {
 // Per-day work/break minutes for one worker, bucketed by Vilnius 'date' within the window.
 // `allowLarge` honors manual-adjustment magnitudes (payroll/timesheet convention); leave it false
 // for the analysis daily-log so it matches the report's 16h-clamped metrics.
-function aggregateDaily(workSessions, breakSessions, window, { allowLarge = false } = {}) {
+function aggregateDaily(workSessions, breakSessions, tasks, window, { allowLarge = false } = {}) {
     const { startStr, endStr } = window;
     const inWin = (d) => d && d >= startStr && d <= endStr;
     const days = {};
@@ -152,6 +178,26 @@ function aggregateDaily(workSessions, breakSessions, window, { allowLarge = fals
     for (const s of breakSessions || []) {
         if (!inWin(s.date)) continue;
         bump(s.date, 'break', sanitizeReportMinutes(s.durationMinutes));
+    }
+    // A plain task's own `manualMinutes` is SEPARATE, additive worked time — the task total is
+    // manualMinutes + timerMinutes — and it has no work_sessions row behind it (typically a legacy
+    // task whose actualTime was typed in, back-filled by pauseTask). Every on-screen surface counts
+    // it (DailyStatistics, CombinedHoursSummary); summing sessions alone made the downloaded payroll
+    // timesheet report FEWER hours than the same manager sees on screen for the same period. The
+    // three guards mirror DailyStatistics exactly, and each one prevents a double count:
+    //   • quick-work / call tasks already log a dedicated work_session of the same length, so their
+    //     manualMinutes is that same time seen from the task side;
+    //   • `timeChanged` means the time was re-derived from work_sessions into timerMinutes
+    //     (reconcileTaskTimerFromSessions), so the sessions loop above already carries it;
+    //   • no finish instant ⇒ no day to bucket into, so an unfinished task contributes nothing.
+    for (const t of tasks || []) {
+        if (!t || !t.manualMinutes) continue;
+        if (t.isSystemTask || t.isQuickWork || t.timeChanged) continue;
+        const finishedAt = t.completedAt || t.deletedAt || t.confirmedAt;
+        if (!finishedAt || Number.isNaN(new Date(finishedAt).getTime())) continue;
+        const date = getLithuanianDateString(finishedAt);
+        if (!inWin(date)) continue;
+        bump(date, 'work', sanitizeReportMinutes(t.manualMinutes, { allowLarge }));
     }
     return days;
 }
@@ -179,8 +225,9 @@ function computePlannedMinutes(plannedShifts, window, expectedWeeklyHours) {
 
 // Build the full report object from already-fetched, per-worker-sliced raw data.
 //
-// input.workers[]: { userId, name, expectedWeeklyHours?, payRate?, recognition?,
+// input.workers[]: { userId, name, expectedWeeklyHours?, payRate?, taskPayRateIds?, recognition?,
 //                    workSessions, breakSessions, plannedShifts, tasks, calendarRequests }
+// `taskPayRateIds` is the taskId → chosen-tariff-id lookup earnings needs (see computePeriodEarnings).
 // `includeDaily` appends a per-worker daily work/break log (the "evidence" behind the metrics) —
 // off by default to keep the analysis lean; turn on for a focused single-worker / short-span pull.
 export function buildReport({ generatedAt, window, prevWindow, scopeLabel, includeEarnings, includeDaily = false, workers }) {
@@ -217,7 +264,7 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
 
         const earnings =
             includeEarnings && hasPayRate(w.payRate)
-                ? computePeriodEarnings(raw.workSessions, window, w.payRate.tiers)
+                ? computePeriodEarnings(raw.workSessions, window, w.payRate, w.taskPayRateIds)
                 : null;
 
         const recognition = w.recognition
@@ -228,7 +275,7 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
 
         let daily = null;
         if (includeDaily) {
-            const days = aggregateDaily(raw.workSessions, raw.breakSessions, window, { allowLarge: false });
+            const days = aggregateDaily(raw.workSessions, raw.breakSessions, raw.tasks, window, { allowLarge: false });
             daily = Object.keys(days)
                 .sort()
                 .map((date) => ({
@@ -280,7 +327,7 @@ export function buildReport({ generatedAt, window, prevWindow, scopeLabel, inclu
                 'Trukmės apkarpytos iki realių ribų (veiklos sesija ≤ 16 val.) prieš sumuojant.',
                 `Startas laiku: veikla pradėta ≤ ${ON_TIME_GRACE_MIN} min. po planuoto veiklos laiko pradžios = „laiku".`,
                 'Δ — pokytis prieš ankstesnį tokio paties ilgio laikotarpį; „geriau"/„prasčiau" pagal metrikos kryptį.',
-                'Uždarbis — neto po mokesčių, tarpinis pagal meistro tarifų pakopas ir kaupiamas mėnesio valandas.',
+                'Uždarbis — neto po mokesčių, tarpinis pagal užduočiai priskirtą tarifą, jo pakopas ir kaupiamas mėnesio valandas.',
                 'Pripažinimo skaičiai — viso per visą laiką (ne šio laikotarpio).',
             ],
         },
@@ -396,14 +443,17 @@ export function renderReportJSON(report) {
 // One row per worked day (work + break, HH:MM), then a per-worker "Viso" total carrying Planuota +
 // Skirtumas (gated by the plan-coverage floor). Operates on the RAW fetched slice (`workers`), not
 // the aggregated report object. Honors manual-adjustment magnitudes (payroll convention) — distinct
-// from the analysis metrics, which clamp every session at 16h for outlier resistance.
+// from the analysis metrics, which clamp every session at 16h for outlier resistance — and, via
+// aggregateDaily, counts a finished plain task's own manualMinutes as worked time exactly like the
+// on-screen day view does, so the payroll sheet can never total FEWER hours than the screen.
 //
 // `includeEarnings` appends "Neto (€)" / "Bruto (€)" columns. Money lands ONLY on each worker's
 // "Viso" row, never on the daily rows: the net rate is marginal over CUMULATIVE monthly hours
 // (see computePeriodEarnings), so a per-day price would mis-tier and read as fact. Workers without
 // a pay rate, or whose window earns nothing, leave both money cells blank — same null policy as
-// buildReport. The earnings figure ALSO uses the analysis 16h clamp (no allowLarge), so it can
-// differ slightly from the allowLarge "Veikla" total above; that mirrors EarningsModal exactly.
+// buildReport. The earnings figure uses the analysis 16h clamp (no allowLarge) and prices only
+// work_sessions, so it can differ from the "Veikla" total above; it mirrors what EarningsModal
+// showed the worker, including the per-task tariff.
 export function renderTimesheetCSV(workers, window, { includeEarnings = false } = {}) {
     const escape = (str) => {
         if (str === null || str === undefined) return '';
@@ -417,7 +467,7 @@ export function renderTimesheetCSV(workers, window, { includeEarnings = false } 
     const pad = (cells) => (includeEarnings ? [...cells, '', ''] : cells);
 
     for (const w of workers) {
-        const days = aggregateDaily(w.workSessions, w.breakSessions, window, { allowLarge: true });
+        const days = aggregateDaily(w.workSessions, w.breakSessions, w.tasks, window, { allowLarge: true });
         let totalWork = 0;
         let totalBreak = 0;
         Object.keys(days)
@@ -440,7 +490,7 @@ export function renderTimesheetCSV(workers, window, { includeEarnings = false } 
         const totalCells = [escape(w.name), escape('Viso'), escape(csvMinutes(totalWork)), escape(csvMinutes(totalBreak)), escape(plannedCell), escape(skirtumasCell)];
         if (includeEarnings) {
             const earnings = hasPayRate(w.payRate)
-                ? computePeriodEarnings(w.workSessions, window, w.payRate.tiers)
+                ? computePeriodEarnings(w.workSessions, window, w.payRate, w.taskPayRateIds)
                 : null;
             totalCells.push(escape(earnings ? String(earnings.netEur) : ''), escape(earnings ? String(earnings.grossEur) : ''));
         }

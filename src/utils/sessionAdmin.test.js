@@ -17,6 +17,9 @@ vi.mock('firebase/firestore', () => ({
     doc: vi.fn((_db, col, id) => ({ _path: `${col}/${id}`, _col: col, _id: id })),
     updateDoc: vi.fn(() => Promise.resolve()),
     getDoc: vi.fn(() => Promise.resolve({ exists: () => false, data: () => ({}) })),
+    // The target user is re-read SERVER-FIRST before anything is settled (the confirm dialog can
+    // sit open for minutes while the worker's real session moves on).
+    getDocFromServer: vi.fn(() => Promise.resolve({ exists: () => false, data: () => ({}) })),
 }));
 
 vi.mock('./taskActions', () => ({ pauseTask: vi.fn(() => Promise.resolve()) }));
@@ -25,7 +28,7 @@ vi.mock('./timerTransitionExecutor', () => ({
     applyTimerTransitionPlan: vi.fn(() => Promise.resolve()),
 }));
 
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { pauseTask } from './taskActions';
 import { logError } from './errorLog';
 import { applyTimerTransitionPlan } from './timerTransitionExecutor';
@@ -46,6 +49,9 @@ beforeEach(() => {
     pauseTask.mockResolvedValue(undefined);
     applyTimerTransitionPlan.mockResolvedValue(undefined);
     getDoc.mockResolvedValue(missingSnap());
+    // Default: the server has nothing newer than the caller's snapshot, so every pre-existing
+    // expectation below keeps describing the same behaviour.
+    getDocFromServer.mockResolvedValue(missingSnap());
 });
 
 describe('endSessionForUser', () => {
@@ -116,6 +122,47 @@ describe('endSessionForUser', () => {
 
         expect(getDoc).toHaveBeenCalledTimes(2);
         expect(pauseTask).not.toHaveBeenCalled();
+        expect(userClearFor('u1')).toBeDefined();
+    });
+
+    it('settles the LIVE task, not the one frozen in the manager’s dialog snapshot', async () => {
+        // The oversight panel captures the user doc when the manager taps the icon; the confirm
+        // dialog can sit open for minutes. Here the worker reopens the app meanwhile, ends the
+        // stuck break (whose paused task t1 is already 'paused') and starts task t2. Acting on the
+        // stale snapshot resolved t1, skipped pauseTask, and then blind-cleared the user doc —
+        // leaving t2 running with nothing pointing at it, so its next pause credited the whole
+        // stretch. The server re-read must make this settle t2 instead.
+        getDocFromServer.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ activeSession: { type: 'task', taskId: 't2' }, workStatus: { activeTaskId: 't2' } }),
+        });
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'active_sessions/u1') return Promise.resolve(missingSnap());
+            if (ref?._path === 'tasks/t1') return Promise.resolve(taskSnap({ id: 't1', timerStatus: 'paused' }));
+            if (ref?._path === 'tasks/t2') return Promise.resolve(taskSnap({ id: 't2', timerStatus: 'running' }));
+            return Promise.resolve(missingSnap());
+        });
+
+        await endSessionForUser({ id: 'u1', activeSession: { type: 'break', taskId: 't1' } });
+
+        expect(getDocFromServer).toHaveBeenCalledWith(expect.objectContaining({ _path: 'users/u1' }));
+        expect(pauseTask).toHaveBeenCalledTimes(1);
+        expect(pauseTask).toHaveBeenCalledWith(expect.objectContaining({ id: 't2', timerStatus: 'running' }));
+        expect(userClearFor('u1')).toBeDefined();
+    });
+
+    it('falls back to the caller’s copy when the server re-read fails', async () => {
+        // A manager on a flaky connection must still be able to settle a genuinely stuck worker.
+        getDocFromServer.mockRejectedValue(new Error('unavailable'));
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'active_sessions/u1') return Promise.resolve(missingSnap());
+            if (ref?._path === 'tasks/t1') return Promise.resolve(taskSnap({ id: 't1', timerStatus: 'running' }));
+            return Promise.resolve(missingSnap());
+        });
+
+        await endSessionForUser({ id: 'u1', activeSession: { type: 'task', taskId: 't1' } });
+
+        expect(pauseTask).toHaveBeenCalledWith(expect.objectContaining({ id: 't1' }));
         expect(userClearFor('u1')).toBeDefined();
     });
 

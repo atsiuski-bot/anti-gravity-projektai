@@ -66,17 +66,38 @@ export const deleteTask = defineCommand({
           });
         }
       } else {
-        // Hard delete — remove from both collections, then mark sessions deleted.
-        if (!task.isArchived) await deleteDoc(doc(db, 'tasks', id));
-        await deleteDoc(doc(db, 'archived_tasks', id));
-        // Session marking is best-effort: a failure here must not undo the delete that already
-        // happened (mirrors the prior util's inner try/catch).
+        // Hard delete — remove the AUTHORITATIVE row, then mark its sessions, then clear the mirror.
+        //
+        // Which collection is authoritative depends on the task: `archived_tasks/{id}` for an
+        // already-archived one, `tasks/{id}` for a live one. That delete is the operation the caller
+        // asked for, so its failure must surface. It has to happen FIRST, because session marking is
+        // irreversible in practice: flagging isDeleted on a task that then fails to delete removes
+        // its time from every report while the task itself is still on the board.
+        const authoritative = task.isArchived ? 'archived_tasks' : 'tasks';
+        const mirror = task.isArchived ? 'tasks' : 'archived_tasks';
+        await deleteDoc(doc(db, authoritative, id));
+
+        // Sessions are marked only once the task is PROVABLY gone, and never after another write
+        // that can throw: an unmarked work_sessions row whose task no longer exists is an ORPHAN
+        // that still sums into reports and trips the nightly credit-integrity scan, and nothing can
+        // retry it (the task can no longer be found). Best-effort — a failure here must not undo the
+        // delete that already succeeded (mirrors the prior util's inner try/catch).
         try {
           const sessionsSnap = await getDocs(query(collection(db, 'work_sessions'), where('taskId', '==', id)));
           await Promise.all(sessionsSnap.docs.map((s) =>
             updateDoc(doc(db, 'work_sessions', s.id), { isDeleted: true, deletedAt: new Date().toISOString() })));
         } catch (sessionErr) {
           logError(sessionErr, { source: 'commands.deleteTask.markSessions' });
+        }
+
+        // The opposite-collection mirror, which normally does NOT exist — and both delete rules
+        // dereference resource.data, so deleting a missing doc is REJECTED rather than being a
+        // no-op. Letting that escape reported "couldn't delete" for a task that IS gone, so it is
+        // logged and swallowed: the authoritative delete above already succeeded.
+        try {
+          await deleteDoc(doc(db, mirror, id));
+        } catch (mirrorErr) {
+          logError(mirrorErr, { source: 'commands.deleteTask.clearMirror' });
         }
       }
     } catch (err) {

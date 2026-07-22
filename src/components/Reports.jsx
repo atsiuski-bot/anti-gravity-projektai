@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, doc, updateDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, vilniusWallClockToISO, addDaysToDateString, calculateCurrentTotalMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes } from '../utils/timeUtils';
-import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
+import { formatMinutesToTimeString, getLithuanianDateString, vilniusWallClockToISO, addDaysToDateString, calculateCurrentTotalMinutes } from '../utils/timeUtils';
+import { formatDisplayName, isManagerRole, resolveUserId } from '../utils/formatters';
 import { privateScopeConstraints, scopeRoster } from '../utils/teamScope';
 import { cn } from '../utils/cn';
 import { addComment } from '../utils/commentActions';
@@ -56,7 +56,6 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     // default to 'day' view; the team report keeps 'week' as its default.
     const isPersonalView = userRole === 'worker';
     const [dateRange, setDateRange] = useState(() => resolvePresetRange(isPersonalView ? 'day' : 'week'));
-    const [, setWorkData] = useState([]); // populated by fetchWorkHours; read only in CSV export path
     // Test/founder accounts are excluded from the work report by default so payroll totals and
     // the leaderboard aren't skewed by non-production data; a manager can opt to show them.
     // Reports always exclude test (isTest) users — there is no manager toggle.
@@ -100,13 +99,11 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
     const [revertTarget, setRevertTarget] = useState(null);
     const [reverting, setReverting] = useState(false);
 
-    // Fetch Work Hours Data — only when a multi-day range is selected (day mode uses DailyStatistics).
-    useEffect(() => {
-        if (activeTab === 'report' && reportPeriod !== 'day') {
-            fetchWorkHours();
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchWorkHours is recreated each render; intentionally refetch only on tab/period/range change
-    }, [activeTab, reportPeriod, dateRange.start, dateRange.end]);
+    // No work-hours fetch here on purpose. Every number this tab shows comes from
+    // TeamPeriodSummary / PersonalPeriodSummary / DailyStatistics, and the CSV export lives in
+    // ReportExportModal — so the old fetch re-read work_sessions, break_sessions and the ENTIRE
+    // unfiltered work_hours collection on every period tap only to discard the result, while its
+    // failures still raised the shared error banner over a report that was rendering fine.
 
     // Fetch Tasks Data
     useEffect(() => {
@@ -115,264 +112,6 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchTasks is recreated each render; intentionally refetch only on tab/filter change
     }, [activeTab, taskFilters]); // Refetch when filters change
-
-    const fetchWorkHours = async () => {
-        setLoading(true);
-        try {
-            // The manager picks the span directly now; the aggregation below is span-agnostic.
-            // (The old hardcoded "Jan 2026 starts on the 19th" clamp is gone — with explicit
-            // from/to dates the manager sets the start, and no sessions exist before go-live.)
-            const startStr = dateRange.start;
-            const endStr = dateRange.end;
-
-            // The query constrains itself to the rows this viewer may read (own / team /
-            // whole-company) so it never requests a denied document once the rules tighten. This
-            // introduces composite indexes (owner/team field + date) — listed in firestore.indexes.json.
-            const sessScope = privateScopeConstraints({
-                userData, uid: currentUser?.uid, effectiveRole: userRole, ownerField: 'userId'
-            });
-
-            const workQ = query(
-                collection(db, 'work_sessions'),
-                where('date', '>=', startStr),
-                where('date', '<=', endStr),
-                ...sessScope
-            );
-
-            // Query break_sessions by their canonical Lithuanian-local 'date' field too, so
-            // breaks bucket into the same day/month as the work they sit alongside. The old
-            // query filtered by the UTC 'startTime', which mis-bucketed breaks taken near
-            // UTC midnight and split a Vilnius day across two months at the boundary.
-            const breakQ = query(
-                collection(db, 'break_sessions'),
-                where('date', '>=', startStr),
-                where('date', '<=', endStr),
-                ...sessScope
-            );
-
-            // Planned hours come from the calendar (work_hours): start/end ISO timestamps, no
-            // 'date' field, so we read the collection and bucket client-side by the Lithuanian
-            // calendar day of each entry's start — same read permission as the session queries.
-            const plannedQ = query(collection(db, 'work_hours'));
-
-            const [workSnap, breakSnap, plannedSnap] = await Promise.all([
-                getDocs(workQ),
-                getDocs(breakQ),
-                getDocs(plannedQ)
-            ]);
-
-            const workSessions = workSnap.docs
-                .map(d => ({ ...d.data(), id: d.id, _type: 'work' }))
-                .filter(session => !session.isDeleted);
-
-            const breakSessions = breakSnap.docs.map(d => ({ ...d.data(), id: d.id, _type: 'break' }));
-
-            // Aggregation
-            const userMap = {};
-
-            // Helper to get best available name
-            const getUserName = (uid, sessionName) => {
-                const u = users?.find(user => user.id === uid);
-                if (u) return u.displayName || u.email;
-                // Treat both the legacy English placeholder and the current Lithuanian one as
-                // "no real name" so an old doc storing 'Unknown' never surfaces English; fall
-                // back to the Lithuanian placeholder used everywhere else (resolveUserName).
-                if (sessionName && sessionName !== 'Unknown' && sessionName !== 'Nežinomas') return sessionName;
-                return 'Nežinomas';
-            };
-
-            // Helper to init user map
-            const initUser = (uid, sessionName) => {
-                if (!userMap[uid]) {
-                    userMap[uid] = {
-                        userId: uid,
-                        name: getUserName(uid, sessionName),
-                        totalMinutes: 0,
-                        totalBreakMinutes: 0,
-                        plannedMinutes: 0,
-                        days: {} // { date: { totalWork: 0, totalBreak: 0, sessions: [] } }
-                    };
-                }
-            };
-
-            const isManager = isManagerRole(userRole);
-
-            // Helper to check for duplicates
-            const isDuplicate = (existingSessions, newSession) => {
-                return existingSessions.some(existing => existing.id === newSession.id);
-            };
-
-            // Process Work
-            workSessions.forEach(s => {
-                const uid = resolveUserId(s);
-                const uname = resolveUserName(s);
-                if (!isManager && uid !== currentUser.uid) return;
-
-                initUser(uid, uname);
-
-                if (!userMap[uid].days[s.date]) {
-                    userMap[uid].days[s.date] = { totalWork: 0, totalBreak: 0, sessions: [] };
-                }
-
-                // Deduplicate work sessions
-                if (isDuplicate(userMap[uid].days[s.date].sessions, s)) {
-                    return;
-                }
-
-                // Read-side guard: a corrupt single session (pre-clamp orphan, fat-fingered
-                // edit) must not poison the total. Clamp before summing and flag the day so the
-                // manager sees it was capped rather than silently inflated.
-                const workMin = sanitizeReportMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment });
-                if (isImplausibleSessionMinutes(s.durationMinutes, { allowLarge: s.isManualAdjustment })) {
-                    userMap[uid].days[s.date].flagged = true;
-                    userMap[uid].hasFlagged = true;
-                }
-                userMap[uid].totalMinutes += workMin;
-                userMap[uid].days[s.date].totalWork += workMin;
-                userMap[uid].days[s.date].sessions.push(s);
-            });
-
-            // Process Breaks
-            breakSessions.forEach(s => {
-                const uid = resolveUserId(s);
-                const uname = resolveUserName(s);
-                if (!isManager && uid !== currentUser.uid) return;
-
-                // Only add breaks if user exists (or should we create? usually user has work too)
-                // Let's create if missing to be safe
-                if (!userMap[uid]) {
-                    initUser(uid, uname);
-                }
-
-                if (!userMap[uid].days[s.date]) {
-                    userMap[uid].days[s.date] = { totalWork: 0, totalBreak: 0, sessions: [] };
-                }
-
-                // Deduplicate break sessions
-                if (isDuplicate(userMap[uid].days[s.date].sessions, s)) {
-                    return;
-                }
-
-                const breakMin = sanitizeReportMinutes(s.durationMinutes);
-                if (isImplausibleSessionMinutes(s.durationMinutes)) {
-                    userMap[uid].days[s.date].flagged = true;
-                    userMap[uid].hasFlagged = true;
-                }
-                userMap[uid].days[s.date].totalBreak += breakMin;
-                userMap[uid].totalBreakMinutes += breakMin;
-                userMap[uid].days[s.date].sessions.push(s);
-            });
-
-            // Post-process: Sort sessions by time for each day and inject inactive gaps
-            Object.values(userMap).forEach(user => {
-                Object.values(user.days).forEach(dayData => {
-                    dayData.sessions.sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-
-                    if (dayData.sessions.length > 0) {
-                        dayData.dayStart = dayData.sessions[0].startTime;
-                        // Find the latest end time
-                        const maxEnd = dayData.sessions.reduce((max, s) => {
-                            return new Date(s.endTime) > new Date(max) ? s.endTime : max;
-                        }, dayData.sessions[0].endTime);
-                        dayData.dayEnd = maxEnd;
-
-                        // Inject 'inactive' sessions for gaps > 1 minute
-                        const sessionsWithInactivity = [];
-                        let lastEndTime = null;
-
-                        dayData.sessions.forEach(session => {
-                            const currentStartTime = new Date(session.startTime);
-
-                            if (lastEndTime) {
-                                const diffMs = currentStartTime.getTime() - lastEndTime.getTime();
-                                const diffMinutes = Math.floor(diffMs / (1000 * 60));
-
-                                // Only add gap if strictly > 1 minute and not negative (overlapping)
-                                if (diffMinutes > 1) {
-                                    sessionsWithInactivity.push({
-                                        id: `inactive-${lastEndTime.getTime()}`,
-                                        _type: 'inactive',
-                                        startTime: lastEndTime.toISOString(),
-                                        endTime: currentStartTime.toISOString(),
-                                        durationMinutes: diffMinutes,
-                                        taskTitle: 'Neaktyvus'
-                                    });
-                                }
-                            }
-
-                            sessionsWithInactivity.push(session);
-
-                            // Update lastEndTime to the max of current lastEndTime and this session's endTime
-                            // (Handle potential overlaps gracefully)
-                            const currentEndTime = new Date(session.endTime);
-                            if (!lastEndTime || currentEndTime > lastEndTime) {
-                                lastEndTime = currentEndTime;
-                            }
-                        });
-
-                        dayData.sessions = sessionsWithInactivity;
-                    }
-                });
-            });
-
-            // Planned vs actual: sum each worker's calendar-scheduled minutes that fall inside the
-            // selected span, then attach to their row so the summary can show an overtime/undertime
-            // delta. Only attached to workers who already have worked/break data in the span.
-            plannedSnap.docs.forEach(d => {
-                const wh = d.data();
-                if (!wh.start || !wh.end) return;
-                // Approved leave is time OFF, not planned work: counting an "Atostogos" slot
-                // toward plannedMinutes makes a holiday week read as a planned shortfall against
-                // a denominator the worker was never expected to fill. Exclude it from the plan.
-                if (wh.isVacation) return;
-                const uid = wh.userId;
-                if (!uid) return;
-                if (!isManager && uid !== currentUser.uid) return;
-                const dayStr = getLithuanianDateString(new Date(wh.start));
-                if (dayStr < startStr || dayStr > endStr) return;
-                const mins = (new Date(wh.end).getTime() - new Date(wh.start).getTime()) / (1000 * 60);
-                if (!Number.isFinite(mins) || mins <= 0) return;
-                // Seed the row from the plan too: a worker who was scheduled but logged no
-                // session in the span must still surface (worked 00:00, a real plan, a visible
-                // negative Skirtumas) instead of vanishing — the mirror of the surplus case.
-                initUser(uid);
-                userMap[uid].plannedMinutes += mins;
-            });
-            Object.values(userMap).forEach(u => { u.plannedMinutes = Math.round(u.plannedMinutes); });
-
-            // Expected-hours fallback: a worker who logged time but never hand-drew a calendar plan
-            // would show plannedMinutes 0 and a meaningless Skirtumas. If they carry a
-            // weeklyExpectedHours baseline, synthesize the plan for the span (baseline × weeks) so the
-            // delta has a real denominator. Only fills a MISSING plan — a real calendar plan wins.
-            const spanDays = Math.max(
-                1,
-                Math.round((new Date(endStr).getTime() - new Date(startStr).getTime()) / 86400000) + 1
-            );
-            const spanWeeks = spanDays / 7;
-            Object.values(userMap).forEach(u => {
-                if (u.plannedMinutes > 0) return;
-                const usr = users?.find(x => x.id === u.userId);
-                const baseline = usr?.weeklyExpectedHours;
-                if (Number.isFinite(baseline) && baseline > 0) {
-                    u.plannedMinutes = Math.round(baseline * 60 * spanWeeks);
-                    u.plannedFromBaseline = true;
-                }
-            });
-
-            // Convert to array
-            const results = Object.values(userMap).sort((a, b) => b.totalMinutes - a.totalMinutes);
-            setError('');
-            setWorkData(results);
-
-        } catch (error) {
-            console.error("Error fetching work hours:", error);
-            // Surface the failure as a friendly banner instead of silently leaving the report
-            // empty — a swallowed fetch error otherwise reads as a genuine "no work" result.
-            setError('Nepavyko užkrauti veiklos valandų ataskaitos. Patikrinkite ryšį ir bandykite dar kartą.');
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const fetchTasks = async ({ preserveError = false } = {}) => {
         setLoading(true);
@@ -386,10 +125,16 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                 userData, uid: currentUser?.uid, effectiveRole: userRole, ownerField: 'assignedUserId'
             });
 
+            // Both server-side lower bounds are anchored to the SAME Vilnius midnight the in-memory
+            // window below uses. `new Date('YYYY-MM-DD')` is UTC midnight — 03:00 Vilnius in summer —
+            // so a task finished or confirmed between 00:00 and 03:00 on the range's first day was
+            // never FETCHED, even though the client filter and the day grouping would have shown it.
+            const rangeStartIso = vilniusWallClockToISO(taskFilters.startDate, '00:00') || new Date(taskFilters.startDate).toISOString();
+
             // Query 1: Archived - Respects date filter
             const archivedQ = query(
                 collection(db, 'archived_tasks'),
-                where('archivedAt', '>=', new Date(taskFilters.startDate).toISOString()),
+                where('archivedAt', '>=', rangeStartIso),
                 ...taskScope
             );
 
@@ -406,7 +151,7 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
             // Also get confirmed ones that match date filter
             const activeRecentQ = query(
                 collection(db, 'tasks'),
-                where('updatedAt', '>=', new Date(taskFilters.startDate).toISOString()),
+                where('updatedAt', '>=', rangeStartIso),
                 ...taskScope
             );
 
@@ -598,6 +343,14 @@ export default function Reports({ users, canExport = false, viewRole, views = ['
                 completedBy: null,
                 confirmedAt: null,
                 confirmedBy: null,
+                // Clear the soft-delete flags too. A task deleted with "keep work hours" is stored
+                // as completed AND isDeleted, so a revert that reset only the completion left it
+                // deleted: the active list hides it (deletedAt older than the work-day cutoff) and
+                // the nightly sweep archives it away — the manager pressed Grąžinti and the task
+                // vanished for good. reopenTask and the two other restore paths clear all three.
+                isDeleted: false,
+                deletedAt: null,
+                deletedBy: null,
                 updatedAt: new Date().toISOString()
                 // Importantly, we do NOT touch timerMinutes, actualTime, or any other time tracking data
             });
@@ -1334,18 +1087,35 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
     const { userData, uid, effectiveRole } = scope || {};
     const [state, setState] = useState({ loading: true, team: null, prevTeam: null, warnings: [], error: false });
 
-    // The roster the summary covers — everyone the viewer may see, minus disabled and test accounts
-    // (Reports never counts test users), matching the export modal's candidate list.
-    const workerIds = useMemo(() => {
-        const roster = scopeRoster(users, userData, uid) || [];
-        return roster.filter((u) => !u.isDisabled && !u.isTest).map((u) => u.id);
-    }, [users, userData, uid]);
+    // VALUE identity of the roster this summary covers: each visible id plus whether that account is
+    // disabled, sorted into one string. Test accounts are dropped (Reports never counts them).
+    //
+    // Why a string and not an id ARRAY: `users` is rebuilt inline on every parent render and
+    // `userData` is a new object on every user-doc snapshot, so an array memoised on them was a new
+    // dependency each time — the effect below then re-ran the whole five-collection report fetch and
+    // blanked the card back to its spinner while the manager was reading it. A string changes only
+    // when the roster genuinely changes.
+    const rosterKey = useMemo(() => (
+        (scopeRoster(users, userData, uid) || [])
+            .filter((u) => !u.isTest)
+            .map((u) => `${u.id}|${u.isDisabled ? 'off' : 'on'}`)
+            .sort()
+            .join(',')
+    ), [users, userData, uid]);
 
     const startStr = range?.start;
     const endStr = range?.end;
 
     useEffect(() => {
         let ignore = false;
+        const rosterEntries = rosterKey ? rosterKey.split(',') : [];
+        const idOf = (entry) => entry.slice(0, entry.lastIndexOf('|'));
+        // Disabled accounts are FETCHED like everyone else: a worker offboarded mid-period still
+        // worked the days before they left, and dropping them by current account state erased those
+        // hours from the team totals while the day table below still listed them — two contradictory
+        // totals on one screen, and no way to close out their last period.
+        const workerIds = rosterEntries.map(idOf);
+        const disabledIds = new Set(rosterEntries.filter((e) => e.endsWith('|off')).map(idOf));
         if (!startStr || !endStr || startStr > endStr || workerIds.length === 0) {
             setState({ loading: false, team: null, prevTeam: null, warnings: [], error: false });
             return undefined;
@@ -1357,12 +1127,20 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
                 const { workers, prevWindow } = await gatherReportData({
                     db, userData, uid, effectiveRole, users, window, workerIds, includeRecognition: false,
                 });
+                // ...but a disabled account with NO session in the compared span is a closed account,
+                // not a team member: keep it out so "Meistrų" is not inflated by former staff.
+                const inCompared = (s) => s.date >= prevWindow.startStr && s.date <= endStr;
+                const counted = workers.filter((w) => (
+                    !disabledIds.has(w.userId)
+                    || (w.workSessions || []).some(inCompared)
+                    || (w.breakSessions || []).some(inCompared)
+                ));
                 const generatedAt = new Date().toISOString();
                 // Current report carries the team rollup + per-worker dataTrust we surface.
-                const current = buildReport({ generatedAt, window, prevWindow, scopeLabel: '', includeEarnings: true, workers });
+                const current = buildReport({ generatedAt, window, prevWindow, scopeLabel: '', includeEarnings: true, workers: counted });
                 // A second build over the PREVIOUS window (already fetched) gives a real prior team
                 // total to diff — true team-level deltas without modifying the aggregator.
-                const previous = buildReport({ generatedAt, window: prevWindow, prevWindow, scopeLabel: '', includeEarnings: true, workers });
+                const previous = buildReport({ generatedAt, window: prevWindow, prevWindow, scopeLabel: '', includeEarnings: true, workers: counted });
                 if (ignore) return;
                 const warnings = current.workers
                     .filter((w) => w.dataTrust && w.dataTrust.implausibleSessions > 0)
@@ -1374,8 +1152,8 @@ function TeamPeriodSummary({ range, users, scope, onDrillWorker, onShiftPeriod, 
             }
         })();
         return () => { ignore = true; };
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData/users read through the stable workerIds + scope ids; depending on the whole objects would refetch on every parent render
-    }, [startStr, endStr, workerIds, uid, effectiveRole]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData/users read through the stable rosterKey + scope ids; depending on the whole objects would refetch on every parent render
+    }, [startStr, endStr, rosterKey, uid, effectiveRole]);
 
     // Team-level delta from current vs previous total. `goodWhen='up'` for quantities (more is
     // better) and on-time %; null when there is no prior value to compare against.

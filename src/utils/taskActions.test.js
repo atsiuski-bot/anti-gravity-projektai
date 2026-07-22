@@ -40,7 +40,7 @@ import { updateDoc, addDoc, setDoc, getDocs, getDoc, getDocFromServer } from 'fi
 import { logError } from './errorLog';
 import { getLithuanianNow } from './timeUtils';
 import { MAX_SESSION_MINUTES } from './timeUtils';
-import { startTask, pauseTask, resumeTask, creditAndResumeTask, taskSessionDocId, pauseOtherTasks } from './taskActions';
+import { startTask, pauseTask, resumeTask, creditAndResumeTask, taskSessionDocId, pauseOtherTasks, completeTaskAtLimit } from './taskActions';
 
 // Fixed "now" so the credit math (now - timerStartedAt) is exact. June -> Vilnius is a
 // stable UTC+3, so the session date buckets to 2026-06-23 with no DST ambiguity.
@@ -376,6 +376,135 @@ describe('pauseTask — explicit endTime (heartbeat recovery)', () => {
         expect(upd.timerMinutes).toBeCloseTo(30.6667, 3);
         // And the work_session mirror is written too, so the total and the sessions stay in sync.
         expect(workSessionWrites()).toHaveLength(1);
+    });
+});
+
+describe('pauseTask — server confirmation of THIS task (the stale-snapshot inflation)', () => {
+    // pauseOtherTasks has always re-confirmed every OTHER task before pausing it; the task handed
+    // DIRECTLY to pauseTask (the time-limit monitor's cached activeTaskRef, a manager's table row)
+    // got no such check, so a silently stale 'running' snapshot inflated the credit and clobbered
+    // the real session row through the deterministic doc id.
+
+    it('credits NOTHING when the server proves the stretch was already closed elsewhere', async () => {
+        // Backgrounded tablet: its cache still says the run started at 09:00 with 60 min banked,
+        // while the phone already paused it at 09:30 (server: paused, 90 min).
+        const stale = {
+            id: 'tX', timerStatus: 'running', timerStartedAt: '2026-06-23T09:00:00.000Z',
+            timerMinutes: 60, assignedUserId: 'u1',
+        };
+        getDoc.mockImplementation((ref) => (
+            ref?._path === 'tasks/tX'
+                ? Promise.resolve({ exists: () => true, data: () => ({ assignedUserId: 'u1', timerStatus: 'paused', timerStartedAt: null, timerMinutes: 90 }) })
+                : Promise.resolve({ exists: () => false, data: () => ({}) })
+        ));
+
+        const result = await pauseTask(stale);
+
+        expect(result).toBeNull();
+        expect(taskUpdateFor('tX')).toBeUndefined();   // no re-credit of already-banked time
+        expect(workSessionWrites()).toHaveLength(0);   // and no later endTime over the real row
+    });
+
+    it('credits onto the SERVER timerMinutes base, not the stale cached one', async () => {
+        const stale = {
+            id: 'tY', timerStatus: 'running', timerStartedAt: '2026-06-23T11:00:00.000Z',
+            timerMinutes: 10, assignedUserId: 'u1',
+        };
+        getDoc.mockImplementation((ref) => (
+            ref?._path === 'tasks/tY'
+                ? Promise.resolve({ exists: () => true, data: () => ({ assignedUserId: 'u1', timerStatus: 'running', timerStartedAt: '2026-06-23T11:00:00.000Z', timerMinutes: 40 }) })
+                : Promise.resolve({ exists: () => false, data: () => ({}) })
+        ));
+
+        await pauseTask(stale);
+
+        expect(taskUpdateFor('tY').timerMinutes).toBe(100); // 40 (server) + 60 elapsed, NOT 10 + 60
+    });
+
+    it('does NOT wipe the live activeSession when the worker has already moved to another task', async () => {
+        const task = {
+            id: 'tZ', timerStatus: 'running', timerStartedAt: '2026-06-23T11:00:00.000Z',
+            timerMinutes: 0, assignedUserId: 'u1',
+        };
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'tasks/tZ') return Promise.resolve({ exists: () => true, data: () => task });
+            if (ref?._path === 'users/u1') return Promise.resolve({ exists: () => true, data: () => ({ activeSession: { type: 'task', taskId: 'otherTask' } }) });
+            return Promise.resolve({ exists: () => false, data: () => ({}) });
+        });
+
+        await pauseTask(task);
+
+        expect(taskUpdateFor('tZ')).toBeDefined();      // this task IS closed and credited...
+        expect(userUpdatesFor('u1')).toHaveLength(0);   // ...but task Y's live session survives
+    });
+});
+
+describe('completeTaskAtLimit — the auto-confirm denial that trapped the limit popup', () => {
+    it("re-issues as 'completed' when the manager-role 'confirmed' flip is denied on their OWN task", async () => {
+        // resolveCompletionStatus gives ANY manager-shaped role 'confirmed', but the rules only let a
+        // manager flip approval fields on a task they actually OVERSEE. A seniorManager finishing
+        // their OWN task (someone else is its vadovas) is denied — and this door has no other exit:
+        // the caller silences the repeating alarm and closes the forced popup only after this
+        // resolves, so a throw left the alarm sounding on a modal that would not close.
+        const task = {
+            id: 'tLimit', title: 'Own task', timerMinutes: 120, manualMinutes: 0,
+            assignedUserId: 'u1', managerId: 'someoneElse',
+        };
+        const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+        updateDoc.mockImplementation((ref, payload) => (
+            ref?._path === 'tasks/tLimit' && payload?.status === 'confirmed'
+                ? Promise.reject(denied)
+                : Promise.resolve()
+        ));
+
+        const result = await completeTaskAtLimit(task, {
+            currentUser: { uid: 'u1', displayName: 'Senior' },
+            userData: {},
+            userRole: 'seniorManager',
+        });
+
+        const statusWrites = updateDoc.mock.calls
+            .filter(([ref, payload]) => ref?._path === 'tasks/tLimit' && payload?.status)
+            .map((c) => c[1]);
+        expect(statusWrites.at(-1).status).toBe('completed'); // the finish LANDED instead of throwing
+        expect(statusWrites.at(-1).confirmedBy).toBeNull();
+        expect(result.isManagerOrAdmin).toBe(false);          // → the real overseer gets the priėmimas ping
+    });
+});
+
+describe('startTask — banking a stretch still running on the TARGET task', () => {
+    it('closes a server-confirmed running stretch BEFORE re-anchoring timerStartedAt', async () => {
+        // The tablet's cache says 'paused' (so the UI offered Pradėti), but the server says the
+        // phone has been running this task since 11:00. pauseOtherTasks skips the current task, so
+        // without this guard the re-anchor discarded that hour with no session row and no error.
+        const cached = {
+            id: 'tA', title: 'Dig', timerStatus: 'paused', timerStartedAt: null,
+            timerMinutes: 0, assignedUserId: 'u1',
+        };
+        const serverCopy = {
+            assignedUserId: 'u1', title: 'Dig', timerStatus: 'running',
+            timerStartedAt: '2026-06-23T11:00:00.000Z', timerMinutes: 0,
+        };
+        getDoc.mockImplementation((ref) => (
+            ref?._path === 'tasks/tA'
+                ? Promise.resolve({ exists: () => true, data: () => serverCopy })
+                : Promise.resolve({ exists: () => false, data: () => ({}) })
+        ));
+        getDocFromServer.mockImplementation((ref) => getDoc(ref));
+
+        await startTask(cached, 'u1');
+
+        const updates = updateDoc.mock.calls
+            .filter(([ref]) => ref?._path === 'tasks/tA')
+            .map((c) => c[1]);
+        expect(updates).toHaveLength(2);
+        expect(updates[0].timerStatus).toBe('paused');
+        expect(updates[0].timerMinutes).toBe(60);   // 11:00 -> 12:00 banked first
+        expect(updates[1].timerStatus).toBe('running'); // only then re-anchored
+        // ...and the banked stretch reached work_sessions under its deterministic id.
+        const sessions = workSessionWrites();
+        expect(sessions).toHaveLength(1);
+        expect(sessions[0].durationMinutes).toBe(60);
     });
 });
 

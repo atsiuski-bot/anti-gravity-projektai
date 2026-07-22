@@ -58,4 +58,21 @@ describe('splitTextWithLinks', () => {
             { type: 'text', value: 'file.txt v1.2 done' },
         ]);
     });
+
+    it('keeps a "www." whose anchoring dot the peel would eat as plain text', () => {
+        // Without the post-peel re-validation this emitted { type:'link', href:'www' } — a RELATIVE
+        // href that opens /www, i.e. a second cold boot of the PWA in a new tab.
+        expect(splitTextWithLinks('adresas www.!')).toEqual([
+            { type: 'text', value: 'adresas ' },
+            { type: 'text', value: 'www.!' },
+        ]);
+        expect(splitTextWithLinks('www.,')).toEqual([{ type: 'text', value: 'www.,' }]);
+        expect(splitTextWithLinks('adresas www.!').some((p) => p.type === 'link')).toBe(false);
+    });
+
+    it('prefixes https:// onto an auto-capitalised Www. link too', () => {
+        expect(splitTextWithLinks('Www.regitra.lt')).toEqual([
+            { type: 'link', value: 'Www.regitra.lt', href: 'https://Www.regitra.lt' },
+        ]);
+    });
 });

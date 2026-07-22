@@ -88,6 +88,39 @@ describe('computeWorkerStats — tasks (throughput & quality)', () => {
         expect(s.approvalPct).toBe(50); // 1 confirmed of 2
         expect(s.highPriorityPct).toBe(50); // 1 HIGH of 2
     });
+
+    it('ignores a soft-deleted task even though it carries completion/acceptance stamps', () => {
+        // "Delete, keep work hours" writes completed+confirmed ALONGSIDE isDeleted, so a discarded
+        // task used to score as a completion AND as an acceptance.
+        const withDeleted = computeWorkerStats({
+            ...RAW,
+            tasks: [
+                ...RAW.tasks,
+                {
+                    assignedUserId: 'w1', status: 'confirmed', completed: true,
+                    completedAt: '2026-06-12T14:00:00Z', confirmedAt: '2026-06-12T15:00:00Z',
+                    isDeleted: true, deletedAt: '2026-06-12T15:30:00Z', manualMinutes: 60, priority: 'HIGH',
+                },
+            ],
+        }, WINDOW, {});
+        expect(withDeleted.completedCount).toBe(2); // unchanged by the deleted row
+        expect(withDeleted.approvalPct).toBe(50);
+    });
+
+    it('buckets a task by when the work finished, not by when it was accepted', () => {
+        // Finished 2026-06-30 (Vilnius), accepted 2026-07-02: it belongs to June in BOTH the
+        // month-end pull and any later re-pull.
+        const juneTasks = {
+            ...RAW,
+            tasks: [{
+                assignedUserId: 'w1', status: 'confirmed',
+                completedAt: '2026-06-30T12:00:00Z', confirmedAt: '2026-07-02T09:00:00Z',
+                manualMinutes: 60,
+            }],
+        };
+        expect(computeWorkerStats(juneTasks, WINDOW, {}).completedCount).toBe(1);
+        expect(computeWorkerStats(juneTasks, { startStr: '2026-07-01', endStr: '2026-07-31' }, {}).completedCount).toBe(0);
+    });
 });
 
 describe('computeWorkerStats — discipline (punctuality & reschedules)', () => {

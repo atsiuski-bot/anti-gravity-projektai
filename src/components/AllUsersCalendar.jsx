@@ -38,23 +38,66 @@ const END_HOUR = 22;
 const TOTAL_HOURS = END_HOUR - START_HOUR; // 15 hours
 const WEEKDAYS = ['Sekmadienis', 'Pirmadienis', 'Antradienis', 'Trečiadienis', 'Ketvirtadienis', 'Penktadienis', 'Šeštadienis'];
 
-// Helper to calculate position and width
-const getEventStyle = (start, end) => {
-    const startHour = start.getHours() + start.getMinutes() / 60;
-    const endHour = end.getHours() + end.getMinutes() / 60;
+// Narrowest bar we will ever draw, as a % of the 07:00–22:00 track (~18 minutes). A shift lying
+// wholly outside the visible window used to be dropped entirely; it is now pinned to the nearest
+// edge at this width, so scheduled time is never rendered as nothing.
+const MIN_BAR_PERCENT = 2;
+
+// True when the entry covers the WHOLE local day — the shape every "Nedirbu, visą dieną" booking is
+// written in (00:00 → next local midnight, WorkPlanner.buildAbsenceDayData). Computed from the day
+// boundary rather than a fixed 24h span so it still holds on the 23h/25h DST days.
+// (A sibling copy of this shape check lives in WorkPlanner's edit modal — keep them in step.)
+const isAllDaySpan = (start, end) => {
+    if (start.getHours() !== 0 || start.getMinutes() !== 0) return false;
+    const nextMidnight = new Date(start);
+    nextMidnight.setHours(0, 0, 0, 0);
+    nextMidnight.setDate(nextMidnight.getDate() + 1);
+    return end.getTime() >= nextMidnight.getTime();
+};
+
+// How an entry's span reads in text. An all-day absence is stored 00:00 → next midnight, so the raw
+// clock range printed a meaningless "00:00–00:00" on the mobile card and in every bar's title /
+// accessible name; name the shape instead.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export const eventTimeLabel = (start, end) => (isAllDaySpan(start, end)
+    ? 'Visą dieną'
+    : `${format(start, 'HH:mm')}–${format(end, 'HH:mm')}`);
+
+// Helper to calculate position and width. Exported for unit testing — this geometry is what decides
+// whether a booked absence is visible to the manager at all.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export const getEventStyle = (start, end) => {
+    // Hours are measured from the START's local midnight, NOT read off the clock: an entry that ends
+    // on a LATER day (an all-day absence ends at the next midnight) reported endHour = 0, so the
+    // clamp below collapsed it to nothing and the manager saw an empty row where a worker had booked
+    // the day off — availability, the whole point of this calendar, read as "nothing scheduled".
+    const dayStart = new Date(start);
+    dayStart.setHours(0, 0, 0, 0);
+    const startHour = (start.getTime() - dayStart.getTime()) / 3600000;
+    const endHour = (end.getTime() - dayStart.getTime()) / 3600000;
+
+    if (!Number.isFinite(startHour) || !Number.isFinite(endHour) || endHour <= startHour) return null;
 
     // Clamp to view range
     const effectiveStart = Math.max(startHour, START_HOUR);
     const effectiveEnd = Math.min(endHour, END_HOUR);
 
-    if (effectiveEnd <= effectiveStart) return null;
+    // Entirely outside 07:00–22:00 (e.g. a 05:00–06:00 shift): draw an edge marker instead of
+    // dropping the bar, so no scheduled time is ever invisible.
+    if (effectiveEnd <= effectiveStart) {
+        const left = endHour <= START_HOUR ? 0 : 100 - MIN_BAR_PERCENT;
+        return { left: `${left}%`, width: `${MIN_BAR_PERCENT}%` };
+    }
 
     const leftPercent = ((effectiveStart - START_HOUR) / TOTAL_HOURS) * 100;
     const widthPercent = ((effectiveEnd - effectiveStart) / TOTAL_HOURS) * 100;
+    // A very short entry keeps a visible minimum width; the left edge gives way so the bar can
+    // never run past the end of the track.
+    const width = Math.max(widthPercent, MIN_BAR_PERCENT);
 
     return {
-        left: `${leftPercent}%`,
-        width: `${widthPercent}%`
+        left: `${Math.min(leftPercent, 100 - width)}%`,
+        width: `${width}%`
     };
 };
 
@@ -299,7 +342,7 @@ export default function AllUsersCalendar() {
                                         const style = getEventStyle(event.start, event.end);
                                         if (!style) return null;
                                         const status = eventStatus(event);
-                                        const timeRange = `${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}`;
+                                        const timeRange = eventTimeLabel(event.start, event.end);
                                         const barStyle = { ...style, backgroundColor: event.isVacation ? VACATION_COLOR : event.color };
                                         const labelBase = `${user.displayName}, ${event.title}${status ? `, ${status.label}` : ''}, ${timeRange}`;
                                         const baseBar = "absolute top-1 h-6 p-0 rounded-full border border-line shadow-sm flex items-center justify-center hover:brightness-105 transition-all z-10";
@@ -395,7 +438,7 @@ export default function AllUsersCalendar() {
                                             <div className="flex items-baseline gap-2 min-w-0 flex-1">
                                                 <UserChip userId={user.id} name={user.displayName} linkToProfile={false} className="truncate min-w-0" />
                                                 <span className="text-caption text-ink-muted font-medium tabular-nums whitespace-nowrap flex-shrink-0">
-                                                    {format(event.start, 'HH:mm')}–{format(event.end, 'HH:mm')}
+                                                    {eventTimeLabel(event.start, event.end)}
                                                 </span>
                                             </div>
                                             {status && (
@@ -444,7 +487,7 @@ export default function AllUsersCalendar() {
                                                 type="button"
                                                 onClick={() => setReportUser(user)}
                                                 className="w-full text-left px-3.5 py-2.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset"
-                                                aria-label={`${user.displayName}, ${format(event.start, 'HH:mm')}–${format(event.end, 'HH:mm')}. Atidaryti dienos ataskaitą.`}
+                                                aria-label={`${user.displayName}, ${eventTimeLabel(event.start, event.end)}. Atidaryti dienos ataskaitą.`}
                                             >
                                                 {cardBody}
                                             </button>

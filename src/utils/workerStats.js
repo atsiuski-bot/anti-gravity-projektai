@@ -229,7 +229,16 @@ export function computeWorkerStats(raw, window, opts = {}) {
     //     so "užduotys" reflects real assigned work, not call/quick-work auto-logs.
     const tasks = (raw.tasks || []).filter((t) => {
         if (t.isSystemTask || t.isQuickWork) return false;
-        const day = getLithuanianDateString(t.confirmedAt || t.completedAt || t.archivedAt || t.createdAt);
+        // A soft-deleted task is NOT throughput. Deleting a task with "keep work hours" stamps
+        // completed/confirmed ON TOP of isDeleted, and the fetch layer admits it (it only drops
+        // deleted SESSIONS), so without this gate every discarded task scored as a completion —
+        // and as an acceptance — in both the on-screen KPI and the downloaded report.
+        if (t.isDeleted || t.status === 'deleted') return false;
+        // Bucket by when the WORK finished, not when a manager accepted it. Keying on confirmedAt
+        // first moved a task into the period of its sign-off, so re-pulling a CLOSED month after
+        // the acceptance landed silently dropped the task out of it — the same report gave two
+        // different answers on two days. Acceptance timing stays visible via approvalPct.
+        const day = getLithuanianDateString(t.completedAt || t.confirmedAt || t.archivedAt || t.createdAt);
         return inWindow(day, startStr, endStr);
     });
     const completedCount = tasks.length;

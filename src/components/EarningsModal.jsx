@@ -22,26 +22,33 @@ const formatHours = (h) =>
 export default function EarningsModal({ open, onClose, task, totalMinutes }) {
     const { currentUser, userData } = useAuth();
     const [priorMinutes, setPriorMinutes] = useState(null); // null = still loading
+    const [loadFailed, setLoadFailed] = useState(false);    // month read failed — refuse to quote a sum
     const payRate = userData?.payRate;
 
     useEffect(() => {
         if (!open || !currentUser?.uid) return undefined;
         let cancelled = false;
         setPriorMinutes(null);
+        setLoadFailed(false);
         (async () => {
             try {
-                // Range on `date` only (single-field, no composite index) — mirrors Reports —
-                // then narrow to this worker client-side. The just-finished session is excluded by
-                // taskId, so its eventual-consistency delay never under/over-counts the month.
+                // Pin the OWNER, not just the date. The work_sessions read rule grants a worker only
+                // rows where `userId == uid`, and Firestore evaluates a LIST query against its
+                // POTENTIAL result set — so a date-only query is denied WHOLESALE (permission-denied)
+                // as soon as any colleague has a session this month, rather than being filtered. That
+                // silently zeroed the month's prior hours and re-priced every task from the LOWEST
+                // tier. The (userId, date) composite index for this shape already exists.
+                // The just-finished session is excluded by taskId, so its eventual-consistency delay
+                // never under/over-counts the month.
                 const monthStart = `${getLithuanianDateString().slice(0, 7)}-01`;
                 const snap = await getDocs(query(
                     collection(db, 'work_sessions'),
+                    where('userId', '==', currentUser.uid),
                     where('date', '>=', monthStart),
                 ));
                 let sum = 0;
                 snap.forEach((d) => {
                     const data = d.data();
-                    if (data.userId !== currentUser.uid) return;       // this worker only
                     if (data.isDeleted) return;                        // voided sessions don't count
                     if (task?.id && data.taskId === task.id) return;   // this task's own segments
                     sum += sanitizeReportMinutes(data.durationMinutes);
@@ -49,7 +56,9 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
                 if (!cancelled) setPriorMinutes(sum);
             } catch (e) {
                 logError(e, { source: 'EarningsModal.monthHours', userId: currentUser?.uid });
-                if (!cancelled) setPriorMinutes(0); // fall back to "this task only" stacking
+                // Fail CLOSED: without the month's prior hours the marginal tier is unknown, and the
+                // old fallback (prior = 0) quoted a confidently WRONG amount. Say nothing instead.
+                if (!cancelled) setLoadFailed(true);
             }
         })();
         return () => { cancelled = true; };
@@ -58,7 +67,7 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
     if (!open) return null;
 
     const taskHours = Math.max(0, (Number(totalMinutes) || 0) / 60);
-    const loading = priorMinutes === null;
+    const loading = priorMinutes === null && !loadFailed;
     const priorHours = (priorMinutes || 0) / 60;
     // Bill by the tariff the manager chose for THIS task (task.payRateId); falls back to the
     // worker's default tariff when the task carries none — so old tasks and single-rate workers
@@ -81,6 +90,11 @@ export default function EarningsModal({ open, onClose, task, totalMinutes }) {
                 <p className="py-6 text-center text-body text-ink-muted">Skaičiuojama…</p>
             ) : !hasPayRate(payRate) ? (
                 <p className="py-2 text-body text-ink-muted">Jums dar nenustatytas įkainis.</p>
+            ) : loadFailed ? (
+                <p role="alert" className="py-2 text-body font-medium text-feedback-danger">
+                    Nepavyko suskaičiuoti šio mėnesio valandų, todėl uždarbio nerodome — suma būtų
+                    neteisinga. Bandykite vėliau arba pasitikslinkite pas vadovą.
+                </p>
             ) : (
                 <div className="space-y-4">
                     <div className="flex items-center justify-center gap-2 text-ink-muted">

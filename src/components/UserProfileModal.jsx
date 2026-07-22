@@ -184,6 +184,15 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
 
     const workerName = formatDisplayName(worker?.displayName || worker?.email || 'Meistras');
 
+    // Scope-determining primitives, pulled out of `viewerData` for the load effect below.
+    // `viewerData` is AuthContext's live user doc: a BRAND-NEW object identity on every snapshot,
+    // including metadata-only ones and the viewer's own heartbeat/status writes. Depending on the
+    // object would re-run the load while the modal is open and re-seed `selectedIds` to "all
+    // checked", so tasks the manager had deliberately unchecked would still get reassigned.
+    // Same pattern as useAssigneeAffinity / DailyStatistics.
+    const viewerRole = viewerData?.role;
+    const viewerScopedManager = viewerData?.scopedManager;
+
     // Load the worker's open tasks + absence window once on open. The task query mirrors the report
     // surfaces (see workerTasksQuerySpec): a whole-team viewer queries the worker's rows by
     // assignedUserId; a SCOPED overseer instead fetches their subtree slice by the teamManagerIds
@@ -225,7 +234,9 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
             }
         })();
         return () => { cancelled = true; };
-    }, [worker?.id, viewerData, viewerUid]);
+        // Only the scope-determining primitives (see above) — never the whole `viewerData` object.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [worker?.id, viewerRole, viewerScopedManager, viewerUid]);
 
     // Target candidates: the viewer's in-scope roster MINUS the absent worker themselves and any
     // disabled account (you cannot hand work to someone who is blocked).
@@ -474,9 +485,14 @@ export default function UserProfileModal({ userId, onClose }) {
             onClose={onClose}
             ariaLabel={`${name} profilis`}
             size="xl"
-            // Fill nearly the whole viewport (only a small inset from the scrim's p-4) so the
-            // member card reads as a full surface, and widen further when the day report is shown.
-            className={clsx('h-[92vh] max-h-[92vh]', showStats && 'max-w-4xl')}
+            // Fill the scrim's padded line (`h-full`) so the member card reads as a full surface,
+            // and widen further when the day report is shown. Deliberately NO max-h here: a
+            // caller-side `max-h-[92vh]` is the same tailwind-merge group as Modal's
+            // `max-h-[calc(100dvh-9rem)]` and would DELETE that cap — and `vh` measures the
+            // URL-bar-hidden viewport, so the card grew taller than the visible area and the
+            // close button plus the Pasiekimai/Statistika/Suvestinė tabs were clipped off the top
+            // of a phone screen with no way to scroll them back (Modal.jsx §height cap).
+            className={clsx('h-full', showStats && 'max-w-4xl')}
         >
             {/* Tab switch — sits ABOVE the identity block. Only a manager who oversees this member
                 gets the statistics view. */}

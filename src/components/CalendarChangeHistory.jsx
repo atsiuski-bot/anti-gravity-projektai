@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
-import { getLithuanianDateString } from '../utils/timeUtils';
+import { getLithuanianDateString, vilniusWallClockToISO, addDaysToDateString } from '../utils/timeUtils';
 import { isManagerRole } from '../utils/formatters';
 import { absenceLabel } from '../utils/absence';
 import { canSeeWholeTeam, isScopedOverseer, isOverseenBy } from '../utils/teamScope';
@@ -41,13 +41,23 @@ export default function CalendarChangeHistory({ users = [] }) {
     const fetchCalendarHistory = async () => {
         setLoading(true);
         try {
-            const startStr = `${historyRange.start}T00:00:00.000Z`;
-            const endStr = `${historyRange.end}T23:59:59.999Z`;
+            // historyRange holds VILNIUS calendar days (getLithuanianDateString / resolvePresetRange),
+            // but `createdAt` is written as new Date().toISOString() — a UTC instant. Pinning a Vilnius
+            // date with a literal 'Z' therefore shifted both bounds by the Vilnius offset (+3h summer,
+            // +2h winter): a request filed at 01:30 Vilnius stamps 22:30Z on the PREVIOUS day and fell
+            // below the floor, so late-night/after-midnight rows — including pending ones carrying the
+            // inline Patvirtinti/Atmesti controls — silently vanished from "Ši diena", while rows from
+            // the small hours of the NEXT day were pulled in under the wrong date. Convert the Vilnius
+            // wall-clock boundaries to real UTC instants (same helper Reports.jsx uses) and make the
+            // upper bound HALF-OPEN — the next day's 00:00 exclusive — so no instant is counted twice.
+            const startStr = vilniusWallClockToISO(historyRange.start, '00:00') || historyRange.start;
+            const endExclusiveDay = addDaysToDateString(historyRange.end, 1);
+            const endStr = vilniusWallClockToISO(endExclusiveDay, '00:00') || endExclusiveDay;
 
             const q = query(
                 collection(db, 'calendar_requests'),
                 where('createdAt', '>=', startStr),
-                where('createdAt', '<=', endStr),
+                where('createdAt', '<', endStr),
                 orderBy('createdAt', 'desc')
             );
 

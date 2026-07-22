@@ -16,7 +16,17 @@ export default function CombinedHoursSummary() {
     // Scoped manager: only their team's rows + roster. Admin/unscoped manager: whole company.
     const scoped = isScopedOverseer(userData);
     const uid = currentUser?.uid;
-    const users = useMemo(() => scopeRoster(allUsers, userData, uid), [allUsers, scoped, uid]); // eslint-disable-line react-hooks/exhaustive-deps -- userData read via the stable `scoped` flag
+    // Same roster the team report uses: in scope, not a test account — and DISABLED ACCOUNTS ARE
+    // KEPT. Reports.jsx (TeamPeriodSummary) filters on `!u.isTest` alone and deliberately retains
+    // offboarded users, because a worker disabled mid-period still worked the hours they logged
+    // before being blocked; dropping them here would erase real time from the dashboard total and
+    // make it disagree with the report tab in the opposite direction. Only `isTest` is excluded,
+    // which is the one exclusion every report surface genuinely shares.
+    const users = useMemo(
+        () => scopeRoster(allUsers, userData, uid).filter(u => !u.isTest),
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData read via the stable `scoped` flag
+        [allUsers, scoped, uid]
+    );
     const [tasks, setTasks] = useState([]);
     const [workHours, setWorkHours] = useState([]);
     const [workSessions, setWorkSessions] = useState([]);
@@ -26,6 +36,11 @@ export default function CombinedHoursSummary() {
 
     useEffect(() => {
         if (!currentUser || usersLoading) return;
+        // The panel opens COLLAPSED, so nothing below is rendered until the manager expands it.
+        // Subscribing anyway meant five live listeners — two of them whole-collection — running,
+        // re-delivering and re-running the O(users × rows) recompute on every teammate's calendar
+        // save, for a panel showing nothing. Subscribe only while it is actually open.
+        if (isCollapsed) return;
 
         // Team filter for a scoped manager (array-contains on the row's denormalized
         // teamManagerIds); null = whole-company (admin / unscoped manager). work_hours is the
@@ -67,8 +82,16 @@ export default function CombinedHoursSummary() {
             console.error("CombinedHoursSummary: Archived Tasks Listener Error:", error);
         });
 
-        // 3. Listen to Work Hours (Planned Calendar Events)
-        const workHoursQuery = query(collection(db, 'work_hours'));
+        // 3. Listen to Work Hours (Planned Calendar Events) — bounded to the displayed week on the
+        // SERVER. Unbounded, this pulled the company's entire shift calendar (every week ever
+        // planned, growing forever) down to a phone just to keep the seven days below; the same
+        // `start` range shape ActiveWorkSessions/AllUsersCalendar already use stays on the
+        // automatic single-field index, so no composite index is needed.
+        const workHoursQuery = query(
+            collection(db, 'work_hours'),
+            where('start', '>=', weekStart.toISOString()),
+            where('start', '<=', weekEnd.toISOString())
+        );
         const unsubWorkHours = onSnapshot(workHoursQuery, (snapshot) => {
             const hoursData = snapshot.docs
                 .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -122,7 +145,7 @@ export default function CombinedHoursSummary() {
             unsubSessions();
             unsubBreakSessions();
         };
-    }, [currentUser, usersLoading, scoped, uid]);
+    }, [currentUser, usersLoading, scoped, uid, isCollapsed]);
 
     // Calculate stats
     const combinedStats = useMemo(() => {

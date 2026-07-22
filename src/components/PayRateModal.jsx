@@ -6,6 +6,7 @@ import { netToGross, validateTiers, EFFECTIVE_TAX_RATE } from '../utils/payRate'
 import Modal from './ui/Modal';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
+import ConfirmDialog from './ui/ConfirmDialog';
 
 // PayRateModal — admin-only editor for a worker's pay tariffs. A worker may have SEVERAL named
 // tariffs (e.g. "Statyba", "Griovimas"); the manager later picks which one applies when assigning a
@@ -22,15 +23,43 @@ const toRow = (t) => ({
 
 const emptyRows = () => [{ fromHours: '0', netRate: '' }];
 
-// Stable per-tariff id — referenced by tasks (task.payRateId), so it must survive future edits.
-let idCounter = 0;
-const mintId = () => {
+// Stable per-tariff id — referenced by tasks (task.payRateId), so it must survive future edits AND
+// never repeat. crypto.randomUUID exists only in a SECURE context (https / localhost), so over a
+// plain-http LAN host (phone testing) the fallback is what actually runs — and it must be unique on
+// its own. The previous fallback was a module-level counter, which restarts at 1 on every page load
+// and therefore re-minted an id an earlier session had already stored; two tariffs sharing an id
+// make resolvePayRate (utils/payRate.js) match the FIRST one, silently billing work at the wrong
+// table. Time + randomness cannot be reset by a reload. Exported for the unit test.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export const mintId = () => {
     try {
         if (typeof crypto !== 'undefined' && crypto.randomUUID) return `rate_${crypto.randomUUID()}`;
     } catch { /* fall through */ }
-    idCounter += 1;
-    return `rate_${idCounter}_${idCounter}`;
+    return `rate_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 };
+
+// Fail closed before a duplicate can reach Firestore: an id collision is invisible in the UI (both
+// tariffs keep their own name) but re-prices every task bound to the shadowed one. Exported for the
+// unit test.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export const hasDuplicateRateIds = (rates) => {
+    const ids = rates.map((r) => r.id);
+    return new Set(ids).size !== ids.length;
+};
+
+// The stored payRate document for a built tariff set. It ALWAYS carries the full named `rates`
+// set — even for a single tariff — because `rates` is the only place a tariff's id lives, and a
+// task references its tariff by that id (task.payRateId). Dropping `rates` on the way back down to
+// one tariff stripped those ids, so every task still bound to a deleted tariff fell through
+// resolvePayRate's list[0] fallback (utils/payRate.js) and was silently re-priced against whichever
+// table happened to remain — a pay change nobody could see. `tiers` / `label` stay as a mirror of
+// the first tariff so any legacy reader of payRate.tiers still resolves the default.
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export const buildPayRateDoc = (built) => ({
+    tiers: built[0].tiers,
+    ...(built[0].label ? { label: built[0].label } : {}),
+    rates: built,
+});
 
 // Build the editor's tariff cards from a stored payRate. Preference mirrors listPayRates: the named
 // `rates` set when present, else the legacy single `tiers` as one card, else one empty card.
@@ -55,11 +84,14 @@ export default function PayRateModal({ open, user, onClose, onSave }) {
     const [cards, setCards] = useState(cardsFromPayRate(null));
     const [error, setError] = useState('');
     const [saving, setSaving] = useState(false);
+    // Index of the tariff card awaiting a delete confirmation (null = none).
+    const [confirmRemoveIdx, setConfirmRemoveIdx] = useState(null);
 
     useEffect(() => {
         if (!open) return;
         setCards(cardsFromPayRate(user?.payRate));
         setError('');
+        setConfirmRemoveIdx(null);
     }, [open, user]);
 
     if (!user) return null;
@@ -77,6 +109,9 @@ export default function PayRateModal({ open, user, onClose, onSave }) {
     const addRow = (ci) => updateCard(ci, { rows: [...cards[ci].rows, { fromHours: '', netRate: '' }] });
     const removeRow = (ci, ri) => updateCard(ci, { rows: cards[ci].rows.filter((_, idx) => idx !== ri) });
     const addCard = () => setCards((prev) => [...prev, { id: mintId(), label: '', rows: emptyRows() }]);
+    // Removing a tariff is CONSEQUENTIAL, never silent: work already assigned to it (and any work
+    // carrying no explicit tariff) falls back to the FIRST remaining tariff afterwards, i.e. it is
+    // re-priced. The admin confirms that trade first — see the ConfirmDialog below.
     const removeCard = (ci) => setCards((prev) => prev.filter((_, idx) => idx !== ci));
 
     const rowsToTiers = (rows) =>
@@ -96,13 +131,12 @@ export default function PayRateModal({ open, user, onClose, onSave }) {
             if (tierErr) { setError(cards.length > 1 ? `„${b.label || `Tarifas ${i + 1}`}“: ${tierErr}` : tierErr); return; }
             if (cards.length > 1 && !b.label) { setError(`Įveskite ${i + 1}-o tarifo pavadinimą.`); return; }
         }
+        if (hasDuplicateRateIds(built)) {
+            setError('Nepavyko išsaugoti: tarifai susidubliavo. Uždarykite langą ir bandykite dar kartą.');
+            return;
+        }
 
-        // Persist: a single tariff keeps the legacy { tiers, label } shape (zero migration for the
-        // common case); multiple tariffs write the full named `rates` set and mirror the first into
-        // `tiers` so any legacy reader of payRate.tiers still resolves the default.
-        const payRate = built.length === 1
-            ? { tiers: built[0].tiers, ...(built[0].label ? { label: built[0].label } : {}) }
-            : { tiers: built[0].tiers, label: built[0].label, rates: built };
+        const payRate = buildPayRateDoc(built);
 
         setSaving(true);
         try {
@@ -128,6 +162,7 @@ export default function PayRateModal({ open, user, onClose, onSave }) {
     };
 
     return (
+        <>
         <Modal
             open={open}
             onClose={onClose}
@@ -177,7 +212,7 @@ export default function PayRateModal({ open, user, onClose, onSave }) {
                                     variant="danger"
                                     icon={Trash2}
                                     label="Pašalinti tarifą"
-                                    onClick={() => removeCard(ci)}
+                                    onClick={() => setConfirmRemoveIdx(ci)}
                                 />
                             </div>
                         )}
@@ -253,5 +288,19 @@ export default function PayRateModal({ open, user, onClose, onSave }) {
                 </p>
             </div>
         </Modal>
+
+        {confirmRemoveIdx !== null && (
+            <ConfirmDialog
+                open={confirmRemoveIdx !== null}
+                title="Pašalinti tarifą?"
+                message={`Tarifas „${cards[confirmRemoveIdx]?.label?.trim() || `Tarifas ${confirmRemoveIdx + 1}`}“ bus pašalintas iš sąrašo.`}
+                warning="Darbai, kuriems šis tarifas jau priskirtas, bus apmokami pagal pirmą likusį tarifą — įkainis gali pasikeisti. Pakeitimas įsigalios paspaudus „Išsaugoti“."
+                confirmLabel="Pašalinti"
+                cancelLabel="Atšaukti"
+                onConfirm={() => { removeCard(confirmRemoveIdx); setConfirmRemoveIdx(null); }}
+                onCancel={() => setConfirmRemoveIdx(null)}
+            />
+        )}
+        </>
     );
 }

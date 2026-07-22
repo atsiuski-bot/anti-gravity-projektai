@@ -1,10 +1,10 @@
 import { doc, getDoc, getDocFromServer, updateDoc, collection, addDoc, setDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
-import { withUserLock } from './sessionLock';
+import { withUserLock, LOCK_MAX_HOLD_MS } from './sessionLock';
 import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
-import { isManagerRole } from './formatters';
+import { isManagerRole, formatTime } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
 import { buildCallTitle } from './callContacts';
 import { notify } from './notify';
@@ -76,6 +76,7 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
         // 3. Pause current session if exists (collect promises, don't await yet)
         let newPausedSession = null;
         let pausePromise = Promise.resolve();
+        let pauseFailure = null; // set if the interrupted task's pause REJECTS (see the guard below)
         // Minutes banked from an interrupted BREAK's pre-interruption segment (see below), folded
         // into the daily break counter when the new session's user update is assembled.
         let bankedBreakMinutes = 0;
@@ -88,9 +89,13 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                     }
                 // Route the failure to the durable crash log, not just console: if this
                 // pause fails the task stays timerStatus:'running' with a stale start and
-                // would later credit ghost time, so the failure must be diagnosable. The
-                // on-load orphan recovery + the clamp bound the damage; this makes it visible.
-                }).catch(e => logError(e, { source: 'pauseFail:startSession.taskPause', taskId: userData.activeSession.taskId }));
+                // would later credit ghost time, so the failure must be diagnosable. Then
+                // RETHROW so the session start aborts (see the await below) — swallowing it
+                // committed the new session on top of a still-running task timer.
+                }).catch(e => {
+                    logError(e, { source: 'pauseFail:startSession.taskPause', taskId: userData.activeSession.taskId });
+                    throw e;
+                });
                 newPausedSession = userData.activeSession;
             } else {
                 newPausedSession = userData.activeSession;
@@ -240,11 +245,38 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
             updates['breakState.dailyAccumulatedMinutes'] = (userData?.breakState?.dailyAccumulatedMinutes || 0) + bankedBreakMinutes;
         }
 
-        // Run critical user doc update in parallel with task pause
-        await Promise.all([
-            updateDoc(userRef, updates),
-            pausePromise
+        // The task pause must COMMIT BEFORE the new session does — it is a precondition, not a
+        // parallel nicety. Running them together (and swallowing a pause failure) let the break/
+        // call/quick-work commit while the task stayed timerStatus:'running' with its original
+        // timerStartedAt: the interruption was then credited TWICE — once as paid task work (the
+        // task's next pause logs ONE segment spanning the whole stretch) and once as a break.
+        // Nothing heals that in the same app session: endSession's doResume only re-anchors a task
+        // it finds PAUSED, and on-load orphan recovery only inspects PRE-BOOT runs. So fail CLOSED,
+        // exactly like startTask/resumeTask do when their own guard cannot be proven — an aborted
+        // start is a repeatable no-op, double-credited time is not.
+        // Fail closed on a REJECTED pause — but NOT on an unsettled one. A Firestore mutation
+        // promise resolves only on server acknowledgement, so offline (the app's primary condition:
+        // a worker interrupting a running task with a break, out of coverage) it stays pending for
+        // as long as the device is offline. Awaiting it outright meant `updateDoc` below was never
+        // even ISSUED, so the session-start mutation never entered the persisted local queue and was
+        // lost on app restart — trading a double-credit bug for a lost-session bug on the commonest
+        // interruption in the app.
+        //
+        // Bounding the wait is safe precisely because ordering is preserved: the pause was enqueued
+        // FIRST, and Firestore replays queued mutations in enqueue order, so the pause still lands
+        // before the session start on reconnect. What we must never do is proceed after a genuine
+        // rejection — that is the double-credit path the guard exists for.
+        const pauseOutcome = await Promise.race([
+            pausePromise.then(() => 'committed', (err) => { pauseFailure = err; return 'failed'; }),
+            new Promise((resolve) => { setTimeout(() => resolve('queued'), LOCK_MAX_HOLD_MS); }),
         ]);
+        if (pauseOutcome === 'failed') throw pauseFailure;
+        // A pause still in flight after the budget keeps its own rejection handler, so a late
+        // failure is recorded rather than surfacing as an unhandled rejection.
+        if (pauseOutcome === 'queued') {
+            pausePromise.catch((err) => logError(err, { source: 'startSession:queuedPauseFailed', userId, sessionType: type }));
+        }
+        await updateDoc(userRef, updates);
 
     } catch (err) {
         // Record durably before rethrowing — every caller only console.errors the
@@ -288,10 +320,14 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
         // wasCapped} shape as the main path, so useOrphanedSessionRecovery can surface the
         // recovered/clamped minutes for these legacy-flag-only sessions too — previously this
         // branch returned undefined and the banner never showed for them.
+        // `endAt` is forwarded: the heartbeat-aware orphan recovery calls endSession with the
+        // session's last proof of life, and a legacy-flag-only orphan reaches THIS branch — never
+        // the `endMoment` line below. Dropping the override here credited the whole dead offline
+        // gap (up to the 16h clamp) for exactly the sessions recovery was meant to cut short.
         if (!userData?.activeSession && !sessionOverrides.force) {
-            if (userData?.breakState?.isTakingBreak) return await endLegacySession(userId, 'break', userData);
-            else if (userData?.callState?.isCalling) return await endLegacySession(userId, 'call', userData);
-            else if (userData?.quickWorkState?.isQuickWorking) return await endLegacySession(userId, 'quickWork', userData);
+            if (userData?.breakState?.isTakingBreak) return await endLegacySession(userId, 'break', userData, sessionOverrides.endAt);
+            else if (userData?.callState?.isCalling) return await endLegacySession(userId, 'call', userData, sessionOverrides.endAt);
+            else if (userData?.quickWorkState?.isQuickWorking) return await endLegacySession(userId, 'quickWork', userData, sessionOverrides.endAt);
             return;
         }
 
@@ -432,6 +468,32 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
             if (resumableTaskIds && resumableTaskIds.length > 0) {
                 // Fire and forget — task resumption should not block endSession
                 const doResume = async () => {
+                    // Retract the "the task is running again" projection this end already wrote to
+                    // the user doc (activeSession + workStatus 'running', step 1 above) when the
+                    // resume it promised turns out to be impossible — the task was accepted,
+                    // confirmed or deleted while the worker was on the break. Nothing else clears
+                    // it: the worker reads "dirba" forever, and DailyStatistics synthesizes a LIVE
+                    // row from activeSession alone, so the manager's team total grows a minute per
+                    // minute with no work_sessions row behind it. Guarded by a server-fresh re-read
+                    // that the projection is still exactly the one we wrote — anything the worker
+                    // started since owns the user doc and must never be wiped.
+                    const retractUnresumableProjection = async (taskId) => {
+                        if (restoredSession?.type !== 'task' || restoredSession.taskId !== taskId) return;
+                        try {
+                            const snap = await getUserSnapServerFirst(doc(db, 'users', userId));
+                            const live = snap.exists() ? snap.data()?.activeSession : null;
+                            if (!live || live.type !== 'task' || live.taskId !== taskId) return;
+                            await updateDoc(doc(db, 'users', userId), {
+                                activeSession: null,
+                                'workStatus.isWorking': false,
+                                'workStatus.status': 'idle',
+                                'workStatus.activeTaskId': null,
+                            });
+                        } catch (e) {
+                            logError(e, { source: 'writeFail:endSession.retractProjection', userId, taskId });
+                        }
+                    };
+
                     try {
                         const resumePromises = resumableTaskIds.map(async (taskId) => {
                             const tDoc = await getDoc(doc(db, 'tasks', taskId));
@@ -475,16 +537,30 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
                                     logError(fetchErr, { source: 'doResume:userStateCheck', userId, taskId });
                                 }
 
+                                // Finished/removed for good — no resume will ever happen for it, so
+                                // the projection written above is a phantom (see retract helper).
+                                const taskIsUnresumable = !!tData.completed
+                                    || tData.status === 'completed'
+                                    || tData.status === 'confirmed'
+                                    || tData.status === 'deleted';
+
                                 if (!userStartedAnotherTask &&
                                     tData.timerStatus === 'paused' &&
-                                    !tData.completed &&
-                                    tData.status !== 'completed' &&
-                                    tData.status !== 'confirmed' &&
-                                    tData.status !== 'deleted') {
+                                    !taskIsUnresumable) {
                                     await resumeTask(tData, userId);
                                 } else {
                                     console.log(`Skipping background resume for ${taskId} (completed or superseded)`);
+                                    // Only when the task itself is the blocker: a supersede (or an
+                                    // unprovable user-state read) means a live session owns the user
+                                    // doc, and clearing it there would be the data loss we avoid.
+                                    if (!userStartedAnotherTask && taskIsUnresumable) {
+                                        await retractUnresumableProjection(taskId);
+                                    }
                                 }
+                            } else {
+                                // Hard-deleted task: nothing to resume, and the same phantom
+                                // "running" projection would otherwise be left behind.
+                                await retractUnresumableProjection(taskId);
                             }
                         });
                         await Promise.allSettled(resumePromises);
@@ -527,7 +603,10 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
 // kept solely so the caller can tell whether the 16h clamp actually cut the credited time down —
 // it is never logged or accumulated. A missing/invalid startTime credits nothing (a clean,
 // uncapped zero), matching how the main path treats a sub-minute or backward-clock orphan.
-const endLegacySession = async (userId, type, userData) => {
+//
+// @param {number|string} [endAt] - optional instant the credited stretch ENDS (the session's last
+//   heartbeat, from orphan recovery). Mirrors endSession's `endMoment`; omitted means "now".
+const endLegacySession = async (userId, type, userData, endAt = null) => {
     try {
         // Construct a fake session object to pass to legacy logger
         let startTime;
@@ -537,12 +616,17 @@ const endLegacySession = async (userId, type, userData) => {
 
         let duration = 0;
         let rawMinutes = 0;
-        const nowMoment = getLithuanianNow();
-        let now = nowMoment;
+        // Credit up to the caller-supplied end instant when there is one (the abandoned session's
+        // last heartbeat), otherwise up to now — the same rule endSession's `endMoment` applies on
+        // the activeSession path. An unparseable override falls back to now rather than poisoning
+        // the duration with NaN.
+        const overrideMoment = endAt != null ? new Date(endAt) : null;
+        const now = overrideMoment && Number.isFinite(overrideMoment.getTime())
+            ? overrideMoment
+            : getLithuanianNow();
 
         if (startTime) {
             const fakeSession = { type, startTime };
-            now = getLithuanianNow(); // Update now
             // Raw (unclamped) delta first, so we can report whether the clamp below reduced it.
             rawMinutes = (now - new Date(startTime)) / (1000 * 60);
             duration = clampSessionMinutes((now - new Date(startTime)) / (1000 * 60));
@@ -618,9 +702,20 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
             createdAt: new Date().toISOString(),
             completedAt: now.toISOString(),
             isBreak: true
-        });
+        // merge:true — same rationale as the call/quick-work branches below. Two independent
+        // closers converge on this ONE deterministic id (this client and the daily server net,
+        // or an interrupted break's banked partial and its final close), so the second write is
+        // an UPDATE. A bare overwrite drops the teamManagerIds the create-only stamp trigger
+        // denormalized onto the row, and the update-rule pin on that field then REJECTS the
+        // write outright — silently, because the caller only logs the failure. The break then
+        // keeps whichever duration the first closer computed.
+        }, { merge: true });
     } else if (session.type === 'call') {
-        const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
+        // Pinned to Europe/Vilnius, not the device clock: this string is written into the task's
+        // permanent description, every read-back path renders times in Vilnius, and the server-side
+        // auto-close mirror formats the SAME record in Vilnius too. A phone on another zone would
+        // otherwise persist a time that contradicts the session's own timestamps next to it.
+        const timeString = formatTime(now);
         // The title is derived from who was on the call ("Skambutis – Klientas"); the optional
         // free-text notes go into the description alongside the recorded time. contactType is
         // also stored as a structured field so reports can group calls by audience.
@@ -681,7 +776,9 @@ const handleLegacyLogging = async (userId, userData, session, now, durationMinut
 
         await Promise.all(callPromises);
     } else if (session.type === 'quickWork') {
-        const timeString = now.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
+        // Vilnius-pinned for the same reason as the call branch above — the string is permanent
+        // free text on the task, and the server mirror formats it in Vilnius.
+        const timeString = formatTime(now);
         const autoStopped = !session.customTitle;
         const title = session.customTitle || AUTO_STOPPED_QUICK_WORK_TITLE;
         // Optional free-text comment that accompanies a TEMPLATE-titled quick work (e.g. title

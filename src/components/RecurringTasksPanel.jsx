@@ -19,7 +19,7 @@ import {
     describeRecurrence,
     nextOccurrence,
 } from '../utils/recurrence';
-import { getLithuanianDateString } from '../utils/timeUtils';
+import { getLithuanianDateString, addDaysToDateString } from '../utils/timeUtils';
 import { cn } from '../utils/cn';
 import Button from './ui/Button';
 import Select from './ui/Select';
@@ -29,6 +29,24 @@ import TaskModal from './TaskModal';
 
 const MONTH_DAYS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: `${i + 1} d.` }));
 const INTERVAL_OPTIONS = RECURRENCE_INTERVALS.map((o) => ({ value: String(o.value), label: o.label }));
+
+/**
+ * PURE: the next occurrence that has NOT been materialized yet — the first one a manager can still
+ * cancel. `nextOccurrence` counts TODAY as an occurrence, but the scheduled generator already ran at
+ * 05:00 Vilnius and wrote today's task (stamping `recurrence.lastGeneratedDate`). So "Praleisti kitą"
+ * used to add TODAY to skipDates: the task for today exists and is untouched, and the occurrence the
+ * manager meant to cancel — tomorrow's — still fired, while the row reported success. Once today has
+ * been generated, start the scan at tomorrow so the "Kita:" preview and the skip act on the same,
+ * still-cancellable day.
+ *
+ * Exported for unit testing and so both call sites read from one definition.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper exported for unit tests.
+export function nextPendingOccurrence(recurrence, today = getLithuanianDateString()) {
+    if (!recurrence) return null;
+    const from = recurrence.lastGeneratedDate === today ? addDaysToDateString(today, 1) : today;
+    return nextOccurrence(recurrence, from);
+}
 
 // One template's recurrence editor + quick actions. Kept as a child so each row's draft/expander
 // state is local and editing one row never re-renders the others.
@@ -116,7 +134,7 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
 
     const handleSkipNext = async () => {
         if (!recurrence) return;
-        const next = nextOccurrence(recurrence);
+        const next = nextPendingOccurrence(recurrence);
         if (!next) return;
         setBusyAction('skip');
         setMsg(null);
@@ -171,7 +189,9 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
         }
     };
 
-    const next = isRecurring ? nextOccurrence(recurrence) : null;
+    // Same source of truth as "Praleisti kitą": the preview must name the day the skip would act on,
+    // never a day whose task is already on the board.
+    const next = isRecurring ? nextPendingOccurrence(recurrence) : null;
 
     return (
         <li className="rounded-control border border-line bg-surface-card">

@@ -399,20 +399,32 @@ export default function ManagerNotifications({ onClose }) {
         bulkApprovableCalRequests.length === calendarRequests.length;
 
     // Batch-approve every pending (add/edit) calendar request in one action — the calendar-side
-    // mirror of handleConfirmAllCompletions. Loops the existing per-item handler, so each approval
-    // still writes work_hours, flips the request, logs the change, and notifies the worker exactly
-    // as a single tap would. Deletes are excluded by construction (calBatchEligible gates the bar).
+    // mirror of handleConfirmAllCompletions. Each approval still writes work_hours, flips the request,
+    // logs the change, and notifies the worker exactly as a single tap would. Deletes are excluded by
+    // construction (calBatchEligible gates the bar).
+    //
+    // It calls the shared writer DIRECTLY rather than the per-card handler: that handler opens with
+    // clearActionFeedback() and swallows its own error into the banner, so in a loop every iteration
+    // WIPED the previous one's error — and because it never rethrows, the outer catch never ran
+    // either. The manager was left looking at a clean panel believing all requests were approved while
+    // a worker's planned hours had never reached work_hours. Failures are counted and reported once.
     const handleApproveAllCalendarRequests = async () => {
         if (!calBatchEligible) return;
         setBulkApprovingCal(true);
         clearActionFeedback();
+        let failed = 0;
         try {
             for (const request of bulkApprovableCalRequests) {
-                await handleApproveCalendarRequest(request);
+                try {
+                    await approveCalendarRequest(request, calendarActor());
+                } catch (err) {
+                    failed += 1;
+                    console.error('Error approving calendar request in batch:', err);
+                }
             }
-        } catch (err) {
-            console.error('Error approving all calendar requests:', err);
-            setActionError('Nepavyko patvirtinti visų užklausų. Bandykite dar kartą.');
+            if (failed > 0) {
+                setActionError(`Nepavyko patvirtinti užklausų: ${failed} iš ${bulkApprovableCalRequests.length}. Bandykite dar kartą.`);
+            }
         } finally {
             setBulkApprovingCal(false);
         }
@@ -494,8 +506,7 @@ export default function ManagerNotifications({ onClose }) {
         try {
             clearActionFeedback();
             // 0. The task may have been hard-deleted out from under this request (see handleApproveTask).
-            // Read it once: if it's gone, clear the orphan and stop; otherwise reuse this snapshot to
-            // open the editor below (no second fetch).
+            // Read it once: if it's gone, clear the orphan and stop.
             const taskRef = doc(db, 'tasks', taskId);
             const taskSnap = await getDoc(taskRef);
             if (!taskSnap.exists()) {
@@ -517,15 +528,60 @@ export default function ManagerNotifications({ onClose }) {
             await handleDismissTask(notif.id);
             await notifyTaskApproved(notif, { edited: true });
 
-            // 3. Open the task for editing in whichever view hosts the modal, and close the bell. The
-            // transient __suppressEditNotice marker rides the in-memory task only (TaskModal builds
+            // 3. Open the task for editing in whichever view hosts the modal, and close the bell.
+            // RE-FETCH first: the snapshot read in step 0 is the PRE-approval doc (status still
+            // 'unapproved'), and the editor seeds its form from whatever object it is handed — so
+            // opening on that stale snapshot let the manager's save write 'unapproved' back over the
+            // approval that just committed, silently un-approving a task the worker had already been
+            // told about. The fresh doc carries approveTask's write; if the re-read fails we merge the
+            // approval fields in by hand rather than fall back to the stale shape. (Mirrors the
+            // re-fetch TaskCard.performRevert does for exactly the same reason.)
+            let fresh = { id: taskSnap.id, ...taskSnap.data(), status: 'approved', isApproved: true };
+            try {
+                const freshSnap = await getDoc(taskRef);
+                if (freshSnap.exists()) fresh = { id: freshSnap.id, ...freshSnap.data() };
+            } catch (refetchErr) {
+                console.error('Failed to re-read the approved task before editing:', refetchErr);
+            }
+            // The transient __suppressEditNotice marker rides the in-memory task only (TaskModal builds
             // its Firestore write from the form, never by spreading this object), so it never persists.
             onClose?.();
-            window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data(), __suppressEditNotice: true } } }));
+            window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { ...fresh, __suppressEditNotice: true } } }));
         } catch (err) {
             console.error("Error in edit and approve:", err);
             setActionError("Nepavyko patvirtinti užduoties. Bandykite dar kartą.");
         }
+    };
+
+    // "Open the task this notification points at" — used by every card that hands the recipient off to
+    // the editor (a returned task, a recurring reassignment, a time-extension request).
+    //
+    // Order matters: READ the task first, dismiss only once it is proven openable. These sites used to
+    // dismiss FIRST and then read, so whenever the task had been deleted/archived meanwhile — or the
+    // read simply failed — the branch ended in silence: no modal, no message, and the very notice that
+    // explained what to do was already gone from the feed. The pointer to the work was destroyed with
+    // zero feedback. A gone task now clears the orphan WITH a neutral notice (mirroring
+    // handleApproveTask); an unreadable one keeps the notification so the user can retry.
+    const openTaskFromNotification = async (notif) => {
+        const taskId = notif?.taskId;
+        if (!taskId) return;
+        clearActionFeedback();
+        let taskSnap;
+        try {
+            taskSnap = await getDoc(doc(db, 'tasks', taskId));
+        } catch (err) {
+            console.error('Failed to load the task behind a notification:', err);
+            setActionError('Nepavyko atidaryti užduoties. Bandykite dar kartą.');
+            return;
+        }
+        if (!taskSnap.exists()) {
+            await handleDismissTask(notif.id);
+            setActionNotice('Ši užduotis jau ištrinta — pasenęs pranešimas pašalintas.');
+            return;
+        }
+        await handleDismissTask(notif.id);
+        onClose?.();
+        window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
     };
 
     const handleDeleteTaskAction = (notificationId, taskId, taskTitle) => {
@@ -629,13 +685,38 @@ export default function ManagerNotifications({ onClose }) {
         if (completions.length === 0) return undefined;
         clearActionFeedback();
         setBulkConfirming(true);
+        // Per-item fault tolerance. One unconfirmable task (hard-deleted meanwhile, or a colleague's
+        // task a scoped manager may not sign off) used to throw straight out of the loop, and
+        // runUndoable's catch then skipped BOTH the deferred worker pings and the undo snackbar — so
+        // the tasks that had already committed were accepted, their notifications marked read, their
+        // workers never told, and the manager was shown a flat "the batch failed" with no undo. Only
+        // the items that actually committed are pinged, undone and counted.
+        const confirmed = [];
         return runUndoable({
-            run: async () => { for (const n of completions) await confirmCompletionWrite(n); },
-            deferredEffect: async () => { for (const n of completions) await notifyCompletionConfirmed(n); },
-            undo: async () => { for (const n of completions) await undoConfirmCompletion(n); },
-            message: completions.length === 1 ? 'Užduotis priimta.' : `Priimta užduočių: ${completions.length}.`,
+            run: async () => {
+                for (const n of completions) {
+                    try {
+                        await confirmCompletionWrite(n);
+                        confirmed.push(n);
+                    } catch (err) {
+                        console.error('Error confirming one completion in the batch:', err);
+                    }
+                }
+                // Nothing committed at all → let runUndoable surface its error toast (no undo to offer).
+                if (confirmed.length === 0) throw new Error('bulk confirm: no completion could be confirmed');
+            },
+            deferredEffect: async () => { for (const n of confirmed) await notifyCompletionConfirmed(n); },
+            undo: async () => { for (const n of confirmed) await undoConfirmCompletion(n); },
+            message: completions.length === 1 ? 'Užduotis priimta.' : 'Užduotys priimtos.',
             undoneMessage: 'Atšaukta — grąžinta priėmimui.',
-            errorMessage: 'Nepavyko priimti visų užduočių. Bandykite dar kartą.',
+            errorMessage: 'Nepavyko priimti nė vienos užduoties. Bandykite dar kartą.',
+        }).then((ok) => {
+            // A partial batch is reported precisely, so the manager knows exactly what still needs
+            // acting on instead of trusting a count that includes the failures.
+            if (ok && confirmed.length < completions.length) {
+                setActionError(`Priimta ${confirmed.length} iš ${completions.length}. Likusių priimti nepavyko — bandykite dar kartą.`);
+            }
+            return ok;
         }).finally(() => setBulkConfirming(false));
     };
 
@@ -681,6 +762,21 @@ export default function ManagerNotifications({ onClose }) {
             if (!snap.exists()) {
                 await handleDismissTask(notif.id);
                 setActionNotice('Šio vartotojo paskyra jau ištrinta — pasenęs prašymas pašalintas. Jei žmogus turi prisijungti, tegul jungiasi iš naujo.');
+                return;
+            }
+            // The sign-up may ALREADY have been decided by another admin: the server fans one card out
+            // to every active admin, and the card renders from the notification payload, never from the
+            // live user doc. Writing blind therefore let a second admin — merely clearing a leftover
+            // card — silently REVERSE a colleague's decision (re-enabling an account that was
+            // deliberately blocked). Re-read the live status and, once it is no longer 'pending', clear
+            // the stale card instead of writing. A legacy doc with no `status` at all has never been
+            // decided, so it stays approvable.
+            const targetStatus = snap.data()?.status;
+            if (targetStatus && targetStatus !== 'pending') {
+                await handleDismissTask(notif.id);
+                setActionNotice(targetStatus === 'blocked'
+                    ? 'Dėl šios paskyros jau apsispręsta — ji užblokuota. Pasenęs prašymas pašalintas.'
+                    : 'Dėl šios paskyros jau apsispręsta — ji patvirtinta. Pasenęs prašymas pašalintas.');
                 return;
             }
             await updateDoc(doc(db, 'users', targetUid), approve
@@ -1098,20 +1194,10 @@ export default function ManagerNotifications({ onClose }) {
                                     actions={[
                                         { key: 'dismiss', label: 'Pažymėti skaitytu', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
                                         {
+                                            // Opens the generated task so the manager can reassign it; the
+                                            // shared helper reads before it dismisses (see its comment).
                                             key: 'reassign', label: 'Priskirti kitą', icon: Edit, variant: 'primary',
-                                            onClick: async () => {
-                                                // Dismiss, then open the generated task so the manager can reassign it.
-                                                await handleDismissTask(notif.id);
-                                                try {
-                                                    const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
-                                                    if (taskSnap.exists()) {
-                                                        onClose?.();
-                                                        window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
-                                                    }
-                                                } catch (e) {
-                                                    console.error('Failed to load recurring task for reassign:', e);
-                                                }
-                                            },
+                                            onClick: () => openTaskFromNotification(notif),
                                         },
                                     ]}
                                 />
@@ -1137,19 +1223,10 @@ export default function ManagerNotifications({ onClose }) {
                                     actions={[
                                         { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
                                         {
+                                            // Opens the returned task so the worker can fix it; the shared
+                                            // helper reads before it dismisses (see its comment).
                                             key: 'open', label: 'Atidaryti užduotį', icon: Edit, variant: 'primary',
-                                            onClick: async () => {
-                                                await handleDismissTask(notif.id);
-                                                try {
-                                                    const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
-                                                    if (taskSnap.exists()) {
-                                                        onClose?.();
-                                                        window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
-                                                    }
-                                                } catch (e) {
-                                                    console.error('Failed to load reverted task:', e);
-                                                }
-                                            },
+                                            onClick: () => openTaskFromNotification(notif),
                                         },
                                     ]}
                                 />
@@ -1225,6 +1302,12 @@ export default function ManagerNotifications({ onClose }) {
                                     <TaskActionRow
                                         className="mt-4"
                                         actions={[
+                                            // Benign dismiss: clearing this card must never require a
+                                            // state-changing write. Without it an admin who does not want
+                                            // to decide (someone else already handled it, or it is not
+                                            // their call) could only clear the badge by blocking or
+                                            // approving — i.e. by overwriting somebody else's decision.
+                                            { key: 'skip', label: 'Praleisti', icon: X, variant: 'secondary', disabled: inFlight, onClick: () => handleDismissTask(notif.id) },
                                             { key: 'block', label: 'Užblokuoti', icon: Ban, variant: 'danger', disabled: inFlight, onClick: () => handleAccountDecision(notif, false) },
                                             { key: 'approve', label: 'Patvirtinti', icon: Check, variant: 'success', loading: inFlight, onClick: () => handleAccountDecision(notif, true) },
                                         ]}
@@ -1403,21 +1486,12 @@ export default function ManagerNotifications({ onClose }) {
                                         { key: 'grant1h', label: 'Pratęsti +1 val.', compactLabel: '+1 val.', icon: TimeGrantedGlyph, variant: 'success', loading: grantingExt === notif.id, disabled: !!grantingExt, onClick: () => handleGrantExtension(notif, '1h') },
                                         { key: 'deny', label: 'Nepratęsti', icon: X, variant: 'secondary', disabled: !!grantingExt, onClick: () => handleDismissExtension(notif) },
                                         {
+                                            // Opens the task so the manager can extend the estimate (saving a
+                                            // longer time fires the worker's extension_granted notice). The
+                                            // shared helper reads before it dismisses (see its comment), so a
+                                            // request whose task is gone is no longer cleared in silence.
                                             key: 'edit', label: 'Redaguoti užduotį', icon: Edit, variant: 'primary', disabled: !!grantingExt,
-                                            onClick: async () => {
-                                                // Dismiss the request, then open the task so the manager can extend the
-                                                // estimate (saving a longer time fires the worker's extension_granted notice).
-                                                await handleDismissTask(notif.id);
-                                                try {
-                                                    const taskSnap = await getDoc(doc(db, 'tasks', notif.taskId));
-                                                    if (taskSnap.exists()) {
-                                                        onClose?.();
-                                                        window.dispatchEvent(new CustomEvent('open-task-modal', { detail: { task: { id: taskSnap.id, ...taskSnap.data() } } }));
-                                                    }
-                                                } catch (e) {
-                                                    console.error("Failed to load task for extending time:", e);
-                                                }
-                                            },
+                                            onClick: () => openTaskFromNotification(notif),
                                         },
                                     ]}
                                 />

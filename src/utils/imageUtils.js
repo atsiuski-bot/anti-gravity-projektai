@@ -16,9 +16,18 @@ export const compressImage = (file, maxWidth = 3000, maxHeight = 3000, quality =
         }
 
         const image = new Image();
-        image.src = URL.createObjectURL(file);
+        // Keep the blob URL in a local so every exit path can release it. An unrevoked URL pins
+        // the whole original file in memory until the document is discarded — and this PWA is a
+        // single document a worker keeps open all shift, so a dozen 5 MB phone photos never come
+        // back and the OS grows more likely to evict the app (which is what orphans running
+        // timers). Revoking once the decode has finished or failed is safe: the decoded bitmap is
+        // already held by the image element, independent of the URL.
+        const objectUrl = URL.createObjectURL(file);
+        image.src = objectUrl;
 
         image.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+
             let width = image.width;
             let height = image.height;
 
@@ -58,8 +67,15 @@ export const compressImage = (file, maxWidth = 3000, maxHeight = 3000, quality =
             }, 'image/jpeg', quality);
         };
 
-        image.onerror = (error) => {
-            reject(error);
+        image.onerror = () => {
+            URL.revokeObjectURL(objectUrl);
+            // The browser hands onerror a bare DOM Event, not an Error — no message, no stack — so
+            // the crash log used to record only {"isTrusted":true} with nothing identifying the
+            // photo. Reject with a real Error naming the file instead: this path is reached by an
+            // iPhone HEIC/HEIF (Chrome on Android cannot decode it in an <img>) and by any
+            // truncated/corrupt photo, and the filename is the only thing that tells the worker —
+            // and the manager reading error_logs — which picture to drop from the selection.
+            reject(new Error(`Nepavyko apdoroti nuotraukos ${file.name}`));
         };
     });
 };

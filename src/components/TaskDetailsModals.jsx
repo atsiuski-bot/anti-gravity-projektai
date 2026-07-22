@@ -250,7 +250,10 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, ca
 
     return (
         <DetailsModal isOpen={isOpen} onClose={onClose} title="Kontrolinis sąrašas" icon={ListChecks}>
-            <div className="flex flex-col h-full max-h-[60vh]">
+            {/* dvh, not vh: on mobile `vh` resolves to the LARGEST viewport (URL bar hidden), so a
+                vh-sized pane grows taller than the DetailsModal card that holds it (capped at
+                80dvh) and the worker ends up with two nested scroll areas. */}
+            <div className="flex flex-col h-full max-h-[60dvh]">
                 {total > 0 && (
                     <div className="mb-4">
                         <div className="mb-1 flex items-center justify-between text-caption font-medium text-ink-muted">
@@ -270,7 +273,10 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, ca
                     </div>
                 )}
 
-                <ul className="flex-1 overflow-y-auto space-y-2 pr-1">
+                {/* min-h-0: a flex child defaults to min-height:auto, which refuses to shrink below
+                    its content — without it this list never scrolls itself and pushes the
+                    "Pridėti punktą" form below the card's fold. */}
+                <ul className="min-h-0 flex-1 overflow-y-auto space-y-2 pr-1">
                     {items.length > 0 ? (
                         items.map((item) => (
                             <li key={item.id} className="flex items-stretch gap-2">
@@ -402,8 +408,11 @@ export function TimeAdjustmentsModal({ isOpen, onClose, task }) {
     return (
         <>
             <DetailsModal isOpen={isOpen} onClose={onClose} title="Koreguoti laiką" icon={Clock}>
-                <div className="flex flex-col h-full max-h-[60vh]">
-                    <div className="flex-1 overflow-y-auto space-y-3 pr-2">
+                {/* dvh + min-h-0 for the same reason as the checklist pane above: a vh-sized pane
+                    outgrows the 80dvh card on mobile, and a flex child without min-h-0 will not
+                    shrink to scroll — together they pushed "Pridėti sesiją" below the fold. */}
+                <div className="flex flex-col h-full max-h-[60dvh]">
+                    <div className="min-h-0 flex-1 overflow-y-auto space-y-3 pr-2">
                         {loading ? (
                             <p className="text-ink-muted text-center py-4">Įkeliama…</p>
                         ) : sessions.length > 0 ? (
@@ -548,6 +557,23 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
         setZoom(prev => prev === 1 ? 3.5 : 1);
     };
 
+    // Tap on the empty canvas AROUND the photo = close. This is the lightbox's only
+    // pointer-driven escape route: the dialog covers the scrim (so Modal's backdrop tap can never
+    // fire) and the canvas fills the card, so without this every tap was swallowed by the zoom
+    // toggle and a phone user with the X off-screen had to reload the app to get out. Taps on the
+    // image itself still zoom — the image's own handler stops propagation before this runs.
+    const handleCanvasClick = (e) => {
+        // Stop here, exactly as toggleZoom did: the wrapper below also carries an onClose, and
+        // letting the event bubble would close on the drag we are about to ignore.
+        e.stopPropagation();
+        // A pan that ends on the canvas also fires a click; a drag is not a dismissal.
+        if (isDragOccurred.current) {
+            isDragOccurred.current = false;
+            return;
+        }
+        onClose();
+    };
+
     // Mouse Event Handlers for Dragging
     const handleMouseDown = (e) => {
         // Only allow dragging when zoomed in
@@ -599,7 +625,12 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
             level="top"
             bare
             closeOnBackdrop={false}
-            className="h-screen max-h-screen w-screen max-w-none rounded-none bg-black/95 shadow-none"
+            // h-full / max-h-full, never h-screen: the scrim reserves 9rem of padding for the
+            // bottom nav, so a card sized to the FULL viewport is taller than the flex line that
+            // centres it and overflows symmetrically — the top overflow is unreachable, which put
+            // the close and zoom buttons ~100px ABOVE the visible viewport on a phone. `full`
+            // resolves against the scrim's padded content box, so the card always fits the line.
+            className="h-full max-h-full w-screen max-w-none rounded-none bg-black/95 shadow-none"
         >
             <div
                 className="relative w-full h-full flex items-center justify-center overflow-hidden"
@@ -657,7 +688,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                     ref={containerRef}
                     className={`w-full h-full overflow-auto overscroll-contain flex
                         ${zoom > 1 ? (isDragging ? 'cursor-grabbing' : 'cursor-grab') : 'cursor-zoom-in'}`}
-                    onClick={toggleZoom}
+                    onClick={handleCanvasClick}
                     onMouseDown={handleMouseDown}
                     onMouseLeave={handleMouseLeave}
                     onMouseUp={handleMouseUp}
@@ -669,13 +700,17 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                         style={{
                             width: zoom > 1 ? '350%' : 'auto',
                             maxWidth: zoom > 1 ? 'none' : '100%',
-                            maxHeight: zoom > 1 ? 'none' : '90vh',
+                            // 100% of the (now correctly sized) canvas rather than 90vh — a vh cap
+                            // is measured against the URL-bar-hidden viewport and would make the
+                            // photo taller than the card, so it scrolled and clipped instead of
+                            // fitting.
+                            maxHeight: zoom > 1 ? 'none' : '100%',
                             objectFit: 'contain',
                             transition: isDragging ? 'none' : 'width 0.3s ease-in-out',
                             pointerEvents: 'auto', // Allow native touch interactions
                             cursor: zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'
                         }}
-                        className={`rounded shadow-xl selectable-none select-none m-auto ${zoom <= 1 ? 'max-w-full max-h-[90vh]' : ''}`}
+                        className={`rounded shadow-xl selectable-none select-none m-auto ${zoom <= 1 ? 'max-w-full max-h-full' : ''}`}
                         onClick={(e) => {
                             // Verify clicking image toggles zoom
                             if (!isDragging) {
