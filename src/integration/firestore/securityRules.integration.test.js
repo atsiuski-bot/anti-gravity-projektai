@@ -4,7 +4,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, doc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { readFile } from 'node:fs/promises';
 
 // Exploit-regression oracles for the authorization fixes from the 2026-07-10 full sweep:
@@ -622,6 +622,107 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
             const b = writeBatch(db);
             b.set(doc(db, 'active_sessions', WORKER_ID), { ...closeToIdle, expectedRunId: 'brun-1' });
             await assertSucceeds(b.commit());
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------------------------
+// 2026-07-22 audit remediation. Two exploit oracles from the 96-finding deep audit:
+//   * request_notifications: a worker forging a SERVER-authored notification type.
+//   * calendar_notifications: a worker re-pointing their own audit row at a colleague.
+// ---------------------------------------------------------------------------------------------
+describeEmulator('audit 2026-07-22 — notification forgery + audit-trail re-pointing', () => {
+    describe('request_notifications: server-authored types are not client-writable', () => {
+        // The doc a worker would plant to make an admin re-enable ANY account: provenance is honest
+        // (createdBy is really them), so every other clause in the create rule passes. Only the
+        // type deny-list stands between this and an admin tapping a pixel-identical approval card.
+        const forged = (over = {}) => ({
+            recipientId: WHOLE_TEAM_ADMIN,
+            type: 'account_approval',
+            category: 'action',
+            targetUserId: OTHER_ID,
+            targetUserName: 'Jonas Jonaitis',
+            isRead: false,
+            createdBy: WORKER_ID,
+            createdAt: '2026-07-22T08:00:00.000Z',
+            ...over,
+        });
+
+        it('exploit: a worker may NOT forge an account_approval card', async () => {
+            const db = workerDb();
+            await assertFails(addDoc(collection(db, 'request_notifications'), forged()));
+        });
+
+        it('exploit: the other six server-only types are refused too', async () => {
+            const db = workerDb();
+            for (const type of [
+                'achievement', 'task_priority_escalated', 'task_overdue',
+                'session_auto_closed', 'timer_running_check', 'recurring_reassign',
+            ]) {
+                await assertFails(addDoc(collection(db, 'request_notifications'), forged({ type })));
+            }
+        });
+
+        it('the legitimate worker→manager notification still succeeds', async () => {
+            // task_completion is the everyday case: the worker finishes work and the manager is told.
+            // If this ever fails, the deny-list has over-reached and a real flow is broken.
+            const db = workerDb();
+            await assertSucceeds(addDoc(collection(db, 'request_notifications'), {
+                recipientId: IN_SCOPE_MGR,
+                type: 'task_completion',
+                category: 'action',
+                taskId: 'task-1',
+                taskTitle: 'Pakeisti siurblį',
+                isRead: false,
+                createdBy: WORKER_ID,
+                createdAt: '2026-07-22T08:00:00.000Z',
+            }));
+        });
+
+        it('a comment notification (the other client funnel) still succeeds', async () => {
+            const db = workerDb();
+            await assertSucceeds(addDoc(collection(db, 'request_notifications'), {
+                recipientId: IN_SCOPE_MGR,
+                type: 'new_comment',
+                category: 'info',
+                taskId: 'task-1',
+                commentText: 'Reikia daugiau medžiagų',
+                isRead: false,
+                userId: WORKER_ID,
+                createdAt: '2026-07-22T08:00:00.000Z',
+            }));
+        });
+    });
+
+    describe('calendar_notifications: the owner is pinned on update', () => {
+        beforeEach(async () => {
+            await seed({
+                [`calendar_notifications/${WORKER_ID}_2026-W30`]: {
+                    userId: WORKER_ID,
+                    userName: 'Rules Worker',
+                    weekStart: '2026-07-20',
+                    changes: [{ type: 'edit', at: '2026-07-22T07:00:00.000Z' }],
+                },
+            });
+        });
+
+        it('exploit: the owner may NOT re-point their calendar-change record at a colleague', async () => {
+            const db = workerDb();
+            await assertFails(updateDoc(doc(db, 'calendar_notifications', `${WORKER_ID}_2026-W30`), {
+                userId: OTHER_ID,
+                userName: 'Colleague',
+            }));
+        });
+
+        it('the legitimate append (changes only, owner untouched) still succeeds', async () => {
+            const db = workerDb();
+            await assertSucceeds(updateDoc(doc(db, 'calendar_notifications', `${WORKER_ID}_2026-W30`), {
+                userId: WORKER_ID,
+                changes: [
+                    { type: 'edit', at: '2026-07-22T07:00:00.000Z' },
+                    { type: 'add', at: '2026-07-22T09:00:00.000Z' },
+                ],
+            }));
         });
     });
 });

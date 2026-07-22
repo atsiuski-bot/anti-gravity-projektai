@@ -2,6 +2,15 @@
   "//": "Composite indexes for the scoped-manager hierarchy (ADR 0005). Scoped managers query private collections with where('teamManagerIds','array-contains', uid) plus the existing date/status/order constraints; personal/own views query with where(owner==uid) plus the same. Single-field array-contains-only queries (MonthlyHours, ActiveWorkSessions, DailyStatistics active/deleted listeners) are served by the automatic index and need NO entry here. Firestore emits an exact 'create index' link at runtime for any composite this file misses — create those during testing.",
   "indexes": [
     {
+      "//": "evaluatePunctuality (functions/index.js) bounds its planned-shift lookup to a ±1-day ISO window instead of reading a worker's whole work_hours history on the first session of every day. The function falls back to the unbounded query if this index is absent, so deploy order does not matter — but until it is deployed the cost fix is inert.",
+      "collectionGroup": "work_hours",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "start", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "tasks",
       "queryScope": "COLLECTION",
       "fields": [

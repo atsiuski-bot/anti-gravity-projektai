@@ -27,7 +27,15 @@ assert.strictEqual(isReferentialTaskSession({ taskId: 'call_partial_172000000000
 assert.strictEqual(isReferentialTaskSession({ taskId: '' }), false);                              // no task claimed
 assert.strictEqual(isReferentialTaskSession({}), false);
 assert.strictEqual(isReferentialTaskSession(null), false);
+// A manager's session correction (SessionEditModal → createWorkSession) mints a SYNTHETIC
+// `manual_<ts>` taskId that matches no tasks doc by construction. Before it was added to the
+// synthetic prefixes, every legitimate correction was reported as orphaned credit for LOOKBACK_DAYS
+// and flipped the daily integrity report to 'warning' — the alarm fatigue that hides a real forgery.
+assert.strictEqual(isReferentialTaskSession({ taskId: 'manual_1720000000000' }), false);
+assert.strictEqual(isReferentialTaskSession({ taskId: 'manual_1720000000000', isManualSession: true }), false);
 // The durable R-04 intents (manager-manual / backdate / gap-claim) reference a REAL task → checked.
+// The isManualSession FLAG must never by itself exempt a row: only the synthetic id shape does, so a
+// correction pinned to a real task stays orphan-checked and cannot smuggle in fabricated credit.
 assert.strictEqual(isReferentialTaskSession({ taskId: 'realTask1', createdByAdmin: 'mgr1', isManualSession: true }), true);
 assert.strictEqual(isReferentialTaskSession({ taskId: 'realTask1', isBackdated: true }), true);
 assert.strictEqual(isReferentialTaskSession({ taskId: 'realTask1', isRecoveredGap: true }), true);

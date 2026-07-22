@@ -33,7 +33,12 @@ const IMPOSSIBLE_DAY_MINUTES = 24 * 60; // 1440
 // Synthetic taskId shapes minted by the system-session writers (call_<ts>, quick_<ts>,
 // <type>_partial_<ts>). A real task is a Firestore auto-id / audited deterministic id and never
 // matches. Belt-and-suspenders behind the provenance flags, in case a legacy row lacks a flag.
-const SYNTHETIC_TASK_ID = /^(?:call_|quick_)|_partial_/;
+// `manual_` is included because a manager correcting someone's hours (SessionEditModal →
+// createWorkSession) mints `manual_<ts>` and no matching tasks doc ever exists — so without this the
+// orphan scan reported every LEGITIMATE correction as fabricated credit for LOOKBACK_DAYS, flipping
+// the daily report to 'warning'. That is the alarm fatigue the three-collection lookup exists to
+// avoid: admins learn to ignore the orphan count, and a genuinely fabricated row hides in the noise.
+const SYNTHETIC_TASK_ID = /^(?:call_|quick_|manual_)|_partial_/;
 const DEFAULT_SAMPLE_LIMIT = 20;
 
 /**
@@ -43,6 +48,10 @@ const DEFAULT_SAMPLE_LIMIT = 20;
  */
 function isReferentialTaskSession(row) {
     if (!row) return false;
+    // NOTE: isManualSession is deliberately NOT excluded here. A manager correction pinned to a REAL
+    // taskId must stay orphan-checked — that is the R-04 fraud control, and the test below locks it.
+    // Only the SYNTHETIC-id shape (`manual_<ts>`, handled above) is exempt, because no task exists
+    // for it by construction.
     if (row.isSystemTask || row.isQuickWork || row.isPartial) return false;
     const taskId = row.taskId;
     if (!taskId || typeof taskId !== 'string') return false;

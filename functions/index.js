@@ -396,11 +396,23 @@ function taskAttachmentOwners(task) {
     return new Set(task && task.assignedUserId ? [task.assignedUserId] : []);
 }
 
+// Every storage object this task owns, across BOTH attachment fields.
+//
+// Work-end proof photos are uploaded through the same uploadAttachments helper (so they carry the
+// same `attachments/<uid>/` key shape the owner guard parses) but are stored under a SEPARATE
+// `completionPhotoUrls` field. Reading only attachmentUrls therefore computed an empty set for
+// them, and all three cleanup triggers silently kept every completion photo forever — including
+// after a hard delete, which removes the task from both collections so no client can ever reach
+// the files again. Those are the most sensitive attachments in the app (client premises, people),
+// so the deletion has to be honoured for them too.
 function urlsOf(task) {
     if (!task) return [];
-    const arr = Array.isArray(task.attachmentUrls) ? task.attachmentUrls : [];
-    if (arr.length) return arr;
-    return task.attachmentUrl ? [task.attachmentUrl] : [];
+    const attachments = Array.isArray(task.attachmentUrls) && task.attachmentUrls.length
+        ? task.attachmentUrls
+        : (task.attachmentUrl ? [task.attachmentUrl] : []);
+    const completion = Array.isArray(task.completionPhotoUrls) ? task.completionPhotoUrls : [];
+    // De-duplicated: a url present in both fields must not be handed to deleteObjects twice.
+    return [...new Set([...attachments, ...completion])];
 }
 
 // In-modal attachment removal: delete objects that disappeared from the list (only those the task's
@@ -558,15 +570,39 @@ async function announceBadge(uid, key, tier) {
 }
 
 // Simple counter badge: +1 to its stat field, then (re)grant the tier the new total reaches.
-async function bumpAndGrant(uid, key) {
+/**
+ * Increment a badge's running count, then award any tier that count newly reaches.
+ *
+ * `dedupId` (the task id) makes the count PER-TASK instead of per-event. Without it, the manager's
+ * "Grąžinti taisyti" cycle re-counted the same task on every re-finish: reopenTask writes
+ * completed:false, so the next finish is another false→true edge and all four completion badges
+ * bumped again — inverting the signal, since the badges that measure reliability grew FASTER for a
+ * worker whose work kept bouncing back. The same double-count happened on any at-least-once
+ * redelivery of the Firestore event, which 2nd-gen triggers do not deduplicate. grantTier's
+ * `tier <= prev` guard cannot undo this: it only blocks a repeat award at the SAME tier, while an
+ * inflated count pushes the worker over the NEXT threshold early, and an earned tier is permanent.
+ *
+ * The marker lives in a SEPARATE `achievement_marks` subcollection, not `achievements` — the client
+ * subscribes to the whole of the latter (useAchievements) and would render a marker as a badge.
+ * Read-before-write inside the transaction, so two concurrent events cannot both pass the check.
+ */
+async function bumpAndGrant(uid, key, dedupId) {
     const badge = BADGES[key];
     const ref = statsRef(uid);
+    const markRef = dedupId
+        ? db.collection('users').doc(uid).collection('achievement_marks').doc(`${key}_${dedupId}`)
+        : null;
     const count = await db.runTransaction(async (tx) => {
+        // All reads must precede all writes in a Firestore transaction.
+        const mark = markRef ? await tx.get(markRef) : null;
+        if (mark && mark.exists) return 0; // this task already counted toward this badge
         const snap = await tx.get(ref);
         const next = ((snap.exists && snap.data()[badge.stat]) || 0) + 1;
         tx.set(ref, { [badge.stat]: next }, { merge: true });
+        if (markRef) tx.set(markRef, { at: new Date().toISOString() });
         return next;
     });
+    if (count === 0) return; // deduped — no tier can have changed
     const reached = await grantTier(uid, key, tierForCount(count, badge.thresholds));
     if (reached) await announceBadge(uid, key, reached);
 }
@@ -631,6 +667,7 @@ exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
     if (!before || !after) return;
     const uid = after.assignedUserId;
     if (!uid) return;
+    const taskId = event.params.id;
 
     const justCompleted = before.completed !== true && after.completed === true;
     const justConfirmed = before.status !== 'confirmed' && after.status === 'confirmed';
@@ -648,17 +685,18 @@ exports.onTaskFinishedBadge = onDocumentUpdated('tasks/{id}', async (event) => {
             // tasks the worker chose to see through, so they must not inflate "Pabaigiu, ką pradedu"
             // (DECISION 2026-06-26; the other completion badges are immune already — quick-work has
             // no estimate/checklist and is MEDIUM priority).
-            if (after.isQuickWork !== true) await bumpAndGrant(uid, 'follow_through');
-            if (hasEstimate(after) && after.timeLimitReached !== true) await bumpAndGrant(uid, 'on_estimate');
-            if (checklistAllDone(after.checklist)) await bumpAndGrant(uid, 'thorough');
-            if (isHighPriority(after.priority)) await bumpAndGrant(uid, 'hard_tasks');
+            // Every bump is keyed by the TASK id, so a return-and-refinish cycle counts once.
+            if (after.isQuickWork !== true) await bumpAndGrant(uid, 'follow_through', taskId);
+            if (hasEstimate(after) && after.timeLimitReached !== true) await bumpAndGrant(uid, 'on_estimate', taskId);
+            if (checklistAllDone(after.checklist)) await bumpAndGrant(uid, 'thorough', taskId);
+            if (isHighPriority(after.priority)) await bumpAndGrant(uid, 'hard_tasks', taskId);
         }
         // Q1 counts a MANAGER sign-off — not a worker (in a manager role) confirming their own task.
         if (justConfirmed && after.confirmedBy && after.confirmedBy !== uid) {
-            await bumpAndGrant(uid, 'approved_craft');
+            await bumpAndGrant(uid, 'approved_craft', taskId);
         }
         if (justDocumented) {
-            await bumpAndGrant(uid, 'documented');
+            await bumpAndGrant(uid, 'documented', taskId);
         }
     } catch (err) {
         logger.error('onTaskFinishedBadge failed', { uid, err: err.message });
@@ -703,7 +741,33 @@ async function evaluatePunctuality(uid, session) {
     if (!firstOfDay) return;
 
     // Earliest planned (non-vacation) shift start that buckets to this Vilnius day.
-    const planned = await db.collection('work_hours').where('userId', '==', uid).get();
+    //
+    // Bounded to a ±1-day ISO window instead of the worker's ENTIRE work_hours history. This runs on
+    // the first work session of every worker-day, so the unbounded form cost one whole-history read
+    // per worker per day — a bill that grows linearly with how long the company has used the planner
+    // (~15 workers × a year of planning ≈ 3.750 reads/day, doubling each year) to answer a question
+    // about ONE day.
+    //
+    // The window is deliberately WIDER than the day: `start` is an ISO (UTC) string while `day` is a
+    // Vilnius calendar day, so the two are offset by 2-3h. Over-fetching by a day on each side keeps
+    // the authoritative `lithuanianDay(ws) !== day` test below completely unchanged — this is purely
+    // a read-volume bound, never a semantic filter, so no DST or midnight edge case can slip.
+    //
+    // Falls back to the unbounded query if the composite index (userId + start) is not deployed yet:
+    // an index deploy is a separate, human-run step, and badge evaluation must not break if the
+    // functions land first. Once the index exists the bounded path takes over on its own.
+    const dayMs = Date.parse(`${day}T00:00:00Z`);
+    let planned;
+    try {
+        planned = await db.collection('work_hours')
+            .where('userId', '==', uid)
+            .where('start', '>=', new Date(dayMs - 24 * 3600 * 1000).toISOString())
+            .where('start', '<=', new Date(dayMs + 48 * 3600 * 1000).toISOString())
+            .get();
+    } catch (err) {
+        logger.warn('evaluatePunctuality bounded work_hours query failed — falling back to full scan (deploy the userId+start index)', { uid, err: err.message });
+        planned = await db.collection('work_hours').where('userId', '==', uid).get();
+    }
     let plannedStartMs = null;
     planned.forEach((d) => {
         const wh = d.data();
@@ -789,6 +853,41 @@ exports.onCalendarPlanBadge = onDocumentCreated('calendar_requests/{id}', async 
 // count, typically 1-2) — on the stamp path only (create/reassign/membership change), never the
 // hot read path. Computed non-recursively (exactly one hop up: worker→manager→senior), so the
 // 4-level hierarchy can never recurse.
+// Roles that may legitimately appear in a worker's `overseerIds` closure. Mirrors the client's
+// isManagerRole (+ the legacy Lithuanian admin spelling) — see SECONDARY_MANAGER_ROLES below, kept
+// separate because THIS list is a security boundary: firestore.rules grants cross-user write access
+// on closure membership alone, so widening it widens who can write a colleague's document.
+const OVERSEER_ROLES = ['manager', 'seniorManager', 'admin', 'Administratorius'];
+
+/**
+ * Authorize a CALLABLE. Every callable must go through this — never re-check `role` by hand.
+ *
+ * Blocking an account (users/{uid}.isDisabled = true) is the app's only offboarding control, and it
+ * used to stop nothing here: firestore.rules isActive() denies the blocked user's DIRECT writes and
+ * AuthContext signs them out of the UI, but their Firebase Auth identity and ID token keep working
+ * and their user doc still says role:'manager'. A role-only gate therefore let a blocked ex-employee
+ * keep calling these functions — which run under the admin SDK and bypass firestore.rules entirely,
+ * so nothing downstream would stop the write either.
+ *
+ * Centralised deliberately: this exact check was missing from every callable independently, so the
+ * defect was the repetition, not any one site. A future callable gets it by construction.
+ *
+ * @param {string|undefined} callerUid  request.auth?.uid
+ * @param {string[]} [roles]            allowed roles; omit to require only an ACTIVE account
+ * @returns {Promise<Object>} the caller's user document data
+ */
+async function assertActiveCaller(callerUid, roles) {
+    if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
+    const snap = await db.collection('users').doc(callerUid).get();
+    if (!snap.exists) throw new HttpsError('permission-denied', 'No profile.');
+    const data = snap.data();
+    if (data.isDisabled === true) throw new HttpsError('permission-denied', 'Account is blocked.');
+    if (roles && !roles.includes(data.role || 'worker')) {
+        throw new HttpsError('permission-denied', 'Insufficient role.');
+    }
+    return data;
+}
+
 async function overseersFor(uid) {
     if (!uid) return [];
     try {
@@ -804,16 +903,40 @@ async function overseersFor(uid) {
             return [];
         }
         // worker (or legacy/absent role): direct managers + each manager's seniors.
+        //
+        // Each listed uid is ROLE-CHECKED before it enters the closure. `teamManagerIds` is team
+        // MEMBERSHIP and nobody clears it on demotion: an admin flipping a coordinator to 'Meistras'
+        // writes only {role:'worker'}, so their uid lingers in every ex-subordinate's array. Copying
+        // that array verbatim therefore left a plain worker inside `overseerIds` — and the users
+        // UPDATE gate in firestore.rules (overseesUserDoc) grants write access on membership in that
+        // closure ALONE, explicitly documenting the assumption that "a worker uid can never be in
+        // it". That assumption is what this filter now actually enforces, so a demoted coordinator
+        // stops being able to write their old crew's live-session fields.
+        //
+        // Self-healing and free: restampTeamOnUserChange already re-runs this for every worker whose
+        // teamManagerIds contains the changed uid whenever a role changes, and the manager document
+        // is already being read below for seniorManagerIds — so this costs no extra reads.
+        //
+        // A FAILED read keeps the uid (the pre-existing behaviour): we drop a manager only on
+        // POSITIVE disconfirmation of their role, never because Firestore hiccuped, so a transient
+        // error cannot strip a legitimate manager's access to their whole team until the next stamp.
         const mgrs = Array.isArray(u.teamManagerIds) ? u.teamManagerIds.filter(Boolean) : [];
-        const result = new Set(mgrs);
+        const result = new Set();
         await Promise.all(mgrs.map(async (m) => {
             try {
                 const msnap = await db.collection('users').doc(m).get();
-                if (!msnap.exists) return;
-                const seniors = msnap.data().seniorManagerIds;
+                if (!msnap.exists) return; // deleted account — not an overseer of anyone
+                const mdata = msnap.data();
+                if (!OVERSEER_ROLES.includes(mdata.role || 'worker')) {
+                    logger.info('overseersFor dropped a demoted manager from the closure', { uid, manager: m, role: mdata.role || 'worker' });
+                    return;
+                }
+                result.add(m);
+                const seniors = mdata.seniorManagerIds;
                 if (Array.isArray(seniors)) seniors.filter(Boolean).forEach((s) => result.add(s));
             } catch (err) {
                 logger.warn('overseersFor manager read failed', { manager: m, err: err.message });
+                result.add(m); // unverified ≠ disproven — keep reach rather than break it on a blip
             }
         }));
         return [...result];
@@ -971,12 +1094,9 @@ exports.restampTeamOnUserChange = onDocumentUpdated('users/{id}', async (event) 
 // memberships. Safe to re-run.
 exports.backfillTeamStamps = onCall(async (request) => {
     const callerUid = request.auth && request.auth.uid;
-    if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
-    const callerSnap = await db.collection('users').doc(callerUid).get();
-    const role = callerSnap.exists ? callerSnap.data().role : '';
-    if (role !== 'admin' && role !== 'Administratorius') {
-        throw new HttpsError('permission-denied', 'Admin only.');
-    }
+    // Active admin only — a BLOCKED admin account must not be able to re-stamp teamManagerIds
+    // across tasks, archived_tasks, deleted_tasks, work_sessions and break_sessions company-wide.
+    await assertActiveCaller(callerUid, ['admin', 'Administratorius']);
     const usersSnap = await db.collection('users').get();
     let users = 0;
     let rows = 0;
@@ -2072,12 +2192,9 @@ exports.generateRecurringTasks = onSchedule(
 // rule's schedule/pause, but the deterministic id still prevents a same-day duplicate.
 exports.runRecurringTasksNow = onCall(async (request) => {
     const callerUid = request.auth && request.auth.uid;
-    if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
-    const callerSnap = await db.collection('users').doc(callerUid).get();
-    const role = callerSnap.exists ? callerSnap.data().role : '';
-    if (!['admin', 'Administratorius', 'manager', 'seniorManager'].includes(role)) {
-        throw new HttpsError('permission-denied', 'Managers only.');
-    }
+    // Active manager+ only — a blocked ex-manager kept a valid ID token and a role:'manager' doc,
+    // so a role-only gate still let them inject real tasks onto the live board via the admin SDK.
+    await assertActiveCaller(callerUid, ['admin', 'Administratorius', 'manager', 'seniorManager']);
     const templateId = request.data && request.data.templateId;
     if (!templateId) throw new HttpsError('invalid-argument', 'templateId required.');
 
@@ -2319,12 +2436,14 @@ exports.parseTaskDraft = onCall(
     { secrets: [OPENROUTER_API_KEY], timeoutSeconds: 30, memory: '256MiB' },
     async (request) => {
         const callerUid = request.auth && request.auth.uid;
-        if (!callerUid) throw new HttpsError('unauthenticated', 'Sign in required.');
-        // Any signed-in user may request a DRAFT. Workers self-create tasks too, and this callable
-        // never writes anything — the assignee is still resolved server-side from the caller-supplied
-        // (client-scoped) roster, so it cannot invent a user. The previous manager-only gate left the
-        // ✨ button visible to workers but ALWAYS failing for them ("AI nepavyko"); opening the
-        // callable makes the button honest for everyone who can see it.
+        // Any ACTIVE signed-in user may request a DRAFT. Workers self-create tasks too, and this
+        // callable never writes anything — the assignee is still resolved server-side from the
+        // caller-supplied (client-scoped) roster, so it cannot invent a user. The previous
+        // manager-only gate left the ✨ button visible to workers but ALWAYS failing for them
+        // ("AI nepavyko"); opening the callable makes the button honest for everyone who can see it.
+        // No role requirement, but the account must still be active: this call spends real money on
+        // the OpenRouter API, and a blocked ex-employee holds a working ID token indefinitely.
+        await assertActiveCaller(callerUid);
         const apiKey = OPENROUTER_API_KEY.value();
         if (!apiKey) throw new HttpsError('failed-precondition', 'AI not configured.');
 

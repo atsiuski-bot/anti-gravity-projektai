@@ -719,7 +719,15 @@ service cloud.firestore {
       // which never lists a non-subtree row for them to dismiss.
       allow update: if isUserActive() &&
                     (resource.data.get('userId', '') == request.auth.uid || canSeeWholeTeam() ||
-                     (isScopedOverseer() && overseesUser(resource.data.get('userId', ''))));
+                     (isScopedOverseer() && overseesUser(resource.data.get('userId', '')))) &&
+                    // Owner pin — no re-pointing the record to a colleague. Authority above is read
+                    // from resource.data (the PRE-image), so without this the owner may rewrite
+                    // `userId` on the way out: the row then leaves their own manager's view (that
+                    // filter fails closed) and lands in the bell attributed to whoever they named,
+                    // falsifying the calendar-change audit trail. Same pin the sibling owned
+                    // collections already carry — work_sessions, break_sessions, work_hours and
+                    // calendar_requests — this collection was simply the one that was missed.
+                    request.resource.data.get('userId', '') == resource.data.get('userId', '');
       allow delete: if isUserActive() &&
                     (canSeeWholeTeam() ||
                      (isScopedOverseer() && overseesUser(resource.data.get('userId', ''))));
@@ -782,6 +790,26 @@ service cloud.firestore {
                     && (request.resource.data.get('createdBy', '') == request.auth.uid ||
                         request.resource.data.get('userId', '') == request.auth.uid)
                     && request.resource.data.get('isRead', false) == false
+                    // SERVER-AUTHORED TYPES ARE NOT CLIENT-WRITABLE. Provenance above only proves the
+                    // caller stamped their OWN uid — it does not stop them choosing a `type` that the
+                    // UI renders as a privileged card. `account_approval` is the sharp one: a worker
+                    // could addDoc one naming any uid as targetUserId, and the admin tapping the
+                    // resulting (pixel-identical) card runs handleAccountDecision, re-enabling a
+                    // blocked account. The others would forge achievements, fake overdue/escalation
+                    // alerts, or spoof a system session close. Admin-SDK writes bypass rules entirely,
+                    // so the genuine server fan-out is unaffected by this clause.
+                    //
+                    // Deliberately a DENY-list of the 7 server-only types, not an allow-list of the 21
+                    // client ones: the rules suite runs ONLY under the Firestore emulator and `npm test`
+                    // skips it, so an allow-list would silently permission-deny any newly-added client
+                    // notification type with nothing in the default gate to catch it. Audited against
+                    // src/notifications/registry.js — every other registry type has a real client
+                    // write-site (notify(), taskFlags notifyType, or a direct addDoc).
+                    && !(request.resource.data.get('type', '') in [
+                          'account_approval', 'achievement', 'task_priority_escalated',
+                          'task_overdue', 'session_auto_closed', 'timer_running_check',
+                          'recurring_reassign'
+                        ])
                     && (!('commentText' in request.resource.data) ||
                         (request.resource.data.commentText is string &&
                          request.resource.data.commentText.size() <= 2000));
