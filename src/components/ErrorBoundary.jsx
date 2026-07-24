@@ -1,7 +1,8 @@
 import React from 'react';
-import { AlertTriangle, Copy, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertTriangle, Copy, Check, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
 import Button from './ui/Button';
 import { logError } from '../utils/errorLog';
+import { forceAppUpdate, isStaleChunkLoadError } from '../utils/appUpdate';
 
 class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -12,7 +13,8 @@ class ErrorBoundary extends React.Component {
             errorInfo: null,
             timestamp: null,
             copied: false,
-            showDetails: false
+            showDetails: false,
+            reloading: false
         };
     }
 
@@ -44,7 +46,7 @@ class ErrorBoundary extends React.Component {
         if (!prev || !next) return;
         const changed = prev.length !== next.length || next.some((k, i) => k !== prev[i]);
         if (changed) {
-            this.setState({ hasError: false, error: null, errorInfo: null, timestamp: null });
+            this.setState({ hasError: false, error: null, errorInfo: null, timestamp: null, reloading: false });
         }
     }
 
@@ -119,7 +121,8 @@ ATASKAITOS PABAIGA
 
     render() {
         if (this.state.hasError) {
-            const { error, timestamp, copied, showDetails } = this.state;
+            const { error, timestamp, copied, showDetails, reloading } = this.state;
+            const staleChunkError = isStaleChunkLoadError(error);
 
             return (
                 <div className="min-h-screen bg-gradient-to-br from-feedback-danger-soft to-surface-sunken flex flex-col items-center justify-center p-4">
@@ -136,7 +139,9 @@ ATASKAITOS PABAIGA
                         </h1>
 
                         <p className="text-ink-muted mb-6 text-center">
-                            Programa netikėtai sustojo. Nukopijuokite klaidos informaciją žemiau ir nusiųskite ją savo administratoriui.
+                            {staleChunkError
+                                ? 'Įrenginyje liko ankstesnė programos versija. Atnaujinkite programą — neišsiųsti darbo įrašai bus išsaugoti.'
+                                : 'Programa netikėtai sustojo. Nukopijuokite klaidos informaciją žemiau ir nusiųskite ją savo administratoriui.'}
                         </p>
 
                         {/* Error Message — friendly Lithuanian summary; raw text stays in the technical details section */}
@@ -186,24 +191,53 @@ ATASKAITOS PABAIGA
 
                         {/* Action Buttons */}
                         <div className="flex flex-col sm:flex-row gap-3">
-                            <Button
-                                variant="primary"
-                                size="lg"
-                                fullWidth
-                                onClick={this.copyErrorToClipboard}
-                                icon={copied ? Check : Copy}
-                            >
-                                {copied ? 'Nukopijuota!' : 'Kopijuoti klaidos informaciją'}
-                            </Button>
+                            {staleChunkError ? (
+                                <>
+                                    <Button
+                                        variant="primary"
+                                        size="lg"
+                                        fullWidth
+                                        loading={reloading}
+                                        onClick={() => {
+                                            this.setState({ reloading: true });
+                                            forceAppUpdate();
+                                        }}
+                                        icon={RefreshCw}
+                                    >
+                                        Atnaujinti programą
+                                    </Button>
+                                    <Button
+                                        variant="secondary"
+                                        size="lg"
+                                        fullWidth
+                                        onClick={this.copyErrorToClipboard}
+                                        icon={copied ? Check : Copy}
+                                    >
+                                        {copied ? 'Nukopijuota!' : 'Kopijuoti klaidos informaciją'}
+                                    </Button>
+                                </>
+                            ) : (
+                                <>
+                                    <Button
+                                        variant="primary"
+                                        size="lg"
+                                        fullWidth
+                                        onClick={this.copyErrorToClipboard}
+                                        icon={copied ? Check : Copy}
+                                    >
+                                        {copied ? 'Nukopijuota!' : 'Kopijuoti klaidos informaciją'}
+                                    </Button>
 
-                            <Button
-                                variant="secondary"
-                                size="lg"
-                                fullWidth
-                                onClick={() => window.location.reload()}
-                            >
-                                Perkrauti puslapį
-                            </Button>
+                                    <Button
+                                        variant="secondary"
+                                        size="lg"
+                                        fullWidth
+                                        onClick={() => window.location.reload()}
+                                    >
+                                        Perkrauti puslapį
+                                    </Button>
+                                </>
+                            )}
                         </div>
 
                         {/* Help Text */}

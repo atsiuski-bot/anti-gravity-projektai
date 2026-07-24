@@ -10,10 +10,11 @@ import Layout from './components/Layout';
 import AchievementCelebrator from './components/AchievementCelebrator';
 import ThemeSync from './components/ThemeSync';
 import { ProfileViewerProvider } from './context/ProfileViewerContext';
+import { lazyWithRecovery } from './utils/appUpdate';
 
 // Lazy load pages
-const Login = React.lazy(() => import('./pages/Login'));
-const Dashboard = React.lazy(() => import('./pages/Dashboard'));
+const Login = lazyWithRecovery(() => import('./pages/Login'));
+const Dashboard = lazyWithRecovery(() => import('./pages/Dashboard'));
 
 const LoadingFallback = () => (
     <div className="flex h-screen items-center justify-center bg-surface-base">

@@ -6,9 +6,10 @@ import { canSeeWholeTeam } from '../utils/teamScope';
 import AdminBootstrap from '../components/AdminBootstrap';
 import { runDailyAutomation } from '../utils/automationUtils';
 import { Spinner } from '../components/ui/Loading';
-const ManagerView = React.lazy(() => import('./ManagerView'));
-const WorkerView = React.lazy(() => import('./WorkerView'));
-const ProfilePage = React.lazy(() => import('./ProfilePage'));
+import { lazyWithRecovery } from '../utils/appUpdate';
+const ManagerView = lazyWithRecovery(() => import('./ManagerView'));
+const WorkerView = lazyWithRecovery(() => import('./WorkerView'));
+const ProfilePage = lazyWithRecovery(() => import('./ProfilePage'));
 
 export default function Dashboard() {
     const { userRole, userData } = useAuth();

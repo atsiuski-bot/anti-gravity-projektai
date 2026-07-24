@@ -37,14 +37,15 @@ import EarningsModal from '../components/EarningsModal';
 import CompletionPhotoModal from '../components/CompletionPhotoModal';
 
 import { useNavigation } from '../context/NavigationContext';
+import { lazyWithRecovery } from '../utils/appUpdate';
 
 // The calendar/report views pull in react-big-calendar + date-fns + the reports
 // aggregation — heavy code the worker's primary path (the tasks tab) never needs to
 // render. Splitting them into their own chunks keeps that code out of the eagerly
 // loaded view bundle; Suspense streams each one in when its tab mounts.
-const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
-const AllUsersCalendar = React.lazy(() => import('../components/AllUsersCalendar'));
-const Reports = React.lazy(() => import('../components/Reports'));
+const WorkPlanner = lazyWithRecovery(() => import('../components/WorkPlanner'));
+const AllUsersCalendar = lazyWithRecovery(() => import('../components/AllUsersCalendar'));
+const Reports = lazyWithRecovery(() => import('../components/Reports'));
 
 export default function WorkerView() {
     const { currentUser, userRole, userData, timerEngineEnabled } = useAuth();

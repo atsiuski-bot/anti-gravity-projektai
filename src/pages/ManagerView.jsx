@@ -40,24 +40,25 @@ import { useTaskFiltering } from '../hooks/useTaskFiltering';
 import useFullBleed from '../hooks/useFullBleed';
 import { scopeRoster } from '../utils/teamScope';
 import { cn } from '../utils/cn';
+import { lazyWithRecovery } from '../utils/appUpdate';
 
 // Shared with WorkerView: the calendar/report views are the heavy part of the bundle
 // (react-big-calendar + date-fns + reports aggregation). Lazy-loading them in BOTH views
 // is what actually keeps the code out of the eager shared chunk — a static import in
 // either view would re-hoist it. Suspense streams each one in when its tab mounts.
-const AllUsersCalendar = React.lazy(() => import('../components/AllUsersCalendar'));
-const WorkPlanner = React.lazy(() => import('../components/WorkPlanner'));
-const Reports = React.lazy(() => import('../components/Reports'));
-const CalendarChangeHistory = React.lazy(() => import('../components/CalendarChangeHistory'));
-const AuditDashboard = React.lazy(() => import('../components/AuditDashboard'));
+const AllUsersCalendar = lazyWithRecovery(() => import('../components/AllUsersCalendar'));
+const WorkPlanner = lazyWithRecovery(() => import('../components/WorkPlanner'));
+const Reports = lazyWithRecovery(() => import('../components/Reports'));
+const CalendarChangeHistory = lazyWithRecovery(() => import('../components/CalendarChangeHistory'));
+const AuditDashboard = lazyWithRecovery(() => import('../components/AuditDashboard'));
 // The priority board pulls in @dnd-kit; lazy-load it so that weight enters the bundle only when a
 // manager actually turns the board on (it never touches the worker bundle or the default list).
-const PriorityBoard = React.lazy(() => import('../components/board/PriorityBoard'));
+const PriorityBoard = lazyWithRecovery(() => import('../components/board/PriorityBoard'));
 // Drag-to-reorder for the flat list (mobile cards + desktop table) ALSO pulls in @dnd-kit, so it is
 // lazy-loaded the same way: it enters the bundle only when a manager views the canonical team list,
 // never the worker bundle. Both reuse the board's shared manual order (utils/boardOrder).
-const SortableTaskCardList = React.lazy(() => import('../components/task/SortableTaskCardList'));
-const ReorderableTaskTable = React.lazy(() => import('../components/task/ReorderableTaskTable'));
+const SortableTaskCardList = lazyWithRecovery(() => import('../components/task/SortableTaskCardList'));
+const ReorderableTaskTable = lazyWithRecovery(() => import('../components/task/ReorderableTaskTable'));
 
 export default function ManagerView() {
     const { userRole, currentUser, userData, timerEngineEnabled } = useAuth();
