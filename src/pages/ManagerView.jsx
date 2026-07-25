@@ -31,6 +31,7 @@ import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
 import { useRevisionedTaskRecovery } from '../hooks/useRevisionedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
+import { useRevisionedSecondaryRecovery } from '../hooks/useRevisionedSecondaryRecovery';
 import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
 import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
@@ -136,7 +137,9 @@ export default function ManagerView() {
     // Heartbeat for the running secondary session (break/call/quick-work) — lets the recovery
     // below finalize a genuinely abandoned session at its last proof of life, not the reopen instant.
     useSessionHeartbeat(currentUser);
-    useOrphanedSessionRecovery(currentUser);
+    // Split by owning engine, exactly like the task recovery above.
+    useOrphanedSessionRecovery(currentUser, !timerEngineEnabled);
+    useRevisionedSecondaryRecovery(currentUser, userData, timerEngineEnabled);
 
     // Worker-created tasks still awaiting THIS manager's approval (status 'unapproved' — the same
     // items the notification bell surfaces). Derived from the raw team `tasks`, independent of the

@@ -6,6 +6,7 @@ import { getRecoveryNotices, clearRecoveryNotices, removeRecoveryNotice, addReco
 import { claimRecoveredGap, discardRecoveredGap } from '../utils/sessionEditActions';
 import { formatMinutesToHHMM } from '../utils/timeUtils';
 import Button from './ui/Button';
+import ConfirmDialog from './ui/ConfirmDialog';
 import IconButton from './ui/IconButton';
 import Modal from './ui/Modal';
 
@@ -39,6 +40,7 @@ export default function RecoveryNotice() {
     const [notices, setNotices] = useState([]);
     const [claimingId, setClaimingId] = useState(null); // taskId of an in-flight gap claim
     const [claimError, setClaimError] = useState(null); // taskId whose claim just failed
+    const [pendingDiscard, setPendingDiscard] = useState(null); // credited gap awaiting confirmation
     // Read on mount, then RE-READ whenever a notice is written. The actionable gap notice is written
     // asynchronously (after the recovery pause resolves) — i.e. after this mount read — so a one-shot
     // read would miss it and the blocking modal would never appear this session. RECOVERY_NOTICE_EVENT
@@ -83,8 +85,20 @@ export default function RecoveryNotice() {
         setNotices(keep);
     };
 
-    // "Nedirbau" — the worker was NOT working during this auto-credited gap: hard-delete the
-    // recovered session and drop its notice, leaving the rest intact.
+    // "Nedirbau" HARD-DELETES an already-credited work_sessions row — payable minutes gone, with no
+    // undo and no audit trail to restore from. That is exactly the kind of irreversible action
+    // DESIGN_SYSTEM §8 requires a ConfirmDialog for, yet it sat one tap away on a banner a worker
+    // reads outdoors, in sunlight, with gloves. A mistap silently cost real pay. The dialog names the
+    // task and the exact minutes so the worker confirms WHAT is being removed, not just that
+    // something is.
+    const confirmDiscard = (n) => {
+        if (claimingId) return;
+        setClaimError(null);
+        setPendingDiscard(n);
+    };
+
+    // The worker was NOT working during this auto-credited gap: hard-delete the recovered session
+    // and drop its notice, leaving the rest intact.
     const discardCredited = async (n) => {
         if (!n?.sessionId || claimingId) return;
         setClaimError(null);
@@ -100,6 +114,7 @@ export default function RecoveryNotice() {
             setClaimError(n.taskId);
         } finally {
             setClaimingId(null);
+            setPendingDiscard(null);
         }
     };
 
@@ -233,7 +248,7 @@ export default function RecoveryNotice() {
                                         <div className="mt-1">
                                             <Button
                                                 variant="ghost"
-                                                onClick={() => discardCredited(n)}
+                                                onClick={() => confirmDiscard(n)}
                                                 disabled={claimingId === n.taskId}
                                             >
                                                 {claimingId === n.taskId ? 'Šalinama…' : 'Nedirbau — pašalinti'}
@@ -253,6 +268,21 @@ export default function RecoveryNotice() {
                         <IconButton icon={X} label="Uždaryti pranešimą" variant="ghost" onClick={dismissCredited} />
                     </div>
                 </section>
+            )}
+
+            {/* Irreversibility gate for the hard delete above (DESIGN_SYSTEM §8). */}
+            {pendingDiscard && (
+                <ConfirmDialog
+                    open
+                    title="Pašalinti užskaitytą laiką?"
+                    message={`Bus negrįžtamai pašalinta ${formatMinutesToHHMM(pendingDiscard.gapMinutes)}${pendingDiscard.taskTitle ? ` · ${pendingDiscard.taskTitle}` : ''}.`}
+                    warning="Šio laiko atkurti nebegalėsite — jis dings iš ataskaitų ir uždarbio. Šalinkite tik jei tuo metu tikrai nedirbote."
+                    confirmLabel="Taip, nedirbau"
+                    cancelLabel="Atšaukti"
+                    loading={claimingId === pendingDiscard.taskId}
+                    onConfirm={() => discardCredited(pendingDiscard)}
+                    onCancel={() => setPendingDiscard(null)}
+                />
             )}
 
             {/* Actionable gaps → a BLOCKING, forced-acknowledge modal (no X / backdrop / Escape) so

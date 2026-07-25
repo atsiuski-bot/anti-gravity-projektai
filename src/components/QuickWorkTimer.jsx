@@ -17,6 +17,7 @@ import { useAuth } from '../context/AuthContext';
 import { useUsers } from '../context/UsersContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import { COMMIT_CONFIRM_TIMEOUT_MS } from './taskTimerSafety';
 import { useRevisionedTimerSession } from '../hooks/useRevisionedTimerSession';
 import { issueTimerCommand } from '../utils/timerCommandEngine';
 import {
@@ -283,7 +284,7 @@ const QuickWorkModalComponent = React.memo(({ onSubmit, onClose, onDefer, curren
 QuickWorkModalComponent.displayName = 'QuickWorkModalComponent';
 
 export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
-    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled } = useAuth();
+    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled, timerEngineResolved } = useAuth();
     const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const { usersMap, activeUsers } = useUsers();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
@@ -343,10 +344,16 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
 
     const trackRevisionedQuickWork = useCallback(async (plan) => {
         const issued = await issueTimerCommand(plan);
-        issued.settlement.then(async (outcome) => {
+        issued.settlement.then((outcome) => {
             if (outcome.status === 'confirmed') {
+                // Telling the manager is a SEPARATE, best-effort effect that happens AFTER the time
+                // is already committed — it must never be able to rewrite the timer's outcome. It
+                // used to be awaited inside this chain, so a failed notification fell through to the
+                // .catch below and told the worker "Nepavyko pakeisti greitos veiklos būsenos" for a
+                // session that had in fact been saved: the worker then retried a completed action.
+                // Its own catch keeps the rejection durable (error_logs) and silent to the timer UI.
                 if (plan.quickWorkNotification) {
-                    await notify({
+                    notify({
                         recipientId: plan.quickWorkNotification.recipientId,
                         type: 'task_completion',
                         taskId: plan.quickWorkNotification.taskId,
@@ -356,7 +363,11 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                         userName: userData?.displayName || 'Meistras',
                         userId: currentUser.uid,
                         completedAt: new Date().toISOString(),
-                    });
+                    }).catch((notifyError) => logError(notifyError, {
+                        source: 'QuickWorkTimer.completionNotify',
+                        commandId: outcome.commandId,
+                        taskId: plan.quickWorkNotification.taskId,
+                    }));
                 }
                 return;
             }
@@ -382,6 +393,13 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     }, [currentUser, userData?.displayName]);
 
     const tryRevisionedStartQuickWork = async () => {
+        // The rollout gate has not resolved yet: refuse rather than fall through to the LEGACY
+        // writer. Guessing here is what let a tap during the boot window issue a legacy command that
+        // then became invisible behind a canonical revision once the config resolved (audit T-05).
+        if (!timerEngineResolved) {
+            setError('Laikmačio būsena dar kraunama. Bandykite po akimirkos.');
+            return true;
+        }
         if (!timerEngineEnabled) return false;
         if (!revisionedSession.loaded || revisionedSession.error) {
             setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
@@ -430,6 +448,13 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         comment,
         discard = false,
     } = {}) => {
+        // The rollout gate has not resolved yet: refuse rather than fall through to the LEGACY
+        // writer. Guessing here is what let a tap during the boot window issue a legacy command that
+        // then became invisible behind a canonical revision once the config resolved (audit T-05).
+        if (!timerEngineResolved) {
+            setError('Laikmačio būsena dar kraunama. Bandykite po akimirkos.');
+            return true;
+        }
         if (!timerEngineEnabled) return false;
         if (!revisionedSession.loaded || revisionedSession.error) {
             setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
@@ -483,7 +508,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         await trackRevisionedQuickWork(plan);
         setShowTitleModal(false);
         return true;
-    }, [currentUser, revisionedSession, timerEngineEnabled, trackRevisionedQuickWork, userData]);
+    }, [currentUser, revisionedSession, timerEngineEnabled, timerEngineResolved, trackRevisionedQuickWork, userData]);
 
     // Note: if a quick-work session is ended remotely (e.g. the worker starts a task elsewhere),
     // isQuickWorking flips to false on the next snapshot and this component simply stops showing the
@@ -495,6 +520,17 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         if (!currentUser || isDisabled) return;
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
+
+        // Release the control on a BOUNDED race, not on write acknowledgement — the same backstop
+        // BreakTimer carries. Firestore mutation promises resolve only after the backend acks;
+        // OFFLINE the SDK applies the write locally and leaves the promise pending indefinitely, so
+        // the `finally` below never runs and this guard stays latched for the rest of the app
+        // session: one tap out of coverage left the Greita veikla button silently, permanently dead
+        // — the worker could not stop the quick work they had just started, so it kept accruing
+        // ghost time until a reload, with no error and no spinner to explain it.
+        const releaseGuard = () => { actionInFlightRef.current = false; };
+        const guardTimer = setTimeout(releaseGuard, COMMIT_CONFIRM_TIMEOUT_MS);
+
         setError('');
         try {
             if (await tryRevisionedStartQuickWork()) return;
@@ -521,13 +557,22 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             setPendingSessionProjection(null); // Revert on error
             setError("Nepavyko pradėti greitos veiklos. Bandykite dar kartą.");
         } finally {
-            actionInFlightRef.current = false;
+            // Happy path: the write settled well inside the budget, so cancel the backstop and
+            // release immediately — online behaviour is unchanged.
+            clearTimeout(guardTimer);
+            releaseGuard();
         }
     };
 
     const handleStopQuickWork = async () => {
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
+
+        // Same bounded backstop as the start path: the sub-minute discard branch below awaits
+        // endSession, which offline never settles, and would otherwise latch the guard forever.
+        const releaseGuard = () => { actionInFlightRef.current = false; };
+        const guardTimer = setTimeout(releaseGuard, COMMIT_CONFIRM_TIMEOUT_MS);
+
         try {
             // Here we just check duration and decide whether to show modal or stop immediately
             const now = getLithuanianNow();
@@ -557,7 +602,8 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             SoundManager.playQuickTaskSound();
             setShowTitleModal(true);
         } finally {
-            actionInFlightRef.current = false;
+            clearTimeout(guardTimer);
+            releaseGuard();
         }
     };
 

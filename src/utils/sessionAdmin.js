@@ -45,12 +45,14 @@ export const endSessionForUser = async (user, { actorId = null } = {}) => {
         if (activeRecord?.status === 'active') {
             if (!actorId) throw new Error('Manager force-end requires an actor id');
             let activeTask = null;
-            if (activeRecord.run?.type === 'task') {
+            if (activeRecord.run?.type === 'task' && activeRecord.run?.taskId) {
                 const taskSnap = await getDoc(doc(db, 'tasks', activeRecord.run.taskId));
-                if (!taskSnap.exists()) {
-                    throw new Error('Cannot force-end a canonical task without the task document');
-                }
-                activeTask = { id: taskSnap.id, ...taskSnap.data() };
+                // A MISSING task is no longer fatal. It is the exact state this control exists to
+                // repair: the task was hard-deleted while its timer ran, so the canonical run now
+                // points at nothing and every other path (recovery, next start) refuses it. Throwing
+                // here made the one remaining escape hatch refuse it too. planManagerForceEnd closes
+                // an orphaned run from the run's own data and still writes the credited ledger row.
+                activeTask = taskSnap.exists() ? { id: taskSnap.id, ...taskSnap.data() } : null;
             }
             const plan = planManagerForceEnd({
                 targetUser: target,

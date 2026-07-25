@@ -807,18 +807,33 @@ export const deleteTask = async (task, userId, options = { keepWorkHours: false 
     if (!task || !task.id) return;
 
     try {
-        // 0. Pause a running timer first (logs the final session, frees the user) — kept here so the
-        // deleteTask command needn't import the timer code and create a domain↔taskActions cycle.
-        if (task.timerStatus === 'running') {
-            try {
-                await pauseTask(task);
-                if (task.assignedUserId) {
-                    await updateUserWorkStatus(task.assignedUserId, false, 'idle', null);
-                }
-            } catch (pErr) {
-                console.error("Error pausing active task before deletion:", pErr);
-                // Continue with deletion even if pause fails, to avoid "undead" tasks
+        // 0. SETTLE a running timer first — and abort the deletion if it cannot be settled.
+        //
+        // This used to call the legacy `pauseTask` directly and then delete REGARDLESS of the
+        // outcome. Under the revisioned engine that is unrecoverable: `pauseTask` only rewrites the
+        // task/user projection and never touches `active_sessions`, so hard-deleting the task left
+        // the canonical run pointing at a document that no longer exists — and recovery, the next
+        // start, and manager force-end all refuse a run whose task is missing. The worker was stuck
+        // live with no route back from any UI.
+        //
+        // `endSessionForUser` is the one audited settler that dispatches correctly for BOTH engines
+        // (canonical force-end when `active_sessions` is active, legacy pause otherwise) and for both
+        // actors (the assignee themselves, or a manager acting in scope). Imported dynamically to
+        // keep the static taskActions ↔ sessionAdmin cycle broken; delete is not a hot path.
+        //
+        // Failing CLOSED reverses the old trade deliberately: a task that refuses to delete is
+        // visible and repairable (retry, or force-end from the oversight panel first), whereas a
+        // dangling canonical run is neither.
+        if (task.timerStatus === 'running' && task.assignedUserId) {
+            const { endSessionForUser } = await import('./sessionAdmin');
+            const settled = await endSessionForUser({ id: task.assignedUserId }, { actorId: userId });
+            if (settled?.status === 'failed') {
+                throw Object.assign(
+                    new Error('Cannot delete a task whose running timer could not be settled'),
+                    { code: 'task/timer-unsettled', cause: settled.error }
+                );
             }
+            await updateUserWorkStatus(task.assignedUserId, false, 'idle', null);
         }
 
         // Resolve the actor's role (the keep-hours path auto-confirms for a manager) + name for the

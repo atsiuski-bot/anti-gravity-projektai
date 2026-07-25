@@ -289,52 +289,61 @@ const idleProjectionAfterBreak = (userData, creditedMinutes, issuedAt) => ({
     },
 });
 
+// `task` may be NULL when the run's task document no longer exists (it was hard-deleted while the
+// timer ran). That case must still be closeable: the ledger row is what carries the credited time,
+// and the rules' taskCloseLedgerBound() REQUIRES work_sessions/sess_run_{runId} in the same batch
+// for any task-run close — so an orphaned run without this row could never be settled by anyone, and
+// the worker would stay permanently "live". We therefore write the ledger from the RUN itself (which
+// carries taskId/taskTitle/startedAt) and simply skip the tasks/{id} projection update that has no
+// target. Nothing else changes: a normal close still updates both.
 function closeTaskWrites({ task, run, endedAt, userId }) {
-    if (!task?.id || !run?.runId || !run?.startedAt) {
-        throw new Error('A running task and stable run are required to close a timer');
+    if (!run?.runId || !run?.startedAt || !(task?.id || run?.taskId)) {
+        throw new Error('A stable run (and its task reference) is required to close a timer');
     }
 
     const start = new Date(run.startedAt);
     const end = new Date(endedAt);
     const durationMinutes = clampSessionMinutes((end - start) / 60000);
-    const timerMinutes = Number(task.timerMinutes || 0) + durationMinutes;
     const ledgerId = `sess_run_${run.runId}`;
+    const taskId = task?.id || run.taskId;
+    const writes = [];
 
-    return {
-        durationMinutes,
-        writes: [
-            {
-                type: 'update',
-                path: `tasks/${task.id}`,
-                data: {
-                    timerStatus: 'paused',
-                    timerStartedAt: null,
-                    timerMinutes,
-                    manualMinutes: Number(task.manualMinutes || 0),
-                    updatedAt: endedAt,
-                    timerProjectionVersion: TIMER_ENGINE_VERSION,
-                },
+    if (task?.id) {
+        writes.push({
+            type: 'update',
+            path: `tasks/${task.id}`,
+            data: {
+                timerStatus: 'paused',
+                timerStartedAt: null,
+                timerMinutes: Number(task.timerMinutes || 0) + durationMinutes,
+                manualMinutes: Number(task.manualMinutes || 0),
+                updatedAt: endedAt,
+                timerProjectionVersion: TIMER_ENGINE_VERSION,
             },
-            {
-                type: 'set',
-                path: `work_sessions/${ledgerId}`,
-                data: {
-                    taskId: task.id,
-                    taskTitle: task.title || 'Nežinoma užduotis',
-                    userId,
-                    userName: task.assignedUserName || null,
-                    runId: run.runId,
-                    startTime: start.toISOString(),
-                    endTime: end.toISOString(),
-                    durationMinutes,
-                    date: getLithuanianDateString(end),
-                    createdAt: endedAt,
-                    engineVersion: TIMER_ENGINE_VERSION,
-                },
-                merge: true,
-            },
-        ],
-    };
+        });
+    }
+
+    writes.push({
+        type: 'set',
+        path: `work_sessions/${ledgerId}`,
+        data: {
+            taskId,
+            taskTitle: task?.title || run.taskTitle || 'Nežinoma užduotis',
+            userId,
+            userName: task?.assignedUserName || null,
+            runId: run.runId,
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+            durationMinutes,
+            date: getLithuanianDateString(end),
+            createdAt: endedAt,
+            ...(task?.id ? {} : { orphanedTaskClose: true }),
+            engineVersion: TIMER_ENGINE_VERSION,
+        },
+        merge: true,
+    });
+
+    return { durationMinutes, writes };
 }
 
 function baseCommand({ kind, userId, base, commandId, runId, issuedAt }) {
@@ -583,6 +592,12 @@ export function planBreakStart({
     return { command, writes };
 }
 
+// `creditUntil` separates WHEN the interval stopped from WHEN this command was issued. They are the
+// same for a normal stop (the default), but crash recovery must credit only up to the session's last
+// pre-boot proof of life while issuing the command NOW — otherwise reopening the app hours later
+// credits the whole dead gap as break/call/work, the exact over-credit the legacy recovery path
+// already avoids via its heartbeat lookup. Passing it keeps the revisioned engine from regressing
+// that at cutover.
 export function planBreakEnd({
     userId,
     userData,
@@ -591,6 +606,7 @@ export function planBreakEnd({
     commandId,
     runId = null,
     issuedAt,
+    creditUntil = null,
 }) {
     const base = canonicalSessionState(currentRecord, { ...userData, id: userId });
     if (base.status !== 'active' || base.run?.type !== 'break') {
@@ -604,7 +620,7 @@ export function planBreakEnd({
     }
 
     const startedAt = new Date(base.run.startedAt);
-    const endedAt = new Date(issuedAt);
+    const endedAt = new Date(creditUntil || issuedAt);
     const durationMinutes = clampSessionMinutes((endedAt - startedAt) / 60000);
     const pausedTask = base.run.pausedSession?.type === 'task'
         ? base.run.pausedSession
@@ -994,6 +1010,8 @@ export function planSecondaryEnd({
     customTitle = '',
     customComment = '',
     auditorManagerId = null,
+    creditUntil = null, // see planBreakEnd — credit boundary, distinct from the command's issuedAt
+    skipRestore = false,
 }) {
     if (!['call', 'quickWork'].includes(type)) {
         throw new Error('Secondary end supports call and quickWork');
@@ -1006,7 +1024,11 @@ export function planSecondaryEnd({
         });
     }
 
-    const paused = base.run.pausedSession || null;
+    // skipRestore: end straight to IDLE and leave whatever this session had paused alone. Crash
+    // recovery needs it — there is no live worker at boot to hand a resumed task/break back to, so
+    // restoring one would silently start a timer nobody is watching. Mirrors the legacy closer's
+    // skipResume argument, which the revisioned path must match to avoid regressing at cutover.
+    const paused = skipRestore ? null : (base.run.pausedSession || null);
     const restoresTask = paused?.type === 'task';
     const restoresBreak = paused?.type === 'break';
     if (paused?.type && !['task', 'break'].includes(paused.type)) {
@@ -1024,7 +1046,7 @@ export function planSecondaryEnd({
     }
 
     const startedAt = new Date(base.run.startedAt);
-    const endedAt = new Date(issuedAt);
+    const endedAt = new Date(creditUntil || issuedAt);
     const durationMinutes = clampSessionMinutes((endedAt - startedAt) / 60000);
     const command = baseCommand({
         kind: 'end-session',
@@ -1044,7 +1066,7 @@ export function planSecondaryEnd({
                 userId,
                 userData,
                 run: base.run,
-                endedAt: issuedAt,
+                endedAt: endedAt.toISOString(),
                 durationMinutes,
                 contactType,
                 callNotes,
@@ -1054,7 +1076,7 @@ export function planSecondaryEnd({
                 userId,
                 userData,
                 run: base.run,
-                endedAt: issuedAt,
+                endedAt: endedAt.toISOString(),
                 durationMinutes,
                 customTitle,
                 customComment,
@@ -1204,8 +1226,13 @@ export function planManagerForceEnd({
             code: 'timer/no-active-session',
         });
     }
-    if (base.run?.type === 'task' && !activeTask) {
-        throw Object.assign(new Error('The active task must be supplied for force-end'), {
+    // A task run whose task document is GONE is precisely the state a manager force-end must be able
+    // to clear (see closeTaskWrites): refusing it here left the worker permanently live with no
+    // route out of any UI. The run itself still carries taskId/taskTitle/startedAt, which is all the
+    // ledger row needs. `activeTask` therefore stays OPTIONAL — supplied for a normal force-end,
+    // null for an orphaned one.
+    if (base.run?.type === 'task' && !activeTask && !base.run?.taskId) {
+        throw Object.assign(new Error('The active task run carries no task reference'), {
             code: 'timer/missing-active-task',
         });
     }
@@ -1224,6 +1251,14 @@ export function planManagerForceEnd({
     const writes = [];
     let creditedMinutes = 0;
 
+    // EVERY run type must leave a record of the interval the manager just closed. Only the task
+    // branch used to write one: a force-ended call or quick-work moved canonical state straight to
+    // idle and cleared the projections, so the worker's payable minutes vanished with no trace
+    // anywhere — a manager's *recovery* action silently destroying pay (audit T-18). Call and
+    // quick-work reuse the SAME deterministic ledger writers the normal close uses, so a force-ended
+    // session is indistinguishable downstream from a worker-ended one. Quick work has no title at
+    // force-end time, so quickWorkLogWrites' auto-stopped placeholder is used and the worker can
+    // describe it afterwards — exactly how their own auto-stop already behaves.
     if (base.run?.type === 'task') {
         const closed = closeTaskWrites({
             task: activeTask,
@@ -1233,7 +1268,39 @@ export function planManagerForceEnd({
         });
         creditedMinutes = closed.durationMinutes;
         writes.push(...closed.writes);
+    } else if (base.run?.type === 'call' || base.run?.type === 'quickWork') {
+        const startedAt = new Date(base.run.startedAt);
+        const endedAt = new Date(issuedAt);
+        creditedMinutes = clampSessionMinutes((endedAt - startedAt) / 60000);
+        if (base.run.type === 'call') {
+            writes.push(...callLogWrites({
+                userId: targetUser.id,
+                userData: targetUser,
+                run: base.run,
+                endedAt: issuedAt,
+                durationMinutes: creditedMinutes,
+                contactType: null,
+                callNotes: '',
+            }));
+        } else if (creditedMinutes > MIN_LOGGED_SESSION_MINUTES) {
+            writes.push(...quickWorkLogWrites({
+                userId: targetUser.id,
+                userData: targetUser,
+                run: base.run,
+                endedAt: issuedAt,
+                durationMinutes: creditedMinutes,
+                customTitle: '',
+                customComment: '',
+                auditorManagerId: null,
+            }).writes);
+        }
     }
+    // BREAK is deliberately still projection-only. `break_sessions` is self-logged by rule (create
+    // requires createOwnsUserId — there is no manager-create branch, unlike tasks/work_sessions), so
+    // a manager-issued break row would be permission-denied and would fail the WHOLE force-end batch,
+    // leaving the worker stuck live. Break history is not payable, so the trade is one-sided for now;
+    // closing this gap needs a scoped manager-create branch on break_sessions, i.e. a rules change
+    // and a human-run deploy — deliberately NOT folded into this client-only change.
 
     writes.push(
         {

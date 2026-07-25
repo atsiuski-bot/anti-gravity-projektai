@@ -4,6 +4,7 @@ const AUTO_RECOVERY_KEY = 'workz_stale_chunk_recovery_at';
 const AUTO_RECOVERY_WINDOW_MS = 60 * 1000;
 const CONTROLLER_CHANGE_TIMEOUT_MS = 3000;
 const WORKER_INSTALL_TIMEOUT_MS = 2000;
+const FRESHNESS_PROBE_TIMEOUT_MS = 4000;
 
 const STALE_CHUNK_PATTERNS = [
     /failed to fetch dynamically imported module/i,
@@ -108,8 +109,48 @@ const activateWaitingWorker = async (worker) => {
     });
 };
 
+/**
+ * Positively prove a fresh build is reachable before the installed shell may be destroyed.
+ *
+ * `navigator.onLine` only reports that a network INTERFACE exists. Behind a captive portal, a dead
+ * mobile route or a DNS black hole it stays TRUE while nothing is actually fetchable — and the
+ * previous gate trusted it. A failed update in that state therefore unregistered the app worker and
+ * deleted the Workbox precache, leaving a field worker with NO app at all — unable to see or stop a
+ * running timer — until real connectivity returned. Removing a WORKING offline shell is only ever
+ * safe once we have positively fetched the current build from our own origin.
+ *
+ * The probe requests the app's own service-worker script uncached and demands three things a
+ * captive portal cannot fake at once: a 2xx, a same-origin non-redirected final URL, and a
+ * JavaScript content type (a portal answers any request with its own HTML login page). Any doubt —
+ * a throw, a timeout, an HTML body — resolves FALSE, so the shell is KEPT. Failing closed here
+ * costs at most one stale reload; failing open costs the worker the whole app.
+ */
+const isFreshBuildReachable = async () => {
+    if (typeof fetch !== 'function' || typeof window === 'undefined') return false;
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timer = setTimeout(() => controller?.abort(), FRESHNESS_PROBE_TIMEOUT_MS);
+    try {
+        const response = await fetch(`${window.location.origin}/sw.js?freshness=${Date.now()}`, {
+            method: 'GET',
+            cache: 'no-store',
+            credentials: 'same-origin',
+            redirect: 'follow',
+            signal: controller?.signal,
+        });
+        if (!response.ok || response.redirected) return false;
+        if (new URL(response.url, window.location.origin).origin !== window.location.origin) return false;
+        return /javascript|ecmascript/i.test(response.headers.get('content-type') || '');
+    } catch {
+        return false;
+    } finally {
+        clearTimeout(timer);
+    }
+};
+
 const clearStaleAppShell = async (registrations) => {
-    if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+    if (!(await isFreshBuildReachable())) return;
 
     await Promise.all(registrations.map((registration) => (
         registration.unregister().catch(() => false)

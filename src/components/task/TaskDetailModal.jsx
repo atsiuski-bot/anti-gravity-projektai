@@ -397,7 +397,11 @@ export default function TaskDetailModal({
                                 <button
                                     type="button"
                                     onClick={() => onOpenTimeAdjustments(task)}
-                                    className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                    /* min-h-touch + px-3: the previous px-2/py-1 box was ~26px tall,
+                                       far under the binding 44px gate (DESIGN_SYSTEM §7 / WCAG 2.5.5)
+                                       — and these two are the TIME-CORRECTION controls, the ones a
+                                       worker reaches for with gloves, in sunlight, to recover pay. */
+                                    className="inline-flex items-center gap-1 min-h-touch rounded-control border border-line px-3 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                 >
                                     <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Koreguoti laiką
                                 </button>
@@ -406,7 +410,7 @@ export default function TaskDetailModal({
                                 <button
                                     type="button"
                                     onClick={() => setBackdateOpen(true)}
-                                    className="inline-flex items-center gap-1 rounded-control border border-line px-2 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                    className="inline-flex items-center gap-1 min-h-touch rounded-control border border-line px-3 py-1 text-caption font-medium text-ink-muted hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                 >
                                     <Clock className="h-3.5 w-3.5" aria-hidden="true" /> Įrašyti praėjusį laiką
                                 </button>

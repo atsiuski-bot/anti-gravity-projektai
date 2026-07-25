@@ -14,6 +14,11 @@ import { setAgentsEnabled } from '../domain/agentControl';
 import { decideDisabledLogin } from '../utils/accountStatus';
 import { applyPendingSessionProjection } from '../utils/sessionProjection';
 
+// How long the rollout-config listener may stay unresolved before the timer controls fall back to
+// the legacy path. Long enough that a normal (even slow) first snapshot wins; short enough that an
+// offline boot never leaves a worker unable to start a timer.
+const TIMER_ENGINE_RESOLVE_TIMEOUT_MS = 5000;
+
 const AuthContext = createContext();
 
 // eslint-disable-next-line react-refresh/only-export-components
@@ -30,7 +35,9 @@ export function AuthProvider({ children }) {
         fromCache: true,
         hasPendingWrites: false,
     });
-    const [timerEngineEnabled, setTimerEngineEnabled] = useState(false);
+    // 'unknown' until the rollout-config listener resolves — see the tri-state gate effect below.
+    const [timerEngineStatus, setTimerEngineStatus] = useState('unknown');
+    const engineEverEnabledRef = useRef(false);
     const [userRole, setUserRole] = useState(null);
     const [breakState, setBreakState] = useState(null);
     const [workStatus, setWorkStatus] = useState(null);
@@ -411,7 +418,10 @@ export function AuthProvider({ children }) {
                 setConfirmedUserData(null);
                 setPendingSessionProjection(null);
                 setUserDataMetadata({ fromCache: true, hasPendingWrites: false });
-                setTimerEngineEnabled(false);
+                // Signed out: the gate is unresolved again, and the session's sticky latch is
+                // released so the next sign-in re-reads the rollout config from scratch.
+                setTimerEngineStatus('unknown');
+                engineEverEnabledRef.current = false;
                 setLoading(false);
             }
         });
@@ -444,29 +454,58 @@ export function AuthProvider({ children }) {
         return () => unsub();
     }, [currentUser?.uid]);
 
-    // ADR 0020 rollout gate. Missing config means legacy timer paths remain active, so the client
-    // can ship before the new rules are deployed. Once an admin enables system_config/timerEngine
-    // after the post-ship rules rollout, task start/pause/resume switches to the revisioned engine.
+    // ADR 0020 rollout gate — TRI-STATE ('unknown' | 'disabled' | 'enabled'), not a bare boolean.
+    //
+    // The boolean conflated three different situations into `false`: "not resolved yet", "resolved
+    // OFF", and "the listener errored". Because the interactive app renders before this listener's
+    // first snapshot, a worker could tap a timer during that window and have it issue a LEGACY write
+    // — and then the config would resolve TRUE and canonical state became the authority, with a
+    // legacy run now invisible behind it. 'unknown' makes that window explicit so the timer controls
+    // can refuse to guess (see timerEngineResolved below) instead of silently picking the wrong
+    // engine. It is bounded so an offline boot can never leave the controls stuck.
+    //
+    // The gate is also STICKY once enabled for a signed-in session: an admin flipping the flag off
+    // (or a transient listener error) must not hand authority back to the legacy writers mid-session
+    // while canonical runs are live — that is the "silently downgrade" half of the same bug. ADR-0020
+    // rollback is a fresh-session concern; in-flight commands keep draining either way (below).
     useEffect(() => {
         if (!currentUser?.uid) {
-            setTimerEngineEnabled(false);
+            setTimerEngineStatus('unknown');
+            engineEverEnabledRef.current = false;
             return undefined;
         }
+        // An offline first load may not produce a snapshot promptly. Resolving to 'disabled' (the
+        // legacy path — today's production behaviour) keeps the timers usable rather than blocked.
+        const settleTimer = setTimeout(() => {
+            setTimerEngineStatus((prev) => (prev === 'unknown' ? 'disabled' : prev));
+        }, TIMER_ENGINE_RESOLVE_TIMEOUT_MS);
         const unsub = onSnapshot(
             doc(db, 'system_config', 'timerEngine'),
-            (snap) => setTimerEngineEnabled(snap.exists() && snap.data().enabled === true),
+            (snap) => {
+                const on = snap.exists() && snap.data().enabled === true;
+                if (on) engineEverEnabledRef.current = true;
+                setTimerEngineStatus(on || engineEverEnabledRef.current ? 'enabled' : 'disabled');
+            },
             (err) => {
-                setTimerEngineEnabled(false);
+                // A permission-denied is the EXPECTED pre-rollout state; any other error still must
+                // not be read as "engine off" once this session has been running canonically.
+                setTimerEngineStatus(engineEverEnabledRef.current ? 'enabled' : 'disabled');
                 if (err.code !== 'permission-denied') {
                     logError(err, { source: 'timerEngine.config.subscribe' });
                 }
             }
         );
-        return () => unsub();
+        return () => { clearTimeout(settleTimer); unsub(); };
     }, [currentUser?.uid]);
 
+    // Outbox replay is deliberately NOT gated on the engine being currently enabled. A command can be
+    // persisted to the durable outbox and only THEN have its Firestore batch issued, so an intent may
+    // already be queued when the gate goes off (rollback) or before it resolves. Gating replay on the
+    // live flag stranded exactly those intents — the worker's start/stop simply never happened, with
+    // nothing on screen to say so. Replay is a no-op when the outbox is empty, which is the dormant
+    // case, so running it unconditionally costs nothing.
     useEffect(() => {
-        if (!timerEngineEnabled || !currentUser?.uid) return;
+        if (!currentUser?.uid) return;
         const userId = currentUser.uid;
         const replay = () => {
             import('../utils/timerCommandEngine')
@@ -479,7 +518,7 @@ export function AuthProvider({ children }) {
         replay();
         window.addEventListener('online', replay);
         return () => window.removeEventListener('online', replay);
-    }, [currentUser?.uid, timerEngineEnabled]);
+    }, [currentUser?.uid]);
 
     const [showForceButton, setShowForceButton] = useState(false);
 
@@ -500,7 +539,11 @@ export function AuthProvider({ children }) {
         confirmedUserData,
         userDataMetadata,
         setPendingSessionProjection,
-        timerEngineEnabled,
+        // Derived so every existing consumer keeps its boolean, while the new `timerEngineResolved`
+        // lets the timer controls refuse to act during the pre-resolution window instead of
+        // defaulting to the legacy writers (audit T-05).
+        timerEngineEnabled: timerEngineStatus === 'enabled',
+        timerEngineResolved: timerEngineStatus !== 'unknown',
         userRole,
         login,
         logout,

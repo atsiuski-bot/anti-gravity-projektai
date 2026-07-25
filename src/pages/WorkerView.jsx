@@ -29,6 +29,7 @@ import { useTaskTimeMonitor } from '../hooks/useTaskTimeMonitor';
 import { useOrphanedTaskRecovery } from '../hooks/useOrphanedTaskRecovery';
 import { useRevisionedTaskRecovery } from '../hooks/useRevisionedTaskRecovery';
 import { useOrphanedSessionRecovery } from '../hooks/useOrphanedSessionRecovery';
+import { useRevisionedSecondaryRecovery } from '../hooks/useRevisionedSecondaryRecovery';
 import { useTaskHeartbeat } from '../hooks/useTaskHeartbeat';
 import { useSessionHeartbeat } from '../hooks/useSessionHeartbeat';
 import TaskTimeWarningPopup from '../components/TaskTimeWarningPopup';
@@ -83,7 +84,10 @@ export default function WorkerView() {
     // Same crash/reload recovery for an orphaned break/call/quick-work session — ends it (clamped to
     // 16h, now at the last heartbeat when available) so a forgotten secondary timer can't credit a
     // multi-day "ghost" gap.
-    useOrphanedSessionRecovery(currentUser);
+    // Split by owning engine, exactly like the task recovery above: the legacy closer only clears
+    // projection flags, so it must not run against a canonical run.
+    useOrphanedSessionRecovery(currentUser, !timerEngineEnabled);
+    useRevisionedSecondaryRecovery(currentUser, userData, timerEngineEnabled);
 
 
     useEffect(() => {

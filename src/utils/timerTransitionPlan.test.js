@@ -6,6 +6,7 @@ import {
     planSecondaryEnd,
     planSecondaryStart,
     planTaskEnd,
+    planManagerForceEnd,
     planTaskPause,
     planTaskRecover,
     planTaskStart,
@@ -735,5 +736,145 @@ describe('revisioned timer transition plans', () => {
             status: 'idle',
             revision: 9,
         });
+    });
+});
+
+// Audit T-18 / T-01 — a manager force-end must RECORD what it closes, and must be able to close a
+// run whose task no longer exists (the only escape hatch out of an orphaned canonical run).
+describe('manager force-end records every run type', () => {
+    const activeUser = (run) => ({
+        id: userId,
+        activeSession: null,
+        workStatus: { isWorking: false, status: 'idle', activeTaskId: null },
+        __run: run,
+    });
+    const recordFor = (run, revision = 4) => ({
+        userId,
+        revision,
+        expectedRevision: revision - 1,
+        expectedRunId: null,
+        status: 'active',
+        run,
+        lastCommandId: 'cmd-prev',
+        updatedAt: run.startedAt,
+        engineVersion: 2,
+    });
+
+    it('writes a call ledger row instead of silently dropping the minutes', () => {
+        const run = { runId: 'run-call', type: 'call', startedAt: '2026-07-09T08:00:00.000Z', revision: 4 };
+        const plan = planManagerForceEnd({
+            targetUser: activeUser(run),
+            actorId: 'manager-1',
+            activeRecord: recordFor(run),
+            activeTask: null,
+            commandId: 'cmd-force-call',
+            issuedAt: '2026-07-09T08:30:00.000Z',
+        });
+
+        expect(plan.creditedMinutes).toBe(30);
+        const ledger = plan.writes.find((w) => w.path.startsWith('work_sessions/sess_call_ws_'));
+        expect(ledger).toBeTruthy();
+        expect(ledger.data).toMatchObject({ userId, durationMinutes: 30 });
+        expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
+            .toMatchObject({ status: 'idle', run: null });
+    });
+
+    it('writes an auto-stopped quick-work record the worker can describe later', () => {
+        const run = { runId: 'run-qw', type: 'quickWork', startedAt: '2026-07-09T08:00:00.000Z', revision: 4 };
+        const plan = planManagerForceEnd({
+            targetUser: activeUser(run),
+            actorId: 'manager-1',
+            activeRecord: recordFor(run),
+            activeTask: null,
+            commandId: 'cmd-force-qw',
+            issuedAt: '2026-07-09T09:00:00.000Z',
+        });
+
+        expect(plan.creditedMinutes).toBe(60);
+        const ledger = plan.writes.find((w) => w.path.startsWith('work_sessions/sess_qw_ws_'));
+        expect(ledger.data).toMatchObject({ userId, durationMinutes: 60 });
+        const task = plan.writes.find((w) => w.path.startsWith('tasks/sess_qw_task_'));
+        expect(task.data.title).toContain('Automatiškai');
+    });
+
+    it('closes an orphaned task run whose task document was hard-deleted', () => {
+        const run = {
+            runId: 'run-orphan',
+            type: 'task',
+            taskId: 'task-gone',
+            taskTitle: 'Deleted task',
+            startedAt: '2026-07-09T08:00:00.000Z',
+            revision: 4,
+        };
+        const plan = planManagerForceEnd({
+            targetUser: activeUser(run),
+            actorId: 'manager-1',
+            activeRecord: recordFor(run),
+            activeTask: null, // the task document is gone
+            commandId: 'cmd-force-orphan',
+            issuedAt: '2026-07-09T08:45:00.000Z',
+        });
+
+        // The credited time survives, keyed so the rules' taskCloseLedgerBound() is satisfied.
+        const ledger = plan.writes.find((w) => w.path === 'work_sessions/sess_run_run-orphan');
+        expect(ledger.data).toMatchObject({
+            runId: 'run-orphan',
+            taskId: 'task-gone',
+            durationMinutes: 45,
+            orphanedTaskClose: true,
+        });
+        // ...and no write targets the task that no longer exists.
+        expect(plan.writes.some((w) => w.path.startsWith('tasks/'))).toBe(false);
+        expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
+            .toMatchObject({ status: 'idle' });
+    });
+});
+
+// Audit T-02 — recovery must credit only to the last pre-boot proof of life, never to the reopen
+// instant, and must never resume what an abandoned session had paused.
+describe('secondary close honours an explicit credit boundary', () => {
+    it('credits a call up to creditUntil, not the command instant', () => {
+        const run = { runId: 'run-c', type: 'call', startedAt: '2026-07-09T08:00:00.000Z', revision: 2 };
+        const plan = planSecondaryEnd({
+            type: 'call',
+            userId,
+            userData: { id: userId },
+            activeRecord: {
+                userId, revision: 2, expectedRevision: 1, expectedRunId: null,
+                status: 'active', run, lastCommandId: 'c', updatedAt: run.startedAt, engineVersion: 2,
+            },
+            commandId: 'cmd-recover-call',
+            issuedAt: '2026-07-09T20:00:00.000Z',   // reopened 12h later
+            creditUntil: '2026-07-09T08:20:00.000Z', // last heartbeat
+            skipRestore: true,
+        });
+
+        expect(plan.creditedMinutes).toBe(20);
+    });
+
+    it('skipRestore ends straight to idle instead of resuming a paused task', () => {
+        const run = {
+            runId: 'run-q',
+            type: 'quickWork',
+            startedAt: '2026-07-09T08:00:00.000Z',
+            revision: 2,
+            pausedSession: { type: 'task', taskId: 'task-a', taskTitle: 'Task A' },
+        };
+        const plan = planSecondaryEnd({
+            type: 'quickWork',
+            userId,
+            userData: { id: userId },
+            activeRecord: {
+                userId, revision: 2, expectedRevision: 1, expectedRunId: null,
+                status: 'active', run, lastCommandId: 'c', updatedAt: run.startedAt, engineVersion: 2,
+            },
+            commandId: 'cmd-recover-qw',
+            issuedAt: '2026-07-09T09:00:00.000Z',
+            skipRestore: true,
+        });
+
+        expect(plan.restoredRunId).toBeNull();
+        expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
+            .toMatchObject({ status: 'idle', run: null });
     });
 });

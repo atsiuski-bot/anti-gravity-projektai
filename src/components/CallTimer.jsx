@@ -10,6 +10,7 @@ import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
+import { COMMIT_CONFIRM_TIMEOUT_MS } from './taskTimerSafety';
 import { useRevisionedTimerSession } from '../hooks/useRevisionedTimerSession';
 import { issueTimerCommand } from '../utils/timerCommandEngine';
 import {
@@ -196,7 +197,7 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
 });
 
 export default function CallTimer({ compact = false, hideLabel = false }) {
-    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled } = useAuth();
+    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled, timerEngineResolved } = useAuth();
     const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
 
@@ -242,6 +243,13 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
     }, []);
 
     const tryRevisionedStartCall = async () => {
+        // The rollout gate has not resolved yet: refuse rather than fall through to the LEGACY
+        // writer. Guessing here is what let a tap during the boot window issue a legacy command that
+        // then became invisible behind a canonical revision once the config resolved (audit T-05).
+        if (!timerEngineResolved) {
+            setError('Laikmačio būsena dar kraunama. Bandykite po akimirkos.');
+            return true;
+        }
         if (!timerEngineEnabled) return false;
         if (!revisionedSession.loaded || revisionedSession.error) {
             setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
@@ -292,6 +300,13 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
     };
 
     const tryRevisionedFinishCall = useCallback(async ({ contactType = null, notes = '', discard = false } = {}) => {
+        // The rollout gate has not resolved yet: refuse rather than fall through to the LEGACY
+        // writer. Guessing here is what let a tap during the boot window issue a legacy command that
+        // then became invisible behind a canonical revision once the config resolved (audit T-05).
+        if (!timerEngineResolved) {
+            setError('Laikmačio būsena dar kraunama. Bandykite po akimirkos.');
+            return true;
+        }
         if (!timerEngineEnabled) return false;
         if (!revisionedSession.loaded || revisionedSession.error) {
             setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');
@@ -344,7 +359,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         await trackRevisionedCall(plan);
         setShowTitleModal(false);
         return true;
-    }, [currentUser, revisionedSession, timerEngineEnabled, trackRevisionedCall, userData]);
+    }, [currentUser, revisionedSession, timerEngineEnabled, timerEngineResolved, trackRevisionedCall, userData]);
 
     const handleStartCall = async () => {
         if (!currentUser || isDisabled) return;
@@ -460,6 +475,16 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
         if (actionInFlightRef.current) return;
         actionInFlightRef.current = true;
 
+        // Release the control on a BOUNDED race, not on write acknowledgement — the same backstop
+        // BreakTimer carries. Firestore mutation promises resolve only after the backend acks;
+        // OFFLINE the SDK applies the write locally and leaves the promise pending indefinitely, so
+        // the `finally` below never runs and this guard stays latched for the rest of the app
+        // session: one tap out of coverage left the Skambutis button silently, permanently dead —
+        // the worker could neither end the call they had just started nor make another, with no
+        // error and no spinner to explain it.
+        const releaseGuard = () => { actionInFlightRef.current = false; };
+        const guardTimer = setTimeout(releaseGuard, COMMIT_CONFIRM_TIMEOUT_MS);
+
         setError('');
         try {
             if (!isCalling) {
@@ -471,7 +496,10 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             console.error("Error toggling call:", err);
             setError("Nepavyko pakeisti skambučio būsenos. Bandykite dar kartą.");
         } finally {
-            actionInFlightRef.current = false;
+            // Happy path: the write settled well inside the budget, so cancel the backstop and
+            // release immediately — online behaviour is unchanged.
+            clearTimeout(guardTimer);
+            releaseGuard();
         }
     };
 

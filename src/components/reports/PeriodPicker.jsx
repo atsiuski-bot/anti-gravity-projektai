@@ -86,7 +86,8 @@ export function PeriodPicker({ presets, activeId, onChoose, open, onToggle, labe
                     onClick={onToggle}
                     aria-expanded={open}
                     aria-label={open ? 'Suskleisti laikotarpio parinktis' : 'Daugiau laikotarpio parinkčių'}
-                    className="shrink-0 inline-flex items-center gap-1 h-10 px-3 rounded-control text-body font-semibold border border-line bg-surface-card text-ink-strong transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    /* min-h-touch, not h-10: a 40px control misses the binding 44px gate. */
+                    className="shrink-0 inline-flex items-center gap-1 min-h-touch px-3 rounded-control text-body font-semibold border border-line bg-surface-card text-ink-strong transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 >
                     <span>{open ? 'Mažiau' : 'Daugiau'}</span>
                     {!open && hiddenCount > 0 && (

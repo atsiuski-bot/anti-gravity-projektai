@@ -39,7 +39,7 @@ async function loadTaskForTimer(taskId) {
 }
 
 export default function BreakTimer({ currentUser: _propUser, compact = false, hideLabel = false }) {
-    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled } = useAuth();
+    const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled, timerEngineResolved } = useAuth();
     const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
     const {
@@ -79,6 +79,13 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
     };
 
     const tryRevisionedBreakToggle = async () => {
+        // The rollout gate has not resolved yet: refuse rather than fall through to the LEGACY
+        // writer. Guessing here is what let a tap during the boot window issue a legacy command that
+        // then became invisible behind a canonical revision once the config resolved (audit T-05).
+        if (!timerEngineResolved) {
+            setError('Laikmačio būsena dar kraunama. Bandykite po akimirkos.');
+            return true;
+        }
         if (!timerEngineEnabled) return false;
         if (!revisionedSession.loaded || revisionedSession.error) {
             setError('Laikmačio būsena dar nepasiekiama. Bandykite dar kartą.');

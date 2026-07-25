@@ -14,6 +14,7 @@ import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
 import { cn } from '../utils/cn';
 import QuickWorkDescribePrompt from './QuickWorkDescribePrompt';
 import RecoveryNotice from './RecoveryNotice';
+import TimerSyncNotice from './TimerSyncNotice';
 import OnboardingWelcome from './OnboardingWelcome';
 
 export default function Layout({ children }) {
@@ -150,6 +151,10 @@ export default function Layout({ children }) {
                                 crash/reload auto-closed a forgotten timer — same calm placement,
                                 never the red shell. */}
                             <RecoveryNotice />
+                            {/* Reload-surviving outcome of any offline/queued timer command — the
+                                only place a rejected or multi-device-conflicted action becomes
+                                visible after the issuing component is long gone. */}
+                            <TimerSyncNotice />
                             <OnboardingWelcome />
                             {children}
                         </div>

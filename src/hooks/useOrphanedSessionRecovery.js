@@ -115,12 +115,18 @@ export function resolvePreBootBeat(startMs, appLoadTime, ...beatIsos) {
  * server-side by autoCloseForgottenSessions (functions/index.js), the logging counterpart to this.
  *
  * @param {Object} currentUser - the authenticated user (needs uid).
+ * @param {boolean} [enabled=true] - false once the REVISIONED engine owns the session. This closer
+ *   only clears the user doc's projection flags; it never touches `active_sessions`. Running it
+ *   against a canonical run would report success while the run stayed ACTIVE — screen idle, engine
+ *   still live, and the worker's next start rejected with no UI route out. useRevisionedSecondaryRecovery
+ *   handles that case through a real revisioned transition instead.
  */
-export function useOrphanedSessionRecovery(currentUser) {
+export function useOrphanedSessionRecovery(currentUser, enabled = true) {
     const { userData } = useAuth();
     const handledRef = useRef(false);
 
     useEffect(() => {
+        if (!enabled) return;
         if (handledRef.current) return;
         if (!currentUser?.uid || !userData) return;
 
@@ -198,5 +204,5 @@ export function useOrphanedSessionRecovery(currentUser) {
                 logError(e, { source: 'orphanRecovery:endSession', userId: uid, sessionType: session.type });
             }
         })();
-    }, [currentUser, userData]);
+    }, [currentUser, userData, enabled]);
 }

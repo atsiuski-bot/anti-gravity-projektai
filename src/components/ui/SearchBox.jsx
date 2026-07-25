@@ -181,7 +181,11 @@ export default function SearchBox({
                     type="button"
                     onClick={clear}
                     aria-label="Išvalyti paiešką"
-                    className="absolute right-1 top-1/2 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-input text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    /* Full 44px target (DESIGN_SYSTEM §7 / WCAG 2.5.5), not the old 36px box: this
+                       clear control sits inside a search field a worker uses one-handed outdoors.
+                       The input is already min-h-touch and reserves pr-11, so a 44px button pinned
+                       to right-0 fits exactly without ever overlapping the typed text. */
+                    className="absolute right-0 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-input text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                 >
                     <X className="h-4 w-4" aria-hidden="true" />
                 </button>

@@ -471,15 +471,28 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     updatedAt: new Date().toISOString()
                 })
             ];
+            // A FAILED void is not cosmetic: the task counter above is rolled back either way, so if
+            // the ledger row survives, the same stretch is credited once in work_sessions and no
+            // longer on the task — reports and the task card then disagree permanently. Reporting a
+            // clean "atšaukta" over that left the worker with no reason to mention it to anyone.
+            let voidFailed = false;
             if (sessionDocRef) {
                 writes.push(
                     updateDoc(sessionDocRef, { isDeleted: true, deletedAt: new Date().toISOString() })
-                        .catch(voidErr => logError(voidErr, { source: 'writeFail:undoFinish.voidSession' }))
+                        .catch(voidErr => {
+                            voidFailed = true;
+                            logError(voidErr, { source: 'writeFail:undoFinish.voidSession', taskId: task.id, code: voidErr?.code });
+                        })
                 );
             }
             await Promise.all(writes);
 
-            showToast('Užbaigimas atšauktas. Užduotis vėl aktyvi.', { tone: 'info', duration: 5000 });
+            showToast(
+                voidFailed
+                    ? 'Užduotis vėl aktyvi, bet ankstesnio laiko įrašo pašalinti nepavyko — pasitikslinkite pas vadovą.'
+                    : 'Užbaigimas atšauktas. Užduotis vėl aktyvi.',
+                { tone: voidFailed ? 'warning' : 'info', duration: voidFailed ? 8000 : 5000 }
+            );
         } catch (err) {
             console.error('Error undoing finish:', err);
             logError(err, { source: 'undoFinish' });
@@ -644,7 +657,17 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         date: sessionDate,
                         createdAt: new Date().toISOString()
                     }, { merge: true })
-                      .catch(logErr => logError(logErr, { source: 'writeFail:finishTask.workSession' }));
+                      .catch(logErr => {
+                          // The ledger row IS the credited-time authority — the task's own counter is
+                          // only a projection of it. Swallowing this failure into the crash log alone
+                          // let the finish report success while the payable minutes never landed, so
+                          // task state and reports silently disagreed and only the worker's memory
+                          // could catch it. Kept fire-and-forget on purpose (awaiting it reintroduces
+                          // the offline hang documented below), but a failure must reach the WORKER,
+                          // not just an admin reading error_logs later.
+                          logError(logErr, { source: 'writeFail:finishTask.workSession', taskId: task.id, code: logErr?.code });
+                          showToast('Užduotis užbaigta, bet sugaišto laiko išsaugoti nepavyko. Pasitikslinkite pas vadovą.', { tone: 'warning', duration: 8000 });
+                      });
                 }
             }
 
