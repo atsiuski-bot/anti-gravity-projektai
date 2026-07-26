@@ -15,6 +15,29 @@ import { timerCommandPath } from './timerTransitionPlan';
 
 const inFlight = new Map();
 
+// How old a QUEUED command may be before replay refuses to issue it.
+//
+// Replay is deliberately not gated on the engine flag: an intent can be persisted to the outbox and
+// only then have its Firestore batch issued, so gating on the live flag stranded exactly the
+// commands a rollback was supposed to protect. But "never gated" and "valid forever" are different
+// claims. A command's expectedRevision/expectedRunId only reject it once the canonical record has
+// MOVED — and after a rollback the worker goes back to the legacy writers, which never touch that
+// record. A start queued on Friday could then land days later against an unmoved revision, succeed,
+// and leave the worker canonically "live" on a run their legacy session closed long ago, crediting
+// an ancient stretch nobody worked.
+//
+// The bound is the same 16h ceiling that defines the longest possible single run (MAX_SESSION_MINUTES
+// mirrors it server-side): past that the intent describes a working day that is simply over. A stale
+// command is marked rejected rather than dropped, so TimerSyncNotice tells the worker it did not
+// happen instead of failing silently.
+export const TIMER_COMMAND_MAX_REPLAY_AGE_MS = 16 * 60 * 60 * 1000;
+
+export function isStaleForReplay(command, nowMs = Date.now()) {
+    const issuedMs = Date.parse(command?.issuedAt || '');
+    if (!Number.isFinite(issuedMs)) return false;   // unparseable → let the revision guards decide
+    return nowMs - issuedMs > TIMER_COMMAND_MAX_REPLAY_AGE_MS;
+}
+
 async function commandExists(userId, commandId) {
     const ref = doc(db, timerCommandPath(userId, commandId));
     try {
@@ -144,6 +167,16 @@ export async function replayQueuedTimerCommands(userId) {
                 replayDetected: true,
             });
             results.push({ status: 'confirmed', commandId: entry.commandId });
+            continue;
+        }
+        // Only a command we would RE-ISSUE ourselves can be refused for age. A 'pending' one is
+        // already sitting in Firestore's own durable write queue and will commit on reconnect no
+        // matter what this outbox says — calling it rejected there would be a lie to the worker.
+        if (cachedState === 'missing' && isStaleForReplay(entry)) {
+            await updateTimerCommandStatus(entry.commandId, 'rejected', {
+                errorCode: 'timer/stale-replay',
+            });
+            results.push({ status: 'rejected', commandId: entry.commandId });
             continue;
         }
         const settlement = cachedState === 'pending'

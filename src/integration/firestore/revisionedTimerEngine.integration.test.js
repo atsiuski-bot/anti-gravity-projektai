@@ -749,14 +749,11 @@ describeEmulator('revisioned offline timer engine', () => {
         });
     });
 
-    // A killed PWA gone for two hours: the heartbeat proves one minute, the rest is a plausible
-    // single stretch of untracked work. Both are credited, in one atomic transition — and the timer
-    // comes back PAUSED, not running. The worker is not demonstrably at the job when an app that was
-    // closed for hours is reopened, so re-anchoring the run would leave an unattended timer going.
-    // (This asserted a resumed timer until the engine stopped re-anchoring every orphan; only a
-    // brief interruption resumes now. The point of the case is unchanged: one transition, one
-    // proven row, one gap row, one credit total.)
-    it('recovers a killed PWA by crediting the gap and pausing in one atomic transition', async () => {
+    // A 2h silence is NOT a reload the worker survived — it is a genuinely abandoned run. Recovery
+    // credits the proven stretch plus the plausible untracked gap, then comes back PAUSED, exactly
+    // as the legacy path does. Re-anchoring it instead would leave an unattended timer running on a
+    // device nobody is holding, which is the runaway the 16h ceiling exists to bound.
+    it('recovers a killed PWA by crediting the gap and coming back PAUSED in one atomic transition', async () => {
         const db = workerDb();
         const startPlan = planTaskStart({
             task: task('task-a'),
@@ -812,7 +809,6 @@ describeEmulator('revisioned offline timer engine', () => {
         expect(taskAfter.data()).toMatchObject({
             timerStatus: 'paused',
             timerStartedAt: null,
-            // 1 proven minute + the 119-minute gap: the whole orphaned run is credited exactly once.
             timerMinutes: 120,
         });
         expect(provenSession.data()).toMatchObject({
@@ -824,5 +820,80 @@ describeEmulator('revisioned offline timer engine', () => {
             durationMinutes: 119,
             isRecoveredGap: true,
         });
+    });
+
+    // The other half of the same branch: an ordinary mid-shift reload (PWA update, tab eviction)
+    // that the worker demonstrably came back from. The whole run is real continuous work, so it is
+    // credited in ONE row up to the reload instant, the timer keeps running, and the re-anchored run
+    // is claimed for this app instance — without which the heartbeat refuses to beat it and the run
+    // looks dead a minute later. This is the path the rules must accept while a run stays ACTIVE, so
+    // it also proves the ledger-binding rule (taskCloseLedgerBound) does not reject a live re-anchor.
+    it('continues a brief reload as one run, re-anchored and owned by this app instance', async () => {
+        const db = workerDb();
+        const startPlan = planTaskStart({
+            task: task('task-a'),
+            userId: USER_ID,
+            userData: userData(),
+            activeRecord: null,
+            commandId: 'cmd-reload-start',
+            runId: 'run-before-reload',
+            issuedAt: '2026-07-09T08:00:00.000Z',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, startPlan));
+
+        // Heartbeat 30 s before the reload — well inside the continue window.
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), 'tasks', 'task-a'), {
+                timerLastHeartbeat: '2026-07-09T08:29:30.000Z',
+            }, { merge: true });
+        });
+
+        const [active, runningTask] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('tasks/task-a'),
+        ]);
+        const recoveredAt = '2026-07-09T08:30:00.000Z';
+        const recoveryPlan = planTaskRecover({
+            task: { id: runningTask.id, ...runningTask.data() },
+            userId: USER_ID,
+            userData: userData({
+                type: 'task',
+                taskId: 'task-a',
+                runId: 'run-before-reload',
+                startTime: '2026-07-09T08:00:00.000Z',
+            }),
+            activeRecord: active.data(),
+            commandId: 'cmd-recover-reload',
+            runId: 'run-after-reload',
+            issuedAt: recoveredAt,
+            recoveredAt,
+        });
+
+        await assertSucceeds(applyTimerTransitionPlan(db, recoveryPlan));
+
+        const [activeAfter, taskAfter, provenSession, gap] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('tasks/task-a'),
+            adminRead('work_sessions/sess_run_run-before-reload'),
+            adminRead('work_sessions/sess_gap_run_run-before-reload'),
+        ]);
+        expect(activeAfter.data()).toMatchObject({
+            status: 'active',
+            revision: 2,
+            run: { runId: 'run-after-reload', startedAt: recoveredAt },
+        });
+        expect(taskAfter.data()).toMatchObject({
+            timerStatus: 'running',
+            timerStartedAt: recoveredAt,
+            timerMinutes: 30,
+        });
+        expect(taskAfter.data().timerOwnerInstance, 'an unowned re-anchored run stops being beaten')
+            .toBeTruthy();
+        expect(provenSession.data()).toMatchObject({
+            runId: 'run-before-reload',
+            durationMinutes: 30,
+        });
+        // ONE row, not a proven row plus a "manual correction" the worker never made.
+        expect(gap.exists()).toBe(false);
     });
 });

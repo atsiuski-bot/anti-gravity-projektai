@@ -107,13 +107,19 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                 return false;
             }
 
-            const currentTask = base.status === 'active'
-                ? await loadTaskForTimer(base.run?.taskId)
-                : null;
-            if (base.status === 'active' && !currentTask) {
+            // loadTaskForTimer THROWS when it cannot read (offline, nothing cached) and returns null
+            // only when the server says the task is gone — hard-deleted or archived while its timer
+            // ran. Refusing the break in that case wedged the worker: the orphaned run keeps accruing
+            // and nothing in the app can settle it. The plan layer rebuilds the ledger row from the
+            // run itself, so let it through and mark WHY the task is absent.
+            let currentTask = null;
+            try {
+                if (base.status === 'active') currentTask = await loadTaskForTimer(base.run?.taskId);
+            } catch {
                 setError('Nepavyko įkelti aktyvios užduoties. Prisijunkite prie interneto ir bandykite dar kartą.');
                 return true;
             }
+            const currentTaskMissing = base.status === 'active' && !currentTask;
 
             const now = new Date().toISOString();
             const plan = planBreakStart({
@@ -121,6 +127,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                 userData,
                 activeRecord: revisionedSession.record,
                 currentTask,
+                currentTaskMissing,
                 commandId: idFor('timer_cmd'),
                 runId: idFor('timer_run'),
                 issuedAt: now,

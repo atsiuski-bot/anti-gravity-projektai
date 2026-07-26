@@ -30,6 +30,24 @@ const KIND_LABELS = {
 
 const kindLabel = (kind) => KIND_LABELS[kind] || 'Laikmačio veiksmas';
 
+// Commands that only OPEN a run. A rejected one lost no time — the timer simply never started, and
+// telling the worker their time was not credited sends them hunting for minutes that never existed.
+// Everything else CLOSES a run, where "this stretch was not credited" is the accurate warning.
+const OPENING_KINDS = new Set([
+    'start-task', 'resume-task', 'start-break', 'start-call', 'start-quick-work',
+]);
+
+// `conflicted` is the opposite of lost work: another device already recorded the change, so the
+// state on screen is the newest one. Only a genuine `rejected` means nothing happened at all.
+const failureCopy = (command) => {
+    if (command.status === 'conflicted') {
+        return 'Būsena pakeista kitame įrenginyje, todėl šis veiksmas neįrašytas.';
+    }
+    return OPENING_KINDS.has(command.kind)
+        ? 'Veiksmo nepavyko įrašyti — laikmatis nebuvo paleistas. Pradėkite iš naujo.'
+        : 'Veiksmo nepavyko įrašyti. Laikas už šį tarpsnį neužskaitytas.';
+};
+
 /**
  * Global, reload-surviving status for timer commands issued through the revisioned engine.
  *
@@ -100,9 +118,7 @@ export default function TimerSyncNotice() {
                                     <li key={command.commandId} className="text-body text-ink">
                                         <div className="font-medium text-ink-strong">{kindLabel(command.kind)}</div>
                                         <p className="text-caption text-ink-muted">
-                                            {command.status === 'conflicted'
-                                                ? 'Būsena pakeista kitame įrenginyje, todėl šis veiksmas neįrašytas.'
-                                                : 'Veiksmo nepavyko įrašyti. Laikas už šį tarpsnį neužskaitytas.'}
+                                            {failureCopy(command)}
                                         </p>
                                         <div className="mt-1">
                                             <Button variant="secondary" onClick={() => acknowledge(command)}>
