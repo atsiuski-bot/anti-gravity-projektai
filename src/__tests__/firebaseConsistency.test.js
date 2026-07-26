@@ -445,6 +445,13 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     session_edited: [{ day: '2026-06-20' }, {}],
     session_deleted: [{ day: '2026-06-20' }, {}],
     session_auto_closed: [{ day: '2026-06-20' }, {}],
+    // Parked-summary branch (with the whitespace clamp on the only free-form field), the day-only
+    // fallback when nothing was parked, and the empty fallback.
+    session_force_ended: [
+      { parkedSummary: '  Pertrauka ·   Stogo   remontas ', day: '2026-06-20' },
+      { day: '2026-06-20' },
+      {},
+    ],
     timer_running_check: [{ taskTitle: 'Užduotis' }, {}],
     // Name + day, day-only (name absent), and the empty fallback — covers both copy branches and the
     // whitespace-clamp on userName (the only free-form field) on both client and server mirrors.

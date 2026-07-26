@@ -171,6 +171,7 @@ const CATEGORY_BY_TYPE = {
     session_edited: 'info',
     session_deleted: 'info',
     session_auto_closed: 'info',
+    session_force_ended: 'info',
     timer_running_check: 'info',
     backdated_time_logged: 'info',
     task_priority_escalated: 'info',
@@ -245,6 +246,18 @@ function copyForRequestNotification(n) {
         case 'session_auto_closed':
             // System → worker: a forgotten secondary-session timer was auto-closed + time credited.
             return { title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' };
+        case 'session_force_ended': {
+            // Manager → worker: a coordinator settled a session the worker had left running, which
+            // also drops anything parked underneath it. parkedSummary names what to restart; it may
+            // embed a user-authored task title, so clamp identically to the registry MIRROR.
+            const parked = n.parkedSummary
+                ? String(n.parkedSummary).replace(/\s+/g, ' ').trim().slice(0, 100)
+                : '';
+            return {
+                title: 'Koordinatorius užbaigė sesiją',
+                body: parked || n.day || 'Veiklos laikas',
+            };
+        }
         case 'timer_running_check':
             // System → worker: a running task timer went heartbeat-stale — a gentle "still on it?" check.
             return { title: 'Ar laikmatis vis dar veikia?', body: title };

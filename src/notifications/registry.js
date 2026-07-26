@@ -226,6 +226,26 @@ export const NOTIFICATIONS = {
         link: TAB_TASKS,
         copy: (n) => ({ title: 'Automatiškai uždaryta sesija', body: n.day || 'Veiklos laikas' }),
     },
+    // Manager → worker: a coordinator settled a session the worker had left running. Distinct from
+    // session_auto_closed on purpose — a PERSON did this, and saying "automatiškai" would misattribute
+    // it. It matters because the force-end ends the whole stack: anything the worker had parked
+    // underneath (a break, a task) disappears from their screen with it. Its time is already banked,
+    // but the return path is not, so `parkedSummary` names what they need to restart themselves.
+    // That field is built at the write site and may embed a user-authored task title, so it is
+    // clamped exactly like the server MIRROR before it can reach a lockscreen.
+    session_force_ended: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => {
+            const parked = clamp(n.parkedSummary);
+            return {
+                title: 'Koordinatorius užbaigė sesiją',
+                body: parked || n.day || 'Veiklos laikas',
+            };
+        },
+    },
     // System → worker: a running TASK timer whose per-minute heartbeat has gone stale (the app was
     // backgrounded / killed / lost signal for a while). A GENTLE, once-per-run check that the worker
     // is still on it — so a timer they forgot to stop, OR one the OS froze while they kept working, is

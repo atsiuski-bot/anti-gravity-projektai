@@ -946,6 +946,62 @@ describe('manager force-end records every run type', () => {
         expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
             .toMatchObject({ status: 'idle' });
     });
+
+    // A force-end must settle the worker COMPLETELY — its whole purpose is to un-stick someone who
+    // is stuck live, so unwinding one layer would leave them live on a break nobody is watching.
+    // What it must not do is drop the stack in silence, hence `discardedStack` for the caller.
+    it('ends a two-deep stack to idle and REPORTS what it discarded', () => {
+        const run = {
+            runId: 'run-call-top',
+            type: 'call',
+            startedAt: '2026-07-09T10:00:00.000Z',
+            revision: 4,
+            pausedSession: {
+                type: 'break',
+                startTime: '2026-07-09T09:30:00.000Z',
+                pausedSession: {
+                    type: 'task',
+                    taskId: 'task-a',
+                    taskTitle: 'Stogo remontas',
+                    startTime: '2026-07-09T09:00:00.000Z',
+                },
+            },
+        };
+        const plan = planManagerForceEnd({
+            targetUser: activeUser(run),
+            actorId: 'manager-1',
+            activeRecord: recordFor(run),
+            activeTask: null,
+            commandId: 'cmd-force-stack',
+            issuedAt: '2026-07-09T10:20:00.000Z',
+        });
+
+        // Settled outright — no layer is popped, nothing is left running.
+        expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
+            .toMatchObject({ status: 'idle', run: null });
+        // Only the TOP run is credited here; everything below was already banked when it was
+        // interrupted, so a force-end must not credit it a second time.
+        expect(plan.creditedMinutes).toBe(20);
+        expect(plan.writes.filter((w) => w.path.startsWith('work_sessions/'))).toHaveLength(1);
+        // ...and the return path the worker loses is named, so the caller can tell them.
+        expect(plan.discardedStack).toEqual([
+            { type: 'break' },
+            { type: 'task', taskId: 'task-a', taskTitle: 'Stogo remontas' },
+        ]);
+    });
+
+    it('reports an empty discarded stack when nothing was parked', () => {
+        const run = { runId: 'run-solo', type: 'call', startedAt: '2026-07-09T08:00:00.000Z', revision: 4 };
+        const plan = planManagerForceEnd({
+            targetUser: activeUser(run),
+            actorId: 'manager-1',
+            activeRecord: recordFor(run),
+            activeTask: null,
+            commandId: 'cmd-force-solo',
+            issuedAt: '2026-07-09T08:10:00.000Z',
+        });
+        expect(plan.discardedStack).toEqual([]);
+    });
 });
 
 // Audit T-02 — recovery must credit only to the last pre-boot proof of life, never to the reopen

@@ -2,8 +2,48 @@ import { doc, updateDoc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { db } from '../firebase';
 import { pauseTask } from './taskActions';
 import { logError } from './errorLog';
+import { notify } from './notify';
+import { getLithuanianDateString } from './timeUtils';
+import { SESSION_COLORS } from './sessionColors';
+import { pausedSessionStack } from './sessionNesting';
 import { applyTimerTransitionPlan } from './timerTransitionExecutor';
 import { planManagerForceEnd } from './timerTransitionPlan';
+
+/**
+ * Human summary of what a force-end DROPPED, for the worker's notification.
+ *
+ * A force-end settles the whole stack, not one layer of it (see planManagerForceEnd). No time is
+ * lost — everything below the top run was banked when it was interrupted — but the worker's return
+ * path is: their break and their task disappear from the screen with no explanation. Naming them is
+ * what turns a silent clear into something the worker can act on themselves.
+ *
+ * Session types are named from the ONE presentation map so this copy cannot drift from the labels
+ * the timers use; a task is named by its own title.
+ */
+const summarizeDiscardedStack = (stack) => (stack || [])
+    .map((node) => (node.type === 'task'
+        ? (node.taskTitle || 'Užduotis')
+        : (SESSION_COLORS[node.type]?.label || null)))
+    .filter(Boolean)
+    .join(' · ');
+
+/**
+ * Tell the worker that a coordinator ended their session, and what was parked underneath it.
+ *
+ * Best-effort and never awaited into the caller's result: a failed notification must not make a
+ * SETTLED session report as failed and invite the manager to force-end again. `notify` drops a
+ * self-addressed write on its own, so a manager settling their own session is silently skipped.
+ */
+const notifyForceEnd = (targetUserId, actorId, discardedStack, issuedAt) => {
+    const parkedSummary = summarizeDiscardedStack(discardedStack);
+    notify({
+        recipientId: targetUserId,
+        type: 'session_force_ended',
+        actorUid: actorId,
+        day: getLithuanianDateString(new Date(issuedAt)),
+        ...(parkedSummary ? { parkedSummary } : {}),
+    }).catch((e) => logError(e, { source: 'endSessionForUser.notify', userId: targetUserId }));
+};
 
 /**
  * Manager-side session teardown — settle a worker who is stuck "live" without disabling them.
@@ -54,18 +94,23 @@ export const endSessionForUser = async (user, { actorId = null } = {}) => {
                 // an orphaned run from the run's own data and still writes the credited ledger row.
                 activeTask = taskSnap.exists() ? { id: taskSnap.id, ...taskSnap.data() } : null;
             }
+            const issuedAt = new Date().toISOString();
             const plan = planManagerForceEnd({
                 targetUser: target,
                 actorId,
                 activeRecord,
                 activeTask,
                 commandId: `manager_force_end_${Date.now()}_${Math.random().toString(36).slice(2)}`,
-                issuedAt: new Date().toISOString(),
+                issuedAt,
             });
             await applyTimerTransitionPlan(db, plan);
+            // AFTER the settle is committed: the worker is told only about something that actually
+            // happened, and a notification failure can never roll back a settled session.
+            notifyForceEnd(user.id, actorId, plan.discardedStack, issuedAt);
             return {
                 status: 'canonical-ended',
                 creditedMinutes: plan.creditedMinutes,
+                discardedStack: plan.discardedStack,
             };
         }
 
@@ -80,6 +125,17 @@ export const endSessionForUser = async (user, { actorId = null } = {}) => {
                 }
             }
         }
+        // The legacy engine stacks sessions in the SAME shape (activeSession.pausedSession), so this
+        // branch drops a stack just as the canonical one does — read it before the clear below wipes
+        // it. Guarded on actorId: without a caller uid the notification carries no provenance and
+        // firestore.rules would reject it, so a call made without one stays a silent clear (its
+        // previous behaviour) rather than logging a failed write on every settle.
+        const legacyDiscarded = pausedSessionStack(target.activeSession).map((node) => ({
+            type: node.type,
+            ...(node.taskId ? { taskId: node.taskId } : {}),
+            ...(node.taskTitle ? { taskTitle: node.taskTitle } : {}),
+        }));
+
         // Clear every live-session flag on the user doc. Idempotent with pauseTask's own clear:
         // it also removes the legacy break/call/quick-work ghosts pauseTask does not touch.
         await updateDoc(doc(db, 'users', user.id), {
@@ -91,7 +147,10 @@ export const endSessionForUser = async (user, { actorId = null } = {}) => {
             'callState.isCalling': false,
             'quickWorkState.isQuickWorking': false,
         });
-        return { status: 'legacy-cleared' };
+        if (actorId) {
+            notifyForceEnd(user.id, actorId, legacyDiscarded, new Date().toISOString());
+        }
+        return { status: 'legacy-cleared', discardedStack: legacyDiscarded };
     } catch (e) {
         logError(e, { source: 'endSessionForUser', userId: user.id });
         return { status: 'failed', error: e };

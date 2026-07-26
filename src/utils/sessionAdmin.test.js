@@ -24,6 +24,8 @@ vi.mock('firebase/firestore', () => ({
 
 vi.mock('./taskActions', () => ({ pauseTask: vi.fn(() => Promise.resolve()) }));
 vi.mock('./errorLog', () => ({ logError: vi.fn() }));
+// Same boundary as pauseTask: we assert that the settle TELLS the worker, not how notify writes.
+vi.mock('./notify', () => ({ notify: vi.fn(() => Promise.resolve()) }));
 vi.mock('./timerTransitionExecutor', () => ({
     applyTimerTransitionPlan: vi.fn(() => Promise.resolve()),
 }));
@@ -31,6 +33,7 @@ vi.mock('./timerTransitionExecutor', () => ({
 import { doc, updateDoc, getDoc, getDocFromServer } from 'firebase/firestore';
 import { pauseTask } from './taskActions';
 import { logError } from './errorLog';
+import { notify } from './notify';
 import { applyTimerTransitionPlan } from './timerTransitionExecutor';
 import { endSessionForUser } from './sessionAdmin';
 
@@ -47,6 +50,7 @@ beforeEach(() => {
     // clearAllMocks wipes call history but not implementations; re-arm the resolving defaults.
     updateDoc.mockResolvedValue(undefined);
     pauseTask.mockResolvedValue(undefined);
+    notify.mockResolvedValue(undefined);
     applyTimerTransitionPlan.mockResolvedValue(undefined);
     getDoc.mockResolvedValue(missingSnap());
     // Default: the server has nothing newer than the caller's snapshot, so every pre-existing
@@ -219,5 +223,89 @@ describe('endSessionForUser', () => {
             .toMatchObject({ runId: 'run-force' });
         expect(plan.writes.find((write) => write.path === 'active_sessions/u1').data)
             .toMatchObject({ status: 'idle', revision: 5 });
+    });
+
+    // A force-end settles the WHOLE stack, so anything the worker had parked underneath disappears
+    // from their screen. Its time is already banked, but the return path is not — and the manager
+    // acts from their OWN device, so a localStorage recovery notice could never reach the worker.
+    it('tells the worker WHAT it discarded when it ends a stacked session', async () => {
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'active_sessions/u1') {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => ({
+                        userId: 'u1',
+                        revision: 6,
+                        status: 'active',
+                        run: {
+                            runId: 'run-call-top',
+                            type: 'call',
+                            startedAt: '2026-07-09T10:00:00.000Z',
+                            revision: 6,
+                            pausedSession: {
+                                type: 'break',
+                                startTime: '2026-07-09T09:30:00.000Z',
+                                pausedSession: {
+                                    type: 'task',
+                                    taskId: 't1',
+                                    taskTitle: 'Stogo remontas',
+                                },
+                            },
+                        },
+                    }),
+                });
+            }
+            return Promise.resolve(missingSnap());
+        });
+
+        const result = await endSessionForUser(
+            { id: 'u1', displayName: 'Worker A' },
+            { actorId: 'manager-a' }
+        );
+
+        expect(result.status).toBe('canonical-ended');
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(notify.mock.calls[0][0]).toMatchObject({
+            recipientId: 'u1',
+            type: 'session_force_ended',
+            actorUid: 'manager-a',
+            // Named in words the worker can act on, not a type enum.
+            parkedSummary: 'Pertrauka · Stogo remontas',
+        });
+        expect(logError).not.toHaveBeenCalled();
+    });
+
+    it('omits the parked summary when the ended session had nothing underneath', async () => {
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'active_sessions/u1') {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => ({
+                        userId: 'u1',
+                        revision: 2,
+                        status: 'active',
+                        run: {
+                            runId: 'run-solo',
+                            type: 'call',
+                            startedAt: '2026-07-09T10:00:00.000Z',
+                            revision: 2,
+                        },
+                    }),
+                });
+            }
+            return Promise.resolve(missingSnap());
+        });
+
+        await endSessionForUser({ id: 'u1' }, { actorId: 'manager-a' });
+
+        expect(notify).toHaveBeenCalledTimes(1);
+        expect(notify.mock.calls[0][0].parkedSummary).toBeUndefined();
+    });
+
+    // Without a caller uid the notification carries no provenance and firestore.rules would reject
+    // it, so the legacy branch stays a silent clear rather than logging a failed write every time.
+    it('does not notify from the legacy branch when no actor is known', async () => {
+        await endSessionForUser({ id: 'u1', activeSession: { type: 'break', pausedSession: { type: 'task', taskId: 't1' } } });
+        expect(notify).not.toHaveBeenCalled();
     });
 });

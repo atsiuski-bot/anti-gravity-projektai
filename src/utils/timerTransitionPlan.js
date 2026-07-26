@@ -14,6 +14,7 @@ import { APP_INSTANCE_ID } from './appInstance';
 import {
     evaluateSecondaryStart,
     isSecondarySessionType,
+    pausedSessionStack,
 } from './sessionNesting';
 
 export const TIMER_ENGINE_VERSION = 2;
@@ -1419,6 +1420,25 @@ export function planManagerForceEnd({
         });
     }
 
+    // What this force-end DISCARDS. A session can now be a stack (call ← break ← task), and this
+    // control deliberately ends the whole thing to idle rather than unwinding one layer: its entire
+    // purpose is to settle a worker who is stuck live, and popping one layer would leave them still
+    // live — now on a break nobody is watching, which is exactly the unattended-timer failure
+    // `skipRestore` exists to prevent on the recovery path.
+    //
+    // No TIME is lost by discarding: every session below the top run was banked and credited the
+    // moment it was interrupted, so nothing underneath is accruing. What is lost is the worker's
+    // RETURN PATH — their break and their task simply vanish from the app. So the planner reports
+    // what it dropped, and the caller tells the worker (sessionAdmin.endSessionForUser). It cannot
+    // be told here: this is a pure planner, and a recovery notice would be the wrong carrier anyway
+    // — those are localStorage, written on the device where recovery ran, and a force-end runs on
+    // the MANAGER's device.
+    const discardedStack = pausedSessionStack(base.run).map((node) => ({
+        type: node.type,
+        ...(node.taskId ? { taskId: node.taskId } : {}),
+        ...(node.taskTitle ? { taskTitle: node.taskTitle } : {}),
+    }));
+
     const command = {
         ...baseCommand({
             kind: 'force-end-session',
@@ -1522,6 +1542,7 @@ export function planManagerForceEnd({
     return {
         command,
         creditedMinutes,
+        discardedStack,
         writes,
     };
 }
