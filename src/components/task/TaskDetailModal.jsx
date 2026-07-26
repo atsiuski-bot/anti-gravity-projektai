@@ -579,7 +579,7 @@ export default function TaskDetailModal({
                                                         onChange={(e) => setEditText(e.target.value)}
                                                         rows={2}
                                                         aria-label="Redaguoti komentarą"
-                                                        className="w-full resize-y rounded-input border border-line px-3 py-2 text-body focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                                        className="w-full resize-y rounded-input border border-line px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                                         autoFocus
                                                     />
                                                     <div className="mt-1 flex justify-end gap-1">
@@ -611,7 +611,7 @@ export default function TaskDetailModal({
                                 placeholder="Rašyti komentarą…"
                                 aria-label="Rašyti komentarą"
                                 rows={2}
-                                className="min-h-touch flex-1 resize-y rounded-input border border-line px-3 py-2 text-body focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                className="min-h-touch flex-1 resize-y rounded-input border border-line px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                                 disabled={submitting}
                             />
                             <Button type="submit" variant="primary" size="md" icon={Send} loading={submitting} disabled={!newComment.trim() || submitting}>

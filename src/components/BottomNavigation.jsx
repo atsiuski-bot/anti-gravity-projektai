@@ -89,7 +89,12 @@ const BottomNavigation = () => {
             {/* Main bottom bar — the quiet substrate. Recedes into the canvas (surface-base, no
                 shadow) so only the action dock above reads as "floating": two competing shadows
                 were the reason the two strips blended into one (DESIGN_SYSTEM §9). */}
-            <div
+            {/* A real <nav> landmark, not a bare <div>: this is the app's primary destination
+                switcher, and on a phone the landmark rotor is how a screen-reader user jumps
+                straight to it. Without it there was no way to reach navigation except tabbing
+                through the whole page (WCAG 1.3.1). Named, because the page has more than one nav. */}
+            <nav
+                aria-label="Pagrindinė navigacija"
                 className="fixed bottom-0 left-0 right-0 z-nav border-t border-line bg-surface-base pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]"
                 style={{ boxShadow: '0 -10px 24px -14px rgba(15, 23, 42, 0.22)' }}
             >
@@ -193,7 +198,7 @@ const BottomNavigation = () => {
                         )}
                     </div>
                 </div>
-            </div>
+            </nav>
 
             {/* Overflow sheet for the remaining destinations */}
             {moreOpen && (

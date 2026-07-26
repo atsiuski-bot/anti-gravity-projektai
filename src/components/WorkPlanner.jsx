@@ -1368,7 +1368,13 @@ export default function WorkPlanner() {
                 transparent and inherits this surface; padding gives the toolbar + grid breathing
                 room without eating the fixed height (the inner box keeps its own height). */}
             <div className="bg-surface-card rounded-card border border-line shadow-lg overflow-hidden p-2 sm:p-3">
-            <div className="h-[820px] sm:h-[650px] md:h-[750px] lg:h-[880px]">
+            {/* overflow-x-auto, not a bare clip: at 200% text zoom the toolbar grew wider than the
+                card and `overflow-hidden` alone cut it off with no way to reach it — the "Pridėti"
+                buttons sat past the clip edge and were simply gone (WCAG 1.4.4, content lost on
+                resize). A calendar is a two-dimensional grid, which 1.4.10 exempts from reflow, so
+                the correct fix is to make the overflow REACHABLE rather than to rewrap it. The
+                rounded clip still comes from the parent. */}
+            <div className="h-[820px] overflow-x-auto sm:h-[650px] md:h-[750px] lg:h-[880px]">
                 <Calendar
                     key={isPhone ? 'day' : 'week'}
                     localizer={localizer}

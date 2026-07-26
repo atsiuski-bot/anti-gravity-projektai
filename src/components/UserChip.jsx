@@ -86,7 +86,7 @@ export default function UserChip({
                 type="button"
                 onClick={(e) => { e.stopPropagation(); openProfile(userId); }}
                 aria-label={`Atidaryti ${display} profilį`}
-                className={cn(bareCls, 'rounded-full hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1')}
+                className={cn(bareCls, 'min-h-touch rounded-full hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1')}
             >
                 {inner}
             </button>
@@ -112,7 +112,11 @@ export default function UserChip({
             className={cn(
                 pill,
                 'transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
-                block && 'min-h-touch',
+                // A clickable chip is a real control, so it owes the >=44px target (§7) — and §2
+                // is explicit that density never wins over the target size. An earlier attempt to
+                // keep the pill at 30px and widen only the hit area with a pseudo-element failed:
+                // later-painting siblings won the hit test, so the extra band was dead to taps.
+                'min-h-touch',
                 className
             )}
         >

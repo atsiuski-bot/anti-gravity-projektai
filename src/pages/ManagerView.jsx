@@ -370,8 +370,10 @@ export default function ManagerView() {
                                     <span
                                         className={cn(
                                             'ml-0.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-caption font-bold leading-none',
+                                            // Solid brand-hover, not a translucent white scrim — see
+                                            // ManagerNotifications: white-on-blended-indigo missed AA.
                                             teamTasksSubTab === 'approvals'
-                                                ? 'bg-white/20 text-white'
+                                                ? 'bg-brand-hover text-white'
                                                 : 'bg-feedback-warning-soft text-feedback-warning-text'
                                         )}
                                     >

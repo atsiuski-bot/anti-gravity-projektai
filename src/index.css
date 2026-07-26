@@ -69,15 +69,23 @@
   --surface-sunken: 243 244 246;/* gray-100 #F3F4F6 */
   --ink-strong: 17 24 39;      /* gray-900 #111827 */
   --ink: 55 65 81;             /* gray-700 #374151 */
-  --ink-muted: 107 114 128;    /* gray-500 #6B7280 */
+  /* gray-600, NOT gray-500. gray-500 sat on the AA line and fell off it depending on which
+     surface it landed on: 4.83:1 on the white card, 4.63:1 on surface-base, but only 4.39:1 on
+     surface-sunken — which is exactly where muted meta text lives (avatar initials, chip labels,
+     the audit key/value rows). gray-600 clears 4.5:1 on ALL THREE surfaces (6.4-7.0:1), so the
+     token is no longer surface-dependent. Hierarchy is preserved: ink-strong 900 > ink 700 >
+     muted 600, and the muted/default distinction is carried by size + weight as much as tone. */
+  --ink-muted: 75 85 99;       /* gray-600 #4B5563 */
   --line: 229 231 235;         /* gray-200 #E5E7EB */
 
   /* Feedback triads (solid / soft bg / border / accent text / solid-hover) */
-  --fb-success: 22 163 74;     /* green-600 */
+  /* green-700, NOT green-600: this is a FILL that white text rides on (Button variant="success",
+     the "Priimti" accept action). green-600 gave white only 3.30:1 — below AA. green-700 = 5.02:1. */
+  --fb-success: 21 128 61;     /* green-700 */
   --fb-success-soft: 240 253 244;   /* green-50 */
   --fb-success-border: 187 247 208; /* green-200 */
   --fb-success-text: 21 128 61;     /* green-700 (AA on soft) */
-  --fb-success-hover: 21 128 61;    /* green-700 */
+  --fb-success-hover: 22 101 52;    /* green-800 — must stay darker than the new default */
 
   --fb-warning: 245 158 11;    /* amber-500 */
   --fb-warning-soft: 255 251 235;   /* amber-50 */
@@ -113,7 +121,12 @@
      shell (full-screen bg), surface (the running card / pill bg), accent (timer/icon/label —
      ONE fill-safe value in both themes, lightened only as foreground text in the dark block),
      soft (the *-200 border/ring tint). Dark overrides live in the [data-theme="dark"] block. */
-  --session-quickwork-shell: 239 68 68;     /* red-500   #EF4444 */
+  /* red-600, NOT red-500: this is the ONE shell whose on-shell text is pinned WHITE
+     (`[data-session-shell="red"] .wz-on-shell`, further down). White on red-500 was 3.76:1 —
+     the 12px on-shell headings failed AA on the app's loudest, most-read-outdoors state.
+     red-600 carries white at 4.83:1 and is still the saturated alarm red of §4; it is the same
+     red the app already trusts for `--fb-danger`. */
+  --session-quickwork-shell: 220 38 38;     /* red-600   #DC2626 — white 4.83:1 */
   --session-quickwork-surface: 254 242 242; /* red-50    #FEF2F2 */
   --session-quickwork-accent: 185 28 28;    /* red-700   #B91C1C */
   --session-quickwork-soft: 254 202 202;    /* red-200   #FECACA */
@@ -155,11 +168,13 @@
 
   /* Feedback — DEFAULT solids unchanged (white-text fills keep AA); soft/border become deep
      low-saturation washes and accent text lightens for legibility on the dark canvas. */
-  --fb-success: 22 163 74;
+  /* green-700 in dark too — the fill is theme-independent because the text riding on it is
+     always white, so the 3.30:1 green-600 failure was identical in both themes. */
+  --fb-success: 21 128 61;          /* green-700 — white 5.02:1 */
   --fb-success-soft: 14 42 26;
   --fb-success-border: 27 77 51;
   --fb-success-text: 74 222 128;    /* green-400 */
-  --fb-success-hover: 22 163 74;    /* green-600 */
+  --fb-success-hover: 22 101 52;    /* green-800 */
 
   --fb-warning: 245 158 11;
   --fb-warning-soft: 46 36 16;

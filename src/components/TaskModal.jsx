@@ -1644,7 +1644,9 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                 aria-label={p.label}
                                                 aria-pressed={active}
                                                 title={p.label}
-                                                className={`flex h-9 items-center justify-center gap-1 rounded-md px-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'flex-[2] ring-2 ring-brand' : 'flex-1 ring-1 ring-line'}`}
+                                                // min-h-touch, not h-9 (36px): these are the primary priority control
+                                                // and must carry a full 44px target (§7).
+                                                className={`flex min-h-touch items-center justify-center gap-1 rounded-md px-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'flex-[2] ring-2 ring-brand' : 'flex-1 ring-1 ring-line'}`}
                                                 style={{ backgroundColor: getPriorityColor(p.id) }}
                                             >
                                                 {active && (
@@ -2003,6 +2005,10 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             value={newChecklistItem}
                                             onChange={(e) => setNewChecklistItem(e.target.value)}
                                             placeholder="Pridėti punktą..."
+                                            // A placeholder is not an accessible name: it is dropped as soon as
+                                            // the user types, so a screen reader announced this field as an
+                                            // unlabelled "edit text, blank" (WCAG 3.3.2 / 4.1.2).
+                                            aria-label="Naujas eigos sąrašo punktas"
                                             className="flex-1 px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-base"
                                         />
                                         <IconButton icon={Plus} label="Pridėti punktą" variant="primary" onClick={addChecklistItemLocal} />

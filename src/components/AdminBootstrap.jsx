@@ -60,10 +60,11 @@ export default function AdminBootstrap() {
                         </p>
                     </div>
                 </div>
-                <Button
-                    onClick={handleBecomeAdmin}
-                    className="ml-4 bg-feedback-warning text-white hover:bg-feedback-warning-hover shadow-sm"
-                >
+                {/* Canonical `primary` (brand) — not a bespoke amber fill. White on amber-500 was
+                    2.15:1, and amber cannot carry white at AA without ceasing to read as amber. The
+                    surrounding banner already carries the warning semantics; the action itself uses
+                    the one interactive accent (§6). */}
+                <Button onClick={handleBecomeAdmin} className="ml-4">
                     Tapti administratoriumi
                 </Button>
             </div>
