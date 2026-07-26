@@ -37,6 +37,7 @@ import {
   parseTimeStringToMinutes,
 } from '../utils/timeUtils.js';
 import { isManagerRole, isAdminRole } from '../utils/formatters.js';
+import { TIMER_ENGINE_VERSION } from '../utils/timerTransitionPlan.js';
 import { BADGE_CATALOG, TIER_KEYS } from '../utils/badgeCatalog.js';
 import { recurrenceFiresOn } from '../utils/recurrence.js';
 import { NOTIFICATIONS, notificationCopy, notificationCategory, notificationLink } from '../notifications/registry.js';
@@ -941,5 +942,110 @@ describe('task-session record-id lockstep (client closers ↔ functions auto-sto
     // No task-timer path may regress to addDoc for work_sessions: a random id cannot dedup.
     expect(TASK_ACTIONS_SRC).not.toContain("addDoc(collection(db, 'work_sessions')");
     expect(TASK_TIMER_CONTROLS_SRC).not.toContain("addDoc(collection(db, 'work_sessions')");
+  });
+});
+
+// =============================================================================================
+// 8c. CANONICAL RUN AWARENESS (ADR-0020) — the revisioned engine's authority is active_sessions/
+//     {uid}; tasks/{id} and users/{uid} are only its projections. The nightly nets close a run by
+//     writing those projections, so each must ALSO (a) credit into the ledger id the engine's own
+//     closer would have used, and (b) retire the canonical record. Miss (a) and one stretch is
+//     credited twice under two ids that can never converge; miss (b) and the record keeps claiming
+//     an active run forever — nothing can delete it, and the worker is refused every later start.
+//     canonicalRunOf is the pure predicate both nets gate on; it is sliced and locked here.
+// =============================================================================================
+
+describe('canonicalRunOf (functions/index.js canonical active-session matcher)', () => {
+  const { canonicalRunOf } = (() => {
+    const start = FUNCTIONS_SRC.indexOf('function canonicalRunOf');
+    const end = FUNCTIONS_SRC.indexOf('async function readCanonicalRun');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not slice canonicalRunOf out of functions/index.js — markers moved; update this test.');
+    }
+    return new Function(`${FUNCTIONS_SRC.slice(start, end)}\n;return { canonicalRunOf };`)();
+  })();
+
+  const START = '2026-07-06T06:00:00.000Z';
+  const record = (over = {}) => ({
+    status: 'active',
+    revision: 4,
+    run: { runId: 'run-1', type: 'task', taskId: 't1', startedAt: START, ...(over.run || {}) },
+    ...over,
+  });
+
+  it('matches the run the net is closing, and returns it so its runId can key the ledger', () => {
+    expect(canonicalRunOf(record(), { type: 'task', taskId: 't1', startIso: START }).runId).toBe('run-1');
+  });
+
+  it('does NOT match a NEWER run the worker started meanwhile (same task, later start)', () => {
+    const newer = record({ run: { startedAt: '2026-07-06T09:00:00.000Z' } });
+    expect(canonicalRunOf(newer, { type: 'task', taskId: 't1', startIso: START })).toBeNull();
+  });
+
+  it('does NOT match a different task, a different session type, or an already-idle record', () => {
+    expect(canonicalRunOf(record(), { type: 'task', taskId: 'other', startIso: START })).toBeNull();
+    expect(canonicalRunOf(record(), { type: 'break', startIso: START })).toBeNull();
+    expect(canonicalRunOf(record({ status: 'idle', run: null }), { type: 'task', taskId: 't1', startIso: START })).toBeNull();
+  });
+
+  it('matches a secondary run on type + start alone (breaks/calls carry no taskId)', () => {
+    const brk = { status: 'active', revision: 2, run: { runId: 'run-b', type: 'break', startedAt: START } };
+    expect(canonicalRunOf(brk, { type: 'break', startIso: START }).runId).toBe('run-b');
+  });
+
+  it('returns null on a missing record, a runless run, or an unparseable start', () => {
+    expect(canonicalRunOf(null, { type: 'task', taskId: 't1', startIso: START })).toBeNull();
+    expect(canonicalRunOf(record({ run: { runId: null } }), { type: 'task', taskId: 't1', startIso: START })).toBeNull();
+    expect(canonicalRunOf(record(), { type: 'task', taskId: 't1', startIso: 'nope' })).toBeNull();
+    expect(canonicalRunOf(record({ run: { startedAt: 'nope' } }), { type: 'task', taskId: 't1', startIso: START })).toBeNull();
+  });
+});
+
+describe('canonical ledger-id lockstep (client engine closers ↔ functions nets)', () => {
+  const PLAN_SRC = read('src/utils/timerTransitionPlan.js');
+
+  it('server TIMER_ENGINE_VERSION equals the client TIMER_ENGINE_VERSION', () => {
+    const m = FUNCTIONS_SRC.match(/const TIMER_ENGINE_VERSION = (\d+);/);
+    expect(m, 'functions/index.js lost its TIMER_ENGINE_VERSION mirror').toBeTruthy();
+    expect(Number(m[1])).toBe(TIMER_ENGINE_VERSION);
+  });
+
+  it('both sides mint the same canonical ledger prefixes for an engine-owned run', () => {
+    for (const prefix of ['sess_run_', 'sess_break_run_']) {
+      expect(PLAN_SRC, `timerTransitionPlan.js lost the ${prefix} ledger prefix`).toContain(prefix);
+      expect(FUNCTIONS_SRC, `functions/index.js cannot dedup against ${prefix} — the nets would mint a second row`)
+        .toContain(prefix);
+    }
+  });
+
+  it('both nets retire the canonical record for the run they close', () => {
+    const autoStop = FUNCTIONS_SRC.slice(
+      FUNCTIONS_SRC.indexOf('async function autoStopForgottenTimers'),
+      FUNCTIONS_SRC.indexOf('const TIMER_STALE_NUDGE_MS')
+    );
+    const autoClose = FUNCTIONS_SRC.slice(
+      FUNCTIONS_SRC.indexOf('async function autoCloseForgottenSessions'),
+      FUNCTIONS_SRC.indexOf('exports.dailyIntegrityScan')
+    );
+    expect(autoStop, 'autoStopForgottenTimers no longer releases the canonical run').toContain('releaseCanonicalRun');
+    expect(autoClose, 'autoCloseForgottenSessions no longer releases the canonical run').toContain('releaseCanonicalRun');
+  });
+
+  it('every ledger row the engine writes on a shared id merges over the server stamp', () => {
+    // A bare set clears the trigger-written teamManagerIds, which firestore.rules pins immutable —
+    // denying the WHOLE transition batch. Every set on a deterministic ledger id must carry merge.
+    // Each write object is delimited by the NEXT `path:` in the plan source, so the scan needs no
+    // brace matching and no guess at the object's length.
+    const pathStarts = [...PLAN_SRC.matchAll(/path: `([^`]*)`/g)];
+    const ledgerSets = pathStarts.filter((m) =>
+      (/^(work_sessions|break_sessions)\//.test(m[1]) || /^tasks\/sess_/.test(m[1]))
+      && /type: 'set'/.test(PLAN_SRC.slice(Math.max(0, m.index - 60), m.index)));
+    expect(ledgerSets.length, 'no ledger set writes found — the extraction shape changed').toBeGreaterThan(6);
+    for (const m of ledgerSets) {
+      const next = pathStarts.find((p) => p.index > m.index);
+      const block = PLAN_SRC.slice(m.index, next ? next.index : PLAN_SRC.length);
+      expect(block, `${m[1]} is written with a bare set — a replayed close would be denied`)
+        .toMatch(/merge:/);
+    }
   });
 });

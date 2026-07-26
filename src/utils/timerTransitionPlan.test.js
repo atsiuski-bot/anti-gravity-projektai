@@ -11,6 +11,7 @@ import {
     planTaskRecover,
     planTaskStart,
 } from './timerTransitionPlan';
+import { APP_INSTANCE_ID } from './appInstance';
 
 const userId = 'worker-a';
 const baseTask = {
@@ -946,5 +947,108 @@ describe('secondary close honours an explicit credit boundary', () => {
         expect(plan.restoredRunId).toBeNull();
         expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
             .toMatchObject({ status: 'idle', run: null });
+    });
+});
+
+// A task can be hard-deleted or archived WHILE its timer runs. The canonical record still points at
+// that run, so every later transition is planned from it — and every planner used to refuse without
+// the task document, which left the worker unable to start anything at all while the orphaned run
+// kept accruing. Only a PROVABLY absent task may bypass the guard; a merely unreadable one (offline)
+// must still refuse, or the close would silently drop the credited minutes from tasks/{id}.
+describe('a task deleted mid-run must not wedge the worker', () => {
+    const runningOnDeleted = {
+        userId,
+        revision: 6,
+        status: 'active',
+        run: {
+            runId: 'run-gone',
+            type: 'task',
+            taskId: 'task-deleted',
+            taskTitle: 'Deleted task',
+            startedAt: '2026-07-09T08:00:00.000Z',
+            revision: 6,
+        },
+    };
+    const otherTask = { ...baseTask, id: 'task-b', title: 'Task B' };
+
+    it('starting another task closes the orphaned run from the RUN itself', () => {
+        const plan = planTaskStart({
+            task: otherTask,
+            userId,
+            userData: idleUser,
+            activeRecord: runningOnDeleted,
+            previousTask: null,
+            previousTaskMissing: true,
+            commandId: 'cmd-switch',
+            runId: 'run-new',
+            issuedAt: '2026-07-09T08:30:00.000Z',
+        });
+
+        const ledger = plan.writes.find((w) => w.path === 'work_sessions/sess_run_run-gone');
+        expect(ledger.data).toMatchObject({
+            taskId: 'task-deleted',
+            taskTitle: 'Deleted task',
+            durationMinutes: 30,
+            orphanedTaskClose: true,
+        });
+        // Nothing may be written to the task that no longer exists.
+        expect(plan.writes.some((w) => w.path === 'tasks/task-deleted')).toBe(false);
+        expect(plan.writes.some((w) => w.path === 'tasks/task-b')).toBe(true);
+    });
+
+    it('still refuses when the task is merely UNREADABLE, so credited minutes are never dropped', () => {
+        expect(() => planTaskStart({
+            task: otherTask,
+            userId,
+            userData: idleUser,
+            activeRecord: runningOnDeleted,
+            previousTask: null,
+            commandId: 'cmd-switch',
+            runId: 'run-new',
+            issuedAt: '2026-07-09T08:30:00.000Z',
+        })).toThrow(/atomic switch/);
+    });
+
+    it('lets a break and a secondary session start over the orphaned run too', () => {
+        const breakPlan = planBreakStart({
+            userId,
+            userData: idleUser,
+            activeRecord: runningOnDeleted,
+            currentTask: null,
+            currentTaskMissing: true,
+            commandId: 'cmd-break',
+            runId: 'run-break',
+            issuedAt: '2026-07-09T08:30:00.000Z',
+        });
+        expect(breakPlan.writes.find((w) => w.path === 'work_sessions/sess_run_run-gone').data.durationMinutes)
+            .toBe(30);
+
+        const callPlan = planSecondaryStart({
+            type: 'call',
+            userId,
+            userData: idleUser,
+            activeRecord: runningOnDeleted,
+            currentTask: null,
+            currentTaskMissing: true,
+            commandId: 'cmd-call',
+            runId: 'run-call',
+            issuedAt: '2026-07-09T08:30:00.000Z',
+        });
+        expect(callPlan.writes.find((w) => w.path === 'work_sessions/sess_run_run-gone').data.durationMinutes)
+            .toBe(30);
+    });
+
+    it('a plain start claims the run for this app instance, or the heartbeat refuses to beat it', () => {
+        const plan = planTaskStart({
+            task: baseTask,
+            userId,
+            userData: idleUser,
+            activeRecord: null,
+            commandId: 'cmd-start',
+            runId: 'run-owned',
+            issuedAt: '2026-07-09T08:00:00.000Z',
+        });
+        expect(plan.writes.find((w) => w.path === 'tasks/task-a').data.timerOwnerInstance)
+            .toBe(APP_INSTANCE_ID);
     });
 });

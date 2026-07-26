@@ -16,6 +16,18 @@ export const TIMER_ACTIVE_COLLECTION = 'active_sessions';
 export const timerCommandPath = (userId, commandId) =>
     `users/${userId}/timer_commands/${commandId}`;
 
+// Every ledger row this planner writes carries a DETERMINISTIC id that the server nets
+// (functions/index.js: autoStopForgottenTimers / autoCloseForgottenSessions) can also mint for the
+// same run — that shared id is what dedups the two independent closers. But the row is a plain
+// document only until it exists: an onCreate trigger then denormalizes `teamManagerIds` onto it, and
+// firestore.rules pins that field immutable on UPDATE. A bare `set` re-writes the whole document
+// WITHOUT that field, so the moment a row already exists the write reads as "teamManagerIds
+// cleared" and the rule denies it — taking the ENTIRE transition batch with it, including the
+// active-session revision bump. The worker's stop then fails outright and they stay canonically
+// live. Merging writes only the fields we actually own and leaves the server's stamp alone, which
+// is what makes a replayed or server-raced close idempotent instead of fatal.
+const MERGE_OVER_SERVER_STAMP = true;
+
 const legacyRunId = (session) => {
     const startedAt = session?.startTime || '';
     const taskId = session?.taskId || 'unknown';
@@ -234,6 +246,7 @@ const closeBreakWrites = ({ userId, userData, run, endedAt }) => {
                 isBreak: true,
                 engineVersion: TIMER_ENGINE_VERSION,
             },
+            merge: MERGE_OVER_SERVER_STAMP,
         });
     }
     return { durationMinutes, writes };
@@ -370,6 +383,7 @@ export function planTaskStart({
     userData,
     activeRecord: currentRecord,
     previousTask = null,
+    previousTaskMissing = false,
     commandId,
     runId,
     issuedAt,
@@ -382,7 +396,12 @@ export function planTaskStart({
     if (base.status === 'active' && base.run?.type !== 'task') {
         throw Object.assign(new Error('A secondary session is active'), { code: 'timer/conflict' });
     }
-    if (base.status === 'active' && base.run?.taskId !== task.id && !previousTask) {
+    // Switching tasks needs the outgoing task doc so its credited minutes can be updated in the same
+    // batch — unless that document is PROVABLY gone (hard-deleted or archived mid-run), which the
+    // caller signals explicitly. closeTaskWrites already reconstructs the ledger row from the run
+    // itself in that case; refusing instead left the worker unable to start ANY task while the
+    // orphaned run kept accruing, with no way out from the app.
+    if (base.status === 'active' && base.run?.taskId !== task.id && !previousTask && !previousTaskMissing) {
         throw Object.assign(new Error('The active task must be supplied for an atomic switch'), {
             code: 'timer/missing-active-task',
         });
@@ -434,6 +453,11 @@ export function planTaskStart({
                 timerStatus: 'running',
                 timerStartedAt: issuedAt,
                 timerLastHeartbeat: issuedAt,
+                // Claim the run for THIS app instance, exactly as the legacy startTask does. Without
+                // it useTaskHeartbeat falls back to its pre-ownership proxy (start ≥ boot time),
+                // which stops being true the moment the app reloads — the run then goes unbeaten,
+                // reads as abandoned, and the nightly net credits only up to the last beat.
+                timerOwnerInstance: APP_INSTANCE_ID,
                 startedAt: task.startedAt || issuedAt,
                 status: 'in-progress',
                 updatedAt: issuedAt,
@@ -532,6 +556,7 @@ export function planBreakStart({
     userData,
     activeRecord: currentRecord,
     currentTask = null,
+    currentTaskMissing = false,
     commandId,
     runId,
     issuedAt,
@@ -544,7 +569,9 @@ export function planBreakStart({
             code: 'timer/conflict',
         });
     }
-    if (base.status === 'active' && !currentTask) {
+    // See planTaskStart: a PROVABLY deleted/archived task must not block the switch — the ledger row
+    // is rebuilt from the run — while a merely unreadable one still must.
+    if (base.status === 'active' && !currentTask && !currentTaskMissing) {
         throw Object.assign(new Error('The active task must be supplied for a break switch'), {
             code: 'timer/missing-active-task',
         });
@@ -662,6 +689,7 @@ export function planBreakEnd({
                 isBreak: true,
                 engineVersion: TIMER_ENGINE_VERSION,
             },
+            merge: MERGE_OVER_SERVER_STAMP,
         });
     }
 
@@ -761,6 +789,7 @@ export function planSecondaryStart({
     userData,
     activeRecord: currentRecord,
     currentTask = null,
+    currentTaskMissing = false,
     commandId,
     runId,
     issuedAt,
@@ -779,7 +808,9 @@ export function planSecondaryStart({
             code: 'timer/conflict',
         });
     }
-    if (base.status === 'active' && base.run?.type === 'task' && !currentTask) {
+    // See planTaskStart: a PROVABLY deleted/archived task must not block the switch — the ledger row
+    // is rebuilt from the run — while a merely unreadable one still must.
+    if (base.status === 'active' && base.run?.type === 'task' && !currentTask && !currentTaskMissing) {
         throw Object.assign(new Error('The active task must be supplied for a secondary switch'), {
             code: 'timer/missing-active-task',
         });
@@ -870,6 +901,7 @@ function callLogWrites({ userId, userData, run, endedAt, durationMinutes, contac
                 isSystemTask: true,
                 engineVersion: TIMER_ENGINE_VERSION,
             },
+            merge: MERGE_OVER_SERVER_STAMP,
         },
         {
             type: 'set',
@@ -888,6 +920,7 @@ function callLogWrites({ userId, userData, run, endedAt, durationMinutes, contac
                 isSystemTask: true,
                 engineVersion: TIMER_ENGINE_VERSION,
             },
+            merge: MERGE_OVER_SERVER_STAMP,
         },
     ];
 }
@@ -949,6 +982,7 @@ function quickWorkLogWrites({
                     workSessionId: sessionId,
                     engineVersion: TIMER_ENGINE_VERSION,
                 },
+                merge: MERGE_OVER_SERVER_STAMP,
             },
             {
                 type: 'set',
@@ -966,6 +1000,7 @@ function quickWorkLogWrites({
                     isQuickWork: true,
                     engineVersion: TIMER_ENGINE_VERSION,
                 },
+                merge: MERGE_OVER_SERVER_STAMP,
             },
         ],
     };

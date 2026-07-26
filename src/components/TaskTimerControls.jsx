@@ -43,6 +43,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         userData,
         setPendingSessionProjection,
         timerEngineEnabled,
+        timerEngineResolved,
     } = useAuth();
     const { showToast } = useToast();
     const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
@@ -236,21 +237,37 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         return issued;
     };
 
+    // Load the task the canonical record says is currently running, so switching tasks can close it
+    // atomically. Two failures look alike from a cache read and must NOT be treated alike:
+    //   • GONE — the task was hard-deleted or archived while its timer ran. The plan layer is built
+    //     for this (closeTaskWrites reconstructs the ledger row from the run itself), so the switch
+    //     must proceed; refusing left the worker permanently unable to start anything, with the run
+    //     still live and accruing.
+    //   • UNREADABLE — we are offline and simply cannot say. Closing without the task doc here would
+    //     silently drop the credited minutes from tasks/{id}, so this one must still refuse.
+    // Only a SERVER read can tell them apart, which is why a cache miss escalates instead of deciding.
     const previousTaskFor = async (base) => {
         if (base.status !== 'active' || base.run?.type !== 'task' || base.run.taskId === task.id) {
-            return null;
+            return { task: null, missing: false };
         }
         const ref = doc(db, 'tasks', base.run.taskId);
+        try {
+            const cached = await getDocFromCache(ref);
+            if (cached.exists()) return { task: { id: cached.id, ...cached.data() }, missing: false };
+        } catch { /* not cached — fall through to the authoritative read */ }
+
         let snapshot;
         try {
-            snapshot = await getDocFromCache(ref);
-        } catch {
             snapshot = await getDoc(ref);
+        } catch (error) {
+            throw Object.assign(new Error('The active task is unavailable'), {
+                code: 'timer/missing-active-task',
+                cause: error,
+            });
         }
-        if (!snapshot.exists()) {
-            throw new Error('The active task is unavailable');
-        }
-        return { id: snapshot.id, ...snapshot.data() };
+        return snapshot.exists()
+            ? { task: { id: snapshot.id, ...snapshot.data() }, missing: false }
+            : { task: null, missing: true };
     };
 
     const runRevisionedStart = async () => {
@@ -262,13 +279,14 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             ...userData,
             id: currentUser.uid,
         });
-        const previousTask = await previousTaskFor(base);
+        const previous = await previousTaskFor(base);
         const plan = planTaskStart({
             task,
             userId: currentUser.uid,
             userData,
             activeRecord: revisionedSession.record,
-            previousTask,
+            previousTask: previous.task,
+            previousTaskMissing: previous.missing,
             commandId: idFor('timer_cmd'),
             runId: idFor('timer_run'),
             issuedAt: new Date().toISOString(),
@@ -297,6 +315,18 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         return trackRevisionedOutcome(plan, 'Sustabdyta. Išsaugota šiame telefone.');
     };
 
+    // The rollout gate has not resolved yet: refuse rather than fall through to the LEGACY writer.
+    // A tap inside that window would issue a legacy write that the engine, once it resolves ON, has
+    // no idea about — the run becomes invisible behind the canonical record and the worker's time
+    // silently stops being tracked. Break/call/quick-work already refuse here; the task timer is the
+    // one control that did not, and it is the one workers tap first (audit T-05).
+    // `setError` differs per surface (inline action error vs the finish dialog's own error).
+    const engineUnresolved = (setError) => {
+        if (timerEngineResolved) return false;
+        setError('Laikmačio būsena dar kraunama. Bandykite po akimirkos.');
+        return true;
+    };
+
     const reportRevisionedError = (error, source) => {
         logError(error, { source, taskId: task.id, code: error?.code });
         if (error?.code === 'timer/conflict' || error?.code === 'timer/already-running') {
@@ -318,6 +348,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         setActionError('');
         try {
             if (!currentUser) return;
+            if (engineUnresolved(setActionError)) return;
             if (timerEngineEnabled) {
                 await runRevisionedStart();
                 return;
@@ -364,6 +395,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         actionInFlightRef.current = true;
         setActionError('');
         try {
+            if (engineUnresolved(setActionError)) return;
             if (timerEngineEnabled) {
                 await runRevisionedPause();
                 return;
@@ -399,6 +431,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
         setActionError('');
         try {
             if (!currentUser) return;
+            if (engineUnresolved(setActionError)) return;
             if (timerEngineEnabled) {
                 await runRevisionedStart();
                 return;
@@ -579,6 +612,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
     const performFinish = async () => {
         setFinishing(true);
         try {
+            if (engineUnresolved(setFinishError)) return;
             if (timerEngineEnabled) {
                 await performRevisionedFinish();
                 return;

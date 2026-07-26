@@ -1367,6 +1367,84 @@ const HEARTBEAT_STALE_GAP_MS = 5 * 60 * 1000;
 const STALE_TASK_DAYS = 30;                                   // non-terminal age that warrants review
 const STALE_STATUSES = ['pending', 'in-progress', 'approved', 'unapproved'];
 
+// ---------------------------------------------------------------------------
+// Canonical (ADR-0020) active-session awareness for the nightly nets
+// ---------------------------------------------------------------------------
+//
+// The revisioned timer engine keeps ONE authoritative record per worker in active_sessions/{uid};
+// tasks/{id} and users/{uid} are merely its projections. Both nets below predate that engine and
+// still close a run by writing the PROJECTIONS alone, which under the engine leaves the canonical
+// record claiming 'active' for a run the server has already settled — and nothing heals it, because
+// active_sessions can never be deleted and the client recovery path now (correctly) refuses to
+// credit a run whose task is no longer running. The worker is then wedged: restarting the SAME task
+// is refused as already-running, and starting a DIFFERENT one first "closes" the stale run and
+// credits up to another 16h nobody worked.
+//
+// So a net that closes a run must also retire the canonical record under the same revision protocol
+// the client uses, and must credit into the same deterministic ledger id the engine's own closer
+// would have used — otherwise the two closers mint two rows for one stretch and can never dedupe.
+const TIMER_ENGINE_VERSION = 2;   // MIRROR of src/utils/timerTransitionPlan.js TIMER_ENGINE_VERSION
+
+// The canonical run held by `record`, but ONLY if it is the very run this net is closing. Matching
+// on the start instant (not just the type/task) is what stops a slow scan from retiring a NEWER run
+// the worker started in the meantime.
+function canonicalRunOf(record, { type, taskId = null, startIso }) {
+    if (!record || record.status !== 'active') return null;
+    const run = record.run;
+    if (!run || run.type !== type || !run.runId) return null;
+    if (taskId && run.taskId !== taskId) return null;
+    const runStartMs = new Date(run.startedAt || '').getTime();
+    const closingStartMs = new Date(startIso || '').getTime();
+    if (!Number.isFinite(runStartMs) || !Number.isFinite(closingStartMs)) return null;
+    return runStartMs === closingStartMs ? run : null;
+}
+
+// Read-only probe: is this run canonical? Used BEFORE the close so the ledger id can be chosen.
+// A read failure reads as "not canonical", which degrades to the pre-engine behaviour rather than
+// blocking the stop — the projections still get written, exactly as they do today.
+async function readCanonicalRun(uid, match) {
+    if (!uid) return null;
+    try {
+        const snap = await db.collection('active_sessions').doc(uid).get();
+        return snap.exists ? canonicalRunOf(snap.data(), match) : null;
+    } catch (err) {
+        logger.warn('canonical run read failed', { uid, err: err.message });
+        return null;
+    }
+}
+
+// Retire the canonical record for a run this net just closed. The match is re-checked INSIDE the
+// transaction, so a client command landing between the probe above and this write wins the race
+// intact instead of being clobbered by a stale revision. Best-effort: a failure here never undoes
+// the projection writes that already landed (the next nightly scan re-runs the same match).
+async function releaseCanonicalRun(uid, match) {
+    const ref = db.collection('active_sessions').doc(uid);
+    try {
+        return await db.runTransaction(async (tx) => {
+            const snap = await tx.get(ref);
+            if (!snap.exists) return false;
+            const record = snap.data() || {};
+            const run = canonicalRunOf(record, match);
+            if (!run) return false;
+            tx.set(ref, {
+                userId: uid,
+                revision: (record.revision || 0) + 1,
+                expectedRevision: record.revision || 0,
+                expectedRunId: run.runId,
+                status: 'idle',
+                run: null,
+                lastCommandId: `sys_autoclose_${run.runId}`,
+                updatedAt: new Date().toISOString(),
+                engineVersion: TIMER_ENGINE_VERSION,
+            });
+            return true;
+        });
+    } catch (err) {
+        logger.warn('canonical run release failed', { uid, err: err.message });
+        return false;
+    }
+}
+
 // Stop timers left RUNNING longer than any real continuous session — the forgotten-timer corruption
 // (the 8710-min / 1158-min cases) that the CLIENT clamp structurally cannot reach, because it only
 // fires while the assignee has the app open on that task (autoStopped was 0/471 in the data). The
@@ -1390,6 +1468,11 @@ async function autoStopForgottenTimers() {
     const audits = [];
     const writer = db.bulkWriter();
     const creditWrites = [];
+    const canonicalReleases = [];
+    // Filter first, then process: choosing the ledger id needs an active_sessions read per hit, and
+    // forEach cannot await. The candidate set is tiny by construction (only runs past the 16h
+    // ceiling), so the extra reads cost nothing.
+    const candidates = [];
     snap.forEach((docSnap) => {
         const t = docSnap.data();
         if (!t.timerStartedAt) return;
@@ -1397,7 +1480,10 @@ async function autoStopForgottenTimers() {
         if (Number.isNaN(startMs)) return;
         const elapsedMin = (nowMs - startMs) / 60000;
         if (elapsedMin <= MAX_RUNNING_TIMER_MINUTES) return;
+        candidates.push({ docSnap, t, startMs, elapsedMin });
+    });
 
+    for (const { docSnap, t, startMs, elapsedMin } of candidates) {
         // Heartbeat-aware credit: a timer left running >16h is forgotten, but the per-minute client
         // heartbeat (timerLastHeartbeat) marks the last instant the app was actually alive on it.
         // Credit the PROVEN stretch [start → last beat] (clamped ≤16h) instead of discarding the
@@ -1414,6 +1500,11 @@ async function autoStopForgottenTimers() {
         const creditedMin = appLongGone ? Math.min((beatMs - startMs) / 60000, MAX_RUNNING_TIMER_MINUTES) : 0;
         const credited = creditedMin > MIN_LOGGED_SECONDARY_MINUTES && !!t.assignedUserId;
 
+        // Does the revisioned engine own this run? If so its canonical record has to be retired too,
+        // and the credit must land on the id the engine's own closer would have used.
+        const canonicalMatch = { type: 'task', taskId: docSnap.id, startIso: t.timerStartedAt };
+        const canonicalRun = await readCanonicalRun(t.assignedUserId, canonicalMatch);
+
         const update = {
             timerStatus: 'paused',
             timerStartedAt: null,
@@ -1423,17 +1514,27 @@ async function autoStopForgottenTimers() {
             updatedAt: nowIso,
         };
         if (credited) update.timerMinutes = (t.timerMinutes || 0) + creditedMin;
+        // Clear the run pointer on the projection too, so the task doc stops advertising a run that
+        // no longer exists — the same fields the engine's own pause writes.
+        if (canonicalRun) {
+            update.timerRunId = null;
+            update.timerProjectionVersion = TIMER_ENGINE_VERSION;
+        }
         writer.update(docSnap.ref, update);
 
         if (credited) {
-            // Deterministic id (taskId + its start) so a re-fired scan hits ALREADY_EXISTS via
-            // createIfAbsent rather than double-crediting. The prefix MIRRORS the client's
-            // taskSessionDocId (src/utils/taskActions.js) so a client pause of the same running
-            // stretch and this auto-stop converge on ONE row (locked by firebaseConsistency.test.js).
-            // The onCreate stamp trigger denormalizes teamManagerIds, so reports scope it like any
-            // timer-logged session.
+            // Deterministic id so a re-fired scan hits ALREADY_EXISTS via createIfAbsent rather than
+            // double-crediting — and, crucially, the SAME id the run's other possible closer would
+            // mint, so the two never produce two rows for one stretch. Which id that is depends on
+            // which engine owns the run: sess_run_{runId} for the revisioned engine (mirrors
+            // closeTaskWrites in timerTransitionPlan.js), sess_task_{taskId}_{startMs} for the legacy
+            // client closer (mirrors taskSessionDocId in taskActions.js) — both locked by
+            // firebaseConsistency.test.js. The onCreate stamp trigger denormalizes teamManagerIds,
+            // so reports scope it like any timer-logged session.
             creditWrites.push({
-                ref: db.collection('work_sessions').doc(`sess_task_${docSnap.id}_${startMs}`),
+                ref: db.collection('work_sessions').doc(
+                    canonicalRun ? `sess_run_${canonicalRun.runId}` : `sess_task_${docSnap.id}_${startMs}`
+                ),
                 data: {
                     taskId: docSnap.id,
                     taskTitle: t.title || 'Nežinoma užduotis',
@@ -1445,16 +1546,20 @@ async function autoStopForgottenTimers() {
                     date: lithuanianDay(new Date(beatMs)),
                     createdAt: nowIso,
                     autoStopped: true,
+                    ...(canonicalRun
+                        ? { runId: canonicalRun.runId, engineVersion: TIMER_ENGINE_VERSION }
+                        : {}),
                 },
             });
         }
+        if (canonicalRun) canonicalReleases.push({ uid: t.assignedUserId, match: canonicalMatch });
 
         stopped += 1;
         if (samples.length < SAMPLE_LIMIT) samples.push({ id: docSnap.id, elapsedMin: Math.round(elapsedMin), creditedMin: Math.round(creditedMin) });
         // Key on the stopped running interval (taskId + its start) so a retry recomputes the SAME
         // idempotency key — the create() in appendSystemDecision then dedups the audit, not the effect.
-        audits.push({ taskId: docSnap.id, startIso: t.timerStartedAt, elapsedMin: Math.round(elapsedMin), creditedMin: Math.round(creditedMin) });
-    });
+        audits.push({ taskId: docSnap.id, startIso: t.timerStartedAt, elapsedMin: Math.round(elapsedMin), creditedMin: Math.round(creditedMin), canonical: !!canonicalRun });
+    }
     await writer.close();
 
     // Persist the credited work_sessions AFTER the task writes land. Deterministic ids → a retried
@@ -1467,6 +1572,16 @@ async function autoStopForgottenTimers() {
         }
     }
 
+    // Retire the canonical record LAST — only after the task projection and its ledger row have
+    // landed, so an observer never sees a run reported closed before its credited time exists. A run
+    // with nothing to credit (no heartbeat → phantom interval discarded) deliberately writes no row:
+    // the client-side coupling rule exists to stop a CLIENT advancing the revision while withholding
+    // credited time, and there is no credited time here to withhold. Minting a 0-minute row instead
+    // would put a phantom entry in the worker's own session list for work that was never proven.
+    for (const r of canonicalReleases) {
+        await releaseCanonicalRun(r.uid, r.match);
+    }
+
     // Audit each auto-stop under the SYSTEM actor (ADR 0015), AFTER the writes land. Best-effort:
     // an audit failure never undoes a stop that already happened.
     for (const a of audits) {
@@ -1476,9 +1591,10 @@ async function autoStopForgottenTimers() {
             source: 'dailyIntegrityScan',
             targetType: 'task',
             targetId: a.taskId,
-            reason: a.creditedMin > 0
+            reason: (a.creditedMin > 0
                 ? `Auto-stopped a timer left running ${a.elapsedMin} min (>16h); credited ${a.creditedMin} min up to the last heartbeat, dropped the unproven tail`
-                : `Auto-stopped a timer left running ${a.elapsedMin} min (>16h); no heartbeat — phantom interval discarded`,
+                : `Auto-stopped a timer left running ${a.elapsedMin} min (>16h); no heartbeat — phantom interval discarded`)
+                + (a.canonical ? '; retired the canonical active-session record for that run' : ''),
             before: { timerStatus: 'running', timerStartedAt: a.startIso },
             after: { timerStatus: 'paused', timerStartedAt: null, autoStopped: true, creditedMinutes: a.creditedMin },
         });
@@ -1651,14 +1767,24 @@ async function createIfAbsent(ref, data) {
 // independent closers idempotent against EACH OTHER: if the worker reopens the app at ~scan time,
 // the client and this net both resolve the same session, but both write the SAME id, so only one
 // row survives (create() here / setDoc on the client) — no double-credit.
-async function writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, now, userData }) {
+async function writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, now, userData, canonicalRun = null }) {
     const startTime = session.startTime;
     const timeString = vilniusHHMM(now);
 
     if (session.type === 'break') {
-        await createIfAbsent(db.collection('break_sessions').doc(`sess_break_${uid}_${startMs}`), {
+        // Call and quick-work already key their ids on (uid + start) in BOTH engines, so those
+        // dedupe as-is. A break does not: the revisioned engine keys its break row on the run
+        // (closeBreakWrites → sess_break_run_{runId}), so when the engine owns this run the net must
+        // use that id or the same break is credited twice under two ids that can never converge.
+        const breakId = canonicalRun
+            ? `sess_break_run_${canonicalRun.runId}`
+            : `sess_break_${uid}_${startMs}`;
+        await createIfAbsent(db.collection('break_sessions').doc(breakId), {
             userId: uid, userName, startTime, endTime: nowIso, durationMinutes, date,
             createdAt: nowIso, completedAt: nowIso, isBreak: true,
+            ...(canonicalRun
+                ? { runId: canonicalRun.runId, engineVersion: TIMER_ENGINE_VERSION }
+                : {}),
         });
         return;
     }
@@ -1744,9 +1870,14 @@ async function autoCloseForgottenSessions() {
         const userName = u.displayName || 'Nežinomas';
 
         try {
+            // Does the revisioned engine own this session? Probed BEFORE the close, because it picks
+            // the ledger id, and retired AFTER it, so the record is never idled ahead of its credit.
+            const canonicalMatch = { type: session.type, startIso: session.startTime };
+            const canonicalRun = await readCanonicalRun(uid, canonicalMatch);
+
             // (1) Credit the clamped time as a record (sub-minute taps are discarded, as on the client).
             if (durationMinutes > MIN_LOGGED_SECONDARY_MINUTES) {
-                await writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, now, userData: u });
+                await writeSecondaryCloseRecords({ uid, userName, session, startMs, durationMinutes, date, nowIso, now, userData: u, canonicalRun });
             }
             // (2) Clear the live flags so the session no longer hangs (and the client won't re-close it).
             // We deliberately do NOT touch breakState.dailyAccumulatedMinutes: it is a display-only
@@ -1763,6 +1894,12 @@ async function autoCloseForgottenSessions() {
                 updates['quickWorkState.isQuickWorking'] = false;
             }
             await docSnap.ref.update(updates);
+
+            // (3) Retire the canonical record for the same run. Clearing users/{uid}.activeSession
+            // alone would leave active_sessions still claiming an active break/call/quick-work, and
+            // every later transition is planned from that record — so the worker would be refused a
+            // new session on a run the server had already closed.
+            if (canonicalRun) await releaseCanonicalRun(uid, canonicalMatch);
 
             // Tell the worker their forgotten timer was auto-closed and time credited — so recovered
             // paid time is never an unexplained entry. Only when real time was logged (a sub-minute

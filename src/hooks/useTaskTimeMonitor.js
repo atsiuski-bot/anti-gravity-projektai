@@ -46,6 +46,33 @@ export function isPreBootOrphanTask(task, appLoadTime = APP_LOAD_TIME) {
     return Number.isFinite(startedAtMs) && startedAtMs < appLoadTime;
 }
 
+// Undo the "your timer stopped" announcement when the stop turns out NOT to have happened.
+//
+// Under the revisioned engine the 100% limit block issues a pause COMMAND and then immediately
+// latches the run, opens the forced popup and starts the alarm — all of which tell the worker the
+// clock stopped. Issuing is not stopping: the command can still settle as rejected, or lose a
+// multi-device race. The timer is then still running, and because the latch is keyed by an unchanged
+// timerStartedAt it matches on every later tick, so the 100% block never fires again — the whole
+// overrun accrues silently behind a popup claiming it had stopped. The legacy branch guards this
+// synchronously; the canonical one cannot (offline the command is durably queued and resolves much
+// later, and blocking there would be worse), so it retracts instead and lets the next 10 s tick
+// retry the stop.
+//
+// Returns whether it retracted, so the caller logs only a genuine failure. Pure apart from the three
+// effects it is asked to perform, and exported so those effects are testable without a DOM.
+//
+// @param {object|null} outcome - the settled command outcome; null/undefined = the settlement itself
+//                                threw, which is also "the stop did not happen".
+export function retractLimitPauseAnnouncement(outcome, { taskId, limitReached, setLimitPopup }) {
+    // 'queued' is NOT a failure: the write is durably saved on the device and will land.
+    if (outcome?.status === 'confirmed' || outcome?.status === 'queued') return false;
+    limitReached.delete(taskId);
+    SoundManager.stopTimeLimitRepeat();
+    // Leave a popup belonging to a DIFFERENT task alone — the worker may have moved on.
+    setLimitPopup((prev) => (prev?.task?.id === taskId ? null : prev));
+    return true;
+}
+
 /**
  * Hook that monitors the active running task for time limit thresholds.
  * - At 70% of estimatedTime: shows warning popup + plays warning sound (FYI, task keeps running)
@@ -127,8 +154,15 @@ export function useTaskTimeMonitor(tasks) {
             taskUpdates: { timeLimitReached: true },
         });
         const issued = await issueTimerCommand(plan);
+        // Issuing is not stopping — see retractLimitPauseAnnouncement for why the announcement this
+        // caller is about to make has to be undoable.
+        const announcement = {
+            taskId: task.id,
+            limitReached: limitReachedRef.current,
+            setLimitPopup,
+        };
         issued.settlement.then((outcome) => {
-            if (outcome.status === 'confirmed' || outcome.status === 'queued') return;
+            if (!retractLimitPauseAnnouncement(outcome, announcement)) return;
             logError(outcome.error || new Error(`Limit pause ${outcome.status}`), {
                 source: 'useTaskTimeMonitor.limitPause.settlement',
                 taskId: task.id,
@@ -136,6 +170,7 @@ export function useTaskTimeMonitor(tasks) {
                 commandId: outcome.commandId,
             });
         }).catch((error) => {
+            retractLimitPauseAnnouncement(null, announcement);
             logError(error, {
                 source: 'useTaskTimeMonitor.limitPause.settlement',
                 taskId: task.id,

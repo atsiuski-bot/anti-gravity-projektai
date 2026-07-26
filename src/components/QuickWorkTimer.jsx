@@ -419,13 +419,19 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             return false;
         }
 
-        const currentTask = base.status === 'active' && base.run?.type === 'task'
-            ? await loadTaskForTimer(base.run.taskId)
-            : null;
-        if (base.status === 'active' && base.run?.type === 'task' && !currentTask) {
+        // loadTaskForTimer THROWS when it cannot read (offline) and returns null only when the server
+        // says the task is gone — deleted or archived mid-run. Blocking on the latter wedged the
+        // worker against a run nothing could settle; the plan layer rebuilds its ledger row from the
+        // run itself, so pass the reason through instead of refusing.
+        const switchingFromTask = base.status === 'active' && base.run?.type === 'task';
+        let currentTask = null;
+        try {
+            if (switchingFromTask) currentTask = await loadTaskForTimer(base.run.taskId);
+        } catch {
             setError('Nepavyko įkelti aktyvios užduoties. Prisijunkite prie interneto ir bandykite dar kartą.');
             return true;
         }
+        const currentTaskMissing = switchingFromTask && !currentTask;
 
         const plan = planSecondaryStart({
             type: 'quickWork',
@@ -433,6 +439,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             userData,
             activeRecord: revisionedSession.record,
             currentTask,
+            currentTaskMissing,
             commandId: idFor('timer_cmd'),
             runId: idFor('timer_run'),
             issuedAt: new Date().toISOString(),
