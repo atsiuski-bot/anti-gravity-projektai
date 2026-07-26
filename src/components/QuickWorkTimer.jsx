@@ -411,9 +411,12 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             id: currentUser.uid,
         });
         const persistedCanonical = Boolean(revisionedSession.record);
-        if (base.status === 'active' && !['task', 'break'].includes(base.run?.type)) {
+        // Quick work may be started on top of a task, a break or a call — the engine banks the
+        // interrupted session and nests it, so it resumes once this quick work ends. Only quick work
+        // ON quick work is refused, and that is unreachable from the UI (the button is a stop then).
+        if (base.status === 'active' && base.run?.type === 'quickWork') {
             if (persistedCanonical) {
-                setError('Pirma užbaikite aktyvią veiklą.');
+                setError('Greita veikla jau vyksta.');
                 return true;
             }
             return false;
@@ -479,14 +482,8 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             }
             return false;
         }
-        if (base.run.pausedSession?.type && !['task', 'break'].includes(base.run.pausedSession.type)) {
-            if (revisionedSession.record) {
-                setError('Šiai greitos veiklos kombinacijai dar naudojamas senasis užbaigimo kelias.');
-                return true;
-            }
-            return false;
-        }
-
+        // Whatever this quick work interrupted comes back: a task needs its document for the atomic
+        // resume, a nested break/call resumes from the run alone.
         let restoreTask = null;
         if (base.run.pausedSession?.type === 'task') {
             restoreTask = await loadTaskForTimer(base.run.pausedSession.taskId);

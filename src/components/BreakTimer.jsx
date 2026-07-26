@@ -99,13 +99,10 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
         const baseIsPersistedCanonical = Boolean(revisionedSession.record);
 
         if (!isTakingBreak) {
-            if (base.status === 'active' && base.run?.type !== 'task') {
-                if (baseIsPersistedCanonical) {
-                    setError('Pirma užbaikite aktyvią veiklą kitame įrenginyje.');
-                    return true;
-                }
-                return false;
-            }
+            // A break may now be taken on top of a call or quick work too — the engine banks the
+            // interrupted session and nests it, so it resumes when the break ends. Only a task run
+            // needs its document loaded for the atomic close.
+            const switchingFromTask = base.status === 'active' && base.run?.type === 'task';
 
             // loadTaskForTimer THROWS when it cannot read (offline, nothing cached) and returns null
             // only when the server says the task is gone — hard-deleted or archived while its timer
@@ -114,12 +111,12 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             // run itself, so let it through and mark WHY the task is absent.
             let currentTask = null;
             try {
-                if (base.status === 'active') currentTask = await loadTaskForTimer(base.run?.taskId);
+                if (switchingFromTask) currentTask = await loadTaskForTimer(base.run?.taskId);
             } catch {
                 setError('Nepavyko įkelti aktyvios užduoties. Prisijunkite prie interneto ir bandykite dar kartą.');
                 return true;
             }
-            const currentTaskMissing = base.status === 'active' && !currentTask;
+            const currentTaskMissing = switchingFromTask && !currentTask;
 
             const now = new Date().toISOString();
             const plan = planBreakStart({
@@ -145,17 +142,11 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             return false;
         }
 
+        // Whatever this break interrupted comes back: a task needs its document for the atomic
+        // resume, a nested call/quick work resumes from the run alone.
         const pausedSession = base.run?.pausedSession || userData?.activeSession?.pausedSession || null;
-        if (pausedSession?.type && pausedSession.type !== 'task') {
-            if (baseIsPersistedCanonical) {
-                setError('Šiai pertraukos kombinacijai dar naudojamas senasis užbaigimo kelias.');
-                return true;
-            }
-            return false;
-        }
-
         let restoreTask = null;
-        if (pausedSession?.taskId) {
+        if (pausedSession?.type === 'task' && pausedSession.taskId) {
             restoreTask = await loadTaskForTimer(pausedSession.taskId);
             if (!restoreTask) {
                 restoreTask = {
@@ -172,7 +163,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             activeRecord: revisionedSession.record,
             restoreTask,
             commandId: idFor('timer_cmd'),
-            runId: restoreTask ? idFor('timer_run') : null,
+            runId: pausedSession?.type ? idFor('timer_run') : null,
             issuedAt: now,
         });
         await trackRevisionedBreak(plan);

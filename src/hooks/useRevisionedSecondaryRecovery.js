@@ -78,6 +78,12 @@ export function useRevisionedSecondaryRecovery(currentUser, userData, enabled) {
                     commandId: idFor('timer_recover'),
                     issuedAt,
                     creditUntil,
+                    // Explicit, not implied by `restoreTask: null`: a break can nest a task AND now a
+                    // call/quick work underneath, and there is no live worker at boot to hand a
+                    // resumed session back to. Without the flag this call threw on any break that had
+                    // paused a task (so the abandoned break was never closed at all), and would now
+                    // silently resume a paused call instead.
+                    skipRestore: true,
                 })
                 : planSecondaryEnd({
                     type,

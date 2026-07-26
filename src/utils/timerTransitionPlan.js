@@ -116,15 +116,20 @@ const legacyRunningProjection = (task, run, issuedAt) => ({
     'quickWorkState.isQuickWorking': false,
 });
 
-const taskPausedSession = (run) => {
-    if (!run || run.type !== 'task') return null;
-    return {
-        type: 'task',
-        taskId: run.taskId || null,
-        taskTitle: run.taskTitle || null,
-        runId: run.runId || null,
-        startTime: run.startedAt || null,
-    };
+export const SECONDARY_RUN_TYPES = ['break', 'call', 'quickWork'];
+export const isSecondaryRunType = (type) => SECONDARY_RUN_TYPES.includes(type);
+
+// The task (if any) sitting at the BOTTOM of the paused stack. The projection's
+// workStatus.activeTaskId points at it, so "which task am I on" survives however many secondary
+// sessions are stacked above it — previously this was hand-unrolled one level deep per call site,
+// which silently reported "no task" as soon as a second secondary nested.
+const pausedTaskIdOf = (pausedSession) => {
+    let node = pausedSession;
+    while (node) {
+        if (node.type === 'task') return node.taskId || null;
+        node = node.pausedSession || null;
+    }
+    return null;
 };
 
 const runToPausedSession = (run) => {
@@ -170,13 +175,7 @@ const secondaryRunningProjection = (
 ) => {
     const stateKey = secondaryStateKeyFor(run.type);
     const flag = secondaryFlagFor(run.type);
-    const pausedTaskId = run.pausedSession?.type === 'task'
-        ? run.pausedSession.taskId
-        : (
-            run.pausedSession?.type === 'break'
-                ? run.pausedSession.pausedSession?.taskId || null
-                : null
-        );
+    const pausedTaskId = pausedTaskIdOf(run.pausedSession);
     const projection = {
         activeSession: {
             type: run.type,
@@ -252,6 +251,73 @@ const closeBreakWrites = ({ userId, userData, run, endedAt }) => {
     }
     return { durationMinutes, writes };
 };
+
+// Close the secondary run that a NEW transition interrupts, through the very same ledger writers a
+// normal close uses.
+//
+// Canonical models an interruption as CLOSE-AND-REOPEN, never pause-and-continue: the interrupted
+// stretch is banked as a self-contained record keyed to its OWN start, and the session later resumes
+// as a NEW run with a NEW start. That is what makes a stack safe — two segments of one session can
+// neither overlap in time nor collide on a ledger id, so no minute is ever credited twice however
+// deep the sessions nest. (The break branch already worked this way; call and quick work were simply
+// refused instead, which is why the UI offered switches the engine then rejected.)
+//
+// An interrupted call/quick work carries no classification yet, so it lands exactly as
+// planManagerForceEnd leaves one: the call as a plain "Skambutis" record, the quick work as the
+// auto-stopped placeholder the "describe later" banner already surfaces for retroactive naming.
+function closeSecondaryWrites({ userId, userData, run, endedAt }) {
+    if (!run?.runId || !run?.startedAt) {
+        throw new Error('A running secondary session and a stable run are required to close it');
+    }
+
+    if (run.type === 'break') {
+        const closed = closeBreakWrites({ userId, userData, run, endedAt });
+        return { ...closed, breakMinutes: closed.durationMinutes };
+    }
+
+    const durationMinutes = clampSessionMinutes(
+        (new Date(endedAt) - new Date(run.startedAt)) / 60000
+    );
+
+    if (run.type === 'call') {
+        return {
+            durationMinutes,
+            breakMinutes: 0,
+            writes: callLogWrites({
+                userId,
+                userData,
+                run,
+                endedAt,
+                durationMinutes,
+                contactType: null,
+                callNotes: '',
+            }),
+        };
+    }
+
+    if (run.type === 'quickWork') {
+        return {
+            durationMinutes,
+            breakMinutes: 0,
+            // A sub-minute mis-tap is discarded rather than logged, matching the normal quick-work
+            // close. A call is always logged (it has its own deliberate end gate), also matching.
+            writes: durationMinutes > MIN_LOGGED_SESSION_MINUTES
+                ? quickWorkLogWrites({
+                    userId,
+                    userData,
+                    run,
+                    endedAt,
+                    durationMinutes,
+                    customTitle: '',
+                    customComment: '',
+                    auditorManagerId: null,
+                }).writes
+                : [],
+        };
+    }
+
+    throw new Error(`Unsupported secondary run type: ${run.type}`);
+}
 
 const clockTime = (date) =>
     date.toLocaleTimeString('lt-LT', { hour: '2-digit', minute: '2-digit', hour12: false });
@@ -570,14 +636,15 @@ export function planBreakStart({
     if (!runId) throw new Error('Break start requires a new runId');
 
     const base = canonicalSessionState(currentRecord, { ...userData, id: userId });
-    if (base.status === 'active' && base.run?.type !== 'task') {
-        throw Object.assign(new Error('Another secondary session is active'), {
-            code: 'timer/conflict',
+    const interrupted = base.status === 'active' ? base.run : null;
+    if (interrupted?.type === 'break') {
+        throw Object.assign(new Error('A break is already running'), {
+            code: 'timer/already-running',
         });
     }
     // See planTaskStart: a PROVABLY deleted/archived task must not block the switch — the ledger row
     // is rebuilt from the run — while a merely unreadable one still must.
-    if (base.status === 'active' && !currentTask && !currentTaskMissing) {
+    if (interrupted?.type === 'task' && !currentTask && !currentTaskMissing) {
         throw Object.assign(new Error('The active task must be supplied for a break switch'), {
             code: 'timer/missing-active-task',
         });
@@ -592,7 +659,7 @@ export function planBreakStart({
         issuedAt,
     });
     const revision = base.revision + 1;
-    const pausedSession = base.status === 'active' ? taskPausedSession(base.run) : null;
+    const pausedSession = interrupted ? runToPausedSession(interrupted) : null;
     const run = {
         runId,
         type: 'break',
@@ -602,12 +669,22 @@ export function planBreakStart({
     };
     const writes = [];
 
-    if (base.status === 'active') {
+    // A break may now interrupt a CALL or QUICK WORK, not just a task. Whatever it interrupts is
+    // banked through its own normal closer (closeSecondaryWrites) and nested underneath, so the
+    // interrupted session resumes as a fresh run when the break ends.
+    if (interrupted?.type === 'task') {
         writes.push(...closeTaskWrites({
             task: currentTask,
-            run: base.run,
+            run: interrupted,
             endedAt: issuedAt,
             userId,
+        }).writes);
+    } else if (interrupted) {
+        writes.push(...closeSecondaryWrites({
+            userId,
+            userData,
+            run: interrupted,
+            endedAt: issuedAt,
         }).writes);
     }
 
@@ -620,7 +697,7 @@ export function planBreakStart({
         {
             type: 'update',
             path: `users/${userId}`,
-            data: breakRunningProjection(userData, run, issuedAt, pausedSession?.taskId || null),
+            data: breakRunningProjection(userData, run, issuedAt, pausedTaskIdOf(pausedSession)),
         },
         commandWrite(command, revision),
     );
@@ -643,6 +720,7 @@ export function planBreakEnd({
     runId = null,
     issuedAt,
     creditUntil = null,
+    skipRestore = false,
 }) {
     const base = canonicalSessionState(currentRecord, { ...userData, id: userId });
     if (base.status !== 'active' || base.run?.type !== 'break') {
@@ -651,28 +729,37 @@ export function planBreakEnd({
         });
     }
 
-    if (restoreTask && !runId) {
-        throw new Error('Restoring a task after break requires a new runId');
+    // skipRestore: end straight to IDLE and leave whatever this break had paused alone — the same
+    // contract planSecondaryEnd carries, and now REQUIRED here rather than merely symmetric: a break
+    // can nest a call/quick work underneath, and crash recovery has no live worker at boot to hand a
+    // resumed session back to, so restoring one would silently start a timer nobody is watching.
+    const paused = skipRestore ? null : (base.run.pausedSession || null);
+    const restoresTask = paused?.type === 'task';
+    const restoresSecondary = isSecondaryRunType(paused?.type);
+    if (paused?.type && !restoresTask && !restoresSecondary) {
+        throw Object.assign(new Error('This nested break restore is not supported yet'), {
+            code: 'timer/conflict',
+        });
+    }
+    if (restoresTask && restoreTask?.id !== paused.taskId) {
+        throw Object.assign(new Error('The task to restore does not match the paused session'), {
+            code: 'timer/conflict',
+        });
+    }
+    if ((restoresTask || restoresSecondary) && !runId) {
+        throw new Error('Restoring a session after a break requires a new runId');
     }
 
     const startedAt = new Date(base.run.startedAt);
     const endedAt = new Date(creditUntil || issuedAt);
     const durationMinutes = clampSessionMinutes((endedAt - startedAt) / 60000);
-    const pausedTask = base.run.pausedSession?.type === 'task'
-        ? base.run.pausedSession
-        : null;
-    if (pausedTask?.taskId && restoreTask?.id !== pausedTask.taskId) {
-        throw Object.assign(new Error('The task to restore does not match the paused session'), {
-            code: 'timer/conflict',
-        });
-    }
 
     const command = baseCommand({
         kind: 'end-session',
         userId,
         base,
         commandId,
-        runId: restoreTask ? runId : base.run.runId,
+        runId: (restoresTask || restoresSecondary) ? runId : base.run.runId,
         issuedAt,
     });
     const revision = base.revision + 1;
@@ -699,12 +786,12 @@ export function planBreakEnd({
         });
     }
 
-    if (restoreTask) {
+    if (restoresTask) {
         const nextRun = {
             runId,
             type: 'task',
             taskId: restoreTask.id,
-            taskTitle: restoreTask.title || pausedTask?.taskTitle || 'Užduotis',
+            taskTitle: restoreTask.title || paused?.taskTitle || 'Užduotis',
             startedAt: issuedAt,
             revision,
         };
@@ -765,6 +852,33 @@ export function planBreakEnd({
             },
             commandWrite(command, revision),
         );
+    } else if (restoresSecondary) {
+        // Pop the call/quick work this break was taken on top of. It resumes as a FRESH run —
+        // its pre-break stretch was already banked when the break started — and inherits whatever
+        // it in turn had paused, so the task at the bottom of the stack is not lost.
+        const nextRun = {
+            runId,
+            type: paused.type,
+            startedAt: issuedAt,
+            revision,
+            pausedSession: paused.pausedSession || null,
+        };
+        writes.push(
+            {
+                type: 'set',
+                path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
+                data: activeRecord({ command, revision, status: 'active', run: nextRun }),
+            },
+            {
+                type: 'update',
+                path: `users/${userId}`,
+                // The break just closed is folded into the day counter by the projection itself,
+                // exactly as the idle path below does — a resumed session must not lose those
+                // minutes just because it did not pass through idle.
+                data: secondaryRunningProjection(userData, nextRun, issuedAt, durationMinutes),
+            },
+            commandWrite(command, revision),
+        );
     } else {
         writes.push(
             {
@@ -784,7 +898,8 @@ export function planBreakEnd({
     return {
         command,
         creditedMinutes: durationMinutes,
-        restoredTaskRunId: restoreTask ? runId : null,
+        restoredTaskRunId: restoresTask ? runId : null,
+        restoredRunId: (restoresTask || restoresSecondary) ? runId : null,
         writes,
     };
 }
@@ -806,17 +921,22 @@ export function planSecondaryStart({
     if (!runId) throw new Error('Secondary start requires a new runId');
 
     const base = canonicalSessionState(currentRecord, { ...userData, id: userId });
-    if (
-        base.status === 'active'
-        && !['task', 'break'].includes(base.run?.type)
-    ) {
+    const interrupted = base.status === 'active' ? base.run : null;
+    // Same-type is a STOP, never a nest: stacking a call inside a call (or quick work inside quick
+    // work) would leave two undescribed sessions of one kind whose finish prompts fire out of order.
+    if (interrupted?.type === type) {
+        throw Object.assign(new Error('This session type is already running'), {
+            code: 'timer/already-running',
+        });
+    }
+    if (interrupted && interrupted.type !== 'task' && !isSecondaryRunType(interrupted.type)) {
         throw Object.assign(new Error('This secondary switch is not supported yet'), {
             code: 'timer/conflict',
         });
     }
     // See planTaskStart: a PROVABLY deleted/archived task must not block the switch — the ledger row
     // is rebuilt from the run — while a merely unreadable one still must.
-    if (base.status === 'active' && base.run?.type === 'task' && !currentTask && !currentTaskMissing) {
+    if (interrupted?.type === 'task' && !currentTask && !currentTaskMissing) {
         throw Object.assign(new Error('The active task must be supplied for a secondary switch'), {
             code: 'timer/missing-active-task',
         });
@@ -831,7 +951,7 @@ export function planSecondaryStart({
         issuedAt,
     });
     const revision = base.revision + 1;
-    const pausedSession = base.status === 'active' ? runToPausedSession(base.run) : null;
+    const pausedSession = interrupted ? runToPausedSession(interrupted) : null;
     const run = {
         runId,
         type,
@@ -842,22 +962,25 @@ export function planSecondaryStart({
     const writes = [];
     let closedBreakMinutes = 0;
 
-    if (base.status === 'active' && base.run?.type === 'task') {
+    // Any interrupted session — task, break, call or quick work — is banked through its own normal
+    // closer and nested underneath. Only `break` contributes to the day's break counter, which is
+    // why its minutes ride out separately into the projection below.
+    if (interrupted?.type === 'task') {
         writes.push(...closeTaskWrites({
             task: currentTask,
-            run: base.run,
+            run: interrupted,
             endedAt: issuedAt,
             userId,
         }).writes);
-    } else if (base.status === 'active' && base.run?.type === 'break') {
-        const closedBreak = closeBreakWrites({
+    } else if (interrupted) {
+        const closed = closeSecondaryWrites({
             userId,
             userData,
-            run: base.run,
+            run: interrupted,
             endedAt: issuedAt,
         });
-        closedBreakMinutes = closedBreak.durationMinutes;
-        writes.push(...closedBreak.writes);
+        closedBreakMinutes = closed.breakMinutes;
+        writes.push(...closed.writes);
     }
 
     writes.push(
@@ -1074,8 +1197,8 @@ export function planSecondaryEnd({
     // skipResume argument, which the revisioned path must match to avoid regressing at cutover.
     const paused = skipRestore ? null : (base.run.pausedSession || null);
     const restoresTask = paused?.type === 'task';
-    const restoresBreak = paused?.type === 'break';
-    if (paused?.type && !['task', 'break'].includes(paused.type)) {
+    const restoresSecondary = isSecondaryRunType(paused?.type);
+    if (paused?.type && !restoresTask && !restoresSecondary) {
         throw Object.assign(new Error('This nested secondary restore is not supported yet'), {
             code: 'timer/conflict',
         });
@@ -1085,7 +1208,7 @@ export function planSecondaryEnd({
             code: 'timer/conflict',
         });
     }
-    if ((restoresTask || restoresBreak) && !runId) {
+    if ((restoresTask || restoresSecondary) && !runId) {
         throw new Error('Restoring a session requires a new runId');
     }
 
@@ -1097,7 +1220,7 @@ export function planSecondaryEnd({
         userId,
         base,
         commandId,
-        runId: (restoresTask || restoresBreak) ? runId : base.run.runId,
+        runId: (restoresTask || restoresSecondary) ? runId : base.run.runId,
         issuedAt,
     });
     const revision = base.revision + 1;
@@ -1193,10 +1316,13 @@ export function planSecondaryEnd({
             },
             commandWrite(command, revision),
         );
-    } else if (restoresBreak) {
+    } else if (restoresSecondary) {
+        // Pop whatever secondary sat underneath — break, call or quick work. It resumes as a FRESH
+        // run (its pre-interruption stretch was banked when this session started) and inherits its
+        // own paused stack, so nothing below is lost.
         const nextRun = {
             runId,
-            type: 'break',
+            type: paused.type,
             startedAt: issuedAt,
             revision,
             pausedSession: paused.pausedSession || null,
@@ -1247,7 +1373,7 @@ export function planSecondaryEnd({
                 actualMinutes: durationMinutes,
             }
             : null,
-        restoredRunId: (restoresTask || restoresBreak) ? runId : null,
+        restoredRunId: (restoresTask || restoresSecondary) ? runId : null,
         writes,
     };
 }

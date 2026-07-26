@@ -1173,6 +1173,231 @@ describe('break day counter must not carry across the day boundary', () => {
         expect(bs.lastDate).toBe('2026-07-09');
     });
 
+    it.each([
+        ['a call', 'call'],
+        ['a quick work', 'quickWork'],
+    ])('%s interrupted by a break banks its minutes and nests, then resumes fresh', (_label, type) => {
+        const startedAt = '2026-07-09T09:00:00.000Z';
+        const interruptedAt = '2026-07-09T09:10:00.000Z';
+        const startMs = new Date(startedAt).getTime();
+        const ledgerPath = type === 'call'
+            ? `work_sessions/sess_call_ws_${userId}_${startMs}`
+            : `work_sessions/sess_qw_ws_${userId}_${startMs}`;
+        const runningSecondary = {
+            userId,
+            revision: 7,
+            status: 'active',
+            run: { runId: 'run-secondary', type, startedAt, revision: 7, pausedSession: null },
+        };
+
+        const started = planBreakStart({
+            userId,
+            userData: staleUser,
+            activeRecord: runningSecondary,
+            commandId: 'cmd-break-over-secondary',
+            runId: 'run-break-over',
+            issuedAt: interruptedAt,
+        });
+
+        // The interrupted stretch is banked as its OWN complete record, keyed to its own start.
+        expect(started.writes.find((w) => w.path === ledgerPath)?.data.durationMinutes).toBe(10);
+        // ...and the session itself is nested, not destroyed.
+        const nested = started.writes
+            .find((w) => w.path === `active_sessions/${userId}`).data.run.pausedSession;
+        expect(nested).toMatchObject({ type, startTime: startedAt });
+
+        // Ending the break pops it back as a NEW run starting NOW — so the banked stretch and the
+        // resumed stretch can never overlap or share a ledger id.
+        const ended = planBreakEnd({
+            userId,
+            userData: staleUser,
+            activeRecord: {
+                userId,
+                revision: 8,
+                status: 'active',
+                run: {
+                    runId: 'run-break-over',
+                    type: 'break',
+                    startedAt: interruptedAt,
+                    revision: 8,
+                    pausedSession: nested,
+                },
+            },
+            commandId: 'cmd-end-break-over',
+            runId: 'run-secondary-resumed',
+            issuedAt: '2026-07-09T09:15:00.000Z',
+        });
+        const resumed = ended.writes
+            .find((w) => w.path === `active_sessions/${userId}`).data;
+        expect(resumed.status).toBe('active');
+        expect(resumed.run).toMatchObject({
+            runId: 'run-secondary-resumed',
+            type,
+            startedAt: '2026-07-09T09:15:00.000Z',
+        });
+        // The break's own minutes still reach the day counter even though it did not pass idle.
+        expect(breakStateOf(ended).dailyAccumulatedMinutes).toBe(5);
+    });
+
+    it('a quick work interrupted by a call keeps the two segments on DIFFERENT ledger ids', () => {
+        const firstStart = '2026-07-09T10:00:00.000Z';
+        const interruptedAt = '2026-07-09T10:20:00.000Z';
+        const resumedAt = '2026-07-09T10:30:00.000Z';
+        const idFor = (iso) => `work_sessions/sess_qw_ws_${userId}_${new Date(iso).getTime()}`;
+
+        const interrupted = planSecondaryStart({
+            type: 'call',
+            userId,
+            userData: staleUser,
+            activeRecord: {
+                userId,
+                revision: 2,
+                status: 'active',
+                run: {
+                    runId: 'run-qw-1',
+                    type: 'quickWork',
+                    startedAt: firstStart,
+                    revision: 2,
+                    pausedSession: null,
+                },
+            },
+            commandId: 'cmd-call-over-qw',
+            runId: 'run-call-over-qw',
+            issuedAt: interruptedAt,
+        });
+        expect(interrupted.writes.find((w) => w.path === idFor(firstStart))?.data.durationMinutes)
+            .toBe(20);
+
+        // The resumed segment closes onto its OWN id — 20 + 15 minutes in two rows, never 35 in one
+        // row twice.
+        const finished = planSecondaryEnd({
+            type: 'quickWork',
+            userId,
+            userData: staleUser,
+            activeRecord: {
+                userId,
+                revision: 4,
+                status: 'active',
+                run: {
+                    runId: 'run-qw-2',
+                    type: 'quickWork',
+                    startedAt: resumedAt,
+                    revision: 4,
+                    pausedSession: null,
+                },
+            },
+            commandId: 'cmd-end-qw',
+            issuedAt: '2026-07-09T10:45:00.000Z',
+            customTitle: 'Tvarkos',
+        });
+        expect(finished.writes.find((w) => w.path === idFor(resumedAt))?.data.durationMinutes)
+            .toBe(15);
+        expect(finished.writes.some((w) => w.path === idFor(firstStart))).toBe(false);
+    });
+
+    it('keeps the task at the BOTTOM of a two-deep stack addressable', () => {
+        const withTaskUnderBreak = {
+            userId,
+            revision: 5,
+            status: 'active',
+            run: {
+                runId: 'run-break-deep',
+                type: 'break',
+                startedAt: '2026-07-09T11:00:00.000Z',
+                revision: 5,
+                pausedSession: {
+                    type: 'task',
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    runId: 'run-task',
+                    startTime: '2026-07-09T10:00:00.000Z',
+                },
+            },
+        };
+        const plan = planSecondaryStart({
+            type: 'call',
+            userId,
+            userData: staleUser,
+            activeRecord: withTaskUnderBreak,
+            commandId: 'cmd-call-over-break-over-task',
+            runId: 'run-call-deep',
+            issuedAt: '2026-07-09T11:05:00.000Z',
+        });
+        // call ← break ← task: the projection must still name the task the worker will return to,
+        // which a one-level-deep lookup reported as null.
+        expect(plan.writes.find((w) => w.path === `users/${userId}`).data.workStatus.activeTaskId)
+            .toBe('task-a');
+    });
+
+    it('refuses to nest a session inside one of the SAME type', () => {
+        const runningCall = {
+            userId,
+            revision: 1,
+            status: 'active',
+            run: {
+                runId: 'run-call',
+                type: 'call',
+                startedAt: '2026-07-09T12:00:00.000Z',
+                revision: 1,
+                pausedSession: null,
+            },
+        };
+        expect(() => planSecondaryStart({
+            type: 'call',
+            userId,
+            userData: staleUser,
+            activeRecord: runningCall,
+            commandId: 'cmd-call-on-call',
+            runId: 'run-call-2',
+            issuedAt: '2026-07-09T12:01:00.000Z',
+        })).toThrow(/already running/i);
+
+        expect(() => planBreakStart({
+            userId,
+            userData: staleUser,
+            activeRecord: {
+                ...runningCall,
+                run: { ...runningCall.run, type: 'break', runId: 'run-break' },
+            },
+            commandId: 'cmd-break-on-break',
+            runId: 'run-break-2',
+            issuedAt: '2026-07-09T12:01:00.000Z',
+        })).toThrow(/already running/i);
+    });
+
+    it('recovery closes an abandoned break WITHOUT resuming whatever it paused', () => {
+        const plan = planBreakEnd({
+            userId,
+            userData: staleUser,
+            activeRecord: {
+                userId,
+                revision: 9,
+                status: 'active',
+                run: {
+                    runId: 'run-break-abandoned',
+                    type: 'break',
+                    startedAt: '2026-07-09T13:00:00.000Z',
+                    revision: 9,
+                    pausedSession: {
+                        type: 'task',
+                        taskId: 'task-a',
+                        taskTitle: 'Task A',
+                        runId: 'run-task',
+                        startTime: '2026-07-09T12:00:00.000Z',
+                    },
+                },
+            },
+            commandId: 'cmd-recover-break',
+            issuedAt: '2026-07-09T13:30:00.000Z',
+            skipRestore: true,
+        });
+        // Previously this THREW (restoreTask null vs. a paused task), so an abandoned break that had
+        // interrupted a task could never be closed canonically at all.
+        expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data.status)
+            .toBe('idle');
+        expect(plan.restoredRunId).toBeNull();
+    });
+
     it('a call starting over a break banks the closed minutes onto the rebased total', () => {
         const plan = planSecondaryStart({
             type: 'call',

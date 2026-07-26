@@ -261,16 +261,12 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             id: currentUser.uid,
         });
         const persistedCanonical = Boolean(revisionedSession.record);
-        if (base.status === 'active' && base.run?.type === 'quickWork') {
+        // A call may be started on top of a task, a break or a quick work — the engine banks the
+        // interrupted session and nests it, so it resumes once the call ends. Only a call ON a call
+        // is refused, and that is unreachable from the UI (the button is a stop in that state).
+        if (base.status === 'active' && base.run?.type === 'call') {
             if (persistedCanonical) {
-                setError('Pirma užbaikite greitą veiklą, tada pradėkite skambutį.');
-                return true;
-            }
-            return false;
-        }
-        if (base.status === 'active' && !['task', 'break'].includes(base.run?.type)) {
-            if (persistedCanonical) {
-                setError('Pirma užbaikite aktyvią veiklą.');
+                setError('Skambutis jau vyksta.');
                 return true;
             }
             return false;
@@ -331,14 +327,8 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             }
             return false;
         }
-        if (base.run.pausedSession?.type && !['task', 'break'].includes(base.run.pausedSession.type)) {
-            if (revisionedSession.record) {
-                setError('Šiai skambučio kombinacijai dar naudojamas senasis užbaigimo kelias.');
-                return true;
-            }
-            return false;
-        }
-
+        // Whatever this call interrupted comes back: a task needs its document for the atomic
+        // resume, a nested break/quick work resumes from the run alone.
         let restoreTask = null;
         if (base.run.pausedSession?.type === 'task') {
             restoreTask = await loadTaskForTimer(base.run.pausedSession.taskId);
