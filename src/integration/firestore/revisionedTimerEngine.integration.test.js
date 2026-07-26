@@ -466,6 +466,188 @@ describeEmulator('revisioned offline timer engine', () => {
         });
     });
 
+    // A stack two secondaries deep (call <- break <- task) run against the REAL rules file, not
+    // reasoned about. Three things are only provable here: that validActiveSessionRecord accepts a
+    // nested pausedSession chain at all, that taskCloseLedgerBound does NOT fire on a secondary
+    // close (it binds only a task run, so a call/quick-work close carries no sess_run_ row), and
+    // that unwinding the stack step by step lands the worker back on the original task.
+    it('unwinds a two-deep stack: call over break over task, back down to the task', async () => {
+        const db = workerDb();
+
+        const startTaskPlan = planTaskStart({
+            task: task('task-a'),
+            userId: USER_ID,
+            userData: userData(),
+            activeRecord: null,
+            commandId: 'cmd-stack-task-start',
+            runId: 'run-task-bottom',
+            issuedAt: '2026-07-09T08:00:00.000Z',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, startTaskPlan));
+
+        // Layer 1 — a break interrupts the task. The task's minutes are banked on the way down.
+        const [activeAfterTask, runningTask] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('tasks/task-a'),
+        ]);
+        const startBreakPlan = planBreakStart({
+            userId: USER_ID,
+            userData: userData({ type: 'task', taskId: 'task-a', runId: 'run-task-bottom' }),
+            activeRecord: activeAfterTask.data(),
+            currentTask: { id: runningTask.id, ...runningTask.data() },
+            commandId: 'cmd-stack-break-start',
+            runId: 'run-break-middle',
+            issuedAt: '2026-07-09T08:10:00.000Z',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, startBreakPlan));
+
+        // Layer 2 — a call interrupts the break. THIS is the transition the engine used to refuse.
+        const activeAfterBreak = await adminRead(`active_sessions/${USER_ID}`);
+        const startCallPlan = planSecondaryStart({
+            type: 'call',
+            userId: USER_ID,
+            userData: {
+                ...userData({ type: 'break', runId: 'run-break-middle' }),
+                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 0 },
+            },
+            activeRecord: activeAfterBreak.data(),
+            commandId: 'cmd-stack-call-start',
+            runId: 'run-call-top',
+            issuedAt: '2026-07-09T08:20:00.000Z',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, startCallPlan));
+
+        const [activeStacked, bankedBreak] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('break_sessions/sess_break_run_run-break-middle'),
+        ]);
+        // The rules accepted a run whose pausedSession is itself a session with a pausedSession.
+        expect(activeStacked.data()).toMatchObject({
+            status: 'active',
+            run: {
+                runId: 'run-call-top',
+                type: 'call',
+                pausedSession: {
+                    type: 'break',
+                    pausedSession: { type: 'task', taskId: 'task-a' },
+                },
+            },
+        });
+        // The interrupted break was banked, so nothing underneath is still accruing.
+        expect(bankedBreak.data()).toMatchObject({ runId: 'run-break-middle', durationMinutes: 10 });
+
+        // Unwind 1 — ending the call pops the break back as a FRESH run.
+        const endCallPlan = planSecondaryEnd({
+            type: 'call',
+            userId: USER_ID,
+            userData: {
+                ...userData({ type: 'call', runId: 'run-call-top' }),
+                breakState: { isTakingBreak: false, dailyAccumulatedMinutes: 10 },
+            },
+            activeRecord: activeStacked.data(),
+            commandId: 'cmd-stack-call-end',
+            runId: 'run-break-resumed',
+            issuedAt: '2026-07-09T08:35:00.000Z',
+            contactType: 'client',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, endCallPlan));
+
+        const [activeAfterCall, callSession] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead(`work_sessions/sess_call_ws_${USER_ID}_${new Date('2026-07-09T08:20:00.000Z').getTime()}`),
+        ]);
+        expect(activeAfterCall.data()).toMatchObject({
+            status: 'active',
+            run: {
+                runId: 'run-break-resumed',
+                type: 'break',
+                startedAt: '2026-07-09T08:35:00.000Z',
+                pausedSession: { type: 'task', taskId: 'task-a' },
+            },
+        });
+        expect(callSession.data()).toMatchObject({ durationMinutes: 15 });
+
+        // Unwind 2 — ending the resumed break restores the original task.
+        const resumedTaskDoc = await adminRead('tasks/task-a');
+        const endBreakPlan = planBreakEnd({
+            userId: USER_ID,
+            userData: {
+                ...userData({ type: 'break', runId: 'run-break-resumed' }),
+                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 10 },
+            },
+            activeRecord: activeAfterCall.data(),
+            restoreTask: { id: resumedTaskDoc.id, ...resumedTaskDoc.data() },
+            commandId: 'cmd-stack-break-end',
+            runId: 'run-task-restored',
+            issuedAt: '2026-07-09T08:40:00.000Z',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, endBreakPlan));
+
+        const [activeFinal, finalTask] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('tasks/task-a'),
+        ]);
+        expect(activeFinal.data()).toMatchObject({
+            status: 'active',
+            run: { runId: 'run-task-restored', type: 'task', taskId: 'task-a' },
+        });
+        // 10 minutes credited on the way down, and the task is live again — the worker is back
+        // exactly where they started, with no minute counted twice anywhere in the stack.
+        expect(finalTask.data()).toMatchObject({
+            timerStatus: 'running',
+            timerMinutes: 10,
+            timerRunId: 'run-task-restored',
+        });
+    });
+
+    it('lets a manager force-end a two-deep stack in one write', async () => {
+        const db = workerDb();
+        const startTaskPlan = planTaskStart({
+            task: task('task-a'),
+            userId: USER_ID,
+            userData: userData(),
+            activeRecord: null,
+            commandId: 'cmd-force-stack-task',
+            runId: 'run-task-bottom',
+            issuedAt: '2026-07-09T08:00:00.000Z',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, startTaskPlan));
+
+        const [activeAfterTask, runningTask] = await Promise.all([
+            adminRead(`active_sessions/${USER_ID}`),
+            adminRead('tasks/task-a'),
+        ]);
+        const startBreakPlan = planBreakStart({
+            userId: USER_ID,
+            userData: userData({ type: 'task', taskId: 'task-a', runId: 'run-task-bottom' }),
+            activeRecord: activeAfterTask.data(),
+            currentTask: { id: runningTask.id, ...runningTask.data() },
+            commandId: 'cmd-force-stack-break',
+            runId: 'run-break-middle',
+            issuedAt: '2026-07-09T08:10:00.000Z',
+        });
+        await assertSucceeds(applyTimerTransitionPlan(db, startBreakPlan));
+
+        const activeStacked = await adminRead(`active_sessions/${USER_ID}`);
+        const forcePlan = planManagerForceEnd({
+            targetUser: { id: USER_ID, displayName: 'Timer Worker' },
+            actorId: MANAGER_ID,
+            activeRecord: activeStacked.data(),
+            activeTask: null,
+            commandId: 'cmd-force-stack',
+            issuedAt: '2026-07-09T08:25:00.000Z',
+        });
+        // The manager force-idle branch of the active_sessions rule must accept a stacked run.
+        await assertSucceeds(applyTimerTransitionPlan(managerDb(), forcePlan));
+
+        const activeAfterForce = await adminRead(`active_sessions/${USER_ID}`);
+        expect(activeAfterForce.data()).toMatchObject({ status: 'idle', run: null });
+        // The whole stack is settled, and the caller is told what the worker lost so it can say so.
+        expect(forcePlan.discardedStack).toEqual([
+            { type: 'task', taskId: 'task-a', taskTitle: 'Task task-a' },
+        ]);
+    });
+
     it('starts a break over an active task and later restores the task with a fresh run', async () => {
         const db = workerDb();
         const startTaskPlan = planTaskStart({
