@@ -91,3 +91,27 @@ export function resolveInitialTaskStatus({ isManagerOrAdmin, isSelfAssigned } = 
     return 'pending';
 }
 
+/**
+ * Does a manager's edit tell the story "I gave you more time" — or just "I changed something"?
+ *
+ * Three things must all hold: the worker actually ran out of budget (`timeLimitReached`), this edit
+ * moves the estimate, and the task is still OPEN. The last one is the one that is easy to forget:
+ * "Numatomas laikas pratęstas" promises MORE TIME TO WORK, which is meaningless once the task is
+ * finished — that edit is an accounting correction and must fall through to the plain "edited"
+ * notice. The limit latch deliberately OUTLIVES the finish (planTaskEnd leaves it set so the
+ * on_estimate badge trigger can read it on the completion edge), so this decision has to ask about
+ * the task's state and not merely about the latch.
+ *
+ * Kept pure and unit-locked so the copy the worker receives can never drift from the situation it
+ * claims to describe.
+ *
+ * @param {{ completed?: boolean, timeLimitReached?: boolean, estimatedTime?: string }} task
+ * @param {string} nextEstimatedTime — the estimate the edit is about to save.
+ * @returns {boolean} true → notify 'extension_granted'; false → the caller's ordinary edit notice.
+ */
+export function isTimeExtensionEdit(task, nextEstimatedTime) {
+    if (!task || task.completed === true) return false;
+    if (task.timeLimitReached !== true) return false;
+    return task.estimatedTime !== nextEstimatedTime;
+}
+

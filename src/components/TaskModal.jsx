@@ -19,7 +19,7 @@ import { buildChecklistItem, reconcileChecklist } from '../utils/checklistAction
 import { parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
 import { titleStemSet, stemSetsSimilar } from '../utils/titleSimilarity';
-import { resolveInitialTaskStatus } from '../utils/taskStatus';
+import { resolveInitialTaskStatus, isTimeExtensionEdit } from '../utils/taskStatus';
 import { listPayRates, hasMultiplePayRates } from '../utils/payRate';
 import { TEMPLATE_CATEGORIES, getTemplateCategory, inferTemplateCategory } from '../utils/templateCategories';
 import useTaskSuggestions from '../hooks/useTaskSuggestions';
@@ -1170,7 +1170,8 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 // Tell the worker(s) about a manager-side edit that concerns them — ONE notice per
                 // save, chosen by precedence so a single edit never fans out into several pings:
                 //   1. reassigned        → the NEW assignee gets "assigned", the OLD one "unassigned";
-                //   2. estimate lifted after the limit was hit → "time extended" (the specific story);
+                //   2. estimate lifted after the limit was hit, on a STILL-OPEN task → "time
+                //      extended" (the specific story);
                 //   3. any other field   → "edited".
                 // All are gated on "the affected person isn't the editor" so a self-edit is silent,
                 // and the whole branch is skipped when handleEditAndApprove already sent the combined
@@ -1189,7 +1190,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                         await notify({ recipientId: oldAssignee, type: 'task_unassigned', taskId: task.id, taskTitle: formData.title, ...actor });
                     }
                 } else if (newAssignee && newAssignee !== editorUid) {
-                    if (task.timeLimitReached && task.estimatedTime !== formData.estimatedTime) {
+                    if (isTimeExtensionEdit(task, formData.estimatedTime)) {
                         await notify({ recipientId: newAssignee, type: 'extension_granted', taskId: task.id, taskTitle: formData.title, estimatedTime: formData.estimatedTime, ...actor });
                     } else if (!task.__suppressEditNotice) {
                         await notify({ recipientId: newAssignee, type: 'task_edited', taskId: task.id, taskTitle: formData.title, ...actor });
