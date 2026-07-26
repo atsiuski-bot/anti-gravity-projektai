@@ -1,16 +1,17 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { deleteApp, initializeApp } from 'firebase/app';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import {
     addDoc,
     collection,
-    connectFirestoreEmulator,
     disableNetwork,
+    doc,
     enableNetwork,
-    getFirestore,
     onSnapshot,
     query,
+    setDoc,
     where,
 } from 'firebase/firestore';
+import { readFile } from 'node:fs/promises';
 
 // Regression oracle for the silent planned-hours loss.
 //
@@ -33,32 +34,56 @@ const WORKER_ID = 'pending-worker';
 const emulatorAvailable = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const describeEmulator = emulatorAvailable ? describe : describe.skip;
 
-// Plain SDK clients against the emulator, not @firebase/rules-unit-testing: this pins client-cache
-// semantics, not authorization, so the rules layer only adds a dependency and a failure mode.
-const [emulatorHost, emulatorPort] = (process.env.FIRESTORE_EMULATOR_HOST || '').split(':');
-const apps = [];
+// Authenticated clients via @firebase/rules-unit-testing, NOT a bare initializeApp client.
+//
+// This file used to build plain, unauthenticated SDK clients on the argument that it pins cache
+// semantics rather than authorization, so the rules layer would only add a dependency and a failure
+// mode. That reasoning does not hold: the emulator loads the real firestore.rules whatever client
+// connects to it, so authorization is never opted out of — only the principal is chosen. An
+// anonymous client is denied `list` on /work_hours (read requires isUserActive()), the listener's
+// initial snapshot therefore never arrives, and BOTH cases below timed out before asserting
+// anything. The dependency is also already unavoidable — the three sibling integration files pin
+// offline/pending semantics through exactly this harness.
+//
+// Each context gets its own Firebase app, hence its own cache: the two cases below need separate
+// caches, which is why they take a client each rather than sharing one.
+let testEnv;
 
-function emulatorDb(name) {
-    const app = initializeApp({ projectId: PROJECT_ID }, name);
-    apps.push(app);
-    const db = getFirestore(app);
-    connectFirestoreEmulator(db, emulatorHost, Number(emulatorPort));
-    return db;
+function workerDb() {
+    return testEnv.authenticatedContext(WORKER_ID, {
+        email: 'pending-worker@example.test',
+    }).firestore();
 }
 
-// Start from an empty database. Without this a document left by an earlier run is already present
-// (and already committed) when the listener attaches, so the assertions below would be reading the
-// previous run's state rather than this one's.
 beforeAll(async () => {
     if (!emulatorAvailable) return;
-    await fetch(
-        `http://${process.env.FIRESTORE_EMULATOR_HOST}/emulator/v1/projects/${PROJECT_ID}/databases/(default)/documents`,
-        { method: 'DELETE' }
-    );
+    testEnv = await initializeTestEnvironment({
+        projectId: PROJECT_ID,
+        firestore: {
+            rules: await readFile(new URL('../../../firestore.rules', import.meta.url), 'utf8'),
+        },
+    });
+}, 30_000);
+
+// Start from an empty database, and seed the ACTIVE user doc the read rule resolves against
+// (isUserActive() = signed in + users/{uid} exists + not disabled). Without the reset a document
+// left by an earlier case is already present (and already committed) when the listener attaches, so
+// the assertions below would be reading that state rather than this case's.
+beforeEach(async () => {
+    if (!emulatorAvailable) return;
+    await testEnv.clearFirestore();
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+        await setDoc(doc(context.firestore(), `users/${WORKER_ID}`), {
+            id: WORKER_ID,
+            role: 'worker',
+            isDisabled: false,
+            email: 'pending-worker@example.test',
+        });
+    });
 }, 30_000);
 
 afterAll(async () => {
-    await Promise.all(apps.map((app) => deleteApp(app).catch(() => undefined)));
+    await testEnv?.cleanup();
 });
 
 // Collects every snapshot the planner's listener would receive, in order.
@@ -81,7 +106,7 @@ function waitFor(predicate, label, timeoutMs = 15000) {
 
 describeEmulator('work_hours pending-write visibility', () => {
     it('marks a write made without a connection as pending, and clears it once delivered', async () => {
-        const db = emulatorDb('pending-a');
+        const db = workerDb();
         const seen = [];
         const unsubscribe = watchWorkHours(db, (snap) => {
             seen.push({
@@ -129,7 +154,7 @@ describeEmulator('work_hours pending-write visibility', () => {
     }, 30_000);
 
     it('without includeMetadataChanges the pending flag never clears (why the option is required)', async () => {
-        const db = emulatorDb('pending-b');
+        const db = workerDb();
         const seen = [];
         const q = query(collection(db, 'work_hours'), where('userId', '==', WORKER_ID));
         // The same listener MINUS the option — i.e. what this component did before the fix.
