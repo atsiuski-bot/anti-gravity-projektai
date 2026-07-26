@@ -81,7 +81,7 @@ export default function ManagerView() {
     const [teamCalendarSubTab, setTeamCalendarSubTab] = useState('calendar');
 
     // Use custom hooks
-    const { tasks, ownTasks, users, allUsers, error } = useManagerData(currentUser);
+    const { tasks, ownTasks, ownTasksLoaded, users, allUsers, error } = useManagerData(currentUser);
     // A scoped manager's pickers/reports must only offer their own team; admins & unscoped
     // managers see everyone. (Data rows are already team-scoped by the listeners; this narrows
     // the people you can FILTER/SELECT so no one outside the team is even named.)
@@ -678,7 +678,11 @@ export default function ManagerView() {
                             <div className="mb-6">
                                 <DailyWorkProgress currentUser={currentUser} tasks={filterTasksByVisibility(filteredMyTasks)} />
                             </div>
-                            {sortedMyTasks.length === 0 ? (
+                            {!ownTasksLoaded ? (
+                                <div className="py-12 bg-surface-card rounded-card shadow-sm border border-line">
+                                    <Spinner label="Kraunami darbai…" />
+                                </div>
+                            ) : sortedMyTasks.length === 0 ? (
                                 <div className="text-center py-12 bg-surface-card rounded-card shadow-sm border border-line">
                                     <p className="text-body text-ink-muted">Jums dar nepriskirta jokių užduočių.</p>
                                 </div>

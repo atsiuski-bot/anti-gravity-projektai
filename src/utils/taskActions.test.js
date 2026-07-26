@@ -540,6 +540,63 @@ describe('creditAndResumeTask — continue a briefly-reloaded timer', () => {
         expect(sessions[0].durationMinutes).toBe(30);
         expect(sessions[0].endTime).toBe('2026-06-23T11:30:00.000Z');
     });
+
+    // The continuity invariant. Every surface that tells the worker they are working — the
+    // whole-screen session colour, the header pill, the primary button, the manager's live panel —
+    // reads users/{uid}.activeSession. A plain pause nulls it, and startTask needs three server
+    // round-trips before it can write a fresh one, so a recovery that means "keep working" used to
+    // announce "stopped" for that whole window on every reload mid-shift.
+    it('never writes activeSession:null — the session changes value, it does not blink out', async () => {
+        const task = {
+            id: 'tCont',
+            title: 'Dig',
+            timerStatus: 'running',
+            timerStartedAt: '2026-06-23T11:00:00.000Z',
+            timerMinutes: 5,
+            assignedUserId: 'u1',
+        };
+
+        await creditAndResumeTask(task, new Date('2026-06-23T11:30:00.000Z').getTime());
+
+        const userWrites = userUpdatesFor('u1');
+        expect(userWrites.some((w) => w.activeSession === null)).toBe(false);
+        // ...and the run really did continue: the last user write re-anchors the task session.
+        const last = userWrites[userWrites.length - 1];
+        expect(last.activeSession).toMatchObject({ type: 'task', taskId: 'tCont' });
+        expect(last.workStatus.status).toBe('running');
+    });
+
+    // The other half of the same invariant: skipping the clear is only safe while the re-anchor
+    // actually happens. startTask fails CLOSED (returns false, never throws) when a live secondary
+    // session superseded the run — leaving the stale activeSession up would then park a permanent
+    // "still working" banner over a timer that is genuinely stopped.
+    it('clears the session after all when the re-anchor is refused', async () => {
+        // Only the USER doc carries the live break — the task doc must stay unreadable so
+        // pauseTask's own staleness guard keeps the caller's snapshot and still banks the stretch.
+        getDoc.mockImplementation((ref) => Promise.resolve(
+            ref?._col === 'users'
+                ? {
+                    exists: () => true,
+                    data: () => ({ activeSession: { type: 'break', startTime: '2026-06-23T11:45:00.000Z' } }),
+                }
+                : { exists: () => false, data: () => ({}) }
+        ));
+
+        const task = {
+            id: 'tCont',
+            title: 'Dig',
+            timerStatus: 'running',
+            timerStartedAt: '2026-06-23T11:00:00.000Z',
+            timerMinutes: 5,
+            assignedUserId: 'u1',
+        };
+
+        await creditAndResumeTask(task, new Date('2026-06-23T11:30:00.000Z').getTime());
+
+        const userWrites = userUpdatesFor('u1');
+        expect(userWrites.some((w) => w.activeSession === null)).toBe(true);
+        expect(userWrites.some((w) => w.workStatus?.status === 'paused')).toBe(true);
+    });
 });
 
 describe('startTask / resumeTask — running-state writes', () => {

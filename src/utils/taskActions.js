@@ -5,7 +5,8 @@ import { isManagerRole } from './formatters';
 import { logError } from './errorLog';
 import { notify, categoryOf } from './notify';
 import { createTask, reopenTask, deleteTask as deleteTaskCommand, completeTask, humanActor, MODES } from '../domain';
-import { withUserLock } from './sessionLock';
+import { withUserLock, LOCK_MAX_HOLD_MS } from './sessionLock';
+import { APP_INSTANCE_ID } from './appInstance';
 
 /**
  * Updates the user's work status in Firestore.
@@ -45,6 +46,9 @@ const updateUserWorkStatus = async (userId, isWorking, status, taskId) => {
  *
  * @param {Object} task - The task to start.
  * @param {string} userId - The user ID.
+ * @returns {Promise<boolean>} true when the timer was actually re-anchored; false when one of the
+ *   fail-closed guards below aborted the start (a silent no-op the caller cannot otherwise detect —
+ *   creditAndResumeTask needs it to know the run did NOT continue).
  */
 export const startTask = (task, userId) => withUserLock(userId, () => startTaskImpl(task, userId));
 
@@ -66,12 +70,12 @@ const startTaskImpl = async (task, userId) => {
                 logError(new Error('startTask skipped: live secondary session present'), {
                     source: 'startTask:supersededByLiveSession', userId, taskId: task.id, liveType: live.type,
                 });
-                return;
+                return false;
             }
         } catch (guardErr) {
             // Fail CLOSED: unproven safety → skip the start rather than risk wiping a live session.
             logError(guardErr, { source: 'startTask:guardRead', userId, taskId: task.id });
-            return;
+            return false;
         }
 
         // 1. Pause others (must complete before starting new task)
@@ -79,7 +83,7 @@ const startTaskImpl = async (task, userId) => {
 
         // 1b. Bank any stretch THIS task is still running on the server before re-anchoring it —
         // pauseOtherTasks skips the current task, so nothing else covers this document.
-        if (!(await closeRunningStretchOnTarget(task, userId, 'startTask'))) return;
+        if (!(await closeRunningStretchOnTarget(task, userId, 'startTask'))) return false;
 
         const now = new Date().toISOString();
 
@@ -92,6 +96,9 @@ const startTaskImpl = async (task, userId) => {
                 // anchor (orphan recovery's "no heartbeat → legacy clamp" path is then only
                 // ever reached by pre-heartbeat data, never a freshly-started timer).
                 timerLastHeartbeat: now,
+                // Claim the run for THIS app instance. Only its owner may beat it, so a second
+                // tab/device of the same worker can no longer keep a dead timer looking alive.
+                timerOwnerInstance: APP_INSTANCE_ID,
                 startedAt: task.startedAt || now,
                 status: 'in-progress',
                 updatedAt: now
@@ -117,6 +124,7 @@ const startTaskImpl = async (task, userId) => {
             })
         ]);
 
+        return true;
     } catch (err) {
         console.error("Error starting task:", err);
         // Record to the durable crash log before rethrowing — a failed timer start is exactly
@@ -287,7 +295,17 @@ export const pauseTask = async (task, { skipUserStatusUpdate = false, endTime = 
             );
         }
 
-        await Promise.all(parallelOps);
+        // Bounded on purpose. Offline, a Firestore mutation promise NEVER settles (it resolves on
+        // backend ack, not on the local write), so awaiting these outright meant the `finally` below
+        // never ran and `pauseInFlight` stayed latched for the rest of the app session: every later
+        // "Pauzė" on this task returned null as a "concurrent pause is already running" no-op, which
+        // the UI reports as success. The writes are already applied to the local cache and replay on
+        // reconnect, so waiting past the shared 8 s budget buys nothing — it only wedges the button.
+        let releaseTimer;
+        await Promise.race([
+            Promise.all(parallelOps).finally(() => clearTimeout(releaseTimer)),
+            new Promise((resolve) => { releaseTimer = setTimeout(resolve, LOCK_MAX_HOLD_MS); }),
+        ]);
 
         // Surface the credited duration + whether the clamp actually reduced it, so the
         // crash-recovery hook can show the worker an accurate "timer recovered" notice. The
@@ -422,6 +440,10 @@ const resumeTaskImpl = async (task, userId) => {
                 timerStartedAt: now,
                 // Seed the heartbeat on resume too (same rationale as startTask).
                 timerLastHeartbeat: now,
+                // Re-anchoring transfers ownership to whichever instance performed the resume —
+                // including recovery's creditAndResumeTask, which is how a reloaded app re-adopts
+                // the run it just proved was still live.
+                timerOwnerInstance: APP_INSTANCE_ID,
                 startedAt: task.startedAt || now,
                 status: 'in-progress',
                 updatedAt: now
@@ -474,11 +496,36 @@ const resumeTaskImpl = async (task, userId) => {
  * @param {number} endTimeMs - epoch ms of the last heartbeat (the credited stretch's end).
  */
 export const creditAndResumeTask = async (task, endTimeMs) => {
-    // Credit + log the proven segment, then resume. skipUserStatusUpdate is intentionally NOT
-    // set: pauseTask's user-doc write is harmless here because startTask immediately overwrites
-    // it back to 'running' with a fresh activeSession.
-    await pauseTask(task, { endTime: endTimeMs });
-    await startTask(task, task.assignedUserId);
+    // Credit + log the proven segment, then re-anchor.
+    //
+    // skipUserStatusUpdate is REQUIRED here, not optional. This transition's whole intent is "keep
+    // working", so the user doc must never pass through a not-working state. A plain pause writes
+    // `activeSession: null`, and startTask cannot write a fresh one until it has completed three
+    // sequential server round-trips (its own guard read, pauseOtherTasks, closeRunningStretchOnTarget).
+    // For that entire window every surface that reads activeSession — the whole-screen session
+    // colour (Layout), the header session pill, the primary button label, and the manager's "Aktyvi
+    // veikla" panel — told a worker who was demonstrably still working that they were stopped. On the
+    // recovery path that fired on EVERY reload mid-shift, which is exactly the "the app forgot I was
+    // working" report. Skipping the clear keeps the OLD activeSession on screen until startTask
+    // overwrites it in place: the value changes, it never becomes null.
+    await pauseTask(task, { endTime: endTimeMs, skipUserStatusUpdate: true });
+
+    // startTask fails CLOSED: it returns false (no throw) when a guard read is unproven or a live
+    // secondary session superseded the run. Either way the timer is genuinely paused now, so the
+    // clear the pause skipped has to happen after all — a stuck "still working" banner over a
+    // stopped timer is the one outcome worse than a brief blank.
+    let resumed = false;
+    try {
+        resumed = await startTask(task, task.assignedUserId);
+    } finally {
+        if (!resumed && task.assignedUserId) {
+            await updateUserWorkStatus(task.assignedUserId, false, 'paused', task.id);
+            await updateDoc(doc(db, 'users', task.assignedUserId), { activeSession: null })
+                .catch(clearErr => logError(clearErr, {
+                    source: 'creditAndResumeTask:clearAfterFailedResume', taskId: task.id,
+                }));
+        }
+    }
 };
 
 /**

@@ -53,6 +53,15 @@ export default function WorkerView() {
     const { usersMap, loading: usersLoading } = useUsers();
     const { activeTab, scrollPositions } = useNavigation();
     const [tasks, setTasks] = useState([]);
+    // Has the tasks listener reported at least once? An empty `tasks` array means "nothing loaded
+    // yet" and "this worker genuinely has no tasks" alike, and the empty state cannot tell them
+    // apart — so a worker with a RUNNING timer was shown "Kol kas užduočių nėra" plus a "Sukurti
+    // užduotį" button on every reload, while the shell colour and header pill simultaneously said a
+    // task was running. The window is not brief: the listener below does not even start until the
+    // whole users collection resolves. Latches ON only — the effect re-arms on every roster write
+    // (usersMap is a dependency, and heartbeats touch user docs), and resetting would re-flash the
+    // spinner over an already-populated list once a minute.
+    const [tasksLoaded, setTasksLoaded] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     // Post-completion earnings popup payload ({ task, totalMinutes }). No longer set from an event
@@ -133,14 +142,19 @@ export default function WorkerView() {
                 tasksData = sortWorkerTasks(tasksData);
 
                 setTasks(tasksData);
+                setTasksLoaded(true);
                 setError(null);
             }, (err) => {
                 logError(err, { source: 'onSnapshot:workerTasks' });
                 setError("Nepavyko užkrauti užduočių. Bandykite vėliau.");
+                // Stop waiting: the error banner is the honest signal now, and holding the list in
+                // a permanent loading state would hide it behind a spinner that never resolves.
+                setTasksLoaded(true);
             });
         } catch (err) {
             console.error("Error setting up tasks listener:", err);
             setError("Įvyko klaida. Bandykite perkrauti puslapį.");
+            setTasksLoaded(true);
         }
 
         const handleOpenTaskModal = (e) => {
@@ -344,7 +358,11 @@ export default function WorkerView() {
                     role="worker"
                 />
 
-                {sortedTasks.length === 0 ? (
+                {!tasksLoaded ? (
+                    <div className="rounded-card border border-line bg-surface-card shadow-sm p-8">
+                        <Spinner label="Kraunamos užduotys…" />
+                    </div>
+                ) : sortedTasks.length === 0 ? (
                     <div className="rounded-card border border-line bg-surface-card shadow-sm">
                         <EmptyState
                             icon={ClipboardList}

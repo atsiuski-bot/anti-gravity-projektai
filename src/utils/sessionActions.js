@@ -8,6 +8,7 @@ import { isManagerRole, formatTime } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
 import { buildCallTitle } from './callContacts';
 import { notify } from './notify';
+import { APP_INSTANCE_ID } from './appInstance';
 
 // Placeholder title given to a quick-work session that ends without the worker naming it
 // (it was stopped remotely, so the "what did you do?" prompt never appeared on this device).
@@ -188,6 +189,11 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
         const activeSession = {
             type,
             startTime,
+            // Claim the session for THIS app instance, exactly as a task run is claimed. Only the
+            // owner beats activeSessionLastHeartbeat, so a second tab of the same worker can no
+            // longer keep an abandoned break/call/quick-work looking alive — which would credit the
+            // dead stretch up to the reopen instead of stopping at the true last proof of life.
+            ownerInstance: APP_INSTANCE_ID,
             pausedSession: newPausedSession || inheritedPausedSession,
             ...metadata
         };
@@ -409,13 +415,10 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
             }
         }
 
-        // 2. CRITICAL: Update user doc immediately (this is what the UI waits for)
-        await updateDoc(userRef, updates);
-
-        // 3. Non-critical logging — fire and forget, don't block the caller.
+        // 2. Non-critical logging — fire and forget, don't block the caller.
         // `discard` short-circuits ALL logging: the worker chose to annul this session, so its
         // time must not land in `sessions` OR the legacy `work_sessions`/`sessions` mirror. The
-        // critical path above still ran — the session is closed and any paused session restored —
+        // critical path below still runs — the session is closed and any paused session restored —
         // so only the logging is skipped, never the state cleanup. (Used by the call "Anuliuoti"
         // action; any partial segment already logged in startSession for an INTERRUPTED other
         // session stays, as that is a different session's real time, not this discarded one.)
@@ -446,7 +449,24 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
                 await Promise.all(logPromises);
             } catch (e) { logError(e, { source: 'writeFail:endSession.doLogging', userId }); }
         };
+        // ISSUED BEFORE the critical user-doc write below, deliberately.
+        //
+        // A Firestore write applies to the local cache instantly but its PROMISE only settles when
+        // the backend acknowledges it — so offline it never settles at all. While this call sat
+        // AFTER `await updateDoc(userRef, ...)`, an offline "Baigti" therefore never even reached
+        // doLogging: the minutes-carrying rows were not written, not queued, not anywhere. Close the
+        // app before reconnecting and that break / call / quick-work was simply gone. Issuing the
+        // logging first puts those rows in the offline queue immediately; being unawaited, it still
+        // does not delay the user-doc write by a single tick.
+        //
+        // Safe to reorder because every pay-relevant row handleLegacyLogging writes uses a
+        // DETERMINISTIC id (sess_break_/sess_call_ws_/sess_qw_ws_ + startMs), so a close that is
+        // ultimately rejected and retried converges on the same row rather than duplicating it. The
+        // one random-id write is the `sessions` audit mirror, which no report sums.
         if (!session.discard) doLogging(); // Fire and forget — no await (skipped on annul)
+
+        // 3. CRITICAL: Update user doc (this is what the UI waits for)
+        await updateDoc(userRef, updates);
 
         // 4. Task Resumption Logic
         if (!skipResume) {

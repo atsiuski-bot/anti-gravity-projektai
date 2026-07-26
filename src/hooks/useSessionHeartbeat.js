@@ -5,6 +5,25 @@ import { useAuth } from '../context/AuthContext';
 import { logError } from '../utils/errorLog';
 import { TIMER_HEARTBEAT_INTERVAL_MS } from '../utils/timeUtils';
 import { getSecondarySession } from './useOrphanedSessionRecovery';
+import { APP_INSTANCE_ID, isOwnedByThisInstance } from '../utils/appInstance';
+
+// Captured once when this JS context boots — the legacy fallback anchor (see isBeatableSession).
+const APP_LOAD_TIME = Date.now();
+
+// May THIS app instance write the proof of life for this secondary session?
+//
+// Previously there was no test at all: every open context of the worker beat the session, so a
+// break/call/quick-work whose phone died stayed "alive" as long as any other tab was open, and the
+// abandonment recovery then credited it up to the reopen instead of the true last proof of life.
+// Ownership is the same rule the task heartbeat uses; sessions started before ownership existed
+// carry no ownerInstance and fall back to the boot-time proxy, which is conservative in the safe
+// direction (a pre-boot session is left to the recovery hook to judge). Pure + exported for tests.
+export function isBeatableSession(session, appLoadTime = APP_LOAD_TIME, instanceId = APP_INSTANCE_ID) {
+    if (!session?.startTime) return false;
+    if (session.ownerInstance) return isOwnedByThisInstance(session.ownerInstance, instanceId);
+    const startMs = new Date(session.startTime).getTime();
+    return Number.isFinite(startMs) && startMs >= appLoadTime;
+}
 
 /**
  * Keep a running break / call / quick-work session "alive" by stamping `activeSessionLastHeartbeat`
@@ -37,7 +56,7 @@ export function useSessionHeartbeat(currentUser) {
     // Derive the active secondary session's start instant (stable within a session). Recomputed
     // each render, but only its VALUE drives the effect, so userData churn does not restart the beat.
     const session = userData ? getSecondarySession(userData) : null;
-    const startKey = session?.startTime || null;
+    const startKey = isBeatableSession(session) ? session.startTime : null;
 
     useEffect(() => {
         if (!uid || !startKey) return undefined;

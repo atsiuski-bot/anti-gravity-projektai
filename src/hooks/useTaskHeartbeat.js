@@ -3,22 +3,30 @@ import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { logError } from '../utils/errorLog';
 import { TIMER_HEARTBEAT_INTERVAL_MS } from '../utils/timeUtils';
+import { APP_INSTANCE_ID, isOwnedByThisInstance } from '../utils/appInstance';
 
 // Captured once when this JS context boots (same convention as the recovery hooks). A running task
 // whose timerStartedAt predates this moment is a PRE-BOOT run this device merely OBSERVES — it is
 // orphan-recovery's to judge, and this hook must never beat it (see isBeatableRun).
 const APP_LOAD_TIME = Date.now();
 
-// Is this task a run THIS app session started (or re-anchored), i.e. one this device may beat?
-// Pre-boot runs are excluded on purpose: the beat is the "proof of life" orphan recovery uses to
-// tell a live timer from an abandoned one, and it now server-confirms that proof before acting.
-// The old unconditional immediate beat stamped a fresh beat onto every orphan at boot — blessing
-// an abandoned timer as alive and poisoning that confirmation. Every legitimate continuation of a
-// pre-boot run re-anchors timerStartedAt (creditAndResumeTask / resumeTask / startTask), so it
-// becomes beatable the instant recovery decides it really is live. Pure + exported for tests.
-export function isBeatableRun(task, uid, appLoadTime = APP_LOAD_TIME) {
+// Is this task a run THIS app instance anchored, i.e. one this device may beat?
+//
+// Ownership, not timing, is the test. The beat is the "proof of life" orphan recovery uses to tell
+// a live timer from an abandoned one, so only the instance actually running the timer may write it.
+// Every legitimate continuation of a pre-boot run re-anchors it (creditAndResumeTask / resumeTask /
+// startTask), and re-anchoring transfers ownership — so a run becomes beatable the instant recovery
+// decides it really is live, and not before.
+//
+// `timerOwnerInstance` is absent on runs anchored before ownership existed. Those fall back to the
+// original boot-time proxy (`startMs >= appLoadTime`), which is conservative in the safe direction:
+// it still refuses to bless a pre-boot orphan at boot. It remains wrong for a bystander tab, but
+// only until that legacy run is next anchored — after which the owner check governs.
+// Pure + exported for tests.
+export function isBeatableRun(task, uid, appLoadTime = APP_LOAD_TIME, instanceId = APP_INSTANCE_ID) {
     if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return false;
     if (!uid || task.assignedUserId !== uid) return false;
+    if (task.timerOwnerInstance) return isOwnedByThisInstance(task.timerOwnerInstance, instanceId);
     const startMs = new Date(task.timerStartedAt).getTime();
     return Number.isFinite(startMs) && startMs >= appLoadTime;
 }

@@ -17,6 +17,12 @@ export const useManagerData = (currentUser) => {
     // memo below, NOT inside the snapshot callback — see the subscription's dependency note.
     const [rawTasks, setRawTasks] = useState([]);
     const [ownTasks, setOwnTasks] = useState([]);
+    // "Mano darbai" runs on its OWN owner-scoped listener below, so the broad `loading` flag says
+    // nothing about it. Without a flag of its own, an empty ownTasks array reads as "no tasks
+    // assigned" while it still means "not loaded", and a manager working their own task was told
+    // "Jums dar nepriskirta jokių užduočių" on every reload. Latches ON only — never reset on a
+    // re-arm, so a populated list can't flash back to a spinner.
+    const [ownTasksLoaded, setOwnTasksLoaded] = useState(false);
     const [error, setError] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -85,8 +91,12 @@ export const useManagerData = (currentUser) => {
         const q = query(collection(db, 'tasks'), where('assignedUserId', '==', uid));
         const unsub = onSnapshot(q, (snapshot) => {
             setOwnTasks(snapshot.docs.map(d => ({ id: d.id, ...d.data() })));
+            setOwnTasksLoaded(true);
         }, (err) => {
             logError(err, { source: 'onSnapshot:managerOwnTasks' });
+            // Stop waiting on a read that will not arrive — the empty state is then the truthful
+            // thing to show, rather than a spinner that never resolves.
+            setOwnTasksLoaded(true);
         });
         return () => unsub();
     }, [uid]);
@@ -94,5 +104,5 @@ export const useManagerData = (currentUser) => {
     // Filter out disabled users for the UI
     const users = usersList.filter(u => !u.isDisabled);
 
-    return { tasks, ownTasks, users, allUsers: usersList, error, loading };
+    return { tasks, ownTasks, ownTasksLoaded, users, allUsers: usersList, error, loading };
 };

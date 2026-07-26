@@ -45,3 +45,40 @@ describe('isBeatableRun — which running task this device may stamp proof-of-li
         expect(isBeatableRun(null, 'u1', BOOT)).toBe(false);
     });
 });
+
+// Ownership supersedes the boot-time proxy. The proxy answered "did this run start after I booted",
+// which any second context of the same worker that was already open also satisfies — so a laptop tab
+// left open beside the phone kept stamping proof-of-life onto a run it merely observed, and (the beat
+// being one flat last-write-wins field) OVERWROTE the dying phone's true final beat. Recovery then
+// credited the whole dead stretch as worked. Ownership makes the beat mean what its consumers assume.
+describe('isBeatableRun — ownership, not timing, decides who may beat', () => {
+    const BOOT = new Date('2026-07-01T08:00:00Z').getTime();
+    const iso = (ms) => new Date(ms).toISOString();
+    const MINE = 'inst_mine';
+    const THEIRS = 'inst_other_tab';
+    const run = (over = {}) => ({
+        id: 't1', timerStatus: 'running', timerStartedAt: iso(BOOT + 60000),
+        assignedUserId: 'u1', ...over,
+    });
+
+    it('beats a run THIS instance anchored', () => {
+        expect(isBeatableRun(run({ timerOwnerInstance: MINE }), 'u1', BOOT, MINE)).toBe(true);
+    });
+
+    it('does NOT beat a run another instance anchored, even though it started after this boot', () => {
+        // The bystander case: this tab booted first, the phone then started the run. The old proxy
+        // said "started after my boot → mine to beat"; ownership correctly says observer.
+        expect(isBeatableRun(run({ timerOwnerInstance: THEIRS }), 'u1', BOOT, MINE)).toBe(false);
+    });
+
+    it('falls back to the boot-time proxy only for runs anchored before ownership existed', () => {
+        expect(isBeatableRun(run(), 'u1', BOOT, MINE)).toBe(true);
+        expect(isBeatableRun(run({ timerStartedAt: iso(BOOT - 60000) }), 'u1', BOOT, MINE)).toBe(false);
+    });
+
+    it('still refuses a foreign owner on someone else\'s task', () => {
+        expect(isBeatableRun(
+            run({ timerOwnerInstance: THEIRS, assignedUserId: 'someone-else' }), 'u1', BOOT, MINE,
+        )).toBe(false);
+    });
+});
