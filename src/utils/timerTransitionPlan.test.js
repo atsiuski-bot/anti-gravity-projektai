@@ -266,7 +266,10 @@ describe('revisioned timer transition plans', () => {
             userData: {
                 ...idleUser,
                 displayName: 'Worker A',
-                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 3 },
+                // lastDate is part of the fixture because production always has it: a running break
+                // means a break START wrote the pair. Without it the total is undated, which is now
+                // deliberately treated as "not today's" — a different case, covered separately.
+                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 3, lastDate: '2026-07-09' },
             },
             activeRecord: {
                 userId,
@@ -458,7 +461,8 @@ describe('revisioned timer transition plans', () => {
             userData: {
                 ...idleUser,
                 displayName: 'Worker A',
-                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 4 },
+                // Same-day pair — see the note on the break-end fixture above.
+                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 4, lastDate: '2026-07-09' },
             },
             activeRecord: {
                 userId,
@@ -1093,5 +1097,105 @@ describe('a task deleted mid-run must not wedge the worker', () => {
         });
         expect(plan.writes.find((w) => w.path === 'tasks/task-a').data.timerOwnerInstance)
             .toBe(APP_INSTANCE_ID);
+    });
+});
+
+// breakState.dailyAccumulatedMinutes is a DAY total. Every writer used to carry the stored number
+// forward verbatim while ALSO stamping lastDate to today, so the first break of a new day re-dated
+// yesterday's total as today's and it grew day over day (production: 619 min against ~50 s taken).
+// The pair (total, lastDate) must now always describe the SAME day.
+describe('break day counter must not carry across the day boundary', () => {
+    const YESTERDAY_TOTAL = 619.1034;
+    const staleUser = {
+        id: userId,
+        activeSession: null,
+        workStatus: { isWorking: false, status: 'idle', activeTaskId: null },
+        breakState: {
+            isTakingBreak: false,
+            dailyAccumulatedMinutes: YESTERDAY_TOTAL,
+            lastDate: '2026-07-08',
+        },
+    };
+    const breakStateOf = (plan) =>
+        plan.writes.find((w) => w.path === `users/${userId}`).data.breakState;
+
+    it('starting a break on a NEW day rebases the total to zero before re-dating it', () => {
+        const plan = planBreakStart({
+            userId,
+            userData: staleUser,
+            activeRecord: null,
+            commandId: 'cmd-break-newday',
+            runId: 'run-break-newday',
+            issuedAt: '2026-07-09T08:00:00.000Z',
+        });
+        const bs = breakStateOf(plan);
+        expect(bs.dailyAccumulatedMinutes, 'yesterday\'s total must not become today\'s').toBe(0);
+        expect(bs.lastDate).toBe('2026-07-09');
+    });
+
+    it('keeps a SAME-day total, so a second break of the day still accumulates', () => {
+        const sameDay = {
+            ...staleUser,
+            breakState: { ...staleUser.breakState, dailyAccumulatedMinutes: 12, lastDate: '2026-07-09' },
+        };
+        const plan = planBreakStart({
+            userId,
+            userData: sameDay,
+            activeRecord: null,
+            commandId: 'cmd-break-sameday',
+            runId: 'run-break-sameday',
+            issuedAt: '2026-07-09T08:00:00.000Z',
+        });
+        expect(breakStateOf(plan).dailyAccumulatedMinutes).toBe(12);
+    });
+
+    it('ending a break credits onto the rebased total and re-dates it in the same write', () => {
+        const plan = planBreakEnd({
+            userId,
+            userData: staleUser,
+            activeRecord: {
+                userId,
+                revision: 6,
+                status: 'active',
+                run: {
+                    runId: 'run-break',
+                    type: 'break',
+                    startedAt: '2026-07-09T08:05:00.000Z',
+                    revision: 6,
+                    pausedSession: null,
+                },
+            },
+            commandId: 'cmd-end-break-newday',
+            issuedAt: '2026-07-09T08:15:00.000Z',
+        });
+        const bs = breakStateOf(plan);
+        expect(bs.dailyAccumulatedMinutes, 'must be the 10 credited minutes alone').toBe(10);
+        expect(bs.lastDate).toBe('2026-07-09');
+    });
+
+    it('a call starting over a break banks the closed minutes onto the rebased total', () => {
+        const plan = planSecondaryStart({
+            type: 'call',
+            userId,
+            userData: staleUser,
+            activeRecord: {
+                userId,
+                revision: 3,
+                status: 'active',
+                run: {
+                    runId: 'run-break-2',
+                    type: 'break',
+                    startedAt: '2026-07-09T08:00:00.000Z',
+                    revision: 3,
+                    pausedSession: null,
+                },
+            },
+            commandId: 'cmd-call-over-break',
+            runId: 'run-call',
+            issuedAt: '2026-07-09T08:04:00.000Z',
+        });
+        const bs = breakStateOf(plan);
+        expect(bs.dailyAccumulatedMinutes).toBe(4);
+        expect(bs.lastDate).toBe('2026-07-09');
     });
 });

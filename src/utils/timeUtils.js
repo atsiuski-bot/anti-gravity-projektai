@@ -253,6 +253,35 @@ export const getLithuanianDateString = (date = new Date()) => {
 };
 
 /**
+ * The value `breakState.dailyAccumulatedMinutes` should be built on TODAY — 0 once the day has
+ * rolled over, otherwise the stored total.
+ *
+ * WHY THIS EXISTS
+ * The field is a DAY total, but nothing ever wrote it back to zero: the rollover lived only in
+ * useTimerState, which sets the DISPLAYED value to 0 when `lastDate` is older than today and never
+ * persists that. Every writer meanwhile carried the stored number forward verbatim — and starting a
+ * break also stamps `lastDate` to today. So the first break of a new day re-dated yesterday's total
+ * as today's, after which the read-time reset no longer fired and the counter simply grew, day over
+ * day, without bound. A live account reached 619 minutes of "today's break" against roughly 50
+ * seconds actually taken.
+ *
+ * Deriving the base here moves the rollover to where the value is WRITTEN, so the stored number is
+ * correct on its own and no longer depends on a reader to reinterpret it. Every break write site —
+ * legacy (sessionActions) and canonical (timerTransitionPlan) — must go through this.
+ *
+ * @param {Object|null} breakState - the user's stored breakState.
+ * @param {Date|string} [at] - the instant the write is credited to; a break is bucketed by the day
+ *                             it ENDS, matching the break_sessions row's own `date`.
+ * @returns {number} minutes to build on — 0 on a new day, or a stale/unusable stored value.
+ */
+export const breakDayBaseMinutes = (breakState, at = new Date()) => {
+    const stored = Number(breakState?.dailyAccumulatedMinutes || 0);
+    // A negative or unparseable total is corruption, not history — never carry it forward.
+    if (!Number.isFinite(stored) || stored <= 0) return 0;
+    return breakState?.lastDate === getLithuanianDateString(at) ? stored : 0;
+};
+
+/**
  * Adds (or subtracts) whole calendar days to a YYYY-MM-DD string and returns a YYYY-MM-DD
  * string. Pure UTC calendar arithmetic, so it is DST-independent and never lands on a
  * non-existent local hour. Use this to derive a day-window's end as the NEXT day's work-day
