@@ -1,7 +1,7 @@
 import { db } from '../firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { archiveTask } from './taskActions';
-import { getLithuanianNow, getLithuanianDateString, getLithuanian3AMCutoff, addDaysToDateString } from './timeUtils';
+import { getLithuanianNow, getLithuanianDateString, getWorkDayCutoff, addDaysToDateString } from './timeUtils';
 
 // NOTE: deadline-based PRIORITY ESCALATION used to live here (checkAndPromoteTasks) and ran in the
 // browser, gated to whole-team admins/managers. It was MOVED to a scheduled Cloud Function
@@ -68,14 +68,14 @@ export async function archiveOldTasks() {
         deletedSnap.docs.forEach(d => taskMap.set(d.id, { id: d.id, ...d.data() }));
         const tasks = Array.from(taskMap.values());
 
-        // Archive rule: the work-day flips at 03:00 Vilnius time. Derive the current
-        // work-day as a Vilnius date string, rolling back one day when the moment is
-        // still before today's 03:00 Vilnius cutoff. The old code used the BROWSER's
-        // local getHours() < 3, so an off-Vilnius device flipped the day at the wrong
+        // Archive rule: the work-day flips at WORK_DAY_START_HOUR Vilnius time. Derive the
+        // current work-day as a Vilnius date string, rolling back one day when the moment is
+        // still before today's Vilnius cutoff. The old code used the BROWSER's
+        // local getHours(), so an off-Vilnius device flipped the day at the wrong
         // hour and mis-archived (or skipped archiving) yesterday's tasks.
         const now = getLithuanianNow();
         const todayStr = getLithuanianDateString(now);
-        const cutOffStr = (now < getLithuanian3AMCutoff(todayStr))
+        const cutOffStr = (now < getWorkDayCutoff(todayStr))
             ? addDaysToDateString(todayStr, -1)
             : todayStr;
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { doc, getDocFromServer } from 'firebase/firestore';
 import { db } from '../firebase';
-import { pauseTask, creditAndResumeTask } from '../utils/taskActions';
+import { pauseTask, creditAndResumeTask, startTask, clearLiveSessionAfterFailedResume } from '../utils/taskActions';
 import { claimRecoveredGap } from '../utils/sessionEditActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
@@ -58,7 +58,12 @@ export function decideOrphanTaskRecovery(task, appLoadTime = Date.now()) {
 // certainly a multi-day forgotten timer, not one offline shift. AUTO-credit only fires when the
 // running task is the CURRENT user's own (attribution/rules would be wrong otherwise) and the write
 // succeeds — any other case falls back to the opt-in claim offer so the time is never silently lost.
-export async function resolveUntrackedGap(task, currentUser, decision) {
+// `silent` suppresses ONLY the success banner. It is set on the silent-continuation path, where the
+// timer never stopped and the worker is meant to notice nothing at all — a banner there would be the
+// single interruption in an otherwise seamless recovery. The FAILURE branch is never silenced: when
+// the auto-credit write does not land the time is genuinely un-credited, so the claim offer (and its
+// durable error_logs trace) must still appear or real worked time disappears without a record.
+export async function resolveUntrackedGap(task, currentUser, decision, silent = false) {
     const gapMinutes = Math.round((decision.gapTo - decision.gapFrom) / 60000);
     if (gapMinutes < 1 || gapMinutes > MAX_SESSION_MINUTES || !task.assignedUserId) return;
 
@@ -95,6 +100,7 @@ export async function resolveUntrackedGap(task, currentUser, decision) {
     });
 
     if (claim?.ok) {
+        if (silent) return;
         addRecoveryNotice(task.assignedUserId, {
             kind: 'task-gap-credited', taskId: task.id, taskTitle: task.title || '',
             gapMinutes, sessionId: claim.id,
@@ -134,7 +140,7 @@ export async function confirmTaskOrphanOnServer(task) {
 //     cover the app-open stretch worked in between, or that stretch would be silently dropped.
 // A confirm failure propagates to the caller (unlatch + retry); a failed WRITE after a successful
 // confirm is logged and stays latched, exactly as before.
-export async function recoverConfirmedOrphan(task, currentUser, nowMs = Date.now()) {
+export async function recoverConfirmedOrphan(task, currentUser, nowMs = Date.now(), appLoadTime = APP_LOAD_TIME) {
     const fresh = await confirmTaskOrphanOnServer(task);
     if (!fresh) return null; // another closer already finalized this run — nothing left to recover
     const decision = decideOrphanTaskRecovery(fresh, nowMs);
@@ -154,7 +160,19 @@ export async function recoverConfirmedOrphan(task, currentUser, nowMs = Date.now
         }
         // (3) Large tail — credit the proven part up to the last beat and pause, then resolve
         // the untracked gap (auto-credit or claim offer); see pauseAtBeatAndResolveGap.
-        return await pauseAtBeatAndResolveGap(fresh, currentUser, decision);
+        //
+        // …unless THIS app has been open, and showing this timer as running, the whole time. That
+        // is the offline-restart case: the app restarted with no signal, so it could neither
+        // server-confirm the orphan (this function's first line throws, and the caller retries)
+        // nor write a heartbeat (it does not own the run). Meanwhile the worker watched a running
+        // timer and kept working. When signal finally returns, the last beat is hours old and the
+        // stale-tail rule above would stop a timer that never actually stopped — leaving everything
+        // worked from here on untracked until they notice. A confirm that lands well after boot is
+        // itself the evidence: the app was alive and displaying the run for that whole stretch.
+        return await pauseAtBeatAndResolveGap(
+            fresh, currentUser, decision,
+            nowMs - appLoadTime > TIMER_HEARTBEAT_CONTINUE_MS,
+        );
     } catch (e) {
         logError(e, { source: 'orphanRecovery:pauseTask', taskId: task.id });
         return null;
@@ -174,10 +192,34 @@ export async function recoverConfirmedOrphan(task, currentUser, nowMs = Date.now
 // work_sessions row for the same interval; since reports sum work_sessions, the interval would
 // double-count and the summed sessions would diverge from task.timerMinutes (the very invariant
 // pauseTask maintains). Gating on the result closes that double-credit path.
-export async function pauseAtBeatAndResolveGap(task, currentUser, decision) {
-    const result = await pauseTask(task, { endTime: decision.creditTo });
-    stampRecoveredNotice(task, result);
-    if (result) await resolveUntrackedGap(task, currentUser, decision);
+// `keepRunning` turns this into a SILENT CONTINUATION: the proven stretch and the untracked gap are
+// credited exactly as always, but the timer is then re-anchored instead of left stopped, and no
+// "timer was recovered and stopped" notice is shown — because it was not stopped. The worker sees
+// nothing at all; the only difference to them is that the timer did not die. The gap's own
+// "Nedirbau" opt-out banner still appears: that one is about credited MONEY, not about the timer,
+// and it is the worker's only way to reject time they did not work.
+export async function pauseAtBeatAndResolveGap(task, currentUser, decision, keepRunning = false) {
+    // Skip the user-doc clear when a re-anchor follows, for the same reason creditAndResumeTask
+    // does — the session must not blink out between the close and the restart.
+    const result = await pauseTask(task, { endTime: decision.creditTo, skipUserStatusUpdate: keepRunning });
+    if (result) await resolveUntrackedGap(task, currentUser, decision, keepRunning);
+
+    // A null result means our pause was DEDUPED — the time-limit monitor closed this same run one
+    // tick earlier and credited it up to now, which is also why it is showing the worker a forced
+    // "limit reached" popup. Re-anchoring on top of that would start a second run behind that popup,
+    // so the continuation is off here for the same reason the gap credit above is.
+    if (!keepRunning || !result) {
+        stampRecoveredNotice(task, result);
+        return result;
+    }
+
+    // startTask fails CLOSED (returns false, never throws). If it declines, the timer really is
+    // stopped, so undo the skipped clear and fall back to the honest "recovered and stopped" notice.
+    const resumed = await startTask(task, task.assignedUserId);
+    if (!resumed) {
+        await clearLiveSessionAfterFailedResume(task);
+        stampRecoveredNotice(task, result);
+    }
     return result;
 }
 

@@ -255,8 +255,8 @@ export const getLithuanianDateString = (date = new Date()) => {
 /**
  * Adds (or subtracts) whole calendar days to a YYYY-MM-DD string and returns a YYYY-MM-DD
  * string. Pure UTC calendar arithmetic, so it is DST-independent and never lands on a
- * non-existent local hour. Use this to derive a day-window's end as the NEXT day's 03:00
- * cutoff (getLithuanian3AMCutoff of dateStr+1) instead of "cutoff + 24h": across a DST
+ * non-existent local hour. Use this to derive a day-window's end as the NEXT day's work-day
+ * cutoff (getWorkDayCutoff of dateStr+1) instead of "cutoff + 24h": across a DST
  * boundary a fixed +24h leaves a 1-hour gap (work dropped) or overlap (work double-counted).
  *
  * @param {string} dateStr - A YYYY-MM-DD date string.
@@ -382,16 +382,29 @@ export const getLithuanianWeekday = (date = new Date()) => {
     return enToLtMap[enWeekday] || 'Nežinoma';
 };
 
+// The Vilnius wall-clock hour at which one WORK day ends and the next begins. Deliberately not
+// midnight: a shift that runs past 00:00 is the same working day to the person doing it, and a task
+// finished at 01:00 dropping out of "today" is a lie the worker has to argue with. Set to 05:00 so
+// a genuine night shift ending before dawn still belongs to the day it started on.
+//
+// Changing this ONE number moves every day window that governs what a worker SEES: which finished
+// tasks linger in the personal and team lists, the Dienos statistika 05:00→05:00 span, and when
+// archiveOldTasks sweeps. It does NOT move where minutes are STORED — work_sessions.date is stamped
+// by the pure Vilnius calendar day at the moment the session ends — so reports and pay are
+// unaffected by this constant and no historical row is rewritten.
+export const WORK_DAY_START_HOUR = 5;
+
 /**
- * Returns a Date object for the same day at 03:00 Lithuania time.
+ * Returns a Date object for the WORK-DAY boundary (see WORK_DAY_START_HOUR) on the given
+ * Vilnius calendar day.
  */
-export const getLithuanian3AMCutoff = (dateStr) => {
+export const getWorkDayCutoff = (dateStr) => {
     const [y, m, d] = dateStr.split('-').map(Number);
-    // 03:00 Vilnius is 01:00 UTC in winter (UTC+2) and 00:00 UTC in summer (UTC+3).
+    // Vilnius is UTC+2 in winter and UTC+3 in summer, so the boundary's UTC hour shifts with DST.
     // Read the day's offset from a noon reference (noon is never inside the DST
     // spring-forward gap) so the result is deterministic - the previous
-    // step-towards-03:00 loop could oscillate on the spring-forward day, when 03:00
-    // local time does not exist, and return an off-by-one-hour cutoff.
+    // step-towards-the-boundary loop could oscillate on the spring-forward day, when the
+    // local hour may not exist, and return an off-by-one-hour cutoff.
     const noonUTC = new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
     const localNoonHour = parseInt(
         new Intl.DateTimeFormat('en-GB', {
@@ -402,31 +415,31 @@ export const getLithuanian3AMCutoff = (dateStr) => {
         10
     );
     const offsetHours = localNoonHour - 12; // 2 (winter) or 3 (summer)
-    return new Date(Date.UTC(y, m - 1, d, 3 - offsetHours, 0, 0));
+    return new Date(Date.UTC(y, m - 1, d, WORK_DAY_START_HOUR - offsetHours, 0, 0));
 };
 
 /**
- * The start instant of the CURRENT "work day" — 03:00 Europe/Vilnius. Before 03:00 the work
- * day still belongs to the PREVIOUS calendar day, so the cutoff steps back one day; without
- * that, a task finished just after midnight would sit before "today's" (still-future) 03:00 and
- * wrongly drop out of every day-windowed list. The shared team scope (scopeActiveTasks) and both
- * personal lists (scopePersonalDayWindow) read this one helper so their "today" boundary can
- * never disagree.
+ * The start instant of the CURRENT "work day" — {@link WORK_DAY_START_HOUR}:00 Europe/Vilnius.
+ * Before that hour the work day still belongs to the PREVIOUS calendar day, so the cutoff steps
+ * back one day; without that, a task finished just after midnight would sit before "today's"
+ * (still-future) boundary and wrongly drop out of every day-windowed list. The shared team scope
+ * (scopeActiveTasks) and both personal lists (scopePersonalDayWindow) read this one helper so
+ * their "today" boundary can never disagree.
  *
  * @param {Date} [now=getLithuanianNow()] - Reference instant (injectable for tests).
- * @returns {Date} The current work day's 03:00 Vilnius cutoff as a Date.
+ * @returns {Date} The current work day's Vilnius cutoff as a Date.
  */
 export const getCurrentWorkDayCutoff = (now = getLithuanianNow()) => {
     let cutoffDate = getLithuanianDateString(now);
-    // If it's before today's 03:00 Vilnius cutoff, the work day started at 03:00 the previous
+    // If it's before today's Vilnius cutoff, the work day started at the boundary on the previous
     // calendar day. Compare the instant against the DST-safe Vilnius cutoff (the same technique
-    // automationUtils uses) rather than now.getHours() < 3 — the latter reads the DEVICE-local
+    // automationUtils uses) rather than now.getHours() — the latter reads the DEVICE-local
     // hour, which disagrees with the Vilnius date above on off-Vilnius devices and flips the
-    // work day at the wrong moment for ~2-3h each night.
-    if (now < getLithuanian3AMCutoff(cutoffDate)) {
+    // work day at the wrong moment for several hours each night.
+    if (now < getWorkDayCutoff(cutoffDate)) {
         cutoffDate = addDaysToDateString(cutoffDate, -1);
     }
-    return getLithuanian3AMCutoff(cutoffDate);
+    return getWorkDayCutoff(cutoffDate);
 };
 
 /**
@@ -439,7 +452,7 @@ export const getCurrentWorkDayCutoff = (now = getLithuanianNow()) => {
  *
  * Vilnius is UTC+2 (winter) / UTC+3 (summer); the day's offset is read from a NOON reference
  * (noon is never inside the DST spring-forward gap) so the conversion is deterministic — the
- * same technique getLithuanian3AMCutoff uses. Returns null on malformed input.
+ * same technique getWorkDayCutoff uses. Returns null on malformed input.
  *
  * @param {string} dateStr - Vilnius local date, "YYYY-MM-DD".
  * @param {string} timeStr - Vilnius local time, "HH:MM" (24h).

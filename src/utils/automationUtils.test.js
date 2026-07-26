@@ -36,8 +36,8 @@ beforeEach(() => {
     vi.clearAllMocks();
 });
 
-describe('archiveOldTasks — work-day cutoff flips at 03:00 Vilnius', () => {
-    it('after 03:00 Vilnius: archives tasks finished before today, keeps today', async () => {
+describe('archiveOldTasks — work-day cutoff flips at 05:00 Vilnius', () => {
+    it('after the boundary: archives tasks finished before today, keeps today', async () => {
         // 15:00 Vilnius on 2026-06-21 -> cutoff = 2026-06-21.
         getLithuanianNow.mockReturnValue(new Date('2026-06-21T12:00:00Z'));
         getDocs
@@ -54,9 +54,9 @@ describe('archiveOldTasks — work-day cutoff flips at 03:00 Vilnius', () => {
         expect(archivedIds).not.toContain('todayDone');
     });
 
-    it('before 03:00 Vilnius: rolls the work-day back one day', async () => {
+    it('before the boundary: rolls the work-day back one day', async () => {
         // 23:00 UTC on 2026-06-20 = 02:00 Vilnius on 2026-06-21 (summer +3), which is
-        // BEFORE 03:00 Vilnius -> the work-day is still 2026-06-20.
+        // BEFORE the boundary -> the work-day is still 2026-06-20.
         getLithuanianNow.mockReturnValue(new Date('2026-06-20T23:00:00Z'));
         getDocs
             .mockResolvedValueOnce(snapshotOf([
@@ -70,6 +70,31 @@ describe('archiveOldTasks — work-day cutoff flips at 03:00 Vilnius', () => {
         const archivedIds = archiveTask.mock.calls.map((c) => c[0].id);
         expect(archivedIds).toContain('twoDaysAgo');
         expect(archivedIds).not.toContain('yesterday'); // cutoff rolled back to 06-20
+    });
+
+    // The band that moving the boundary from 03:00 to 05:00 actually changed, and the reason the
+    // move was made: a night shift that ends before dawn belongs to the day it started on. Under
+    // the old 03:00 boundary this instant was already "the next work day", so the previous day's
+    // finished work was archived out from under a worker who was still on shift.
+    it('04:00 Vilnius still belongs to the PREVIOUS work day (the night-shift case)', async () => {
+        // 01:00 UTC on 2026-06-21 = 04:00 Vilnius (summer +3): after the old 03:00 boundary but
+        // before the current 05:00 one -> the work-day must still be 2026-06-20.
+        getLithuanianNow.mockReturnValue(new Date('2026-06-21T01:00:00Z'));
+        getDocs
+            .mockResolvedValueOnce(snapshotOf([
+                { id: 'twoDaysAgo', status: 'confirmed', confirmedAt: '2026-06-19T10:00:00Z' },
+                // 20:00 UTC = 23:00 Vilnius on 06-20, so its Vilnius DAY is 2026-06-20 — the day
+                // the shift began. (22:00 UTC would already bucket to 06-21 and make this test
+                // pass under either boundary, i.e. prove nothing.)
+                { id: 'nightShift', status: 'confirmed', confirmedAt: '2026-06-20T20:00:00Z' },
+            ]))
+            .mockResolvedValueOnce(snapshotOf([]));
+
+        await archiveOldTasks();
+
+        const archivedIds = archiveTask.mock.calls.map((c) => c[0].id);
+        expect(archivedIds).toContain('twoDaysAgo');
+        expect(archivedIds).not.toContain('nightShift');
     });
 
     it('buckets the confirmedAt to its Vilnius day, not the UTC day (the late-evening bug)', async () => {

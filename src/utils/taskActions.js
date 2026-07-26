@@ -518,14 +518,29 @@ export const creditAndResumeTask = async (task, endTimeMs) => {
     try {
         resumed = await startTask(task, task.assignedUserId);
     } finally {
-        if (!resumed && task.assignedUserId) {
-            await updateUserWorkStatus(task.assignedUserId, false, 'paused', task.id);
-            await updateDoc(doc(db, 'users', task.assignedUserId), { activeSession: null })
-                .catch(clearErr => logError(clearErr, {
-                    source: 'creditAndResumeTask:clearAfterFailedResume', taskId: task.id,
-                }));
-        }
+        if (!resumed) await clearLiveSessionAfterFailedResume(task);
     }
+};
+
+/**
+ * Clear the worker's live session + work status for a task whose re-anchor did NOT happen.
+ *
+ * Shared by every "close then immediately re-open" path (creditAndResumeTask above, and orphan
+ * recovery's silent continuation). Those paths deliberately pass `skipUserStatusUpdate` so the
+ * session never blinks out between the two writes — which is only safe while the restart actually
+ * follows. startTask fails CLOSED (returns false, no throw), so when it declines, this performs the
+ * clear that was skipped: a stuck "still working" banner over a stopped timer is the one outcome
+ * worse than a brief blank.
+ *
+ * @param {Object} task - the task whose resume was refused (needs id, assignedUserId).
+ */
+export const clearLiveSessionAfterFailedResume = async (task) => {
+    if (!task?.assignedUserId) return;
+    await updateUserWorkStatus(task.assignedUserId, false, 'paused', task.id);
+    await updateDoc(doc(db, 'users', task.assignedUserId), { activeSession: null })
+        .catch(clearErr => logError(clearErr, {
+            source: 'clearLiveSessionAfterFailedResume', taskId: task.id,
+        }));
 };
 
 /**

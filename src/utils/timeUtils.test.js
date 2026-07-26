@@ -4,7 +4,8 @@ import {
     clampSessionMinutes,
     parseTimeStringToMinutes,
     getLithuanianDateString,
-    getLithuanian3AMCutoff,
+    WORK_DAY_START_HOUR,
+    getWorkDayCutoff,
     getCurrentWorkDayCutoff,
     addDaysToDateString,
     calculateCurrentTotalMinutes,
@@ -105,13 +106,19 @@ describe('getLithuanianDateString (Vilnius calendar day)', () => {
     });
 });
 
-describe('getLithuanian3AMCutoff (03:00 Vilnius as a UTC instant, DST-safe)', () => {
-    it('winter date -> 01:00 UTC (offset +2)', () => {
-        expect(getLithuanian3AMCutoff('2026-01-15').toISOString()).toBe('2026-01-15T01:00:00.000Z');
+describe('getWorkDayCutoff (the work-day boundary as a UTC instant, DST-safe)', () => {
+    // Locked deliberately: the boundary is a POLICY number. A night shift ending before dawn must
+    // still belong to the day it started on, so moving this is a product decision, not a refactor.
+    it('the work day starts at 05:00 Vilnius', () => {
+        expect(WORK_DAY_START_HOUR).toBe(5);
     });
 
-    it('summer date -> 00:00 UTC (offset +3)', () => {
-        expect(getLithuanian3AMCutoff('2026-07-15').toISOString()).toBe('2026-07-15T00:00:00.000Z');
+    it('winter date -> 03:00 UTC (offset +2)', () => {
+        expect(getWorkDayCutoff('2026-01-15').toISOString()).toBe('2026-01-15T03:00:00.000Z');
+    });
+
+    it('summer date -> 02:00 UTC (offset +3)', () => {
+        expect(getWorkDayCutoff('2026-07-15').toISOString()).toBe('2026-07-15T02:00:00.000Z');
     });
 });
 
@@ -135,21 +142,22 @@ describe('addDaysToDateString (UTC calendar arithmetic, DST-independent)', () =>
     });
 });
 
-describe('getCurrentWorkDayCutoff (work-day flips at 03:00 Vilnius, device-tz-independent)', () => {
-    it('keeps TODAY when the instant is past 03:00 Vilnius even if the device-local hour is < 3', () => {
-        // 01:30 UTC on a winter day is 03:30 Vilnius (UTC+2) — i.e. just AFTER today's 03:00
-        // cutoff, so the work day is TODAY (2026-01-15). The old getHours() < 3 test read the
-        // DEVICE-local hour, which is < 3 on UTC-1..UTC+1 devices for this instant and wrongly
+describe('getCurrentWorkDayCutoff (work-day flips at 05:00 Vilnius, device-tz-independent)', () => {
+    it('keeps TODAY when the instant is past 05:00 Vilnius even if the device-local hour is smaller', () => {
+        // 03:30 UTC on a winter day is 05:30 Vilnius (UTC+2) — i.e. just AFTER today's boundary,
+        // so the work day is TODAY (2026-01-15). The old getHours() test read the DEVICE-local
+        // hour, which is below the boundary on western devices for this instant and wrongly
         // rolled the cutoff back to yesterday. The DST-safe Vilnius comparison must not.
-        const now = new Date('2026-01-15T01:30:00Z');
-        expect(getCurrentWorkDayCutoff(now).toISOString()).toBe('2026-01-15T01:00:00.000Z');
+        const now = new Date('2026-01-15T03:30:00Z');
+        expect(getCurrentWorkDayCutoff(now).toISOString()).toBe('2026-01-15T03:00:00.000Z');
     });
 
-    it('rolls back to YESTERDAY when the instant is before today\'s 03:00 Vilnius', () => {
-        // 00:30 UTC on a winter day is 02:30 Vilnius — still BEFORE 03:00, so the work day is
-        // the previous calendar day (2026-01-14), whose 03:00 cutoff is 2026-01-14T01:00 UTC.
-        const now = new Date('2026-01-15T00:30:00Z');
-        expect(getCurrentWorkDayCutoff(now).toISOString()).toBe('2026-01-14T01:00:00.000Z');
+    it('rolls back to YESTERDAY when the instant is before today\'s 05:00 Vilnius', () => {
+        // 02:30 UTC on a winter day is 04:30 Vilnius — still BEFORE 05:00, so the work day is
+        // the previous calendar day (2026-01-14), whose boundary is 2026-01-14T03:00 UTC. This is
+        // the night-shift case: work finished at 04:30 belongs to the day it started on.
+        const now = new Date('2026-01-15T02:30:00Z');
+        expect(getCurrentWorkDayCutoff(now).toISOString()).toBe('2026-01-14T03:00:00.000Z');
     });
 });
 

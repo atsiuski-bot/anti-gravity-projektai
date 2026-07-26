@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getLithuanian3AMCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
@@ -401,14 +401,15 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is read via the stable `scoped` flag + `userRole`; depending on the whole object would re-subscribe every listener on each live-session user-doc update
     }, [selectedUserId, rangeStart, rangeEnd, scoped, scopeUid, userRole]);
 
-    // 3AM work-day window for the selected span: opens at 03:00 on the first day and closes at
-    // 03:00 the day AFTER the last day. For a single day these collapse to the original
-    // [03:00 today, 03:00 tomorrow) window; for a range they widen to cover the whole span.
-    const get3AMCutoff = () => {
-        return getLithuanian3AMCutoff(rangeStart);
+    // Work-day window for the selected span (see WORK_DAY_START_HOUR): opens at the boundary on
+    // the first day and closes at the boundary the day AFTER the last day. For a single day these
+    // collapse to a [boundary today, boundary tomorrow) window; for a range they widen to cover
+    // the whole span.
+    const getDayStartCutoff = () => {
+        return getWorkDayCutoff(rangeStart);
     };
     const getNextDayCutoff = () => {
-        return getLithuanian3AMCutoff(addDaysToDateString(rangeEnd, 1));
+        return getWorkDayCutoff(addDaysToDateString(rangeEnd, 1));
     };
 
     // Sorting state
@@ -419,7 +420,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 
     // Split finished tasks into Today, Earlier, and Archived
     const splitTasks = useMemo(() => {
-        const cutoff = get3AMCutoff();
+        const cutoff = getDayStartCutoff();
         // End the window at the NEXT calendar day's 03:00 cutoff, not "cutoff + 24h":
         // across a DST switch a fixed +24h drifts the boundary by an hour, dropping or
         // double-counting work done in that hour. (Range-aware: closes after rangeEnd.)
@@ -499,7 +500,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             earlierTasks: sortTasks(earlierTasksList),
             archivedTasks: sortTasks(archivedTasksList)
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- getDayStartCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
     }, [finishedTasks, rangeStart, rangeEnd, sortBy]);
 
     const { todayTasks, earlierTasks, archivedTasks } = splitTasks;
@@ -645,7 +646,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // Filter tasks that have manual minutes (Quick Work, Calls, or Manual Logs)
     // AND belong to the selected date's work day (3AM - 3AM)
     const manualTasks = useMemo(() => {
-        const cutoff = get3AMCutoff();
+        const cutoff = getDayStartCutoff();
         // Calendar-day next cutoff (DST-safe), not "cutoff + 24h" — see splitTasks above.
         const nextDayCutoff = getNextDayCutoff();
 
@@ -671,7 +672,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             const finishedDate = new Date(dateStr);
             return finishedDate >= cutoff && finishedDate < nextDayCutoff;
         });
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- get3AMCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- getDayStartCutoff/getNextDayCutoff only read rangeStart/rangeEnd, already listed
     }, [finishedTasks, rangeStart, rangeEnd, showTestUsers, testUserIds]);
 
     const totalManualMinutes = manualTasks.reduce((acc, t) => acc + sanitizeReportMinutes(t.manualMinutes, { allowLarge: true }), 0);
