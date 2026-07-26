@@ -749,7 +749,14 @@ describeEmulator('revisioned offline timer engine', () => {
         });
     });
 
-    it('recovers a killed PWA by crediting the gap and continuing in one atomic transition', async () => {
+    // A killed PWA gone for two hours: the heartbeat proves one minute, the rest is a plausible
+    // single stretch of untracked work. Both are credited, in one atomic transition — and the timer
+    // comes back PAUSED, not running. The worker is not demonstrably at the job when an app that was
+    // closed for hours is reopened, so re-anchoring the run would leave an unattended timer going.
+    // (This asserted a resumed timer until the engine stopped re-anchoring every orphan; only a
+    // brief interruption resumes now. The point of the case is unchanged: one transition, one
+    // proven row, one gap row, one credit total.)
+    it('recovers a killed PWA by crediting the gap and pausing in one atomic transition', async () => {
         const db = workerDb();
         const startPlan = planTaskStart({
             task: task('task-a'),
@@ -798,16 +805,14 @@ describeEmulator('revisioned offline timer engine', () => {
             adminRead('work_sessions/sess_gap_run_run-before-process-death'),
         ]);
         expect(activeAfter.data()).toMatchObject({
-            status: 'active',
+            status: 'idle',
             revision: 2,
-            run: {
-                runId: 'run-after-process-death',
-                startedAt: recoveredAt,
-            },
+            run: null,
         });
         expect(taskAfter.data()).toMatchObject({
-            timerStatus: 'running',
-            timerStartedAt: recoveredAt,
+            timerStatus: 'paused',
+            timerStartedAt: null,
+            // 1 proven minute + the 119-minute gap: the whole orphaned run is credited exactly once.
             timerMinutes: 120,
         });
         expect(provenSession.data()).toMatchObject({
