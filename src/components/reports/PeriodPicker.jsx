@@ -45,13 +45,16 @@ export function PeriodPicker({ presets, activeId, onChoose, open, onToggle, labe
     }, [presets]);
 
     const hiddenCount = presets.length - visibleCount;
-    // Chips sit a touch shorter than a full touch-row (h-10 = 40px) with a slim py-1 frame, so a
-    // couple of pixels of card show above and below them instead of the chips hugging the edges —
-    // the row reads lighter against the narrower date box beneath it.
+    // Full 44px touch row. These were h-10 (40px) to make the row "read lighter", but §2 is explicit
+    // that legibility and target size are never traded for visual density — the breathing room comes
+    // from the card's own px-2 py-1 frame, not from undersizing the control.
     const chipClass = (id) =>
-        `shrink-0 inline-flex items-center justify-center h-10 px-3 rounded-control text-body font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
+        `shrink-0 inline-flex items-center justify-center min-h-touch px-3 rounded-control text-body font-semibold border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${
             activeId === id
-                ? 'bg-brand text-on-brand border-brand'
+                // text-white: `text-on-brand` was a no-op — no `on-brand` colour is configured, so the
+                // selected chip silently inherited the card's dark ink and rendered at 2.82:1 on the
+                // indigo fill. Every other bg-brand control in the app pairs with white (6.29:1).
+                ? 'bg-brand text-white border-brand'
                 : 'bg-surface-card text-ink-strong border-line hover:bg-surface-sunken'
         }`;
 

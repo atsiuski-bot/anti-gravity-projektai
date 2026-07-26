@@ -670,7 +670,9 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         type="button"
                         onClick={() => setHistoryOpen((o) => !o)}
                         aria-expanded={historyOpen}
-                        className="flex items-center gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        // min-h-touch: the header was only 24px tall — the sole control for
+                        // opening the history list, and the hardest to hit on a phone (§7).
+                        className="flex min-h-touch items-center gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
                     >
                         {historyOpen
                             ? <ChevronUp className="w-5 h-5 text-ink-muted shrink-0" aria-hidden="true" />

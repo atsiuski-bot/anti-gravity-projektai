@@ -368,13 +368,18 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                         {/* Title row — a leading status glyph (the card's only status signal) sits to
                             the LEFT; the title takes the rest and wraps with a hanging indent, so a
                             second line starts under the first line's text, never under the glyph. */}
-                        <div className="flex items-start gap-2 mb-2">
-                            <TaskStatusIcon task={task} isRunning={isRunning} animate={justCompleted} className="mt-0.5" />
+                        <div className="flex items-center gap-2 mb-2">
+                            <TaskStatusIcon task={task} isRunning={isRunning} animate={justCompleted} />
                             <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); openDetail(); }}
                                 className={clsx(
-                                    "flex-1 min-w-0 rounded text-left text-body font-bold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                    // The whole card is also clickable and opens the same detail, so a
+                                    // mis-tap was never harmful here — but the title is the control a
+                                    // keyboard/switch user actually lands on, and §2 does not trade target
+                                    // size for density. `items-center` on the row keeps the glyph aligned
+                                    // to the now-taller title instead of floating at the top.
+                                    "flex min-h-touch flex-1 min-w-0 items-center rounded text-left text-body font-bold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
                                     task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong",
                                     taskStatus === 'unapproved' ? "bg-surface-sunken px-2 py-1 text-ink" : ""
                                 )}

@@ -183,7 +183,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                             maxLength={2000}
                             rows={3}
                             placeholder="Pvz.: reikia dar valandos, nes atsirado papildomų darbų."
-                            className="w-full resize-none rounded-input border border-line bg-surface-card px-3 py-2 text-body text-ink placeholder:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                            className="w-full resize-none rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg text-ink placeholder:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                         />
 
                         {/* Photo attachments */}

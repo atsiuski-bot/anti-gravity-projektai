@@ -180,7 +180,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                                                 onChange={(e) => setEditText(e.target.value)}
                                                 rows={2}
                                                 aria-label="Redaguoti komentarą"
-                                                className="w-full px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-sm resize-y"
+                                                className="w-full px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-body-lg resize-y"
                                                 autoFocus
                                             />
                                             <div className="mt-2 flex justify-end gap-2">
@@ -206,7 +206,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                         placeholder="Rašyti komentarą..."
                         aria-label="Rašyti komentarą"
                         rows={2}
-                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-sm resize-y"
+                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-body-lg resize-y"
                         disabled={isSubmitting}
                     />
                     <Button
@@ -324,7 +324,9 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, ca
                             value={newItem}
                             onChange={(e) => setNewItem(e.target.value)}
                             placeholder="Pridėti punktą..."
-                            className="flex-1 rounded-lg border border-line px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-brand"
+                            // Accessible name, not just a placeholder (WCAG 3.3.2) — see TaskModal.
+                            aria-label="Naujas eigos sąrašo punktas"
+                            className="flex-1 rounded-lg border border-line px-3 py-2 text-body-lg focus-visible:ring-2 focus-visible:ring-brand"
                             disabled={isSubmitting}
                         />
                         <IconButton icon={Plus} label="Pridėti punktą" variant="primary" type="submit" disabled={!newItem.trim() || isSubmitting} />

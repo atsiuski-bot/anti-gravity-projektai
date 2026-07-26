@@ -899,7 +899,11 @@ export default function ManagerNotifications({ onClose }) {
                         {activeCount > 0 && (
                             <span className={cn(
                                 'inline-flex min-w-[1.25rem] items-center justify-center rounded-full px-1.5 py-0.5 text-caption font-bold leading-none',
-                                view === 'active' ? 'bg-white/25 text-white' : 'bg-brand text-white'
+                                // Solid brand-hover, not bg-white/25: a 25%-white scrim over the active
+                                // brand tab blended to #7B74EC, leaving white text at 3.78:1. The darker
+                                // solid indigo carries white at 8.0:1 in BOTH themes (--brand-hover is
+                                // theme-independent, unlike `text-brand`, which dark-mode lightens).
+                                view === 'active' ? 'bg-brand-hover text-white' : 'bg-brand text-white'
                             )}>
                                 {activeCount}
                             </span>
@@ -1014,7 +1018,12 @@ export default function ManagerNotifications({ onClose }) {
                                     <h4 className="font-medium text-feedback-info-text">
                                         <UserChip userId={notif.userId} name={notif.userName} /> atnaujino veiklos kalendorių
                                     </h4>
-                                    <div className="mt-2 text-sm text-feedback-info-text space-y-1">
+                                    {/* The diff rows sit on their own calm `surface-card` inset, not on the
+                                        indigo `info-soft` wash: the success/warning FOREGROUND tokens are tuned
+                                        against their OWN soft washes and land at 4.49:1 on indigo — just under
+                                        AA. On the white card they are 5.02:1 (§8 "give that container
+                                        bg-surface-card so the chip keeps its contrast"). */}
+                                    <div className="mt-2 rounded-control bg-surface-card p-2 text-sm text-ink space-y-1">
                                         {notif.changes && notif.changes.map((change, index) => {
                                             const start = parseISO(change.start);
                                             const end = parseISO(change.end);
@@ -1028,7 +1037,12 @@ export default function ManagerNotifications({ onClose }) {
                                             // +/~/- punctuation was a color-only signal — WCAG 1.4.1):
                                             // add = Plus, edit = pencil, cancel = X.
                                             const DeltaIcon = isAdd ? Plus : isEdit ? Edit : X;
-                                            const deltaColor = isAdd ? 'text-feedback-success' : isEdit ? 'text-feedback-warning' : 'text-feedback-danger';
+                                            // The `-text` (foreground) tokens, never the bare fill tokens: the
+                                            // fills are tuned so WHITE rides on them, so reused as text they
+                                            // measured 2.95:1 (success) and 1.92:1 (warning) here. Dark mode
+                                            // already overrode the fills to their -400 shades, which is why this
+                                            // only ever failed in light mode.
+                                            const deltaColor = isAdd ? 'text-feedback-success-text' : isEdit ? 'text-feedback-warning-text' : 'text-feedback-danger-text';
                                             const deltaLabel = isAdd ? 'Pridėta:' : isEdit ? 'Pakeista:' : 'Atšaukta:';
 
                                             return (

@@ -332,7 +332,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Ieškoti meistro…"
                                 aria-label="Ieškoti meistro"
-                                className="w-full bg-transparent py-2 text-body text-ink placeholder:text-ink-muted focus:outline-none"
+                                className="w-full bg-transparent py-2 text-body-lg text-ink placeholder:text-ink-muted focus:outline-none"
                             />
                         </div>
                         <div className="max-h-48 overflow-y-auto rounded-control border border-line">

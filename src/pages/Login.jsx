@@ -146,7 +146,7 @@ export default function Login() {
                             autoComplete="username"
                             value={devEmail}
                             onChange={(e) => setDevEmail(e.target.value)}
-                            className="mb-3 min-h-touch w-full rounded-control border border-line bg-surface-card px-3 py-2 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
+                            className="mb-3 min-h-touch w-full rounded-control border border-line bg-surface-card px-3 py-2 text-body-lg text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
                         />
                         <label htmlFor="dev-password" className="mb-1 block text-caption text-ink-muted">Slaptažodis</label>
                         <input
@@ -155,7 +155,7 @@ export default function Login() {
                             autoComplete="current-password"
                             value={devPassword}
                             onChange={(e) => setDevPassword(e.target.value)}
-                            className="mb-3 min-h-touch w-full rounded-control border border-line bg-surface-card px-3 py-2 text-body text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
+                            className="mb-3 min-h-touch w-full rounded-control border border-line bg-surface-card px-3 py-2 text-body-lg text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
                         />
                         {devError && (
                             <p role="alert" className="mb-3 text-caption text-feedback-danger">{devError}</p>
