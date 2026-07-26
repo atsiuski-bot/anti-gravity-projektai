@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback, useMemo } from 'react';
 import { doc, getDoc, getDocFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
+import { evaluateSecondaryStart } from '../utils/sessionNesting';
 import { useTimerState } from '../hooks/useTimerState';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
 import { Zap, Square, Check, ShieldAlert, Mic, Clock } from 'lucide-react';
@@ -287,7 +288,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
     const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled, timerEngineResolved } = useAuth();
     const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
     const { usersMap, activeUsers } = useUsers();
-    const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
+    const { activeSessionType } = useActiveSessionStatus();
 
     // Quick-work finish templates: the fixed categories plus THIS worker's own profile templates
     // (users/{uid}.quickWorkTemplates). Picking one becomes the session title; the box turns into a
@@ -328,10 +329,12 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
         startTime
     } = useTimerState(currentUser, 'quickWorkState', 'isQuickWorking', null, null, 'quickWork');
 
-    // Quick work may be started ON TOP of an active break (the break nests as pausedSession and
-    // resumes when the quick work ends) — mirroring how a call is allowed during a break. Any
-    // OTHER secondary session (a call) still blocks it.
-    const isDisabled = isSecondarySessionActive && !isQuickWorking && activeSessionType !== 'break';
+    // One shared rule decides what may nest on what (sessionNesting.js) — the planner re-checks the
+    // same verdict at commit time, so the control can no longer offer a switch the engine rejects.
+    // While the quick work itself runs this button IS the stop, so it stays enabled regardless.
+    const nesting = evaluateSecondaryStart(userData?.activeSession, 'quickWork');
+    const isDisabled = !isQuickWorking && !nesting.allowed;
+    const blockedReason = getInterruptionReason(activeSessionType, nesting.code);
 
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -711,8 +714,8 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                     active={isQuickWorking}
                     disabled={isDisabled}
                     onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
-                    aria-label={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greita veikla")}
-                    title={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Greita veikla")}
+                    aria-label={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? blockedReason : "Greita veikla")}
+                    title={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? blockedReason : "Greita veikla")}
                 >
                     {isQuickWorking ? (
                         <Square className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -746,7 +749,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             <button
                 onClick={isQuickWorking ? handleStopQuickWork : handleStartQuickWork}
                 disabled={isDisabled}
-                aria-label={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti greitą veiklą")}
+                aria-label={isQuickWorking ? "Baigti greitą veiklą" : (isDisabled ? blockedReason : "Pradėti greitą veiklą")}
                 className={clsx(
                     "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition shadow-sm active:scale-95 border min-w-[140px]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -755,7 +758,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
                             ? 'bg-session-quickWork-surface border-session-quickWork-soft text-session-quickWork-accent ring-1 ring-session-quickWork-soft'
                             : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-line'
                 )}
-                title={isDisabled ? getInterruptionReason(activeSessionType) : ""}
+                title={isDisabled ? blockedReason : ""}
             >
                 <div className="flex items-center gap-3">
                     <div className={clsx("rounded-control", isQuickWorking ? "text-session-quickWork-accent" : "text-ink-muted")}>

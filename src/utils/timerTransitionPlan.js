@@ -11,6 +11,10 @@ import { isManagerRole } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
 import { buildCallTitle } from './callContacts';
 import { APP_INSTANCE_ID } from './appInstance';
+import {
+    evaluateSecondaryStart,
+    isSecondarySessionType,
+} from './sessionNesting';
 
 export const TIMER_ENGINE_VERSION = 2;
 export const TIMER_ACTIVE_COLLECTION = 'active_sessions';
@@ -116,8 +120,10 @@ const legacyRunningProjection = (task, run, issuedAt) => ({
     'quickWorkState.isQuickWorking': false,
 });
 
-export const SECONDARY_RUN_TYPES = ['break', 'call', 'quickWork'];
-export const isSecondaryRunType = (type) => SECONDARY_RUN_TYPES.includes(type);
+// The nesting rule lives in ONE place (sessionNesting.js) and is enforced twice on purpose: the
+// buttons consult it so a control is never offered for a transition that will be rejected, and the
+// planner re-checks it so a stale snapshot or a second device cannot commit a stack the rule forbids.
+const isSecondaryRunType = isSecondarySessionType;
 
 // The task (if any) sitting at the BOTTOM of the paused stack. The projection's
 // workStatus.activeTaskId points at it, so "which task am I on" survives however many secondary
@@ -434,6 +440,27 @@ function closeTaskWrites({ task, run, endedAt, userId }) {
     return { durationMinutes, writes };
 }
 
+// Re-check the shared nesting rule at COMMIT time. The button that issued this command consulted the
+// same rule, but against a snapshot another device may since have moved on from — so this is the
+// guard that actually keeps a forbidden stack out of canonical state, not a duplicated policy.
+function assertNestingAllowed(interrupted, nextType) {
+    const verdict = evaluateSecondaryStart(interrupted, nextType);
+    if (verdict.allowed) return;
+    if (verdict.code === 'same-type') {
+        throw Object.assign(new Error(`A ${nextType} session is already running`), {
+            code: 'timer/already-running',
+        });
+    }
+    if (verdict.code === 'stack-full') {
+        throw Object.assign(new Error('Too many sessions are already stacked'), {
+            code: 'timer/stack-full',
+        });
+    }
+    throw Object.assign(new Error('This secondary switch is not supported yet'), {
+        code: 'timer/conflict',
+    });
+}
+
 function baseCommand({ kind, userId, base, commandId, runId, issuedAt }) {
     if (!userId || !commandId || !issuedAt) {
         throw new Error('Timer commands require userId, commandId, and issuedAt');
@@ -637,11 +664,7 @@ export function planBreakStart({
 
     const base = canonicalSessionState(currentRecord, { ...userData, id: userId });
     const interrupted = base.status === 'active' ? base.run : null;
-    if (interrupted?.type === 'break') {
-        throw Object.assign(new Error('A break is already running'), {
-            code: 'timer/already-running',
-        });
-    }
+    assertNestingAllowed(interrupted, 'break');
     // See planTaskStart: a PROVABLY deleted/archived task must not block the switch — the ledger row
     // is rebuilt from the run — while a merely unreadable one still must.
     if (interrupted?.type === 'task' && !currentTask && !currentTaskMissing) {
@@ -922,18 +945,7 @@ export function planSecondaryStart({
 
     const base = canonicalSessionState(currentRecord, { ...userData, id: userId });
     const interrupted = base.status === 'active' ? base.run : null;
-    // Same-type is a STOP, never a nest: stacking a call inside a call (or quick work inside quick
-    // work) would leave two undescribed sessions of one kind whose finish prompts fire out of order.
-    if (interrupted?.type === type) {
-        throw Object.assign(new Error('This session type is already running'), {
-            code: 'timer/already-running',
-        });
-    }
-    if (interrupted && interrupted.type !== 'task' && !isSecondaryRunType(interrupted.type)) {
-        throw Object.assign(new Error('This secondary switch is not supported yet'), {
-            code: 'timer/conflict',
-        });
-    }
+    assertNestingAllowed(interrupted, type);
     // See planTaskStart: a PROVABLY deleted/archived task must not block the switch — the ledger row
     // is rebuilt from the run — while a merely unreadable one still must.
     if (interrupted?.type === 'task' && !currentTask && !currentTaskMissing) {

@@ -1398,6 +1398,36 @@ describe('break day counter must not carry across the day boundary', () => {
         expect(plan.restoredRunId).toBeNull();
     });
 
+    it('refuses a THIRD secondary layer at commit time, not just in the UI', () => {
+        // The button consults the same rule, but against a snapshot another device may have moved
+        // on from — so the planner is what actually keeps a forbidden stack out of canonical state.
+        const twoDeep = {
+            userId,
+            revision: 3,
+            status: 'active',
+            run: {
+                runId: 'run-call-deep',
+                type: 'call',
+                startedAt: '2026-07-09T14:00:00.000Z',
+                revision: 3,
+                pausedSession: {
+                    type: 'break',
+                    startTime: '2026-07-09T13:30:00.000Z',
+                    pausedSession: { type: 'task', taskId: 'task-a', taskTitle: 'Task A' },
+                },
+            },
+        };
+        expect(() => planSecondaryStart({
+            type: 'quickWork',
+            userId,
+            userData: staleUser,
+            activeRecord: twoDeep,
+            commandId: 'cmd-third-layer',
+            runId: 'run-qw-third',
+            issuedAt: '2026-07-09T14:05:00.000Z',
+        })).toThrow(/stacked/i);
+    });
+
     it('a call starting over a break banks the closed minutes onto the rebased total', () => {
         const plan = planSecondaryStart({
             type: 'call',

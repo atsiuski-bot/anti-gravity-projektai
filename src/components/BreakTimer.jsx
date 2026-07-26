@@ -3,6 +3,7 @@ import { doc, getDoc, getDocFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
+import { evaluateSecondaryStart } from '../utils/sessionNesting';
 import { useTimerState } from '../hooks/useTimerState';
 import { Coffee, Play, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
@@ -41,13 +42,18 @@ async function loadTaskForTimer(taskId) {
 export default function BreakTimer({ currentUser: _propUser, compact = false, hideLabel = false }) {
     const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled, timerEngineResolved } = useAuth();
     const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
-    const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
+    const { activeSessionType } = useActiveSessionStatus();
     const {
         isActive: isTakingBreak,
         currentSessionMinutes
     } = useTimerState(currentUser, 'breakState', 'isTakingBreak', null, null, 'break');
 
-    const isDisabled = isSecondarySessionActive && !isTakingBreak && activeSessionType !== 'quickWork';
+    // One shared rule decides what may nest on what (sessionNesting.js) — the planner re-checks the
+    // same verdict at commit time, so the control can no longer offer a switch the engine rejects.
+    // While the break itself is running this button IS the stop, so it stays enabled regardless.
+    const nesting = evaluateSecondaryStart(userData?.activeSession, 'break');
+    const isDisabled = !isTakingBreak && !nesting.allowed;
+    const blockedReason = getInterruptionReason(activeSessionType, nesting.code);
 
     const [error, setError] = useState('');
     // Guards the toggle while its Firestore round-trip is in flight, so a rapid double-tap on a slow
@@ -274,8 +280,8 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                     active={isTakingBreak}
                     disabled={isDisabled}
                     onClick={handleToggleBreak}
-                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
-                    title={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
+                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? blockedReason : "Pertrauka")}
+                    title={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? blockedReason : "Pertrauka")}
                 >
                     {isTakingBreak ? (
                         <Play className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -318,8 +324,8 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
                     active={isTakingBreak}
                     disabled={isDisabled}
                     onClick={handleToggleBreak}
-                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pertrauka")}
-                    title={isDisabled ? getInterruptionReason(activeSessionType) : ""}
+                    aria-label={isTakingBreak ? "Tęsti veiklą" : (isDisabled ? blockedReason : "Pertrauka")}
+                    title={isDisabled ? blockedReason : ""}
                 >
                     {isTakingBreak ? (
                         <>

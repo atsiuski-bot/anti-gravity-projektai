@@ -2,6 +2,7 @@ import React, { useState, useRef, useCallback } from 'react';
 import { doc, getDoc, getDocFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useActiveSessionStatus, getInterruptionReason } from '../hooks/useActiveSessionStatus';
+import { evaluateSecondaryStart } from '../utils/sessionNesting';
 import { useTimerState } from '../hooks/useTimerState';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
 import { Phone, Square, Check, ShieldAlert, Mic } from 'lucide-react';
@@ -199,14 +200,19 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
 export default function CallTimer({ compact = false, hideLabel = false }) {
     const { currentUser, userData, setPendingSessionProjection, timerEngineEnabled, timerEngineResolved } = useAuth();
     const revisionedSession = useRevisionedTimerSession(currentUser?.uid, timerEngineEnabled);
-    const { isSecondarySessionActive, activeSessionType } = useActiveSessionStatus();
+    const { activeSessionType } = useActiveSessionStatus();
 
     const {
         isActive: isCalling,
         currentSessionMinutes
     } = useTimerState(currentUser, 'callState', 'isCalling', null, null, 'call');
 
-    const isDisabled = isSecondarySessionActive && !isCalling && activeSessionType !== 'break' && activeSessionType !== 'quickWork';
+    // One shared rule decides what may nest on what (sessionNesting.js) — the planner re-checks the
+    // same verdict at commit time, so the control can no longer offer a switch the engine rejects.
+    // While the call itself is running this button IS the stop, so it stays enabled regardless.
+    const nesting = evaluateSecondaryStart(userData?.activeSession, 'call');
+    const isDisabled = !isCalling && !nesting.allowed;
+    const blockedReason = getInterruptionReason(activeSessionType, nesting.code);
 
     const [showTitleModal, setShowTitleModal] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -526,8 +532,8 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
                     active={isCalling}
                     disabled={isDisabled}
                     onClick={handleToggleCall}
-                    aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
-                    title={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
+                    aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? blockedReason : "Pradėti skambutį")}
+                    title={isCalling ? "Baigti skambutį" : (isDisabled ? blockedReason : "Pradėti skambutį")}
                 >
                     {isCalling ? (
                         <Square className="w-5 h-5 fill-current" aria-hidden="true" />
@@ -561,7 +567,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             <button
                 onClick={handleToggleCall}
                 disabled={isDisabled}
-                aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? getInterruptionReason(activeSessionType) : "Pradėti skambutį")}
+                aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? blockedReason : "Pradėti skambutį")}
                 className={clsx(
                     "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition shadow-sm active:scale-95 border min-w-[140px]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
@@ -570,7 +576,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
                             ? clsx('bg-session-call-surface border-line ring-1 ring-line', getSessionColors('call').accent)
                             : 'bg-surface-card border-line text-ink hover:bg-surface-sunken hover:border-line'
                 )}
-                title={isDisabled ? getInterruptionReason(activeSessionType) : ""}
+                title={isDisabled ? blockedReason : ""}
             >
                 <div className="flex items-center gap-3">
                     <div className={clsx("rounded-control", isCalling ? "text-session-call-accent" : "text-ink-muted")}>

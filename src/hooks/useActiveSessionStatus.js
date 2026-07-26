@@ -12,8 +12,19 @@ const SESSION_TYPE_LABELS = {
 
 export const getActiveSessionLabel = (type) => SESSION_TYPE_LABELS[type] || 'kitas veiksmas';
 
-// Reason shown on a disabled timer (aria-label + tooltip): names the in-progress activity.
-export const getInterruptionReason = (type) => `Šiuo metu vyksta ${getActiveSessionLabel(type)}`;
+/**
+ * Reason shown on a disabled timer (aria-label + tooltip).
+ *
+ * `code` is the verdict from evaluateSecondaryStart, so the wording matches the ACTUAL rule that
+ * refused: "another activity is running" is simply false when the real reason is that the stack is
+ * full and the worker would in fact be allowed to start this — just not on top of two others.
+ */
+export const getInterruptionReason = (type, code = null) => {
+    if (code === 'stack-full') {
+        return 'Jau laukia dvi veiklos — pirma užbaikite vieną iš jų';
+    }
+    return `Šiuo metu vyksta ${getActiveSessionLabel(type)}`;
+};
 
 /**
  * Pure derivation of the session status the UI keys off, exported so the policy is unit-testable

@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useActiveSessionStatus } from '../hooks/useActiveSessionStatus';
 import { getLithuanianNow, clampSessionMinutes, formatMinutesToTimeString } from '../utils/timeUtils';
 import { SESSION_COLORS } from '../utils/sessionColors';
+import { pausedSessionStack } from '../utils/sessionNesting';
 import { cn } from '../utils/cn';
 
 // Live readout for the active secondary session (quick work / call / break), surfaced as its
@@ -73,6 +74,13 @@ export default function ActiveSessionReadout() {
         }
     }, [active, label]);
 
+    // What this session was started ON TOP of. A parked session is one the worker must come back and
+    // end, so leaving it invisible turns it into forgotten — and therefore unlogged — time. Named in
+    // full ("Laukia: Pertrauka"), never by colour or icon alone (§4-A / WCAG 1.4.1).
+    const parked = pausedSessionStack(activeSession)
+        .map((node) => SESSION_COLORS[node.type])
+        .filter(Boolean);
+
     const Icon = cfg?.Icon;
     return (
         <>
@@ -82,18 +90,39 @@ export default function ActiveSessionReadout() {
             </div>
 
             {active && (
-                <div
-                    className={cn(
-                        'flex items-center gap-2 rounded-full border px-3 py-1 shadow-md backdrop-blur-sm',
-                        'animate-in fade-in slide-in-from-bottom-2',
-                        cfg.accentBorder, cfg.surface, cfg.accent
+                <div className="flex flex-col items-center gap-1 animate-in fade-in slide-in-from-bottom-2">
+                    <div
+                        className={cn(
+                            'flex items-center gap-2 rounded-full border px-3 py-1 shadow-md backdrop-blur-sm',
+                            cfg.accentBorder, cfg.surface, cfg.accent
+                        )}
+                    >
+                        <Icon className="h-4 w-4 wz-pulse-soft" aria-hidden="true" />
+                        <span className="text-caption font-medium">{cfg.label}</span>
+                        <span className="font-mono text-body-lg font-bold leading-none tabular-nums">
+                            {formatMinutesToTimeString(minutes)}
+                        </span>
+                    </div>
+
+                    {parked.length > 0 && (
+                        <div
+                            className="flex items-center gap-1.5 rounded-full border border-line bg-surface-card px-2.5 py-0.5 shadow-sm"
+                            // One sentence for a screen reader instead of a row of loose labels.
+                            aria-label={`Laukia: ${parked.map((p) => p.label).join(', ')}`}
+                        >
+                            <span className="text-caption text-ink-muted" aria-hidden="true">Laukia:</span>
+                            {parked.map((p, index) => (
+                                <span
+                                    key={`${p.type}-${index}`}
+                                    className="flex items-center gap-1 text-caption font-medium text-ink"
+                                    aria-hidden="true"
+                                >
+                                    <p.Icon className="h-3.5 w-3.5 shrink-0" />
+                                    {p.label}
+                                </span>
+                            ))}
+                        </div>
                     )}
-                >
-                    <Icon className="h-4 w-4 wz-pulse-soft" aria-hidden="true" />
-                    <span className="text-caption font-medium">{cfg.label}</span>
-                    <span className="font-mono text-body-lg font-bold leading-none tabular-nums">
-                        {formatMinutesToTimeString(minutes)}
-                    </span>
                 </div>
             )}
         </>
