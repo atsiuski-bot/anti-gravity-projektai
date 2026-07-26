@@ -2,7 +2,7 @@ import { doc, getDoc, getDocFromServer, updateDoc, collection, addDoc, setDoc, g
 import { db } from '../firebase';
 import { pauseTask, resumeTask } from './taskActions';
 import { withUserLock, LOCK_MAX_HOLD_MS } from './sessionLock';
-import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
+import { getLithuanianNow, getLithuanianDateString, breakDayBaseMinutes, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES, formatMinutesToTimeString } from './timeUtils';
 import { logError } from './errorLog';
 import { isManagerRole, formatTime } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
@@ -219,8 +219,10 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                 isTakingBreak: true,
                 lastStartedAt: startTime,
                 // + bankedBreakMinutes covers the (rare) break-interrupts-break case; 0 otherwise.
-                dailyAccumulatedMinutes: (userData?.breakState?.dailyAccumulatedMinutes || 0) + bankedBreakMinutes,
-                lastDate: getLithuanianDateString(),
+                // Rebase BEFORE re-dating (breakDayBaseMinutes): stamping today onto yesterday's
+                // total is exactly how this counter used to walk across the day boundary.
+                dailyAccumulatedMinutes: breakDayBaseMinutes(userData?.breakState, nowMoment) + bankedBreakMinutes,
+                lastDate: getLithuanianDateString(nowMoment),
                 resumableTaskIds: resumableTaskIds
             };
         } else if (type === 'call') {
@@ -248,7 +250,10 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
         // not itself a break (a call/quick-work/task interrupting a break — the normal case), fold
         // them into the daily counter here. (A new break object above already includes them.)
         if (bankedBreakMinutes > 0 && type !== 'break') {
-            updates['breakState.dailyAccumulatedMinutes'] = (userData?.breakState?.dailyAccumulatedMinutes || 0) + bankedBreakMinutes;
+            updates['breakState.dailyAccumulatedMinutes'] = breakDayBaseMinutes(userData?.breakState, nowMoment) + bankedBreakMinutes;
+            // The total and the day it belongs to are one pair — writing the number alone would
+            // leave it dated to whenever the break started, which may be yesterday.
+            updates['breakState.lastDate'] = getLithuanianDateString(nowMoment);
         }
 
         // The task pause must COMMIT BEFORE the new session does — it is a precondition, not a
@@ -402,7 +407,10 @@ const endSessionImpl = async (userId, userInfo = null, sessionOverrides = {}, sk
         // Apply legacy clears for the session that just ended
         if (session.type === 'break') {
             updates['breakState.isTakingBreak'] = false;
-            updates['breakState.dailyAccumulatedMinutes'] = (userData.breakState?.dailyAccumulatedMinutes || 0) + durationMinutes;
+            // Bucketed by the day the break ENDS — the same day `sessionDate` gives its logged row —
+            // so a break running past midnight lands wholly in the new day and re-dates the field.
+            updates['breakState.dailyAccumulatedMinutes'] = breakDayBaseMinutes(userData.breakState, endMoment) + durationMinutes;
+            updates['breakState.lastDate'] = sessionDate;
         } else if (session.type === 'call') {
             updates['callState.isCalling'] = false;
         } else if (session.type === 'quickWork') {
@@ -665,8 +673,10 @@ const endLegacySession = async (userId, type, userData, endAt = null) => {
 
         if (type === 'break') {
             updates['breakState.isTakingBreak'] = false;
-            // Accumulate minutes so daily counter is correct
-            updates['breakState.dailyAccumulatedMinutes'] = (userData.breakState?.dailyAccumulatedMinutes || 0) + duration;
+            // Accumulate minutes so daily counter is correct — rebased to the day this close is
+            // credited to, and re-dated with it, so the pair never describes two different days.
+            updates['breakState.dailyAccumulatedMinutes'] = breakDayBaseMinutes(userData.breakState, now) + duration;
+            updates['breakState.lastDate'] = getLithuanianDateString(now);
         } else if (type === 'call') {
             updates['callState.isCalling'] = false;
         } else if (type === 'quickWork') {

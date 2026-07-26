@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
-import { getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
+import { getLithuanianNow, breakDayBaseMinutes, clampSessionMinutes } from '../utils/timeUtils';
 
 /**
  * Custom hook to manage timer state for Break, Call, and QuickWork.
@@ -71,9 +71,6 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
             }
         }
 
-        const lastDate = data.lastDate;
-        const today = getLithuanianDateString();
-
         // Update state data reference
         setStateData(data);
 
@@ -81,21 +78,15 @@ export const useTimerState = (currentUser, stateKey, activeFlagKey, onStateChang
         const wasActive = prevIsActiveRef.current;
         const didChange = isCurrentlyActive !== wasActive;
 
-        // Handle daily reset logic if applicable (mostly for BreakTimer)
-        if (lastDate && lastDate !== today) {
-            setAccumulatedMinutes(0);
-            if (didChange) {
-                setIsActive(isCurrentlyActive);
-                prevIsActiveRef.current = isCurrentlyActive;
-            }
-        } else {
-            const newAccumulated = data.dailyAccumulatedMinutes || 0;
-            setAccumulatedMinutes(newAccumulated);
-
-            if (didChange) {
-                setIsActive(isCurrentlyActive);
-                prevIsActiveRef.current = isCurrentlyActive;
-            }
+        // Daily reset (mostly for BreakTimer). This used to be an inline lastDate comparison — a
+        // SECOND answer to "which day does this number belong to", separate from the one every
+        // writer used. The two drifted, and the write side won: it re-dated a stale total to today,
+        // after which this reader had nothing left to reset. One shared rule now, so a future
+        // writer cannot reopen that gap.
+        setAccumulatedMinutes(breakDayBaseMinutes(data));
+        if (didChange) {
+            setIsActive(isCurrentlyActive);
+            prevIsActiveRef.current = isCurrentlyActive;
         }
 
         // Only update startTime if it changed

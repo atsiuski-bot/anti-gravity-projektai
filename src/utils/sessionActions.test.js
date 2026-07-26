@@ -199,7 +199,7 @@ describe('startSession — opening a secondary session', () => {
             data: () => ({
                 displayName: 'Worker',
                 activeSession: { type: 'break', startTime: '2026-06-23T11:40:00.000Z' },
-                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 15 },
+                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 15, lastDate: '2026-06-23' },
             }),
         });
 
@@ -313,7 +313,7 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
         const userData = {
             displayName: 'Worker',
             activeSession: { type: 'break', startTime: '2026-06-23T11:00:00.000Z' }, // 60 min
-            breakState: { dailyAccumulatedMinutes: 15 },
+            breakState: { dailyAccumulatedMinutes: 15, lastDate: '2026-06-23' },
         };
 
         await endSession('u1', userData);
@@ -340,7 +340,7 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
         const userData = {
             displayName: 'Worker',
             activeSession: { type: 'break', startTime: '2026-06-23T11:00:00.000Z' }, // 60 min to NOW
-            breakState: { dailyAccumulatedMinutes: 15 },
+            breakState: { dailyAccumulatedMinutes: 15, lastDate: '2026-06-23' },
         };
         // Last proof of life was 11:40 (40 min), even though the app reopened at NOW (12:00).
         const lastBeat = new Date('2026-06-23T11:40:00.000Z').getTime();
@@ -373,7 +373,7 @@ describe('endSession — credit math, clamping & the daily-break total', () => {
     it('credits nothing for a backward device clock (negative elapsed -> 0, no log)', async () => {
         const userData = {
             activeSession: { type: 'break', startTime: '2026-06-23T13:00:00.000Z' }, // 1h in the FUTURE
-            breakState: { dailyAccumulatedMinutes: 40 },
+            breakState: { dailyAccumulatedMinutes: 40, lastDate: '2026-06-23' },
         };
 
         await endSession('u1', userData);
@@ -476,7 +476,7 @@ describe('endSession — legacy-flag-only orphan honours the heartbeat bound', (
     it('folds only the beat-bounded minutes into the daily break total', async () => {
         getLithuanianNow.mockReturnValue(new Date('2026-06-24T08:00:00.000Z'));
         const userData = {
-            breakState: { isTakingBreak: true, lastStartedAt: '2026-06-23T18:00:00.000Z', dailyAccumulatedMinutes: 10 },
+            breakState: { isTakingBreak: true, lastStartedAt: '2026-06-23T18:00:00.000Z', dailyAccumulatedMinutes: 10, lastDate: '2026-06-23' },
         };
 
         await endSession('u1', userData, { endAt: new Date('2026-06-23T18:07:00.000Z').getTime() }, true);
@@ -692,5 +692,86 @@ describe('endSession — recovery return contract (drives the RecoveryNotice ban
         expect(result).toMatchObject({ type: 'call', wasCapped: false });
         expect(result.creditedMinutes).toBe(30);
         expect(result.rawMinutes).toBeCloseTo(30, 5);
+    });
+});
+
+// Why every breakState fixture above now carries a `lastDate`:
+//
+// breakState.dailyAccumulatedMinutes is a DAY total, but nothing ever wrote it back to zero — the
+// rollover lived only in useTimerState, which DISPLAYED 0 on a new day and never persisted it.
+// Meanwhile every writer carried the stored number forward verbatim AND stamped `lastDate` to today.
+// So the first break of a new day re-dated yesterday's total as today's, the reader's reset stopped
+// firing, and the counter grew day over day: a live account reached 619 minutes of "today's break"
+// against roughly 50 seconds actually taken. The total and the day it belongs to must be written as
+// one pair, rebased before re-dating.
+describe('break day counter must not survive the day boundary', () => {
+    const STALE = { isTakingBreak: false, dailyAccumulatedMinutes: 619.1034, lastDate: '2026-06-23' };
+
+    it('starting a break on a new day drops yesterday\'s total instead of re-dating it', async () => {
+        getLithuanianNow.mockReturnValue(new Date('2026-06-24T09:00:00.000Z'));
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({ displayName: 'Worker', activeSession: null, breakState: STALE }),
+        });
+
+        await startSession('u1', 'break');
+
+        const bs = userUpdate('u1').breakState;
+        expect(bs.dailyAccumulatedMinutes, 'yesterday\'s 619 min must not become today\'s').toBe(0);
+        expect(bs.lastDate).toBe('2026-06-24');
+    });
+
+    it('keeps a SAME-day total, so the second break of a day still accumulates', async () => {
+        getLithuanianNow.mockReturnValue(new Date('2026-06-23T15:00:00.000Z'));
+        getDoc.mockResolvedValue({
+            exists: () => true,
+            data: () => ({
+                displayName: 'Worker',
+                activeSession: null,
+                breakState: { ...STALE, dailyAccumulatedMinutes: 25 },
+            }),
+        });
+
+        await startSession('u1', 'break');
+
+        expect(userUpdate('u1').breakState.dailyAccumulatedMinutes).toBe(25);
+    });
+
+    it('ending a break credits onto the rebased total and re-dates it in the same write', async () => {
+        getLithuanianNow.mockReturnValue(new Date('2026-06-24T09:30:00.000Z'));
+        const userData = {
+            displayName: 'Worker',
+            activeSession: { type: 'break', startTime: '2026-06-24T09:00:00.000Z' }, // 30 min
+            breakState: STALE,
+        };
+
+        await endSession('u1', userData);
+        await flush();
+
+        const u = userUpdate('u1');
+        expect(u['breakState.dailyAccumulatedMinutes'], 'must be the 30 credited minutes alone').toBe(30);
+        expect(u['breakState.lastDate']).toBe('2026-06-24');
+    });
+
+    it('buckets a break that runs PAST MIDNIGHT into the day it ends, like its logged row', async () => {
+        getLithuanianNow.mockReturnValue(new Date('2026-06-24T09:00:00.000Z'));
+        const userData = {
+            displayName: 'Worker',
+            // 23:30 Vilnius on the 23rd → 00:10 Vilnius on the 24th (Vilnius is UTC+3 in June).
+            activeSession: { type: 'break', startTime: '2026-06-23T20:30:00.000Z' },
+            // Deliberately NOT 40, so "40" below can only be the credited break, never the carry.
+            breakState: { ...STALE, dailyAccumulatedMinutes: 555, lastDate: '2026-06-23' },
+        };
+
+        await endSession('u1', userData, { endAt: new Date('2026-06-23T21:10:00.000Z').getTime() }, true);
+        await flush();
+
+        const u = userUpdate('u1');
+        const logged = setsTo('break_sessions')[0];
+        expect(logged.date, 'the logged row buckets by the END day').toBe('2026-06-24');
+        // The counter must agree with the row: the 555 min belonged to the 23rd, so the new day
+        // starts from this 40-minute break alone.
+        expect(u['breakState.dailyAccumulatedMinutes']).toBe(40);
+        expect(u['breakState.lastDate']).toBe('2026-06-24');
     });
 });

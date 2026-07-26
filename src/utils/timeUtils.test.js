@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
     MAX_SESSION_MINUTES,
+    breakDayBaseMinutes,
     clampSessionMinutes,
     parseTimeStringToMinutes,
     getLithuanianDateString,
@@ -480,5 +481,50 @@ describe('injectInactiveGaps (derived "Neaktyvus" bands)', () => {
         expect(injectInactiveGaps([])).toEqual([]);
         const one = [item('a', '2026-07-03T08:00:00.000Z', '2026-07-03T08:10:00.000Z')];
         expect(gaps(injectInactiveGaps(one))).toHaveLength(0);
+    });
+});
+
+// The break day counter is a DAY total that nothing ever wrote back to zero. Its rollover lived only
+// in the reader, which displayed 0 on a new day but never persisted it — while every WRITER carried
+// the stored number forward AND re-stamped `lastDate` to today. So the first break of a new day
+// re-dated yesterday's total as today's, the reader's reset stopped firing, and the number grew day
+// over day: a live account reached 619 minutes of "today's break" against ~50 seconds actually taken.
+describe('breakDayBaseMinutes — what today\'s break total may build on', () => {
+    const state = (over = {}) => ({ dailyAccumulatedMinutes: 42, lastDate: '2026-07-26', ...over });
+    const TODAY = new Date('2026-07-26T12:00:00.000Z');
+    const TOMORROW = new Date('2026-07-27T12:00:00.000Z');
+
+    it('keeps the stored total while it still belongs to the day being written', () => {
+        expect(breakDayBaseMinutes(state(), TODAY)).toBe(42);
+    });
+
+    it('drops a total carried over from a previous day — the whole point of the field', () => {
+        expect(breakDayBaseMinutes(state(), TOMORROW)).toBe(0);
+    });
+
+    it('drops a stale total EVEN when it is large — the 619-minute production case', () => {
+        const stale = state({ dailyAccumulatedMinutes: 619.1034, lastDate: '2026-07-25' });
+        expect(breakDayBaseMinutes(stale, TODAY)).toBe(0);
+    });
+
+    it('treats a total with no day at all as unattributable, not as today\'s', () => {
+        expect(breakDayBaseMinutes({ dailyAccumulatedMinutes: 30 }, TODAY)).toBe(0);
+    });
+
+    it('never carries forward a negative or unparseable total (a backward device clock)', () => {
+        expect(breakDayBaseMinutes(state({ dailyAccumulatedMinutes: -5 }), TODAY)).toBe(0);
+        expect(breakDayBaseMinutes(state({ dailyAccumulatedMinutes: 'nope' }), TODAY)).toBe(0);
+    });
+
+    it('handles a missing or empty breakState', () => {
+        expect(breakDayBaseMinutes(null, TODAY)).toBe(0);
+        expect(breakDayBaseMinutes({}, TODAY)).toBe(0);
+    });
+
+    it('buckets by the Vilnius day, not UTC — a late-evening break stays in its own day', () => {
+        // 2026-07-26T22:30Z is already 2026-07-27 in Vilnius (UTC+3 in summer).
+        const lateEvening = new Date('2026-07-26T22:30:00.000Z');
+        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-27' }), lateEvening)).toBe(42);
+        expect(breakDayBaseMinutes(state({ lastDate: '2026-07-26' }), lateEvening)).toBe(0);
     });
 });

@@ -1,4 +1,5 @@
 import {
+    breakDayBaseMinutes,
     clampSessionMinutes,
     formatMinutesToTimeString,
     getLithuanianDateString,
@@ -187,9 +188,12 @@ const secondaryRunningProjection = (
         breakState: {
             ...(userData?.breakState || {}),
             isTakingBreak: false,
+            // The day total and the day it belongs to are written as ONE pair — see
+            // breakDayBaseMinutes. Writing the number without re-dating it (or re-dating without
+            // rebasing) is what let yesterday's total be read as today's.
             dailyAccumulatedMinutes:
-                Number(userData?.breakState?.dailyAccumulatedMinutes || 0)
-                + closedBreakMinutes,
+                breakDayBaseMinutes(userData?.breakState, issuedAt) + closedBreakMinutes,
+            lastDate: getLithuanianDateString(new Date(issuedAt)),
         },
         callState: {
             ...(userData?.callState || {}),
@@ -214,9 +218,6 @@ const secondaryRunningProjection = (
             lastStartedAt: run.startedAt,
             resumableTaskIds: pausedTaskId ? [pausedTaskId] : (userData?.[stateKey]?.resumableTaskIds || []),
         };
-        if (run.type === 'break') {
-            projection[stateKey].lastDate = getLithuanianDateString(new Date(issuedAt));
-        }
     }
     return projection;
 };
@@ -267,7 +268,9 @@ const breakRunningProjection = (userData, run, issuedAt, pausedTaskId = null) =>
         ...(userData?.breakState || {}),
         isTakingBreak: true,
         lastStartedAt: run.startedAt,
-        dailyAccumulatedMinutes: Number(userData?.breakState?.dailyAccumulatedMinutes || 0),
+        // Rebase BEFORE re-dating. Stamping today's date onto yesterday's total is precisely how the
+        // counter used to survive the day boundary (see breakDayBaseMinutes).
+        dailyAccumulatedMinutes: breakDayBaseMinutes(userData?.breakState, issuedAt),
         lastDate: getLithuanianDateString(new Date(issuedAt)),
         resumableTaskIds: pausedTaskId ? [pausedTaskId] : (userData?.breakState?.resumableTaskIds || []),
     },
@@ -293,8 +296,11 @@ const idleProjectionAfterBreak = (userData, creditedMinutes, issuedAt) => ({
     breakState: {
         ...(userData?.breakState || {}),
         isTakingBreak: false,
+        // A break is bucketed by the day it ENDS — the same day its break_sessions row carries — so
+        // one that runs past midnight lands wholly in the new day and re-dates the field with it.
         dailyAccumulatedMinutes:
-            Number(userData?.breakState?.dailyAccumulatedMinutes || 0) + creditedMinutes,
+            breakDayBaseMinutes(userData?.breakState, issuedAt) + creditedMinutes,
+        lastDate: getLithuanianDateString(new Date(issuedAt)),
     },
     workStatus: {
         ...(userData?.workStatus || {}),
@@ -738,8 +744,8 @@ export function planBreakEnd({
                         ...(userData?.breakState || {}),
                         isTakingBreak: false,
                         dailyAccumulatedMinutes:
-                            Number(userData?.breakState?.dailyAccumulatedMinutes || 0)
-                            + durationMinutes,
+                            breakDayBaseMinutes(userData?.breakState, issuedAt) + durationMinutes,
+                        lastDate: getLithuanianDateString(new Date(issuedAt)),
                     },
                     callState: {
                         ...(userData?.callState || {}),
