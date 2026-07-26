@@ -27,6 +27,8 @@ import { toggleChecklistItem, addChecklistItem, deleteChecklistItem } from '../u
 import { logError } from '../utils/errorLog';
 import { STATUS_STYLES } from '../utils/taskConstants';
 import { getTaskFlagTint } from '../utils/taskFlags';
+import { getSessionColors } from '../utils/sessionColors';
+import { isSecondarySessionType, pausedTaskInStack } from '../utils/sessionNesting';
 import { useIsTaskRunning } from '../hooks/useIsTaskRunning';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 
@@ -157,13 +159,19 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
 
     // Strict UI logic: activeSession is the PRIMARY source of truth, workStatus is the fallback.
     const isRunning = useIsTaskRunning(task);
-    // Detect "on break from this task": the user started a break while this task's timer was
-    // running — the break session stores the interrupted task in pausedSession.
-    const isOnBreak = !isRunning
+    // "You are coming back to THIS task": it sits in the paused stack beneath whatever session is
+    // running now. Read through the whole stack rather than one level, and tinted by the session
+    // actually on top — a hand-unrolled `activeSession.pausedSession.type === 'break'` check missed
+    // both a call/quick work taken straight over the task AND anything two deep (call ← break ←
+    // task), so the card lost its link to the running session exactly when the worker had most to
+    // keep track of.
+    const activeSession = userData?.activeSession;
+    const parkedUnder = !isRunning
         && task.assignedUserId === currentUser?.uid
-        && userData?.activeSession?.type === 'break'
-        && userData?.activeSession?.pausedSession?.type === 'task'
-        && userData?.activeSession?.pausedSession?.taskId === task.id;
+        && isSecondarySessionType(activeSession?.type)
+        && pausedTaskInStack(activeSession)?.taskId === task.id
+        ? getSessionColors(activeSession.type)
+        : null;
 
     useEffect(() => {
         const updateSpentTime = () => {
@@ -350,7 +358,7 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                 className={clsx(
                     "rounded-card border-2 shadow-sm p-3 mb-2 cursor-pointer transition-shadow duration-base",
                     isRunning ? "bg-session-task-surface border-session-task-shell ring-2 ring-session-task-accent"
-                        : isOnBreak ? "bg-session-task-surface border-session-break-soft ring-2 ring-session-break-accent"
+                        : parkedUnder ? clsx("bg-session-task-surface ring-2", parkedUnder.softBorder, parkedUnder.accentRing)
                         : flagTint
                             ? flagTint
                             : (STATUS_STYLES[taskStatus] || "bg-surface-card border-line"),

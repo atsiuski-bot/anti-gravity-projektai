@@ -17,6 +17,11 @@ import { Zap, Phone, Coffee, Hammer } from 'lucide-react';
  *  - `accent`  timer / icon / accent text color
  *  - `accentBorder` the accent as a BORDER class — for a pill/chip outlined in the session
  *              accent (e.g. the floating ActiveSessionReadout), so it reads the one map too
+ *  - `accentRing` / `softBorder` the same two colours as RING and SOFT-BORDER classes, for a card
+ *              that is tied to the running session without being it — today the task PARKED beneath
+ *              a break/call/quick-work (TaskCard). They are spelled out per type rather than built
+ *              as `ring-session-${type}-accent` because Tailwind's JIT only keeps class strings it
+ *              can see literally; a constructed one is purged and the ring silently disappears.
  *  - `onShell` text color that is legible *directly* on the shell. The shells are theme-REACTIVE
  *              (a light tint in light mode, a deep tone in dark), so on-shell text is pinned via
  *              the `.wz-on-shell` CSS rule keyed off `data-session-shell` + `data-theme` — never
@@ -36,6 +41,8 @@ export const SESSION_COLORS = {
         accent: 'text-session-quickWork-accent',
         accentBg: 'bg-session-quickWork-accent',
         accentBorder: 'border-session-quickWork-accent',
+        accentRing: 'ring-session-quickWork-accent',
+        softBorder: 'border-session-quickWork-soft',
         onShell: 'text-white', // saturated-red shell → white label for contrast
     },
     call: {
@@ -47,6 +54,8 @@ export const SESSION_COLORS = {
         accent: 'text-session-call-accent',
         accentBg: 'bg-session-call-accent',
         accentBorder: 'border-session-call-accent',
+        accentRing: 'ring-session-call-accent',
+        softBorder: 'border-session-call-soft',
         onShell: 'text-gray-900', // light shell (theme-invariant) → fixed dark label, never inverting ink
     },
     break: {
@@ -58,6 +67,8 @@ export const SESSION_COLORS = {
         accent: 'text-session-break-accent',
         accentBg: 'bg-session-break-accent',
         accentBorder: 'border-session-break-accent',
+        accentRing: 'ring-session-break-accent',
+        softBorder: 'border-session-break-soft',
         onShell: 'text-gray-900',
     },
     task: {
@@ -69,6 +80,8 @@ export const SESSION_COLORS = {
         accent: 'text-session-task-accent',
         accentBg: 'bg-session-task-accent',
         accentBorder: 'border-session-task-accent',
+        accentRing: 'ring-session-task-accent',
+        softBorder: 'border-session-task-soft',
         onShell: 'text-gray-900',
     },
 };
