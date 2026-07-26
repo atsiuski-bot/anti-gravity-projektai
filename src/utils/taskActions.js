@@ -888,7 +888,16 @@ export const deleteTask = async (task, userId, options = { keepWorkHours: false 
         // dangling canonical run is neither.
         if (task.timerStatus === 'running' && task.assignedUserId) {
             const { endSessionForUser } = await import('./sessionAdmin');
-            const settled = await endSessionForUser({ id: task.assignedUserId }, { actorId: userId });
+            // notifyWorker:false — this path sends its OWN `task_deleted` below, which names the
+            // task and is strictly more informative about what just happened. A generic "a
+            // coordinator ended your session" alongside it is pure duplication: the run being
+            // settled here is THIS task's own timer, and a task run never carries a paused stack
+            // (only a secondary session nests one), so the force-end notice would have nothing to
+            // add that `task_deleted` does not already say better.
+            const settled = await endSessionForUser(
+                { id: task.assignedUserId },
+                { actorId: userId, notifyWorker: false }
+            );
             if (settled?.status === 'failed') {
                 throw Object.assign(
                     new Error('Cannot delete a task whose running timer could not be settled'),

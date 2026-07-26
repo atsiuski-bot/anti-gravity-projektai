@@ -302,6 +302,42 @@ describe('endSessionForUser', () => {
         expect(notify.mock.calls[0][0].parkedSummary).toBeUndefined();
     });
 
+    // deleteTask settles the worker's running timer through this util and then sends its own
+    // `task_deleted`, which names the task. Without the opt-out the worker got pinged twice for one
+    // manager action, the generic notice adding nothing (a task run carries no paused stack).
+    it('stays silent when the caller sends its own notice for the same event', async () => {
+        getDoc.mockImplementation((ref) => {
+            if (ref?._path === 'active_sessions/u1') {
+                return Promise.resolve({
+                    exists: () => true,
+                    data: () => ({
+                        userId: 'u1',
+                        revision: 3,
+                        status: 'active',
+                        run: {
+                            runId: 'run-task',
+                            type: 'task',
+                            taskId: 't1',
+                            taskTitle: 'Stogo remontas',
+                            startedAt: '2026-07-09T10:00:00.000Z',
+                            revision: 3,
+                        },
+                    }),
+                });
+            }
+            return Promise.resolve(missingSnap());
+        });
+
+        const result = await endSessionForUser(
+            { id: 'u1' },
+            { actorId: 'manager-a', notifyWorker: false }
+        );
+
+        expect(result.status).toBe('canonical-ended');
+        expect(applyTimerTransitionPlan).toHaveBeenCalledTimes(1); // still fully settled
+        expect(notify).not.toHaveBeenCalled();
+    });
+
     // Without a caller uid the notification carries no provenance and firestore.rules would reject
     // it, so the legacy branch stays a silent clear rather than logging a failed write every time.
     it('does not notify from the legacy branch when no actor is known', async () => {

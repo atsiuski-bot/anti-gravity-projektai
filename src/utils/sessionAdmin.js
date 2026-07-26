@@ -64,9 +64,14 @@ const notifyForceEnd = (targetUserId, actorId, discardedStack, issuedAt) => {
  * are logged and swallowed so a transient write error never leaves the caller in a broken state.
  *
  * @param {Object} user - the target user doc ({ id, activeSession?, workStatus?, ... }).
- * @returns {Promise<void>}
+ * @param {Object} [opts]
+ * @param {string} [opts.actorId] - the signed-in caller; required for a canonical force-end.
+ * @param {boolean} [opts.notifyWorker=true] - tell the worker their session was ended. Set false
+ *        ONLY when the caller sends its own, strictly more informative notice for the same event
+ *        (deleteTask does — see its call site), so the worker is not pinged twice about one action.
+ * @returns {Promise<Object>} { status, creditedMinutes?, discardedStack? }
  */
-export const endSessionForUser = async (user, { actorId = null } = {}) => {
+export const endSessionForUser = async (user, { actorId = null, notifyWorker = true } = {}) => {
     if (!user?.id) return { status: 'skipped' };
     try {
         // Re-read the target SERVER-FIRST and settle THAT copy, never the caller's snapshot. The
@@ -106,7 +111,7 @@ export const endSessionForUser = async (user, { actorId = null } = {}) => {
             await applyTimerTransitionPlan(db, plan);
             // AFTER the settle is committed: the worker is told only about something that actually
             // happened, and a notification failure can never roll back a settled session.
-            notifyForceEnd(user.id, actorId, plan.discardedStack, issuedAt);
+            if (notifyWorker) notifyForceEnd(user.id, actorId, plan.discardedStack, issuedAt);
             return {
                 status: 'canonical-ended',
                 creditedMinutes: plan.creditedMinutes,
@@ -147,7 +152,7 @@ export const endSessionForUser = async (user, { actorId = null } = {}) => {
             'callState.isCalling': false,
             'quickWorkState.isQuickWorking': false,
         });
-        if (actorId) {
+        if (actorId && notifyWorker) {
             notifyForceEnd(user.id, actorId, legacyDiscarded, new Date().toISOString());
         }
         return { status: 'legacy-cleared', discardedStack: legacyDiscarded };
