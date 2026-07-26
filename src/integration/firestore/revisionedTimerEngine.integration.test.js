@@ -398,7 +398,6 @@ describeEmulator('revisioned offline timer engine', () => {
             timerStartedAt: null,
             timerMinutes: 5,
             actualTime: '5m',
-            timeLimitReached: false,
         });
         expect(ledgerAfter.data()).toMatchObject({
             runId: 'run-finish',

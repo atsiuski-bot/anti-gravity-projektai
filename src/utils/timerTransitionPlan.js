@@ -1691,7 +1691,19 @@ export function planTaskEnd({
                 completedAt: issuedAt,
                 confirmedBy,
                 confirmedAt: confirmedBy ? issuedAt : null,
-                timeLimitReached: false,
+                // `timeLimitReached` is deliberately NOT cleared here. It is the flag
+                // onTaskFinishedBadge reads on the completed false→true edge to withhold the
+                // on_estimate badge from a task that blew its estimate — and this batch IS that
+                // edge, so clearing it in the same write made the trigger's `after` never see the
+                // limit and granted the badge to every forced limit-popup finish (confirmed live
+                // 2026-07-26). The legacy path only got this right by accident: it clears the flag
+                // in a SEPARATE later write, after the trigger has already read `true`.
+                // Leaving it set is also the honest end state — the limit really was reached — and
+                // matches its sibling latch `warningShown70`, which no finish path clears either.
+                // Nothing else needs it cleared: useTaskTimeMonitor only evaluates the RUNNING
+                // active task (and re-arms the flag itself when time is manually cut), while
+                // extendTaskTime and a TaskModal estimate edit both clear it when a grant of more
+                // time genuinely re-opens the budget.
                 updatedAt: issuedAt,
                 timerProjectionVersion: TIMER_ENGINE_VERSION,
             },

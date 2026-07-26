@@ -1048,4 +1048,29 @@ describe('canonical ledger-id lockstep (client engine closers ↔ functions nets
         .toMatch(/merge:/);
     }
   });
+
+  // The completion batch and the badge trigger are two halves of ONE decision: whether a finished
+  // task blew its estimate. onTaskFinishedBadge reads `after.timeLimitReached` on the completed
+  // false→true edge, and planTaskEnd's task update IS that edge — so if that write also clears the
+  // flag, the trigger can never observe a limit and awards on_estimate to every forced limit-popup
+  // finish (confirmed live 2026-07-26). The legacy path is right only by accident: it clears the
+  // flag in a separate LATER write. Lock both halves so neither can drift alone.
+  it('planTaskEnd never clears the timeLimitReached flag its badge trigger reads', () => {
+    const endStart = PLAN_SRC.indexOf('export function planTaskEnd');
+    expect(endStart, 'timerTransitionPlan.js lost planTaskEnd').toBeGreaterThan(-1);
+    const taskWriteStart = PLAN_SRC.indexOf('path: `tasks/${task.id}`', endStart);
+    expect(taskWriteStart, 'planTaskEnd no longer writes the task projection').toBeGreaterThan(-1);
+    const nextPath = PLAN_SRC.indexOf('path: `', taskWriteStart + 10);
+    const taskWrite = PLAN_SRC.slice(taskWriteStart, nextPath > -1 ? nextPath : PLAN_SRC.length);
+
+    expect(taskWrite, 'planTaskEnd sets timeLimitReached in the SAME batch as completed:true — the on_estimate badge would be granted to an over-estimate finish')
+      .not.toMatch(/timeLimitReached\s*:/);
+
+    const badgeTrigger = FUNCTIONS_SRC.slice(
+      FUNCTIONS_SRC.indexOf('exports.onTaskFinishedBadge'),
+      FUNCTIONS_SRC.indexOf('const GRACE_MINUTES')
+    );
+    expect(badgeTrigger, 'onTaskFinishedBadge lost its timeLimitReached guard — the client no longer clears the flag, so nothing else withholds on_estimate')
+      .toMatch(/after\.timeLimitReached\s*!==\s*true/);
+  });
 });

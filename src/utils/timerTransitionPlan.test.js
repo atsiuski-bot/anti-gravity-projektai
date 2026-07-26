@@ -799,7 +799,6 @@ describe('revisioned timer transition plans', () => {
                 completed: true,
                 status: 'completed',
                 timerMinutes: 15,
-                timeLimitReached: false,
             });
         expect(plan.writes.find((write) =>
             write.path === `active_sessions/${userId}`
@@ -807,6 +806,50 @@ describe('revisioned timer transition plans', () => {
             status: 'idle',
             revision: 9,
         });
+    });
+
+    // Regression — the unearned on_estimate badge (confirmed live 2026-07-26, task
+    // dwwURIYzX3ibQEUJvL6y: 30.016 min against a 30min estimate, finished from the forced
+    // limit popup, badge granted anyway). onTaskFinishedBadge withholds on_estimate on the
+    // completed false→true edge only when `after.timeLimitReached !== true`, and this batch IS
+    // that edge — so clearing the flag in the same write made the trigger blind to every limit
+    // the worker had actually hit. Atomicity is the bug: the legacy path passes only because it
+    // clears the flag in a separate LATER write. The completion batch must leave the flag alone.
+    it('does not clear timeLimitReached in the completion batch (the on_estimate badge gate)', () => {
+        const plan = planTaskEnd({
+            task: {
+                ...baseTask,
+                timerStatus: 'running',
+                timerStartedAt: '2026-07-09T08:00:00.000Z',
+                timerMinutes: 25,
+                estimatedTime: '30min',
+                timeLimitReached: true,
+            },
+            userId,
+            userData: idleUser,
+            activeRecord: {
+                userId,
+                revision: 4,
+                status: 'active',
+                run: {
+                    runId: 'run-limit-finish',
+                    type: 'task',
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    startedAt: '2026-07-09T08:00:00.000Z',
+                    revision: 4,
+                },
+            },
+            commandId: 'cmd-limit-finish',
+            issuedAt: '2026-07-09T08:06:00.000Z',
+        });
+
+        const taskWrite = plan.writes.find((write) => write.path === 'tasks/task-a').data;
+        expect(taskWrite.completed).toBe(true);
+        expect(
+            taskWrite,
+            'planTaskEnd clears timeLimitReached again — the badge trigger reads it on THIS edge, so an over-estimate finish would be awarded on_estimate'
+        ).not.toHaveProperty('timeLimitReached');
     });
 });
 
