@@ -2,11 +2,14 @@ import {
     clampSessionMinutes,
     formatMinutesToTimeString,
     getLithuanianDateString,
+    MAX_SESSION_MINUTES,
     MIN_LOGGED_SESSION_MINUTES,
+    TIMER_HEARTBEAT_CONTINUE_MS,
 } from './timeUtils';
 import { isManagerRole } from './formatters';
 import { DEFAULT_PRIORITY } from './priority';
 import { buildCallTitle } from './callContacts';
+import { APP_INSTANCE_ID } from './appInstance';
 
 export const TIMER_ENGINE_VERSION = 2;
 export const TIMER_ACTIVE_COLLECTION = 'active_sessions';
@@ -1379,7 +1382,24 @@ export function planTaskRecover({
     const hasUsableHeartbeat = Number.isFinite(heartbeatMs)
         && heartbeatMs >= oldStart.getTime()
         && heartbeatMs < recoveryEnd.getTime();
-    const provenEnd = new Date(hasUsableHeartbeat ? heartbeatMs : recoveryEnd.getTime());
+    // How long has this run been UNPROVEN — i.e. how much of it has no heartbeat behind it? This is
+    // the same question decideOrphanTaskRecovery asks on the legacy path, and it must get the same
+    // answer, because the two engines are crediting the same physical event.
+    const unprovenTailMs = hasUsableHeartbeat
+        ? recoveryEnd.getTime() - heartbeatMs
+        : Number.POSITIVE_INFINITY;
+
+    // A brief interruption: the app reloaded (PWA update, tab eviction, memory pressure) while the
+    // worker kept working, and it is demonstrably back now. The whole run is real continuous work,
+    // so it is credited in ONE row up to the reload instant and the timer keeps running. Legacy
+    // does exactly this (mode 'resume'), and matching matters: canonical previously split every
+    // ordinary mid-shift reload into a proven row PLUS a gap row flagged isManualSession — a
+    // "manual correction" the worker never made, minted on every reload.
+    const briefInterruption = unprovenTailMs <= TIMER_HEARTBEAT_CONTINUE_MS;
+    const provenEnd = briefInterruption || !hasUsableHeartbeat
+        ? recoveryEnd
+        : new Date(heartbeatMs);
+
     // Clamp the ENTIRE orphaned run (oldStart → recoveryEnd) to ONE MAX_SESSION_MINUTES
     // budget, then PARTITION that single budget between the heartbeat-proven segment and the
     // post-heartbeat gap. Clamping each segment independently (the previous behaviour) let one
@@ -1391,8 +1411,24 @@ export function planTaskRecover({
         clampSessionMinutes((provenEnd - oldStart) / 60000),
         totalBudgetMinutes,
     );
-    const gapMinutes = hasUsableHeartbeat
-        ? Math.max(0, totalBudgetMinutes - provenMinutes)
+
+    // The gap is measured in REAL WALL CLOCK, then admitted only if it is plausibly one missed
+    // stretch of work — the identical test resolveUntrackedGap applies on the legacy path.
+    //
+    // It used to be `totalBudget - proven`, i.e. whatever was LEFT of the 16h ceiling. That turned
+    // every forgotten timer into a maximum payday: start Friday 17:00, heartbeat dies 17:02, worker
+    // opens the app Monday 08:00 — a 63-hour absence — and the leftover-budget rule credited 958
+    // minutes of "untracked work" nobody did, in a row whose own startTime→endTime span was 63h.
+    // Legacy refused that gap outright. Measuring the gap for what it is, and refusing an
+    // implausible one, is what makes the two engines agree. The budget cap still applies on top, so
+    // the R-03 ceiling above is preserved.
+    const realGapMinutes = (recoveryEnd - provenEnd) / 60000;
+    const gapIsPlausible = !briefInterruption
+        && hasUsableHeartbeat
+        && realGapMinutes >= MIN_LOGGED_SESSION_MINUTES
+        && realGapMinutes <= MAX_SESSION_MINUTES;
+    const gapMinutes = gapIsPlausible
+        ? Math.min(realGapMinutes, Math.max(0, totalBudgetMinutes - provenMinutes))
         : 0;
     const timerMinutes = Number(task.timerMinutes || 0) + provenMinutes + gapMinutes;
 
@@ -1469,39 +1505,86 @@ export function planTaskRecover({
         };
     }
 
-    writes.push(
-        {
-            type: 'set',
-            path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
-            data: activeRecord({ command, revision, status: 'active', run: nextRun }),
-        },
-        {
-            type: 'update',
-            path: `tasks/${task.id}`,
-            data: {
-                timerStatus: 'running',
-                timerStartedAt: recoveryEnd.toISOString(),
-                timerLastHeartbeat: recoveryEnd.toISOString(),
-                timerMinutes,
-                manualMinutes: Number(task.manualMinutes || 0),
-                status: 'in-progress',
-                updatedAt: issuedAt,
-                timerRunId: runId,
-                timerRevision: revision,
-                timerProjectionVersion: TIMER_ENGINE_VERSION,
+    // Only a BRIEF interruption re-anchors and keeps running. A genuinely closed app must come back
+    // PAUSED, exactly as the legacy path does (mode 'pause-at-beat'): the worker is not demonstrably
+    // at work, and silently resuming would run an unattended timer until someone noticed. Recovery
+    // previously re-anchored every orphan unconditionally — including one the phone abandoned days
+    // ago — which is the same runaway the 16h ceiling exists to bound.
+    if (briefInterruption) {
+        writes.push(
+            {
+                type: 'set',
+                path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
+                data: activeRecord({ command, revision, status: 'active', run: nextRun }),
             },
-        },
-        {
-            type: 'update',
-            path: `users/${userId}`,
-            data: legacyRunningProjection(task, nextRun, issuedAt),
-        },
-        commandWrite(command, revision),
-    );
+            {
+                type: 'update',
+                path: `tasks/${task.id}`,
+                data: {
+                    timerStatus: 'running',
+                    timerStartedAt: recoveryEnd.toISOString(),
+                    timerLastHeartbeat: recoveryEnd.toISOString(),
+                    // Claim the re-anchored run for THIS app instance, or the ownership rule in
+                    // useTaskHeartbeat refuses to beat it and the run looks dead a minute later.
+                    timerOwnerInstance: APP_INSTANCE_ID,
+                    timerMinutes,
+                    manualMinutes: Number(task.manualMinutes || 0),
+                    status: 'in-progress',
+                    updatedAt: issuedAt,
+                    timerRunId: runId,
+                    timerRevision: revision,
+                    timerProjectionVersion: TIMER_ENGINE_VERSION,
+                },
+            },
+            {
+                type: 'update',
+                path: `users/${userId}`,
+                data: legacyRunningProjection(task, nextRun, issuedAt),
+            },
+            commandWrite(command, revision),
+        );
+    } else {
+        writes.push(
+            {
+                type: 'set',
+                path: `${TIMER_ACTIVE_COLLECTION}/${userId}`,
+                data: activeRecord({ command, revision, status: 'idle', run: null }),
+            },
+            {
+                type: 'update',
+                path: `tasks/${task.id}`,
+                data: {
+                    timerStatus: 'paused',
+                    timerStartedAt: null,
+                    timerMinutes,
+                    manualMinutes: Number(task.manualMinutes || 0),
+                    updatedAt: issuedAt,
+                    timerRunId: null,
+                    timerRevision: revision,
+                    timerProjectionVersion: TIMER_ENGINE_VERSION,
+                },
+            },
+            {
+                type: 'update',
+                path: `users/${userId}`,
+                data: {
+                    activeSession: null,
+                    workStatus: {
+                        isWorking: false,
+                        status: 'paused',
+                        activeTaskId: task.id,
+                        lastUpdated: issuedAt,
+                    },
+                },
+            },
+            commandWrite(command, revision),
+        );
+    }
 
     return {
         command,
         creditedMinutes: provenMinutes + gapMinutes,
+        resumed: briefInterruption,
         recoveredGap,
         writes,
     };

@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { doc, getDocFromServer } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useRevisionedTimerSession } from './useRevisionedTimerSession';
 import {
     canonicalSessionState,
@@ -41,11 +43,51 @@ export function useRevisionedTaskRecovery(
         if (!task) return;
 
         handledRuns.current.add(base.run.runId);
+
+        // An effect callback cannot be async, and the server confirmation below must be awaited
+        // before any plan is built — so the rest of the recovery runs as its own async scope.
+        (async () => {
+        // Confirm against the SERVER before crediting anything — the guard the legacy path has had
+        // since the first double-credit incident (confirmTaskOrphanOnServer), and which this path
+        // never had. Two things make it mandatory here:
+        //
+        //  • The nightly autoStopForgottenTimers may already have closed this run: it credits the
+        //    heartbeat-proven minutes and writes work_sessions/sess_task_{taskId}_{startMs}. It does
+        //    NOT touch active_sessions (functions/ has no notion of it), so the canonical record
+        //    still says 'active' and every rules check still passes. Recovering on top of that wrote
+        //    a SECOND ledger row (sess_run_{runId}) for the same stretch — two ids that can never
+        //    dedupe — and flipped the task back to running, undoing the server's stop.
+        //  • The `tasks` array here is snapshot state whose first emission after boot comes from the
+        //    local cache, so task.timerMinutes can be the pre-death value. The accumulation below is
+        //    base + proven + gap, so a stale base silently discards whatever the server credited.
+        //
+        // A read that FAILS proves nothing (offline boot), so the run is left unlatched to retry —
+        // never recovered from the cache copy.
+        let fresh;
+        try {
+            const snap = await getDocFromServer(doc(db, 'tasks', task.id));
+            fresh = snap.exists() ? { id: snap.id, ...snap.data() } : null;
+        } catch (error) {
+            handledRuns.current.delete(base.run.runId);
+            logError(error, {
+                source: 'revisionedTaskRecovery.confirm',
+                taskId: task.id,
+                runId: base.run.runId,
+            });
+            return;
+        }
+
+        // Someone else already finalized this stretch — the server net, a second device, or a
+        // manager force-end. Nothing of ours left to credit.
+        if (!fresh || fresh.timerStatus !== 'running' || !fresh.timerStartedAt) return;
+        // …and it must still be THE SAME run, not a newer one started meanwhile.
+        if (fresh.timerRunId && fresh.timerRunId !== base.run.runId) return;
+
         const recoveredAt = new Date().toISOString();
         let plan;
         try {
             plan = planTaskRecover({
-                task,
+                task: fresh,
                 userId: currentUser.uid,
                 userData,
                 activeRecord: session.record,
@@ -83,6 +125,7 @@ export function useRevisionedTaskRecovery(
                 runId: base.run.runId,
             });
         });
+        })();
     }, [
         currentUser,
         enabled,

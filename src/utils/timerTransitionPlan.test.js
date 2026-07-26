@@ -615,29 +615,99 @@ describe('revisioned timer transition plans', () => {
                 expectedRevision: 3,
                 expectedRunId: 'run-before-crash',
             });
+            // The whole run is credited either way — what changes is whether the timer survives.
             expect(plan.creditedMinutes).toBe(minutes);
-            expect(plan.writes.find((write) =>
-                write.path === `active_sessions/${userId}`
-            ).data).toMatchObject({
-                revision: 4,
-                status: 'active',
-                run: {
-                    runId: `run-after-recovery-${minutes}`,
-                    startedAt: recoveredAt,
-                },
-            });
-            expect(plan.writes.find((write) => write.path === 'tasks/task-a').data)
-                .toMatchObject({
+
+            const active = plan.writes.find((w) => w.path === `active_sessions/${userId}`).data;
+            const taskWrite = plan.writes.find((w) => w.path === 'tasks/task-a').data;
+
+            if (minutes <= 3) {
+                // BRIEF interruption (unproven tail within TIMER_HEARTBEAT_CONTINUE_MS): an
+                // ordinary mid-shift reload. The run is real continuous work — credited as ONE
+                // segment up to the reload instant, and re-anchored so the worker never restarts.
+                // It must NOT be split into a gap row: that row is flagged isManualSession, i.e. a
+                // "manual correction" the worker never made, and it used to be minted on EVERY
+                // reload along with a banner asking whether they had really worked.
+                expect(plan.resumed).toBe(true);
+                expect(plan.recoveredGap).toBeNull();
+                expect(active).toMatchObject({
+                    revision: 4,
+                    status: 'active',
+                    run: { runId: `run-after-recovery-${minutes}`, startedAt: recoveredAt },
+                });
+                expect(taskWrite).toMatchObject({
                     timerStatus: 'running',
                     timerStartedAt: recoveredAt,
                     timerMinutes: minutes,
                 });
-            expect(plan.recoveredGap).toMatchObject({
-                sessionId: 'sess_gap_run_run-before-crash',
-                gapMinutes: minutes,
-            });
+                // The re-anchored run must be claimed, or the ownership rule in useTaskHeartbeat
+                // refuses to beat it and it looks abandoned a minute later.
+                expect(typeof taskWrite.timerOwnerInstance).toBe('string');
+            } else {
+                // GENUINELY CLOSED: the app was gone for longer than a skipped beat. The proven
+                // stretch and the plausible gap are still credited, but the timer comes back
+                // PAUSED — exactly as the legacy path does. Re-anchoring every orphan
+                // unconditionally is how an unattended timer runs away.
+                expect(plan.resumed).toBe(false);
+                expect(active).toMatchObject({ revision: 4, status: 'idle', run: null });
+                expect(taskWrite).toMatchObject({
+                    timerStatus: 'paused',
+                    timerStartedAt: null,
+                    timerMinutes: minutes,
+                });
+                expect(plan.recoveredGap).toMatchObject({
+                    sessionId: 'sess_gap_run_run-before-crash',
+                    gapMinutes: minutes,
+                });
+            }
         }
     );
+
+    // The defect this closes: the gap used to be whatever was LEFT of the 16h ceiling, not how long
+    // the worker was actually away. A timer forgotten over a weekend therefore credited a full
+    // 16-hour payday nobody worked. Legacy refuses any gap longer than one plausible shift; this
+    // asserts canonical now agrees.
+    it('refuses an implausible gap instead of paying out the leftover 16h budget', () => {
+        const startedAt = '2026-07-10T14:00:00.000Z';       // Friday 17:00 Vilnius
+        const startMs = new Date(startedAt).getTime();
+        const heartbeatAt = new Date(startMs + 2 * 60000).toISOString();      // dies after 2 min
+        const recoveredAt = new Date(startMs + 63 * 60 * 60000).toISOString(); // reopened Monday
+        const plan = planTaskRecover({
+            task: {
+                ...baseTask,
+                timerStatus: 'running',
+                timerStartedAt: startedAt,
+                timerLastHeartbeat: heartbeatAt,
+            },
+            userId,
+            userData: idleUser,
+            activeRecord: {
+                userId,
+                revision: 3,
+                status: 'active',
+                run: {
+                    runId: 'run-before-crash',
+                    type: 'task',
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    startedAt,
+                    revision: 3,
+                },
+            },
+            commandId: 'cmd-recover-weekend',
+            runId: 'run-after-weekend',
+            issuedAt: recoveredAt,
+            recoveredAt,
+        });
+
+        // Only the two proven minutes are credited — not the 958 minutes the leftover budget
+        // would have handed over, and certainly not as a row claiming a 63-hour span.
+        expect(plan.creditedMinutes).toBe(2);
+        expect(plan.recoveredGap).toBeNull();
+        expect(plan.writes.some((w) => w.path.includes('sess_gap_run_'))).toBe(false);
+        // …and a run abandoned for three days comes back stopped.
+        expect(plan.resumed).toBe(false);
+    });
 
     it('caps a split-heartbeat recovery run to one MAX_SESSION_MINUTES budget (R-03)', () => {
         // Orphaned run: started at 0h, last heartbeat at 15h, recovered at 30h. The proven

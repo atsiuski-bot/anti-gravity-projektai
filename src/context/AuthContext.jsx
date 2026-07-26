@@ -13,6 +13,7 @@ import { removeFcmToken } from '../utils/messaging';
 import { setAgentsEnabled } from '../domain/agentControl';
 import { decideDisabledLogin } from '../utils/accountStatus';
 import { applyPendingSessionProjection } from '../utils/sessionProjection';
+import { isTimerEngineEnabledFor } from '../utils/timerEngineGate';
 
 // How long the rollout-config listener may stay unresolved before the timer controls fall back to
 // the legacy path. Long enough that a normal (even slow) first snapshot wins; short enough that an
@@ -482,7 +483,9 @@ export function AuthProvider({ children }) {
         const unsub = onSnapshot(
             doc(db, 'system_config', 'timerEngine'),
             (snap) => {
-                const on = snap.exists() && snap.data().enabled === true;
+                // Targeted: this reads the `rollout` block, never the legacy `enabled` boolean —
+                // see timerEngineGate.js for why an old bundle cannot be gated any other way.
+                const on = isTimerEngineEnabledFor(snap.exists() ? snap.data() : null, currentUser.uid);
                 if (on) engineEverEnabledRef.current = true;
                 setTimerEngineStatus(on || engineEverEnabledRef.current ? 'enabled' : 'disabled');
             },
