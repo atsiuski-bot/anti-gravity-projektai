@@ -100,7 +100,8 @@ export default function ActiveSessionReadout() {
                         <Icon className="h-4 w-4 wz-pulse-soft" aria-hidden="true" />
                         <span className="text-caption font-medium">{cfg.label}</span>
                         <span className="font-mono text-body-lg font-bold leading-none tabular-nums">
-                            {formatMinutesToTimeString(minutes)}
+                            {/* Per-second heartbeat: proof the clock runs between minute changes. */}
+                            <span className="wz-tick">{formatMinutesToTimeString(minutes)}</span>
                         </span>
                     </div>
 

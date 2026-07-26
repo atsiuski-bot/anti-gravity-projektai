@@ -480,6 +480,17 @@
 }
 .wz-pulse-soft { animation: wz-pulse-soft 2.4s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 
+/* One-per-second heartbeat for a LIVE elapsed-time readout. The number itself only
+   changes once a minute, so without this it looks frozen — the tick is the proof to
+   the worker that the clock is still running. Deliberately fainter and quicker than
+   wz-pulse-soft: it must read as a pulse, not a flash, and must never make the digits
+   hard to read (opacity floor stays well above the AA contrast margin). Paint-only,
+   and neutralised by the reduced-motion guard at the bottom of this file. */
+@keyframes wz-tick {
+  50% { opacity: 0.75; }
+}
+.wz-tick { animation: wz-tick 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
 /* One-shot "settled into place" grow — the completion pill. Monotonic, no overshoot
    (the design system bans bounce/elastic). */
 @keyframes wz-pop {

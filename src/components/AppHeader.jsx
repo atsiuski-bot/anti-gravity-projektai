@@ -35,7 +35,9 @@ function ActiveTaskPill({ session, taskTitle, taskId }) {
             )}
             {minutes !== null && (
                 <span className={cn('shrink-0 font-mono text-body font-bold leading-none tabular-nums', session.accent)}>
-                    {formatMinutesToTimeString(minutes)}
+                    {/* The digits only move once a minute; the per-second pulse is what tells the
+                        worker the clock is still counting. */}
+                    <span className="wz-tick">{formatMinutesToTimeString(minutes)}</span>
                     {estimatedTime && (
                         <span className="font-normal text-ink-muted">{' / '}{estimatedTime}</span>
                     )}
