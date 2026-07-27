@@ -468,6 +468,55 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
             );
         });
 
+        // ---- T-18 (break arm): the force-end's break_sessions tail ------------------------------
+        // A force-end commits as ONE batch, so an owner-only create on break_sessions denied the WHOLE
+        // settle and left the worker stuck live. The manager branch is scoped exactly like
+        // work_sessions — and must NOT become a general cross-user write door.
+        const breakRow = {
+            userId: TARGET_ID,
+            userName: 'Target',
+            runId: 'run-1',
+            startTime: '2026-07-11T00:00:00.000Z',
+            endTime: '2026-07-11T00:20:00.000Z',
+            durationMinutes: 20,
+            date: '2026-07-11',
+            isBreak: true,
+            engineVersion: 2,
+        };
+
+        it('an OUT-OF-SCOPE scoped manager cannot author a break row for the worker', async () => {
+            await assertFails(
+                setDoc(doc(authedDb(OUT_SCOPE_MGR), 'break_sessions', 'sess_break_run_run-1'), breakRow)
+            );
+        });
+
+        it('an IN-SCOPE scoped manager may author the force-ended break row', async () => {
+            await assertSucceeds(
+                setDoc(doc(authedDb(IN_SCOPE_MGR), 'break_sessions', 'sess_break_run_run-1'), breakRow)
+            );
+        });
+
+        it('a whole-company admin may author the force-ended break row', async () => {
+            await assertSucceeds(
+                setDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'break_sessions', 'sess_break_run_run-1'), breakRow)
+            );
+        });
+
+        it('the duration guard still applies to a manager-authored break row', async () => {
+            await assertFails(
+                setDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'break_sessions', 'sess_break_run_run-1'), {
+                    ...breakRow,
+                    durationMinutes: 5000,
+                })
+            );
+        });
+
+        it('a plain WORKER still cannot author a break row for a colleague', async () => {
+            await assertFails(
+                setDoc(doc(workerDb(), 'break_sessions', 'sess_break_run_run-1'), breakRow)
+            );
+        });
+
         // Calendar-request approval workflow (decline is the acute gap: it bypasses the already-scoped
         // work_hours write that approve performs). The userId pin is preserved by the merge update.
         const declinePatch = { status: 'declined', declinedBy: 'x', declinedAt: '2026-07-11T02:00:00.000Z' };

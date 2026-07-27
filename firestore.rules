@@ -572,9 +572,20 @@ service cloud.firestore {
     match /break_sessions/{sessionId} {
       // Read: whole-team viewers see all; a scoped manager only their team; the worker their own.
       allow read:          if isUserActive() && (canSeeWholeTeam() || ownsUserId() || inCallerTeam());
-      // Breaks are self-logged only (no manager-create path). Duration guard (main) — this is the
-      // exact collection the >960-min corruption landed in.
-      allow create:        if isUserActive() && createOwnsUserId() && durationInRange(request.resource.data);
+      // Workers log their own breaks. A manager may author one as the TAIL OF A FORCE-END: the
+      // canonical settle records the break interval the stuck worker could never close themselves,
+      // and because every write of that settle commits as ONE batch, an owner-only create denied the
+      // WHOLE batch — leaving the worker permanently live with no route out of any UI (audit T-18,
+      // break arm). Scope mirrors work_sessions exactly: whole-team viewers for anyone, a scoped
+      // overseer only inside their subtree. The privilege this grants is narrow by construction —
+      // break time is NOT payable (it never enters a work_sessions total), so a manager-authored row
+      // can only alter break HISTORY and the day's break allowance, never pay. Duration guard (main)
+      // still applies to every branch — this is the exact collection the >960-min corruption landed in.
+      allow create:        if isUserActive() && (
+                              createOwnsUserId() ||
+                              canSeeWholeTeam() ||
+                              (isScopedOverseer() && overseesUser(request.resource.data.userId))
+                            ) && durationInRange(request.resource.data);
       // Update carries THREE guards (composed with &&): the duration guard (main), the userId pin
       // (full-sweep F5 — no re-pointing the record to a colleague), and the teamManagerIds pin
       // (audit R-05). break_sessions is stamped by a CREATE-ONLY Cloud Function too, so a forged
