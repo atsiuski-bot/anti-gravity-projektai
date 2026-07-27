@@ -113,9 +113,15 @@ describe('resolveUntrackedGap — what happens to the untracked gap after a paus
         vi.clearAllMocks();
     });
 
+    // A real mid-morning instant, NOT epoch 0. Admission now also asks whether the gap stays inside
+    // one work day, and epoch 0 is 03:00 Vilnius — just under the 05:00 boundary — so any fixture
+    // longer than two hours from there silently "crosses midnight" and gets refused for the wrong
+    // reason. The short fixtures below stay on epoch 0 harmlessly; anything longer must use this.
+    const MORNING = Date.parse('2026-07-27T09:00:00.000Z'); // 12:00 Vilnius
+
     it('AUTO-credits a plausible gap on the worker\'s own task and stamps a "credited" notice', async () => {
         claimRecoveredGap.mockResolvedValue({ ok: true, id: 'sess-1' });
-        const decision = { gapFrom: 1000, gapTo: 1000 + 125 * 60000 }; // 125 min
+        const decision = { gapFrom: MORNING, gapTo: MORNING + 125 * 60000 }; // 125 min
 
         await resolveUntrackedGap(task, worker, decision);
 
@@ -123,14 +129,47 @@ describe('resolveUntrackedGap — what happens to the untracked gap after a paus
         expect(claimRecoveredGap).toHaveBeenCalledWith({
             task: { id: 't1', title: 'Garso komplektu patikrinimas' },
             worker,
-            startTime: new Date(1000).toISOString(),
-            endTime: new Date(1000 + 125 * 60000).toISOString(),
+            startTime: new Date(MORNING).toISOString(),
+            endTime: new Date(MORNING + 125 * 60000).toISOString(),
         });
         expect(addRecoveryNotice).toHaveBeenCalledTimes(1);
         expect(addRecoveryNotice).toHaveBeenCalledWith('worker-1', {
             kind: 'task-gap-credited', taskId: 't1', taskTitle: 'Garso komplektu patikrinimas',
             gapMinutes: 125, sessionId: 'sess-1',
         });
+    });
+
+    // The production case (2026-07-27): a timer left running overnight. Under the old bound the
+    // 10.4-hour gap was UNDER the 16h session ceiling, so it auto-credited 623 minutes of sleep.
+    // It must now fall through to the opt-IN claim instead — refused is not the same as discarded.
+    it('REFUSES to auto-credit an overnight gap, and offers the opt-in claim instead', async () => {
+        const decision = {
+            gapFrom: Date.parse('2026-07-26T19:18:43.000Z'), // 22:18 Vilnius
+            gapTo: Date.parse('2026-07-27T05:41:56.000Z'),   // 08:41 Vilnius, next morning
+        };
+
+        await resolveUntrackedGap(task, worker, decision);
+
+        expect(claimRecoveredGap, 'the night must not be auto-credited').not.toHaveBeenCalled();
+        const notice = addRecoveryNotice.mock.calls[0][1];
+        expect(notice.kind).toBe('task-gap');       // opt-IN claim, not "credited"
+        expect(notice.gapMinutes).toBe(623);
+        expect(logError.mock.calls[0][1]).toMatchObject({
+            source: 'orphanRecovery:gapNotAutoCredited',
+            cause: 'gap-not-one-work-stretch',
+        });
+    });
+
+    it('REFUSES a shorter gap that still spans two work days', async () => {
+        const decision = {
+            gapFrom: Date.parse('2026-07-27T00:00:00.000Z'), // 03:00 Vilnius
+            gapTo: Date.parse('2026-07-27T04:00:00.000Z'),   // 07:00 Vilnius — past the 05:00 line
+        };
+
+        await resolveUntrackedGap(task, worker, decision);
+
+        expect(claimRecoveredGap).not.toHaveBeenCalled();
+        expect(addRecoveryNotice.mock.calls[0][1].kind).toBe('task-gap');
     });
 
     it('falls back to the opt-in claim offer when the auto-credit write fails', async () => {

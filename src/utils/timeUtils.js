@@ -107,6 +107,22 @@ export const MAX_MANUAL_TASK_MINUTES = 1000 * 60;
 // fat-fingered toggle on a phone (gloved hands, outdoors) cannot mint a micro-session.
 export const MIN_LOGGED_SESSION_MINUTES = 1;
 
+// The longest UNTRACKED gap that still reads as one plausible stretch of unrecorded work.
+//
+// This is NOT the same question as MAX_SESSION_MINUTES. That one bounds a session the worker
+// actually started and stopped; this one bounds an interval NOBODY observed — the phone went quiet
+// and we are guessing, on the worker's behalf, that they kept working through it. The guess is
+// auto-credited (opt-OUT), so its bound decides how much unworked time the app will pay for by
+// default when a timer is simply forgotten.
+//
+// Both engines used MAX_SESSION_MINUTES here, which made "asleep" indistinguishable from "working
+// with the phone pocketed": a timer left running overnight was recovered the next morning and
+// credited 623 minutes — 10.4 hours of pay for a night's sleep (observed in production 2026-07-27).
+// The real distribution says the bound was never close to right: of 78 auto-credited gaps ever
+// written, the median is 27 minutes and the second-largest is 3.6 hours. 4h sits above every
+// genuine gap ever observed while refusing a night outright.
+export const MAX_UNTRACKED_GAP_MINUTES = 4 * 60;
+
 // --- Timer heartbeat (crash/reload-survivable running timer) ---------------------------------
 // A live task timer is just a stored start instant; the elapsed is `now − timerStartedAt`. To
 // tell a brief reload-while-working apart from a truly abandoned timer on the next app load, a
@@ -469,6 +485,42 @@ export const getCurrentWorkDayCutoff = (now = getLithuanianNow()) => {
         cutoffDate = addDaysToDateString(cutoffDate, -1);
     }
     return getWorkDayCutoff(cutoffDate);
+};
+
+/**
+ * May an untracked gap [from → to] be AUTO-credited as work the timer failed to record?
+ *
+ * The gap is time nobody observed: the heartbeat stopped, and crediting it is the app guessing that
+ * the worker kept working with the phone pocketed. That guess is opt-OUT, so it must only be made
+ * where it is overwhelmingly likely to be right. Two things disqualify it, and they are different
+ * questions — a gap can fail either one:
+ *
+ *   1. MAGNITUDE — longer than {@link MAX_UNTRACKED_GAP_MINUTES} is beyond any unrecorded stretch
+ *      ever actually observed, so it is a forgotten timer, not silent work.
+ *   2. CONTINUITY — a gap that crosses the {@link WORK_DAY_START_HOUR} boundary is not one stretch
+ *      at all; it spans two work days. A 4-hour gap from 03:00 to 07:00 passes the magnitude test
+ *      and is still obviously not one shift.
+ *
+ * Refusing is NOT the same as discarding: both callers fall back to the opt-IN claim offer, so a
+ * worker who really did work through a long gap can still claim it deliberately. What changes is
+ * the DEFAULT — from "pay for it unless the worker objects" to "ask before paying".
+ *
+ * Pure and exported so the two engines (legacy resolveUntrackedGap, canonical planTaskRecover) share
+ * one answer; they are deliberate mirrors and a divergence here would credit differently per worker.
+ *
+ * @param {number|Date} from - start instant of the gap.
+ * @param {number|Date} to - end instant of the gap.
+ * @returns {boolean} true when the gap may be auto-credited.
+ */
+export const isCreditableUntrackedGap = (from, to) => {
+    const start = from instanceof Date ? from : new Date(from);
+    const end = to instanceof Date ? to : new Date(to);
+    const minutes = (end - start) / 60000;
+    if (!Number.isFinite(minutes)) return false;
+    if (minutes < MIN_LOGGED_SESSION_MINUTES) return false;   // noise, not work
+    if (minutes > MAX_UNTRACKED_GAP_MINUTES) return false;    // (1) magnitude
+    // (2) continuity — same work day on both ends, DST-safe via the shared Vilnius cutoff.
+    return getCurrentWorkDayCutoff(start).getTime() === getCurrentWorkDayCutoff(end).getTime();
 };
 
 /**

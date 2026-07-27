@@ -108,14 +108,40 @@ export function useRevisionedTaskRecovery(
 
         issueTimerCommand(plan).then((issued) => {
             issued.settlement.then((outcome) => {
-                if (outcome.status !== 'confirmed' || !plan.recoveredGap) return;
-                addRecoveryNotice(currentUser.uid, {
-                    kind: 'task-gap-credited',
-                    taskId: task.id,
-                    taskTitle: task.title || '',
-                    gapMinutes: Math.round(plan.recoveredGap.gapMinutes),
-                    sessionId: plan.recoveredGap.sessionId,
-                });
+                if (outcome.status !== 'confirmed') return;
+                if (plan.recoveredGap) {
+                    addRecoveryNotice(currentUser.uid, {
+                        kind: 'task-gap-credited',
+                        taskId: task.id,
+                        taskTitle: task.title || '',
+                        gapMinutes: Math.round(plan.recoveredGap.gapMinutes),
+                        sessionId: plan.recoveredGap.sessionId,
+                    });
+                    return;
+                }
+                // The plan declined to auto-credit this interval (too long, or it spans two work
+                // days). It may still be real work, so offer the opt-IN claim instead of dropping
+                // it — the same fallback legacy's offerManualClaim provides, including the durable
+                // server trace, because the localStorage notice alone leaves nothing to triage from
+                // if the worker never taps it.
+                if (plan.refusedGap) {
+                    const gapMinutes = Math.round(plan.refusedGap.gapMinutes);
+                    logError(new Error('orphan gap not auto-credited (gap-not-one-work-stretch)'), {
+                        source: 'revisionedTaskRecovery.gapNotAutoCredited',
+                        taskId: task.id,
+                        gapMinutes,
+                        fromIso: plan.refusedGap.fromIso,
+                        toIso: plan.refusedGap.toIso,
+                    });
+                    addRecoveryNotice(currentUser.uid, {
+                        kind: 'task-gap',
+                        taskId: task.id,
+                        taskTitle: task.title || '',
+                        gapMinutes,
+                        fromIso: plan.refusedGap.fromIso,
+                        toIso: plan.refusedGap.toIso,
+                    });
+                }
             });
         }).catch((error) => {
             handledRuns.current.delete(base.run.runId);

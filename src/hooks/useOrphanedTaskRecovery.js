@@ -5,7 +5,7 @@ import { pauseTask, creditAndResumeTask, startTask, clearLiveSessionAfterFailedR
 import { claimRecoveredGap } from '../utils/sessionEditActions';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
-import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES } from '../utils/timeUtils';
+import { TIMER_HEARTBEAT_CONTINUE_MS, MAX_SESSION_MINUTES, isCreditableUntrackedGap } from '../utils/timeUtils';
 
 // Captured once when this module is first evaluated — i.e. when the app/tab boots.
 // A task whose timerStartedAt predates this moment was left timerStatus:'running'
@@ -89,6 +89,16 @@ export async function resolveUntrackedGap(task, currentUser, decision, silent = 
 
     const isOwnTask = currentUser?.uid && currentUser.uid === task.assignedUserId;
     if (!isOwnTask) { offerManualClaim('not-own-task'); return; }
+
+    // An interval too long — or spanning two work days — is a forgotten timer, not silent work, so
+    // it must not be paid for by default. Bounding this by the 16h SESSION ceiling let a timer left
+    // running overnight credit 623 minutes of sleep (production, 2026-07-27). Falling through to
+    // the claim offer keeps the worker's real option open: it flips the default from opt-out to
+    // opt-in rather than discarding the time.
+    if (!isCreditableUntrackedGap(decision.gapFrom, decision.gapTo)) {
+        offerManualClaim('gap-not-one-work-stretch');
+        return;
+    }
 
     // AUTO-credit the gap as its own recovered-gap session (opt-out), attributed to and authored by
     // the worker so the work_sessions rules accept it.

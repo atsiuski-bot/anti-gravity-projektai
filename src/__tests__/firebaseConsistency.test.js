@@ -31,6 +31,7 @@ import {
   MAX_SESSION_MINUTES,
   MAX_MANUAL_TASK_MINUTES,
   MIN_LOGGED_SESSION_MINUTES,
+  MAX_UNTRACKED_GAP_MINUTES,
   TIMER_HEARTBEAT_INTERVAL_MS,
   TIMER_HEARTBEAT_CONTINUE_MS,
   getLithuanianDateString,
@@ -1079,5 +1080,54 @@ describe('canonical ledger-id lockstep (client engine closers ↔ functions nets
     );
     expect(badgeTrigger, 'onTaskFinishedBadge lost its timeLimitReached guard — the client no longer clears the flag, so nothing else withholds on_estimate')
       .toMatch(/after\.timeLimitReached\s*!==\s*true/);
+  });
+});
+
+// =============================================================================================
+// 8d. UNTRACKED-GAP ADMISSION LOCKSTEP — the legacy recovery (useOrphanedTaskRecovery) and the
+//     canonical one (timerTransitionPlan) both decide whether an unobserved interval may be
+//     AUTO-credited as work. They are deliberate mirrors: a worker on the engine and a worker on
+//     legacy must be paid by the same rule. They drifted once already by both reaching for the 16h
+//     SESSION ceiling, which credited a night's sleep (623 min, production 2026-07-27). This pins
+//     that neither side reintroduces its own bound.
+// =============================================================================================
+
+describe('untracked-gap admission lockstep (legacy recovery ↔ canonical plan)', () => {
+  const ORPHAN_SRC = read('src/hooks/useOrphanedTaskRecovery.js');
+  const PLAN_SRC = read('src/utils/timerTransitionPlan.js');
+
+  it('both engines gate the gap through the one shared predicate', () => {
+    for (const [name, src] of [['useOrphanedTaskRecovery.js', ORPHAN_SRC], ['timerTransitionPlan.js', PLAN_SRC]]) {
+      expect(src, `${name} no longer asks isCreditableUntrackedGap — the two engines would credit differently`)
+        .toContain('isCreditableUntrackedGap');
+    }
+  });
+
+  it('neither engine bounds the GAP by the session ceiling any more', () => {
+    // The defect: MAX_SESSION_MINUTES bounds a session someone started and stopped; a gap is an
+    // interval nobody observed. Reusing it made "asleep" indistinguishable from "working".
+    const gapBlock = PLAN_SRC.slice(
+      PLAN_SRC.indexOf('const realGapMinutes'),
+      PLAN_SRC.indexOf('const timerMinutes')
+    );
+    expect(gapBlock).not.toContain('MAX_SESSION_MINUTES');
+
+    const legacyGuard = ORPHAN_SRC.slice(
+      ORPHAN_SRC.indexOf('export async function resolveUntrackedGap'),
+      ORPHAN_SRC.indexOf('const claim = await claimRecoveredGap')
+    );
+    expect(legacyGuard).toContain('isCreditableUntrackedGap');
+  });
+
+  it('a refused gap still reaches the worker as an opt-IN claim on BOTH paths', () => {
+    // Refusing to auto-credit must never mean discarding: real work behind a long gap has to stay
+    // claimable, or this fix would trade one silent loss for another.
+    expect(ORPHAN_SRC).toContain('gap-not-one-work-stretch');
+    expect(read('src/hooks/useRevisionedTaskRecovery.js'))
+      .toContain('refusedGap');
+  });
+
+  it('the gap bound is well under the session ceiling (they answer different questions)', () => {
+    expect(MAX_UNTRACKED_GAP_MINUTES).toBeLessThan(MAX_SESSION_MINUTES);
   });
 });

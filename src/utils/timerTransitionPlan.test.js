@@ -715,13 +715,18 @@ describe('revisioned timer transition plans', () => {
     });
 
     it('caps a split-heartbeat recovery run to one MAX_SESSION_MINUTES budget (R-03)', () => {
-        // Orphaned run: started at 0h, last heartbeat at 15h, recovered at 30h. The proven
-        // segment (15h) and the post-heartbeat gap (15h) must NOT each be clamped to 16h and
-        // summed (that credited 30h); the whole run shares one 960-minute ceiling.
+        // Orphaned run: started at 0h, last heartbeat at 15h, recovered at 19h. The proven segment
+        // (15h = 900 min) and the post-heartbeat gap (4h = 240 min) must NOT each be clamped to 16h
+        // and summed (that would credit 1140 min); the whole run shares one 960-minute ceiling, so
+        // the gap may only take the 60 minutes the proven segment left of it.
+        //
+        // The gap here is 4h — the largest an untracked interval may now be (see
+        // isCreditableUntrackedGap). It used to be 15h, which this rule now refuses outright; that
+        // made the case unable to exercise the PARTITION at all, which is what it exists to prove.
         const startedAt = '2026-07-09T00:00:00.000Z';
         const startMs = new Date(startedAt).getTime();
         const heartbeatAt = new Date(startMs + 15 * 60 * 60000).toISOString();
-        const recoveredAt = new Date(startMs + 30 * 60 * 60000).toISOString();
+        const recoveredAt = new Date(startMs + 19 * 60 * 60000).toISOString();
         const plan = planTaskRecover({
             task: {
                 ...baseTask,
@@ -1555,5 +1560,93 @@ describe('break day counter must not carry across the day boundary', () => {
         const bs = breakStateOf(plan);
         expect(bs.dailyAccumulatedMinutes).toBe(4);
         expect(bs.lastDate).toBe('2026-07-09');
+    });
+});
+
+// The production case that forced the bound to change (2026-07-27). A timer was left running
+// overnight; recovery next morning measured a 10.4-hour gap — comfortably UNDER the 16h SESSION
+// ceiling the old rule reused — and credited all 623 minutes as work. The worker was asleep.
+describe('an overnight gap is a forgotten timer, not silent work', () => {
+    const OLD_START = '2026-07-26T19:18:43.000Z';   // 22:18 Vilnius
+    const HEARTBEAT = '2026-07-26T19:18:43.401Z';   // died immediately after the re-anchor
+    const RECOVERED = '2026-07-27T05:41:56.000Z';   // 08:41 Vilnius, next morning
+
+    const overnightPlan = () => planTaskRecover({
+        task: {
+            ...baseTask,
+            timerStatus: 'running',
+            timerStartedAt: OLD_START,
+            timerLastHeartbeat: HEARTBEAT,
+            timerMinutes: 19.19,
+        },
+        userId,
+        userData: idleUser,
+        activeRecord: {
+            userId,
+            revision: 7,
+            status: 'active',
+            run: {
+                runId: 'run-overnight',
+                type: 'task',
+                taskId: 'task-a',
+                taskTitle: 'Task A',
+                startedAt: OLD_START,
+                revision: 7,
+            },
+        },
+        commandId: 'cmd-recover-overnight',
+        runId: 'run-after-overnight',
+        issuedAt: RECOVERED,
+        recoveredAt: RECOVERED,
+    });
+
+    it('writes NO recovered-gap row for the night', () => {
+        const plan = overnightPlan();
+        expect(plan.writes.some((w) => w.path.startsWith('work_sessions/sess_gap_run_'))).toBe(false);
+        expect(plan.recoveredGap).toBeNull();
+    });
+
+    it('leaves the task counter untouched by the night — only proven time is credited', () => {
+        const plan = overnightPlan();
+        const taskWrite = plan.writes.find((w) => w.path === 'tasks/task-a').data;
+        // 623 minutes must NOT appear here; the pre-existing 19.19 stands, plus a sub-second proven
+        // sliver rounded away by the ledger's own minimum.
+        expect(taskWrite.timerMinutes).toBeLessThan(20);
+        expect(plan.creditedMinutes).toBeLessThan(1);
+    });
+
+    it('still comes back PAUSED — an unattended timer must never re-anchor itself', () => {
+        const plan = overnightPlan();
+        expect(plan.resumed).toBe(false);
+        expect(plan.writes.find((w) => w.path === `active_sessions/${userId}`).data)
+            .toMatchObject({ status: 'idle', run: null });
+    });
+
+    it('reports the refused interval so the worker can still CLAIM it deliberately', () => {
+        const plan = overnightPlan();
+        expect(plan.refusedGap).toMatchObject({ fromIso: HEARTBEAT, toIso: RECOVERED });
+        expect(Math.round(plan.refusedGap.gapMinutes)).toBe(623);
+    });
+
+    it('a normal within-shift gap is unaffected — it still auto-credits', () => {
+        const start = '2026-07-27T06:00:00.000Z';          // 09:00 Vilnius
+        const beat = '2026-07-27T06:01:00.000Z';
+        const back = '2026-07-27T06:41:00.000Z';           // 40 min later, same work day
+        const plan = planTaskRecover({
+            task: { ...baseTask, timerStatus: 'running', timerStartedAt: start, timerLastHeartbeat: beat },
+            userId,
+            userData: idleUser,
+            activeRecord: {
+                userId, revision: 2, status: 'active',
+                run: { runId: 'run-shift', type: 'task', taskId: 'task-a', taskTitle: 'Task A', startedAt: start, revision: 2 },
+            },
+            commandId: 'cmd-recover-shift',
+            runId: 'run-after-shift',
+            issuedAt: back,
+            recoveredAt: back,
+        });
+        expect(plan.recoveredGap).toMatchObject({ sessionId: 'sess_gap_run_run-shift' });
+        expect(Math.round(plan.recoveredGap.gapMinutes)).toBe(40);
+        expect(plan.refusedGap).toBeNull();
     });
 });

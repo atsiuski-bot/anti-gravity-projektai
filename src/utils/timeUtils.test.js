@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
     MAX_SESSION_MINUTES,
     breakDayBaseMinutes,
+    isCreditableUntrackedGap,
+    MAX_UNTRACKED_GAP_MINUTES,
     clampSessionMinutes,
     parseTimeStringToMinutes,
     getLithuanianDateString,
@@ -526,5 +528,63 @@ describe('breakDayBaseMinutes — what today\'s break total may build on', () =>
         const lateEvening = new Date('2026-07-26T22:30:00.000Z');
         expect(breakDayBaseMinutes(state({ lastDate: '2026-07-27' }), lateEvening)).toBe(42);
         expect(breakDayBaseMinutes(state({ lastDate: '2026-07-26' }), lateEvening)).toBe(0);
+    });
+});
+
+// An untracked gap is time NOBODY observed — the heartbeat stopped and the app is guessing, on the
+// worker's behalf, that they kept working. Because that guess is auto-credited (opt-out), its bound
+// decides how much unworked time gets paid for when a timer is simply forgotten. Both engines used
+// the 16h SESSION ceiling here, so a timer left running overnight was recovered next morning and
+// credited 623 minutes — 10.4 hours of pay for a night's sleep (production, 2026-07-27).
+describe('isCreditableUntrackedGap — may this unobserved interval be auto-credited?', () => {
+    // Vilnius is UTC+3 in July, so the 05:00 work-day boundary falls at 02:00 UTC.
+    const at = (iso) => new Date(iso).getTime();
+
+    it('credits the ordinary pocketed-phone gap — the case the feature exists for', () => {
+        // 27 min is the production median across all 78 gaps ever auto-credited.
+        expect(isCreditableUntrackedGap(at('2026-07-27T09:00:00Z'), at('2026-07-27T09:27:00Z'))).toBe(true);
+    });
+
+    it('credits right up to the magnitude bound, and refuses just past it', () => {
+        const start = at('2026-07-27T09:00:00Z');
+        expect(isCreditableUntrackedGap(start, start + MAX_UNTRACKED_GAP_MINUTES * 60000)).toBe(true);
+        expect(isCreditableUntrackedGap(start, start + (MAX_UNTRACKED_GAP_MINUTES + 1) * 60000)).toBe(false);
+    });
+
+    it('REFUSES the overnight forgotten timer — the 623-minute production case', () => {
+        // 22:18 Vilnius on the 26th → 08:41 Vilnius on the 27th.
+        expect(isCreditableUntrackedGap(at('2026-07-26T19:18:43Z'), at('2026-07-27T05:41:56Z'))).toBe(false);
+    });
+
+    it('refuses a SHORT gap that still spans two work days — magnitude alone is not enough', () => {
+        // 03:00 → 07:00 Vilnius: only 4h, but it crosses the 05:00 boundary, so it is two days.
+        expect(isCreditableUntrackedGap(at('2026-07-27T00:00:00Z'), at('2026-07-27T04:00:00Z'))).toBe(false);
+    });
+
+    it('credits a late-night gap that stays inside ONE work day', () => {
+        // 23:00 → 01:30 Vilnius — crosses midnight but NOT the 05:00 work-day boundary.
+        expect(isCreditableUntrackedGap(at('2026-07-26T20:00:00Z'), at('2026-07-26T22:30:00Z'))).toBe(true);
+    });
+
+    it('refuses sub-minute noise and unparseable boundaries', () => {
+        const start = at('2026-07-27T09:00:00Z');
+        expect(isCreditableUntrackedGap(start, start + 30_000)).toBe(false);
+        expect(isCreditableUntrackedGap(start, start)).toBe(false);
+        expect(isCreditableUntrackedGap(NaN, start)).toBe(false);
+        expect(isCreditableUntrackedGap(start, NaN)).toBe(false);
+    });
+
+    it('refuses a backwards interval (device clock stepped back)', () => {
+        expect(isCreditableUntrackedGap(at('2026-07-27T09:00:00Z'), at('2026-07-27T08:00:00Z'))).toBe(false);
+    });
+
+    it('accepts Date objects as well as epoch millis', () => {
+        expect(isCreditableUntrackedGap(
+            new Date('2026-07-27T09:00:00Z'), new Date('2026-07-27T09:30:00Z')
+        )).toBe(true);
+    });
+
+    it('is bounded well below the SESSION ceiling — the two answer different questions', () => {
+        expect(MAX_UNTRACKED_GAP_MINUTES).toBeLessThan(MAX_SESSION_MINUTES);
     });
 });

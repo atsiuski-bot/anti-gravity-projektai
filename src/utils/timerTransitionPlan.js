@@ -3,7 +3,7 @@ import {
     clampSessionMinutes,
     formatMinutesToTimeString,
     getLithuanianDateString,
-    MAX_SESSION_MINUTES,
+    isCreditableUntrackedGap,
     MIN_LOGGED_SESSION_MINUTES,
     TIMER_HEARTBEAT_CONTINUE_MS,
 } from './timeUtils';
@@ -1644,11 +1644,15 @@ export function planTaskRecover({
     // Legacy refused that gap outright. Measuring the gap for what it is, and refusing an
     // implausible one, is what makes the two engines agree. The budget cap still applies on top, so
     // the R-03 ceiling above is preserved.
+    //
+    // "Plausible" is isCreditableUntrackedGap's question, not MAX_SESSION_MINUTES'. Bounding it by
+    // the 16h SESSION ceiling meant a timer left running overnight came back crediting 623 minutes
+    // of sleep as work (production, 2026-07-27) — under 16h, so it passed. A refusal here is not a
+    // discard: `refusedGap` below hands the interval to the opt-IN claim offer instead.
     const realGapMinutes = (recoveryEnd - provenEnd) / 60000;
     const gapIsPlausible = !briefInterruption
         && hasUsableHeartbeat
-        && realGapMinutes >= MIN_LOGGED_SESSION_MINUTES
-        && realGapMinutes <= MAX_SESSION_MINUTES;
+        && isCreditableUntrackedGap(provenEnd, recoveryEnd);
     const gapMinutes = gapIsPlausible
         ? Math.min(realGapMinutes, Math.max(0, totalBudgetMinutes - provenMinutes))
         : 0;
@@ -1726,6 +1730,21 @@ export function planTaskRecover({
             toIso: recoveryEnd.toISOString(),
         };
     }
+
+    // A gap we declined to auto-credit is NOT nothing — it is an interval the worker may genuinely
+    // have worked through, and dropping it silently is the failure mode this whole recovery path
+    // exists to prevent. Report it so the caller can offer the opt-IN claim, exactly as legacy's
+    // resolveUntrackedGap does via offerManualClaim. Only a real, measurable interval qualifies:
+    // a brief interruption has no gap by definition, and with no usable heartbeat there is no
+    // boundary to claim from.
+    const refusedGap = (!gapIsPlausible && !briefInterruption && hasUsableHeartbeat
+        && realGapMinutes >= MIN_LOGGED_SESSION_MINUTES)
+        ? {
+            gapMinutes: realGapMinutes,
+            fromIso: provenEnd.toISOString(),
+            toIso: recoveryEnd.toISOString(),
+        }
+        : null;
 
     // Only a BRIEF interruption re-anchors and keeps running. A genuinely closed app must come back
     // PAUSED, exactly as the legacy path does (mode 'pause-at-beat'): the worker is not demonstrably
@@ -1808,6 +1827,7 @@ export function planTaskRecover({
         creditedMinutes: provenMinutes + gapMinutes,
         resumed: briefInterruption,
         recoveredGap,
+        refusedGap,
         writes,
     };
 }
