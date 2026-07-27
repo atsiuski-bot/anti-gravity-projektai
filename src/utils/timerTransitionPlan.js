@@ -1452,6 +1452,9 @@ export function planManagerForceEnd({
     const revision = base.revision + 1;
     const writes = [];
     let creditedMinutes = 0;
+    // null = this force-end closed no break, so the day counter must be left ALONE. 0 is a real
+    // value (a sub-minute break still re-dates the counter), which is why this is not initialised to 0.
+    let closedBreakMinutes = null;
 
     // EVERY run type must leave a record of the interval the manager just closed. Only the task
     // branch used to write one: a force-ended call or quick-work moved canonical state straight to
@@ -1496,13 +1499,23 @@ export function planManagerForceEnd({
                 auditorManagerId: null,
             }).writes);
         }
+    } else if (base.run?.type === 'break') {
+        // The break arm of T-18, unblocked by the matching firestore.rules change (break_sessions
+        // create now carries the same manager branches work_sessions has). It writes through the very
+        // same closeBreakWrites the worker's own end uses, so a force-ended break is indistinguishable
+        // downstream from a self-ended one — same deterministic `sess_break_run_` id, so a replay or a
+        // nightly net closing the same run can never mint a second row.
+        const closed = closeBreakWrites({
+            userId: targetUser.id,
+            userData: targetUser,
+            run: base.run,
+            endedAt: issuedAt,
+        });
+        // NOT added to creditedMinutes: that number is the PAYABLE time this settle credited, and a
+        // break is unpaid. It is banked into the day's break counter below instead.
+        closedBreakMinutes = closed.durationMinutes;
+        writes.push(...closed.writes);
     }
-    // BREAK is deliberately still projection-only. `break_sessions` is self-logged by rule (create
-    // requires createOwnsUserId — there is no manager-create branch, unlike tasks/work_sessions), so
-    // a manager-issued break row would be permission-denied and would fail the WHOLE force-end batch,
-    // leaving the worker stuck live. Break history is not payable, so the trade is one-sided for now;
-    // closing this gap needs a scoped manager-create branch on break_sessions, i.e. a rules change
-    // and a human-run deploy — deliberately NOT folded into this client-only change.
 
     writes.push(
         {
@@ -1525,6 +1538,15 @@ export function planManagerForceEnd({
                 breakState: {
                     ...(targetUser.breakState || {}),
                     isTakingBreak: false,
+                    // Bank the force-ended break into the day total, exactly as the worker's own end
+                    // does (idleProjectionAfterBreak). Without this the row existed but the allowance
+                    // the app reads never saw those minutes, so the same break was silently free.
+                    // Total and date are written as ONE pair — see breakDayBaseMinutes.
+                    ...(closedBreakMinutes === null ? {} : {
+                        dailyAccumulatedMinutes:
+                            breakDayBaseMinutes(targetUser.breakState, issuedAt) + closedBreakMinutes,
+                        lastDate: getLithuanianDateString(new Date(issuedAt)),
+                    }),
                 },
                 callState: {
                     ...(targetUser.callState || {}),

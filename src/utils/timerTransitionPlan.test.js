@@ -915,6 +915,53 @@ describe('manager force-end records every run type', () => {
         expect(task.data.title).toContain('Automatiškai');
     });
 
+    // The BREAK arm of T-18: it was left projection-only because break_sessions had no manager-create
+    // branch, so the row is only writable now that firestore.rules grants one. Two things must happen
+    // together — the history row AND the day counter — or the break is silently free.
+    it('writes a break ledger row and banks it into the day total', () => {
+        const run = { runId: 'run-break', type: 'break', startedAt: '2026-07-09T08:00:00.000Z', revision: 4 };
+        const plan = planManagerForceEnd({
+            targetUser: {
+                ...activeUser(run),
+                breakState: { isTakingBreak: true, dailyAccumulatedMinutes: 15, lastDate: '2026-07-09' },
+            },
+            actorId: 'manager-1',
+            activeRecord: recordFor(run),
+            activeTask: null,
+            commandId: 'cmd-force-break',
+            issuedAt: '2026-07-09T08:20:00.000Z',
+        });
+
+        expect(plan.writes.find((w) => w.path === 'break_sessions/sess_break_run_run-break').data)
+            .toMatchObject({ userId, durationMinutes: 20, isBreak: true, runId: 'run-break' });
+        // A break is NOT payable, so the settle credits no work minutes...
+        expect(plan.creditedMinutes).toBe(0);
+        expect(plan.writes.some((w) => w.path.startsWith('work_sessions/'))).toBe(false);
+        // ...but the day's break allowance must still see them.
+        expect(plan.writes.find((w) => w.path === `users/${userId}`).data.breakState)
+            .toMatchObject({ isTakingBreak: false, dailyAccumulatedMinutes: 35, lastDate: '2026-07-09' });
+    });
+
+    // The counter is touched ONLY by a break force-end; ending a call must leave yesterday's/today's
+    // break total exactly as it stood, or every settle would silently re-date it.
+    it('leaves the break day total untouched when the closed run is not a break', () => {
+        const run = { runId: 'run-call-2', type: 'call', startedAt: '2026-07-09T08:00:00.000Z', revision: 4 };
+        const plan = planManagerForceEnd({
+            targetUser: {
+                ...activeUser(run),
+                breakState: { isTakingBreak: false, dailyAccumulatedMinutes: 15, lastDate: '2026-07-08' },
+            },
+            actorId: 'manager-1',
+            activeRecord: recordFor(run),
+            activeTask: null,
+            commandId: 'cmd-force-call-2',
+            issuedAt: '2026-07-09T08:20:00.000Z',
+        });
+
+        expect(plan.writes.find((w) => w.path === `users/${userId}`).data.breakState)
+            .toEqual({ isTakingBreak: false, dailyAccumulatedMinutes: 15, lastDate: '2026-07-08' });
+    });
+
     it('closes an orphaned task run whose task document was hard-deleted', () => {
         const run = {
             runId: 'run-orphan',

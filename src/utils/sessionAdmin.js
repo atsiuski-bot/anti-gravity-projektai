@@ -56,9 +56,13 @@ const notifyForceEnd = (targetUserId, actorId, discardedStack, issuedAt) => {
  * Why this exists: a worker whose phone died / app was killed mid-session never ends their own
  * timer, so they show "working" forever and (for a task) keep crediting ghost time. A running TASK
  * is settled through `pauseTask`, which logs the open segment to `work_sessions` (a write managers/
- * admins are allowed to make) and clears the owner's `activeSession`/`workStatus`. Non-task break/
- * call/quick-work tails CANNOT be server-logged by a manager — those collections are owner-only — so
- * we can only clear the ghost flags, which matches the existing disable path's block behaviour.
+ * admins are allowed to make) and clears the owner's `activeSession`/`workStatus`.
+ *
+ * On the CANONICAL path every run type now leaves a record: task, call and quick work land in
+ * `work_sessions` (T-18) and a break lands in `break_sessions`, all through the same ledger writers
+ * the worker's own end uses. On the LEGACY path below, the non-task break/call/quick-work tails still
+ * cannot be server-logged by a manager, so that branch only clears the ghost flags — which matches the
+ * existing disable path's block behaviour.
  *
  * Unlike the disable flow, this NEVER touches `isDisabled`: it only settles the session. Failures
  * are logged and swallowed so a transient write error never leaves the caller in a broken state.
