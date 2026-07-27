@@ -34,6 +34,7 @@ import { SoundManager } from '../utils/soundUtils';
 import {
     isPreBootOrphanTask,
     latestTaskForLimitAction,
+    limitDecisionOwedAfterRecovery,
     retractLimitPauseAnnouncement,
 } from './useTaskTimeMonitor';
 
@@ -163,5 +164,71 @@ describe('retractLimitPauseAnnouncement — undoing a stop that never happened',
         expect(retractLimitPauseAnnouncement({ status: 'rejected' }, a.ctx)).toBe(true);
         expect(a.limitReached.has(TASK_ID)).toBe(false);
         expect(a.popup()).toEqual({ task: { id: 'task-b' } });
+    });
+});
+
+// The other half of the yield above. Standing down for recovery is correct, but recovery only knows
+// about heartbeats — not about plans — so nothing raised the 100% decision once it paused the task,
+// and the limit popup is the ONLY worker-side route to a time-extension request. A worker woken by
+// the server's over-the-plan push therefore opened the app into a dead end.
+describe('limitDecisionOwedAfterRecovery — the 100% decision recovery leaves unasked', () => {
+    const WORKER = 'worker-1';
+    // A 45-min task recovery has just stopped at 78 banked minutes: the production case (2026-07-27)
+    // where the plan was blown offline and the worker was never offered the extension.
+    const settled = (over = {}) => ({
+        id: 'task-1',
+        assignedUserId: WORKER,
+        timerStatus: 'paused',
+        estimatedTime: '45min',
+        timerMinutes: 78,
+        ...over,
+    });
+
+    it('owes the decision on a task recovery stopped past its plan', () => {
+        expect(limitDecisionOwedAfterRecovery(settled(), WORKER)).toEqual({
+            task: settled(),
+            estimatedTime: '45min',
+            actualMinutes: 78,
+        });
+    });
+
+    it('owes it at exactly 100% — the same boundary the live gate fires on', () => {
+        expect(limitDecisionOwedAfterRecovery(settled({ timerMinutes: 45 }), WORKER)).not.toBeNull();
+    });
+
+    it('stays quiet when recovery settled the task back UNDER its plan', () => {
+        // Recovery credits only up to the last heartbeat, so the total can land well short of the
+        // elapsed time the gate saw while the run was still open. No overrun → nothing to decide.
+        expect(limitDecisionOwedAfterRecovery(settled({ timerMinutes: 30 }), WORKER)).toBeNull();
+    });
+
+    it('stays quiet while the task is still running — the live gate re-arms on the new run', () => {
+        expect(limitDecisionOwedAfterRecovery(settled({ timerStatus: 'running' }), WORKER)).toBeNull();
+    });
+
+    it('stays quiet on a finished task — the overrun is already settled business', () => {
+        expect(limitDecisionOwedAfterRecovery(settled({ completed: true }), WORKER)).toBeNull();
+        for (const status of ['completed', 'confirmed', 'deleted']) {
+            expect(limitDecisionOwedAfterRecovery(settled({ status }), WORKER)).toBeNull();
+        }
+    });
+
+    it('stays quiet on someone else’s task, or with no signed-in worker', () => {
+        expect(limitDecisionOwedAfterRecovery(settled({ assignedUserId: 'worker-2' }), WORKER)).toBeNull();
+        expect(limitDecisionOwedAfterRecovery(settled(), null)).toBeNull();
+    });
+
+    it('stays quiet on an untimed task — no plan means no line to cross', () => {
+        expect(limitDecisionOwedAfterRecovery(settled({ estimatedTime: '' }), WORKER)).toBeNull();
+        expect(limitDecisionOwedAfterRecovery(settled({ estimatedTime: undefined }), WORKER)).toBeNull();
+    });
+
+    it('counts manual minutes too, exactly as the live gate does', () => {
+        const mixed = settled({ timerMinutes: 20, manualMinutes: 30 });
+        expect(limitDecisionOwedAfterRecovery(mixed, WORKER)?.actualMinutes).toBe(50);
+    });
+
+    it('handles a missing task without throwing', () => {
+        expect(limitDecisionOwedAfterRecovery(null, WORKER)).toBeNull();
     });
 });

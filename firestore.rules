@@ -810,7 +810,7 @@ service cloud.firestore {
                     // alerts, or spoof a system session close. Admin-SDK writes bypass rules entirely,
                     // so the genuine server fan-out is unaffected by this clause.
                     //
-                    // Deliberately a DENY-list of the 7 server-only types, not an allow-list of the 21
+                    // Deliberately a DENY-list of the 8 server-only types, not an allow-list of the 21
                     // client ones: the rules suite runs ONLY under the Firestore emulator and `npm test`
                     // skips it, so an allow-list would silently permission-deny any newly-added client
                     // notification type with nothing in the default gate to catch it. Audited against
@@ -819,7 +819,7 @@ service cloud.firestore {
                     && !(request.resource.data.get('type', '') in [
                           'account_approval', 'achievement', 'task_priority_escalated',
                           'task_overdue', 'session_auto_closed', 'timer_running_check',
-                          'recurring_reassign'
+                          'recurring_reassign', 'task_over_estimate'
                         ])
                     && (!('commentText' in request.resource.data) ||
                         (request.resource.data.commentText is string &&

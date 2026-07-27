@@ -46,6 +46,33 @@ export function isPreBootOrphanTask(task, appLoadTime = APP_LOAD_TIME) {
     return Number.isFinite(startedAtMs) && startedAtMs < appLoadTime;
 }
 
+// Does this task still OWE its worker the 100% decision, now that recovery has settled it?
+//
+// The gate in checkTime only ever evaluates a RUNNING task, and on a pre-boot orphan it deliberately
+// stands down (isPreBootOrphanTask) so recovery can stop the run at the right instant. Recovery then
+// pauses it — and a paused task is no longer an activeTask, so the gate never gets another look. The
+// worker is left with a task quietly parked past its plan and no way to ask for more time: the ONLY
+// worker-side entry to a time-extension request is the limit popup this returns the payload for.
+// That is the hole a worker falls into after an offline overrun — exactly the case the server-side
+// notifyOverEstimateTimers push now wakes them for, which would otherwise send them into a dead end.
+//
+// Returns the popup payload, or null when nothing is owed. Every null is a real reason to stay quiet:
+// still running (recovery re-anchored it — the gate re-arms itself on the fresh timerStartedAt),
+// already finished, someone else's task, untimed, or — the important one — settled BACK under its
+// plan: recovery credits only up to the last heartbeat, which can be well short of the elapsed time
+// the gate saw while the run was still open. Pure + exported so the decision is unit-testable
+// without a React renderer, mirroring isPreBootOrphanTask above.
+export function limitDecisionOwedAfterRecovery(task, userId) {
+    if (!task || task.timerStatus === 'running') return null;
+    if (!userId || task.assignedUserId !== userId) return null;
+    if (task.completed || task.status === 'completed' || task.status === 'confirmed' || task.status === 'deleted') return null;
+    const estimatedMinutes = parseTimeStringToMinutes(task.estimatedTime);
+    if (estimatedMinutes <= 0) return null;
+    const totalMinutes = calculateCurrentTotalMinutes(task);
+    if (totalMinutes < estimatedMinutes) return null;
+    return { task, estimatedTime: task.estimatedTime, actualMinutes: Math.round(totalMinutes) };
+}
+
 // Undo the "your timer stopped" announcement when the stop turns out NOT to have happened.
 //
 // Under the revisioned engine the 100% limit block issues a pause COMMAND and then immediately
@@ -101,6 +128,11 @@ export function useTaskTimeMonitor(tasks) {
     const limitReachedRef = useRef(new Map());
     // Track the task's estimatedTimeMinutes at the time we triggered, so extensions reset it
     const lastEstimatedRef = useRef(new Map()); // taskId -> estimatedMinutes when triggered
+    // Task ids whose 100% gate we stood down on because recovery owned the stop (see the 100% block).
+    // Membership is the proof that the missing popup is OURS to raise once the task settles — without
+    // it, "paused and over its plan" would also match a task the worker knowingly parked days ago, and
+    // they would be ambushed by a forced popup on every app open.
+    const orphanYieldedRef = useRef(new Set());
 
     // Find the currently running task
     const activeTask = tasks?.find(t => {
@@ -251,8 +283,13 @@ export function useTaskTimeMonitor(tasks) {
             //
             // A pre-boot orphan is excluded here entirely — see isPreBootOrphanTask — and left to
             // useOrphanedTaskRecovery, which pauses it at the correct instant (or resumes it) instead
-            // of this block crediting the whole dead gap as one ordinary session.
-            if (percentage >= 100 && !isPreBootOrphanTask(task) && limitReachedRef.current.get(taskId) !== task.timerStartedAt) {
+            // of this block crediting the whole dead gap as one ordinary session. Standing down is
+            // only half a handover though: recovery stops the run but has no notion of the plan, so
+            // the decision this gate exists to force would simply never be asked. Remember the task
+            // here and pick it up once recovery settles it — see the settled-orphan effect below.
+            if (percentage >= 100 && isPreBootOrphanTask(task)) {
+                orphanYieldedRef.current.add(taskId);
+            } else if (percentage >= 100 && limitReachedRef.current.get(taskId) !== task.timerStartedAt) {
                 limitReachedRef.current.set(taskId, task.timerStartedAt);
 
                 // 1. Auto-pause the task (stops the clock + logs the session). In the revisioned
@@ -328,6 +365,46 @@ export function useTaskTimeMonitor(tasks) {
         // survives snapshot churn and only resets on a genuine task / estimate / user change.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeTask?.id, activeTask?.estimatedTime, currentUser?.uid]);
+
+    // Raise the 100% decision on an orphan recovery has now stopped for us — the other half of the
+    // handover the gate above starts. Runs off the tasks snapshot rather than an interval because the
+    // moment it waits for IS a snapshot: recovery's pause landing.
+    //
+    // No alarm here, unlike the gate. The repeating alarm exists to reach a worker whose phone is
+    // pocketed mid-shift; this popup only ever appears with the app open in front of them, and it is
+    // usually the first thing they see after tapping the "Viršytas planuotas laikas" push.
+    useEffect(() => {
+        if (!Array.isArray(tasks) || !currentUser?.uid) return;
+        for (const task of tasks) {
+            if (!task || !orphanYieldedRef.current.has(task.id)) continue;
+            // Still running = recovery re-anchored the timer (silent continuation). Leave it latched:
+            // that fresh timerStartedAt makes it a normal live overrun the gate above re-arms on, and
+            // if that gate stops it first, the popup is already open and the setter below defers.
+            if (task.timerStatus === 'running') continue;
+            orphanYieldedRef.current.delete(task.id); // asked at most once per app session
+            const owed = limitDecisionOwedAfterRecovery(task, currentUser.uid);
+            if (!owed) continue;
+            setLimitPopup((prev) => prev || owed);
+
+            // Stamp the same flag the live gate writes when it stops a task at 100%. It is not
+            // cosmetic: onTaskFinishedBadge reads `after.timeLimitReached` on the completion edge to
+            // decide whether the task blew its estimate, so an overrun that happened offline — where
+            // the gate stood down and recovery, which knows nothing about plans, did the stop — was
+            // still earning the "Telpa į planą" badge. This write is deliberately its OWN update,
+            // issued now rather than folded into the later completion: the trigger reads the flag ON
+            // that edge, so a flag set in the same batch that flips `completed` would be invisible to
+            // it (see planTaskEnd's identical constraint). Fire-and-forget for the same reason the
+            // gate's is — a task correctly stopped must not be held up by a bookkeeping write.
+            updateDoc(doc(db, 'tasks', task.id), {
+                timeLimitReached: true,
+                updatedAt: new Date().toISOString(),
+            }).catch((e) => logError(e, {
+                source: 'useTaskTimeMonitor.recoveredOverrun.markLimit',
+                taskId: task.id,
+                code: e?.code,
+            }));
+        }
+    }, [tasks, currentUser?.uid]);
 
     // Dismiss handler (warning popup only — the limit popup is forced and closes via its actions).
     const dismissWarning = useCallback(() => {

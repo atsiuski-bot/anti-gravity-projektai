@@ -702,11 +702,12 @@ describeEmulator('audit 2026-07-22 — notification forgery + audit-trail re-poi
             await assertFails(addDoc(collection(db, 'request_notifications'), forged()));
         });
 
-        it('exploit: the other six server-only types are refused too', async () => {
+        it('exploit: the other seven server-only types are refused too', async () => {
             const db = workerDb();
             for (const type of [
                 'achievement', 'task_priority_escalated', 'task_overdue',
                 'session_auto_closed', 'timer_running_check', 'recurring_reassign',
+                'task_over_estimate',
             ]) {
                 await assertFails(addDoc(collection(db, 'request_notifications'), forged({ type })));
             }

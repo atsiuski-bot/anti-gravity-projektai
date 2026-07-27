@@ -259,6 +259,19 @@ export const NOTIFICATIONS = {
         link: TAB_TASKS,
         copy: (n) => ({ title: 'Ar laikmatis vis dar veikia?', body: n.taskTitle || 'Gildija' }),
     },
+    // System → worker: the running timer passed the task's PLANNED time while the app was asleep.
+    // useTaskTimeMonitor's 100% gate (stop + forced "pratęsti ar užbaigti" popup) is a foreground-only
+    // interval, so a pocketed phone crosses the plan in silence — this is the server half that reaches
+    // a locked screen instead. Advisory only: the server never stops the timer, so the tap deep-links
+    // to the task where reopening the app settles it. Distinct from timer_running_check on purpose —
+    // that one asks whether a cold timer is still real; this one states a fact about a live one.
+    task_over_estimate: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => ({ title: 'Viršytas planuotas laikas', body: n.taskTitle || 'Gildija' }),
+    },
 
     // ── Trusted worker → admin (oversight: an approval-free backdated entry was logged) ──────────
     // A worker granted canBackdateTime self-logged a missed session at a past time without approval.

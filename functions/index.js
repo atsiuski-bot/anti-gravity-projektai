@@ -173,6 +173,7 @@ const CATEGORY_BY_TYPE = {
     session_auto_closed: 'info',
     session_force_ended: 'info',
     timer_running_check: 'info',
+    task_over_estimate: 'info',
     backdated_time_logged: 'info',
     task_priority_escalated: 'info',
     achievement: 'info',
@@ -261,6 +262,10 @@ function copyForRequestNotification(n) {
         case 'timer_running_check':
             // System → worker: a running task timer went heartbeat-stale — a gentle "still on it?" check.
             return { title: 'Ar laikmatis vis dar veikia?', body: title };
+        case 'task_over_estimate':
+            // System → worker: the running timer passed the task's planned time while the app was
+            // asleep, so the client's own 100% stop + "pratęsti ar užbaigti" popup could not fire.
+            return { title: 'Viršytas planuotas laikas', body: title };
         case 'backdated_time_logged': {
             // Trusted worker → admin: an approval-free backdated session was logged. Body = WHO + day.
             // userName is the only free-form field; clamp identically to the registry MIRROR.
@@ -1667,6 +1672,12 @@ async function notifyStaleRunningTimers(nowMs = Date.now()) {
     let nudged = 0;
     for (const docSnap of snap.docs) {
         const t = docSnap.data();
+        // A run that is ALSO past its planned time belongs to notifyOverEstimateTimers below: that
+        // message strictly dominates this one (it names a concrete problem instead of asking a
+        // question), and both nets are once-per-run, so firing both would just double the push for a
+        // single silent timer. The two thresholds nest (over-estimate speaks at 5 min of client
+        // silence, this one at 25), so every run this net would ever see is already decided there.
+        if (shouldNotifyOverEstimate(t, nowMs)) continue;
         if (!shouldNudgeStaleTimer(t, nowMs)) continue;
         const startMs = new Date(t.timerStartedAt).getTime();
         const ref = db.collection('request_notifications').doc(`timercheck_${docSnap.id}_${startMs}`);
@@ -1700,6 +1711,131 @@ exports.notifyStaleRunningTimers = onSchedule(
     async () => {
         const result = await notifyStaleRunningTimers();
         if (result.nudged > 0) logger.info('notifyStaleRunningTimers fired', result);
+    },
+);
+
+// ---------------------------------------------------------------------------
+// Over-the-plan alert — the offline half of the 100% time-limit gate
+// ---------------------------------------------------------------------------
+//
+// useTaskTimeMonitor stops a task the moment it reaches 100% of its estimate and forces the worker to
+// choose: request more time, or finish. That gate is a 10-second interval inside the PWA, so it only
+// exists while the app is open in the foreground. A worker who pockets the phone (or loses signal)
+// blows straight through the plan with nothing said — confirmed in production 2026-07-27: a 45-min
+// task ran 1h18m, the limit fired only on reopen, and the worker was never offered the extension.
+//
+// This is the server-side half of the same gate, and it deliberately does LESS than the client one:
+// it only SPEAKS. It does not stop the timer and does not credit or drop anything — the server cannot
+// tell "still working past the plan" from "forgot to stop", and guessing either way corrupts real
+// paid time (the same reasoning that keeps notifyStaleRunningTimers advisory). Stopping stays the
+// client's job on reopen; this just makes sure the worker learns about the overrun in minutes,
+// through a push that reaches a locked phone, instead of at the end of the day.
+//
+// How long the client must be SILENT before the server speaks. Above the 1-min heartbeat interval and
+// above the client's 3-min continue window, so a live app is never talked over — if the heartbeat is
+// fresh, the in-app gate is running and has already stopped the task and raised its own popup.
+const TIMER_OVER_ESTIMATE_QUIET_MS = 5 * 60 * 1000;
+
+// The task's planned minutes. Prefers the numeric mirror the client writes on create/edit and on a
+// granted extension; falls back to parsing the human string for docs written before that mirror.
+function taskEstimateMinutes(task) {
+    const stored = Number(task.estimatedTimeMinutes);
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    return parseEstimateMinutes(task.estimatedTime || '');
+}
+
+// Minutes this task has accrued RIGHT NOW — a server MIRROR of the client's calculateCurrentTotalMinutes
+// for a running task: banked (manual + timer) + explicit adjustments + the live stretch, with the same
+// 16h clamp on that stretch so a stale timerStartedAt cannot manufacture an overrun. The client's
+// legacy `actualTime`-string fallback is deliberately NOT mirrored: it only applies when nothing is
+// banked, and reading a free-form string here could only ever make this net speak MORE. Silence on an
+// exotic legacy doc is the safe failure.
+function runningTaskMinutes(task, nowMs) {
+    const startMs = new Date(task.timerStartedAt).getTime();
+    if (!Number.isFinite(startMs)) return NaN;
+    let total = (Number(task.manualMinutes) || 0) + (Number(task.timerMinutes) || 0);
+    if (Array.isArray(task.timeAdjustments)) {
+        for (const adj of task.timeAdjustments) total += Number(adj && adj.durationMinutes) || 0;
+    }
+    const runMinutes = (nowMs - startMs) / 60000;
+    if (runMinutes > 0) total += Math.min(runMinutes, MAX_RUNNING_TIMER_MINUTES);
+    return total;
+}
+
+// Pure decision (unit-tested via a source slice in firebaseConsistency.test.js): tell this worker NOW
+// that their running task passed its plan? Every clause is a reason the server must stay quiet:
+//   • not a running, owned, parseable run → nothing to talk about;
+//   • no heartbeat at all → no proof the app was ever alive on this run (mirrors shouldNudgeStaleTimer);
+//   • heartbeat still fresh → the in-app 100% gate owns it, and a push would duplicate its popup;
+//   • past 16h → the daily autoStopForgottenTimers owns that run, so the nets never both act on one;
+//   • no plan → there is no line to cross (a task with no estimate is untimed by design).
+// Once-per-run-per-plan is enforced downstream by the deterministic notification id, not here.
+function shouldNotifyOverEstimate(task, nowMs) {
+    if (!task || task.timerStatus !== 'running' || !task.timerStartedAt) return false;
+    if (!task.assignedUserId) return false;
+    const startMs = new Date(task.timerStartedAt).getTime();
+    if (!Number.isFinite(startMs)) return false;
+    const beatMs = task.timerLastHeartbeat ? new Date(task.timerLastHeartbeat).getTime() : NaN;
+    if (!Number.isFinite(beatMs)) return false;
+    if (nowMs - beatMs < TIMER_OVER_ESTIMATE_QUIET_MS) return false;
+    if (nowMs - startMs > MAX_RUNNING_TIMER_MINUTES * 60000) return false;
+    const estimateMinutes = taskEstimateMinutes(task);
+    if (!(estimateMinutes > 0)) return false;
+    const spentMinutes = runningTaskMinutes(task, nowMs);
+    return Number.isFinite(spentMinutes) && spentMinutes >= estimateMinutes;
+}
+
+// Scan running task timers and fire ONE over-the-plan alert per run per plan. The notification id is
+// deterministic on (taskId + the run's start + the planned minutes), which makes create() +
+// ALREADY_EXISTS do two jobs: it never repeats across the 10-min cadence, and a granted extension
+// (which rewrites estimatedTimeMinutes) re-arms the alert for the new plan — exactly how the client
+// latch re-arms on an estimate change. A fresh run after a resume re-arms it too. The existing
+// notifyOnRequestNotification onCreate trigger turns the doc into the FCM push.
+async function notifyOverEstimateTimers(nowMs = Date.now()) {
+    let snap;
+    try {
+        snap = await db.collection('tasks').where('timerStatus', '==', 'running').get();
+    } catch (err) {
+        logger.warn('notifyOverEstimateTimers query failed', { err: err.message });
+        return { scanned: 0, alerted: 0 };
+    }
+    const nowIso = new Date(nowMs).toISOString();
+    let alerted = 0;
+    for (const docSnap of snap.docs) {
+        const t = docSnap.data();
+        if (!shouldNotifyOverEstimate(t, nowMs)) continue;
+        const startMs = new Date(t.timerStartedAt).getTime();
+        const planMinutes = Math.round(taskEstimateMinutes(t));
+        const ref = db.collection('request_notifications')
+            .doc(`overest_${docSnap.id}_${startMs}_${planMinutes}`);
+        try {
+            await ref.create({
+                recipientId: t.assignedUserId,
+                type: 'task_over_estimate',
+                category: 'info',
+                taskId: docSnap.id,
+                taskTitle: t.title || 'Užduotis',
+                isRead: false,
+                createdAt: nowIso,
+                createdBy: 'system_over_estimate',
+            });
+            alerted += 1;
+        } catch (err) {
+            if (err && (err.code === 6 || err.code === 'already-exists')) continue; // already alerted
+            logger.warn('notifyOverEstimateTimers alert failed', { id: docSnap.id, err: err.message });
+        }
+    }
+    return { scanned: snap.size, alerted };
+}
+
+// Same 10-minute cadence as the stale-timer net: the worker learns about an overrun within ~10 min of
+// the quiet window elapsing. Same single indexed query (timerStatus == running) over one company's
+// tasks, and a write only for a run that actually crossed its plan.
+exports.notifyOverEstimateTimers = onSchedule(
+    { schedule: 'every 10 minutes', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const result = await notifyOverEstimateTimers();
+        if (result.alerted > 0) logger.info('notifyOverEstimateTimers fired', result);
     },
 );
 

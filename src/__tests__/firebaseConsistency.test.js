@@ -391,6 +391,138 @@ describe('shouldNudgeStaleTimer (functions/index.js stale-running-timer nudge pr
     expect(shouldNudgeStaleTimer({ ...base, timerStartedAt: 'nope' }, NOW)).toBe(false);
     expect(shouldNudgeStaleTimer({ ...base, timerLastHeartbeat: 'nope' }, NOW)).toBe(false);
   });
+
+  it('leaves an over-the-plan run to the over-estimate net (one silent timer must not push twice)', () => {
+    // The scan skips a task shouldNotifyOverEstimate claims, so this predicate never gets to speak on
+    // one. Lock the pairing here: the message that names the problem wins over the one that asks.
+    const scan = FUNCTIONS_SRC.slice(
+      FUNCTIONS_SRC.indexOf('async function notifyStaleRunningTimers'),
+      FUNCTIONS_SRC.indexOf('exports.notifyStaleRunningTimers'),
+    );
+    expect(scan, 'the stale-nudge scan no longer yields to the over-estimate net — a run past its plan now pushes twice')
+      .toContain('shouldNotifyOverEstimate');
+  });
+});
+
+// =============================================================================================
+//  OVER-THE-PLAN ALERT PREDICATE — the server half of the 100% time-limit gate
+//  (functions/index.js notifyOverEstimateTimers). The client gate is a foreground-only interval, so a
+//  pocketed phone blows through the plan in silence; this net is what reaches a locked screen. Sliced
+//  from source so the quiet window and every stay-silent branch are locked without a functions-side
+//  runner — the branches ARE the feature, since a net that speaks too eagerly gets muted by the worker.
+// =============================================================================================
+describe('shouldNotifyOverEstimate (functions/index.js over-the-plan alert predicate)', () => {
+  const { shouldNotifyOverEstimate, TIMER_OVER_ESTIMATE_QUIET_MS } = (() => {
+    const start = FUNCTIONS_SRC.indexOf('const TIMER_OVER_ESTIMATE_QUIET_MS');
+    const end = FUNCTIONS_SRC.indexOf('async function notifyOverEstimateTimers');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Could not slice shouldNotifyOverEstimate out of functions/index.js — markers moved; update this test.');
+    }
+    // The predicate reaches two symbols defined elsewhere in the module. Both are SLICED rather than
+    // re-implemented, so the estimate parser this test exercises is byte-for-byte the deployed one.
+    const parserStart = FUNCTIONS_SRC.indexOf('function parseEstimateMinutes');
+    const parserEnd = FUNCTIONS_SRC.indexOf('function recurringIsoWeekday');
+    if (parserStart === -1 || parserEnd === -1 || parserEnd <= parserStart) {
+      throw new Error('Could not slice parseEstimateMinutes out of functions/index.js — markers moved; update this test.');
+    }
+    const block = FUNCTIONS_SRC.slice(parserStart, parserEnd) + FUNCTIONS_SRC.slice(start, end);
+    return new Function(
+      `const MAX_RUNNING_TIMER_MINUTES = 16 * 60;\n${block}\n;return { shouldNotifyOverEstimate, TIMER_OVER_ESTIMATE_QUIET_MS };`,
+    )();
+  })();
+
+  const NOW = new Date('2026-07-27T12:00:00.000Z').getTime();
+  const iso = (ms) => new Date(ms).toISOString();
+  // The production case this net was built for (2026-07-27): a 45-min task, 37 min already banked from
+  // earlier stretches, the current run 20 min old and the app silent for 10 — 57 min against a 45-min
+  // plan. Each test overrides ONE field to isolate the branch it exercises.
+  const base = {
+    timerStatus: 'running',
+    assignedUserId: 'worker-1',
+    timerStartedAt: iso(NOW - 20 * 60 * 1000),
+    timerLastHeartbeat: iso(NOW - 10 * 60 * 1000),
+    timerMinutes: 37,
+    estimatedTime: '45min',
+    estimatedTimeMinutes: 45,
+  };
+
+  it('alerts once the banked + live minutes pass the plan and the app has gone quiet', () => {
+    expect(shouldNotifyOverEstimate(base, NOW)).toBe(true);
+  });
+
+  it('counts the LIVE stretch, not just banked minutes (the overrun is happening right now)', () => {
+    // Nothing banked; the running stretch alone is what crosses a 15-min plan.
+    const live = { ...base, timerMinutes: 0, estimatedTime: '15min', estimatedTimeMinutes: 15 };
+    expect(shouldNotifyOverEstimate(live, NOW)).toBe(true);
+  });
+
+  it('stays silent while still under the plan', () => {
+    const under = { ...base, estimatedTime: '2h', estimatedTimeMinutes: 120 };
+    expect(shouldNotifyOverEstimate(under, NOW)).toBe(false);
+  });
+
+  it('stays silent while the heartbeat is fresh — the in-app 100% gate owns that stop', () => {
+    const alive = { ...base, timerLastHeartbeat: iso(NOW - (TIMER_OVER_ESTIMATE_QUIET_MS - 60 * 1000)) };
+    expect(shouldNotifyOverEstimate(alive, NOW)).toBe(false);
+  });
+
+  it('stays silent with no heartbeat at all (no proof the app was ever alive on this run)', () => {
+    expect(shouldNotifyOverEstimate({ ...base, timerLastHeartbeat: undefined }, NOW)).toBe(false);
+  });
+
+  it('stays silent past the 16h ceiling — the daily autoStopForgottenTimers owns that run', () => {
+    const old = {
+      ...base,
+      timerStartedAt: iso(NOW - 17 * 60 * 60 * 1000),
+      timerLastHeartbeat: iso(NOW - 16 * 60 * 60 * 1000),
+    };
+    expect(shouldNotifyOverEstimate(old, NOW)).toBe(false);
+  });
+
+  it('stays silent on a task with no plan — there is no line to cross', () => {
+    expect(shouldNotifyOverEstimate({ ...base, estimatedTime: '', estimatedTimeMinutes: 0 }, NOW)).toBe(false);
+    expect(shouldNotifyOverEstimate({ ...base, estimatedTime: undefined, estimatedTimeMinutes: undefined }, NOW)).toBe(false);
+  });
+
+  it('falls back to the human estimate string when the numeric mirror is missing (legacy docs)', () => {
+    const legacy = { ...base, estimatedTimeMinutes: undefined, estimatedTime: '45min' };
+    expect(shouldNotifyOverEstimate(legacy, NOW)).toBe(true);
+    expect(shouldNotifyOverEstimate({ ...legacy, estimatedTime: '2h' }, NOW)).toBe(false);
+  });
+
+  it('stays silent on a paused/unstarted timer, one with no assignee, or an unparseable instant', () => {
+    expect(shouldNotifyOverEstimate({ ...base, timerStatus: 'paused' }, NOW)).toBe(false);
+    expect(shouldNotifyOverEstimate({ ...base, timerStartedAt: null }, NOW)).toBe(false);
+    expect(shouldNotifyOverEstimate({ ...base, assignedUserId: '' }, NOW)).toBe(false);
+    expect(shouldNotifyOverEstimate({ ...base, timerStartedAt: 'nope' }, NOW)).toBe(false);
+    expect(shouldNotifyOverEstimate({ ...base, timerLastHeartbeat: 'nope' }, NOW)).toBe(false);
+  });
+
+  it('a clock-skewed future start cannot manufacture an overrun', () => {
+    const skewed = { ...base, timerMinutes: 0, timerStartedAt: iso(NOW + 60 * 60 * 1000) };
+    expect(shouldNotifyOverEstimate(skewed, NOW)).toBe(false);
+  });
+
+  it('re-arms per plan and per run: the alert id carries both the run start and the planned minutes', () => {
+    // Without the plan in the id a granted extension could never alert again on the same run; without
+    // the start, a resumed run could not. Both are what make the once-per-run dedup safe.
+    const scan = FUNCTIONS_SRC.slice(
+      FUNCTIONS_SRC.indexOf('async function notifyOverEstimateTimers'),
+      FUNCTIONS_SRC.indexOf('exports.notifyOverEstimateTimers'),
+    );
+    expect(scan).toContain('`overest_${docSnap.id}_${startMs}_${planMinutes}`');
+    expect(scan, 'the alert must be create() so ALREADY_EXISTS is the once-per-run dedup').toContain('.create(');
+  });
+
+  it('never writes to the task — this net speaks, it does not stop or credit anything', () => {
+    const scan = FUNCTIONS_SRC.slice(
+      FUNCTIONS_SRC.indexOf('async function notifyOverEstimateTimers'),
+      FUNCTIONS_SRC.indexOf('exports.notifyOverEstimateTimers'),
+    );
+    expect(scan).not.toMatch(/timerStatus:\s*'paused'/);
+    expect(scan).not.toContain('timerMinutes:');
+    expect(scan).not.toContain('work_sessions');
+  });
 });
 
 describe('notification copy lockstep (functions copyForRequestNotification ↔ client registry)', () => {
@@ -454,6 +586,7 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
       {},
     ],
     timer_running_check: [{ taskTitle: 'Užduotis' }, {}],
+    task_over_estimate: [{ taskTitle: 'Užduotis' }, {}],
     // Name + day, day-only (name absent), and the empty fallback — covers both copy branches and the
     // whitespace-clamp on userName (the only free-form field) on both client and server mirrors.
     backdated_time_logged: [{ userName: '  Jonas   Jonaitis ', day: '2026-06-20' }, { day: '2026-06-20' }, {}],
@@ -1080,6 +1213,24 @@ describe('canonical ledger-id lockstep (client engine closers ↔ functions nets
     );
     expect(badgeTrigger, 'onTaskFinishedBadge lost its timeLimitReached guard — the client no longer clears the flag, so nothing else withholds on_estimate')
       .toMatch(/after\.timeLimitReached\s*!==\s*true/);
+  });
+
+  // The third writer of that same flag, and the one with no gate behind it. When a task blows its
+  // plan while the app is asleep, the 100% gate stands down (isPreBootOrphanTask) and recovery does
+  // the stop — and recovery knows nothing about estimates. So unless the settled-orphan path stamps
+  // the flag itself, an offline overrun reaches onTaskFinishedBadge looking exactly like a task
+  // finished inside its plan, and earns on_estimate. Same edge constraint as planTaskEnd above: the
+  // stamp must be its OWN write, landing before the completion edge the trigger reads.
+  it('the settled-orphan path stamps timeLimitReached, separately from any completion', () => {
+    const MONITOR_SRC = read('src/hooks/useTaskTimeMonitor.js');
+    const effectStart = MONITOR_SRC.indexOf('limitDecisionOwedAfterRecovery(task, currentUser.uid)');
+    expect(effectStart, 'useTaskTimeMonitor.js lost the settled-orphan effect').toBeGreaterThan(-1);
+    const effect = MONITOR_SRC.slice(effectStart, MONITOR_SRC.indexOf('}, [tasks, currentUser?.uid]);', effectStart));
+
+    expect(effect, 'the settled-orphan path no longer stamps timeLimitReached — an offline overrun would earn the on_estimate badge')
+      .toMatch(/(^|[^\w.])timeLimitReached:\s*true/m);
+    expect(effect, 'the stamp must not ride a completion write — the badge trigger reads the flag ON that edge, so it would be invisible')
+      .not.toMatch(/completed:\s*true|status:\s*'(completed|confirmed)'/);
   });
 });
 
