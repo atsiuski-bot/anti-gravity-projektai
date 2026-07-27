@@ -1,0 +1,16 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "@google-cloud/storage": { "severity": "moderate", "isDirect": false, "via": ["retry-request", "teeny-request"], "effects": ["firebase-admin"] },
+    "esbuild": { "severity": "low", "isDirect": false, "advisory": "GHSA-g7r4-m6w7-qqqr", "title": "Arbitrary file read when running the development server on Windows", "range": ">=0.27.3 <0.28.1", "fixAvailable": true },
+    "firebase-admin": { "severity": "moderate", "isDirect": true, "via": ["@google-cloud/storage"] },
+    "gaxios": { "severity": "moderate", "isDirect": false, "via": ["uuid"], "fixAvailable": true },
+    "retry-request": { "severity": "moderate", "isDirect": false, "via": ["teeny-request"], "effects": ["@google-cloud/storage"] },
+    "teeny-request": { "severity": "moderate", "isDirect": false, "via": ["uuid"], "effects": ["@google-cloud/storage", "retry-request"] },
+    "uuid": { "severity": "moderate", "isDirect": false, "advisory": "GHSA-w5hq-g745-h8pq", "title": "Missing buffer bounds check in v3/v5/v6 when buf is provided", "range": "<11.1.1" }
+  },
+  "metadata": {
+    "vulnerabilities": { "info": 0, "low": 1, "moderate": 6, "high": 0, "critical": 0, "total": 7 },
+    "dependencies": { "prod": 132, "dev": 711, "optional": 120, "peer": 0, "peerOptional": 0, "total": 842 }
+  }
+}

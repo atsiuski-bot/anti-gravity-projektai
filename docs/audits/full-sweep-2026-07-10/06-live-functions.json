@@ -1,0 +1,33 @@
+{
+  "project": "darbo-planavimas",
+  "count": 22,
+  "surfaceMatchesLocalExports": true,
+  "allVersion": "v2",
+  "allRuntime": "nodejs22",
+  "allLocation": "europe-west1",
+  "functions": [
+    "backfillTeamStamps",
+    "cleanupAttachmentsOnArchivedDelete",
+    "cleanupAttachmentsOnTaskDelete",
+    "cleanupAttachmentsOnTaskUpdate",
+    "dailyIntegrityScan",
+    "escalateTaskPriorities",
+    "generateRecurringTasks",
+    "notifyAdminsOnPendingSignup",
+    "notifyOnCalendarRequest",
+    "notifyOnRequestNotification",
+    "notifyOverdueTasks",
+    "notifyStaleRunningTimers",
+    "onCalendarPlanBadge",
+    "onTaskFinishedBadge",
+    "onWorkSessionBadge",
+    "parseTaskDraft",
+    "restampTeamOnUserChange",
+    "runRecurringTasksNow",
+    "stampTeamOnArchivedTaskWrite",
+    "stampTeamOnBreakSessionCreate",
+    "stampTeamOnTaskWrite",
+    "stampTeamOnWorkSessionCreate"
+  ],
+  "note": "The Firebase listing API verifies deployed name/runtime/location metadata but does not expose source bytes."
+}

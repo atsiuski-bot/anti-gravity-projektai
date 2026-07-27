@@ -126,3 +126,10 @@ dist-ssr
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Agent-local state — per-machine, never part of the repo.
+# .claude/projects/ is agent memory that belongs in ~/.claude, not here (an agent
+# resolving the memory path against the repo root instead of $HOME writes it here).
+# .codex/ is machine-local Codex hook wiring whose commands carry absolute paths.
+.claude/projects/
+.codex/

@@ -1,0 +1,4 @@
+> lint
+> eslint .
+
+Exit code: 0

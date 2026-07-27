@@ -1,0 +1,4 @@
+{
+  "eslint": { "current": "8.57.1", "wanted": "8.57.1", "latest": "10.6.0" },
+  "firebase-admin": { "current": "13.10.0", "wanted": "13.10.0", "latest": "14.1.0" }
+}

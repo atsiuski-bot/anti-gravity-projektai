@@ -1,0 +1,17 @@
+{
+  "auditReportVersion": 2,
+  "vulnerabilities": {
+    "@google-cloud/firestore": { "severity": "moderate", "isDirect": false, "via": ["google-gax"], "effects": ["firebase-admin"] },
+    "@google-cloud/storage": { "severity": "moderate", "isDirect": false, "via": ["retry-request", "teeny-request"], "effects": ["firebase-admin"] },
+    "firebase-admin": { "severity": "moderate", "isDirect": true, "via": ["@google-cloud/firestore", "@google-cloud/storage"] },
+    "gaxios": { "severity": "moderate", "isDirect": false, "via": ["uuid"] },
+    "google-gax": { "severity": "moderate", "isDirect": false, "via": ["retry-request", "uuid"], "effects": ["@google-cloud/firestore"] },
+    "retry-request": { "severity": "moderate", "isDirect": false, "via": ["teeny-request"], "effects": ["@google-cloud/storage", "google-gax"] },
+    "teeny-request": { "severity": "moderate", "isDirect": false, "via": ["uuid"], "effects": ["@google-cloud/storage", "retry-request"] },
+    "uuid": { "severity": "moderate", "isDirect": false, "advisory": "GHSA-w5hq-g745-h8pq", "title": "Missing buffer bounds check in v3/v5/v6 when buf is provided", "range": "<11.1.1" }
+  },
+  "metadata": {
+    "vulnerabilities": { "info": 0, "low": 0, "moderate": 8, "high": 0, "critical": 0, "total": 8 },
+    "dependencies": { "prod": 171, "dev": 86, "optional": 80, "peer": 0, "peerOptional": 0, "total": 336 }
+  }
+}

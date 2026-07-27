@@ -1,0 +1,13 @@
+> workz@0.0.0 test:firestore
+> firebase emulators:exec --project demo-workz-timer --only firestore "vitest run src/integration/firestore --maxWorkers=1 --no-file-parallelism"
+
+Firestore Emulator started in standard edition for demo-workz-timer.
+
+RUN  v4.1.9 C:/Users/karol/Desktop/WORKZ
+
+Test Files  2 passed (2)
+Tests       13 passed (13)
+Duration    19.17s
+
+Script exited successfully; emulator shut down cleanly.
+Exit code: 0

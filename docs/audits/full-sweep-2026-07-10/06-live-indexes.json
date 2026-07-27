@@ -1,0 +1,19 @@
+{
+  "project": "darbo-planavimas",
+  "database": "(default)",
+  "count": 12,
+  "indexes": [
+    { "collection": "break_sessions", "fields": ["userId ASC", "date ASC", "__name__ ASC"], "state": "READY" },
+    { "collection": "tasks", "fields": ["teamManagerIds ARRAY_CONTAINS", "updatedAt ASC", "__name__ ASC"], "state": "READY" },
+    { "collection": "tasks", "fields": ["teamManagerIds ARRAY_CONTAINS", "createdAt DESC", "__name__ DESC"], "state": "READY" },
+    { "collection": "tasks", "fields": ["assignedUserId ASC", "updatedAt ASC", "__name__ ASC"], "state": "READY" },
+    { "collection": "work_sessions", "fields": ["userId ASC", "date ASC", "__name__ ASC"], "state": "READY" },
+    { "collection": "work_sessions", "fields": ["teamManagerIds ARRAY_CONTAINS", "date ASC", "__name__ ASC"], "state": "READY" },
+    { "collection": "tasks", "fields": ["assignedUserId ASC", "status ASC", "__name__ ASC"], "state": "READY" },
+    { "collection": "archived_tasks", "fields": ["assignedUserId ASC", "archivedAt DESC", "__name__ DESC"], "state": "READY" },
+    { "collection": "archived_tasks", "fields": ["assignedUserId ASC", "archivedAt ASC", "__name__ ASC"], "state": "READY" },
+    { "collection": "break_sessions", "fields": ["teamManagerIds ARRAY_CONTAINS", "date ASC", "__name__ ASC"], "state": "READY" },
+    { "collection": "archived_tasks", "fields": ["teamManagerIds ARRAY_CONTAINS", "archivedAt DESC", "__name__ DESC"], "state": "READY" },
+    { "collection": "tasks", "fields": ["teamManagerIds ARRAY_CONTAINS", "status ASC", "__name__ ASC"], "state": "READY" }
+  ]
+}

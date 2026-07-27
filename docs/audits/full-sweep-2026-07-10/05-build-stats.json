@@ -1,0 +1,28 @@
+{
+  "viteVersion": "7.3.5",
+  "modulesTransformed": 2945,
+  "buildSeconds": 12.27,
+  "dist": {
+    "fileCount": 69,
+    "totalBytes": 6080062,
+    "largestFileBytes": 387155,
+    "largestFile": "dist/assets/index-DywbZ0hl.js"
+  },
+  "largestJavaScript": [
+    { "file": "dist/assets/index-DywbZ0hl.js", "bytes": 387155, "gzipKilobytes": 104.78 },
+    { "file": "dist/assets/firebase-firestore-CCYeOxOi.js", "bytes": 371226, "gzipKilobytes": 113.04 },
+    { "file": "dist/assets/calendar-vendor-CWb1SxQC.js", "bytes": 170760, "gzipKilobytes": 55.35 },
+    { "file": "dist/assets/react-vendor-5BX0lWKf.js", "bytes": 161270, "gzipKilobytes": 52.97 }
+  ],
+  "pwa": {
+    "mode": "generateSW",
+    "precacheEntries": 45,
+    "precacheKibibytes": 1829.13,
+    "manifestPresent": true,
+    "serviceWorkerPresent": true,
+    "requiredIconsPresent": true,
+    "brand": "Gildija",
+    "language": "lt"
+  },
+  "viteManifestPresent": false
+}

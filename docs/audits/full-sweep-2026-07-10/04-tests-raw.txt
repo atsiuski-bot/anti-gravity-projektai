@@ -1,0 +1,10 @@
+> workz@0.0.0 test
+> vitest run
+
+RUN  v4.1.9 C:/Users/karol/Desktop/WORKZ
+
+Test Files  67 passed | 2 skipped (69)
+Tests       847 passed | 13 skipped (860)
+Duration    9.17s
+
+Exit code: 0
