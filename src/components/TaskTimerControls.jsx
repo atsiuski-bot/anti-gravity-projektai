@@ -900,7 +900,8 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         disabled={isSecondarySessionActive}
                         className="flex-[2] whitespace-nowrap"
                     >
-                        Pauzė {elapsedString}
+                        {/* Only the running task's elapsed time pulses — never the button label. */}
+                        Pauzė <span className="wz-tick">{elapsedString}</span>
                     </Button>
                 ) : isLimitExceeded ? (
                     /* Start removed once the time limit is exceeded (occupies the primary slot). */
