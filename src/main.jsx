@@ -15,9 +15,17 @@ import { installStaleChunkRecovery } from './utils/appUpdate.js'
 installGlobalErrorLogging();
 installStaleChunkRecovery();
 
-// Expose migration to window for manual execution in console
-window.runMigration = runDatabaseMigration;
-window.diagnoseTasks = diagnoseTasks;
+// Console handles for the one-off DB migration + task diagnostic — DEV ONLY.
+//
+// These shipped in the production bundle, which put an unaudited BULK TASK REWRITE one console line
+// away for anyone with a session: nothing about the browser console is privileged, and the migration
+// runs with whatever rights the signed-in user already has. There is no legitimate production caller
+// — it is a maintenance tool run by hand during development — so the import.meta.env.DEV guard both
+// removes the handle and lets the bundler drop the module from the production build entirely.
+if (import.meta.env.DEV) {
+    window.runMigration = runDatabaseMigration;
+    window.diagnoseTasks = diagnoseTasks;
+}
 
 // Service-worker registration + the accessible update prompt now live inside the React tree
 // (PwaUpdatePrompt), replacing the banned window.confirm that the bare registerSW used.

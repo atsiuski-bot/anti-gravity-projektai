@@ -1,4 +1,4 @@
-import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc, getDoc, getDocs, query, where } from 'firebase/firestore';
+import { doc, updateDoc, addDoc, setDoc, collection, deleteDoc, getDoc, getDocs, increment, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
     getLithuanianDateString,
@@ -114,8 +114,20 @@ const readTaskSessions = async (taskId, ownerUid) => {
 // `ownerUid` is the uid the task's sessions are owned by (always the ASSIGNEE — every work_sessions
 // writer stamps userId: task.assignedUserId, never the actor). It is what makes the read possible at
 // all for a non-manager: see readTaskSessions above.
-export const reconcileTaskTimerFromSessions = async (taskId, ownerUid) => {
+//
+// `deltaMinutes` is the DELTA-MODE fallback for exactly the callers a re-derive cannot serve. When
+// the broad read is denied (every plain-worker correction), the owner-scoped sum is provably
+// incomplete and must never be written back — but the caller usually knows the one thing the sum was
+// needed for: how much credited time THIS correction added or removed. An atomic increment applies
+// that delta without ever needing to see the other rows, so the task counter tracks the canonical
+// ledger instead of silently drifting away from it. Two conditions make it safe, and both are the
+// CALLER's responsibility: the delta must be EXACTLY-ONCE (a retried/duplicated correction must pass
+// no delta, or an increment double-counts where the wholesale re-derive was naturally idempotent),
+// and it must describe a change that has already been persisted. Omit it and the old fail-closed
+// behaviour is unchanged.
+export const reconcileTaskTimerFromSessions = async (taskId, ownerUid, deltaMinutes) => {
     if (!taskId) return { ok: true };
+    const delta = Number.isFinite(deltaMinutes) ? deltaMinutes : 0;
     try {
         // Sum this task's non-deleted logged sessions — the canonical credited time.
         const { snap, partial } = await readTaskSessions(taskId, ownerUid);
@@ -126,9 +138,9 @@ export const reconcileTaskTimerFromSessions = async (taskId, ownerUid) => {
         // rows under another uid after a reassignment (work_sessions stamp userId at pause time,
         // while assignTask repoints assignedUserId later), as do legacy `workerId`-only rows. For a
         // plain worker the broad read is ALWAYS denied, so this is the normal path for them, not an
-        // edge case. Bail out before writing: the pre-existing drift stays visible and repairable,
-        // which is strictly better than a confidently wrong smaller number in reports and pay.
-        if (partial) return { ok: false, error: 'partial' };
+        // edge case. Without a delta there is nothing safe to write: bail out and leave the
+        // (visible, repairable) drift rather than a confidently wrong smaller number in pay.
+        if (partial && !delta) return { ok: false, error: 'partial' };
 
         let total = 0;
         snap.forEach((d) => {
@@ -147,6 +159,28 @@ export const reconcileTaskTimerFromSessions = async (taskId, ownerUid) => {
         }
         if (!taskSnap.exists()) return { ok: true };
 
+        if (partial) {
+            // DELTA MODE. Bound a REMOVAL by what the counter actually holds so a discard can never
+            // drive credited time negative (the summed rows the worker cannot see are not in
+            // timerMinutes' history to give back). `increment` is applied server-side, so two
+            // concurrent corrections compose instead of clobbering each other — which a
+            // read-then-write of the whole counter could not promise on this path.
+            const held = taskSnap.data()?.timerMinutes;
+            const floor = -(typeof held === 'number' && held > 0 ? held : 0);
+            const applied = Math.max(delta, floor);
+            if (!applied) return { ok: true, mode: 'delta' };
+            // `actualTime` is deliberately NOT re-derived here: it is a legacy display string that
+            // calculateCurrentTotalMinutes consults only while manual+timer read 0 AND timeChanged
+            // is falsy, and the flag below keeps it inert. Recomputing it would need the very total
+            // this path cannot see.
+            await updateDoc(ref, {
+                timerMinutes: increment(applied),
+                timeChanged: true,
+                updatedAt: new Date().toISOString(),
+            });
+            return { ok: true, mode: 'delta' };
+        }
+
         // Collapse the credited time into timerMinutes and zero manualMinutes so
         // calculateCurrentTotalMinutes (manual + timer + timeAdjustments) equals the summed
         // sessions. Legacy timeAdjustments deltas are NOT sessions, so they intentionally stay
@@ -158,11 +192,22 @@ export const reconcileTaskTimerFromSessions = async (taskId, ownerUid) => {
             timeChanged: true,
             updatedAt: new Date().toISOString(),
         });
-        return { ok: true };
+        return { ok: true, mode: 'sum' };
     } catch (err) {
         logError(err, { source: 'writeFail:reconcileTaskTimerFromSessions', taskId });
         return { ok: false, error: err?.code === 'permission-denied' ? 'denied' : 'write' };
     }
+};
+
+// A correction persisted its work_sessions row but could NOT bring the task's cached counter with
+// it. The row is canonical, so the action genuinely succeeded — reports and pay are right — but the
+// task card / earnings popup / time-limit monitor now read a stale total, and until now that drift
+// left no trace anywhere. Record it durably so a stale counter is diagnosable after the fact instead
+// of being discovered as an unexplained mismatch weeks later. Returns the flag the action reports.
+const noteReconcileOutcome = (result, { source, taskId }) => {
+    if (result?.ok) return true;
+    logError(new Error(`task counter not reconciled (${result?.error || 'unknown'})`), { source, taskId });
+    return false;
 };
 
 // Edit an existing tracked session's start/end in place. Recomputes durationMinutes + date,
@@ -380,10 +425,13 @@ export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTi
     };
     try {
         const ref = await addDoc(collection(db, 'work_sessions'), payload);
-        // The new backdated session counts toward the report — re-derive the task counter so its
-        // sheet/earnings/monitor include the same time. Best-effort; the worker's own uid keeps the
-        // sessions read inside what the rules grant them (a taskId-only query would be denied).
-        await reconcileTaskTimerFromSessions(task.id, worker.uid);
+        // The new backdated session counts toward the report — bring the task counter with it so its
+        // sheet/earnings/monitor include the same time. The worker's own uid keeps the sessions read
+        // inside what the rules grant them (a taskId-only query would be denied), and the duration is
+        // safe as a delta because addDoc always MINTS a row: there is no id a retry could land on
+        // twice, so this correction can be counted exactly once.
+        const rec = await reconcileTaskTimerFromSessions(task.id, worker.uid, derived.durationMinutes);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:logBackdatedWorkerSession', taskId: task.id });
         // FYI to every admin that an approval-free backdated entry was logged. notifyMany dedupes and
         // drops the actor, so a backdating admin never self-notifies. userId == the worker's uid
         // satisfies the rules' provenance check on a worker-authored notification.
@@ -397,7 +445,7 @@ export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTi
             taskTitle: payload.taskTitle,
             summary: formatMinutesToTimeString(derived.durationMinutes),
         });
-        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
+        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date, reconciled };
     } catch (err) {
         logError(err, { source: 'writeFail:logBackdatedWorkerSession' });
         return { ok: false, error: 'write' };
@@ -451,12 +499,27 @@ export const claimRecoveredGap = async ({ task, worker, startTime, endTime, reas
         // recovery notice's sessionId then points at THE row, so a "Nedirbau" opt-out removes all
         // of the credited time, never leaving an invisible sibling duplicate behind.
         const ref = doc(db, 'work_sessions', `sess_gap_${task.id}_${new Date(startTime).getTime()}`);
+        // That same deterministic id is what makes a DELTA unsafe by default here: unlike the
+        // backdate's addDoc, a second claim of the same gap lands on the SAME row and adds no
+        // credited time at all, so incrementing the counter for it would inflate the task above the
+        // ledger. Prove the row is genuinely new before treating this as an addition — and if the
+        // read cannot answer (offline, denied), claim nothing and fall back to the old fail-closed
+        // behaviour. Over-stating a task's time is worse than a stale, repairable counter.
+        let isNewClaim = false;
+        try {
+            isNewClaim = !(await getDoc(ref)).exists();
+        } catch {
+            // unreadable → not provably new → no delta
+        }
         await setDoc(ref, payload, { merge: true });
         // Fold the just-claimed offline gap into the task counter so its sheet/earnings/monitor match
         // the report (recovery already credited the pre-gap segments; this adds the remainder). The
         // worker's own uid keeps the sessions read inside what the rules grant them.
-        await reconcileTaskTimerFromSessions(task.id, worker.uid);
-        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date };
+        const rec = await reconcileTaskTimerFromSessions(
+            task.id, worker.uid, isNewClaim ? derived.durationMinutes : undefined
+        );
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:claimRecoveredGap', taskId: task.id });
+        return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date, reconciled };
     } catch (err) {
         logError(err, { source: 'writeFail:claimRecoveredGap' });
         return { ok: false, error: 'write' };
@@ -485,17 +548,28 @@ export const discardRecoveredGap = async ({ sessionId, taskId } = {}) => {
         // plain worker — which is how "Nedirbau" used to drop the session from the reports while
         // leaving the credited minutes sitting on the task card. Best-effort: an unreadable row just
         // reconciles without the hint, exactly as before.
+        // The SAME read also yields the exactly-once delta: `durationMinutes` is the credited time
+        // this row is about to take away, and reading it BEFORE the delete is what makes the removal
+        // countable at most once — a repeat "Nedirbau" on an already-deleted gap finds nothing, so it
+        // subtracts nothing. An unreadable row yields no delta and keeps the old fail-closed path.
         let ownerUid = null;
+        let removedMinutes;
         try {
             const snap = await getDoc(ref);
-            if (snap.exists()) ownerUid = snap.data()?.userId || null;
+            if (snap.exists()) {
+                ownerUid = snap.data()?.userId || null;
+                const held = snap.data()?.durationMinutes;
+                if (typeof held === 'number' && held > 0) removedMinutes = -held;
+            }
         } catch {
             // ignore — removing the gap is the operation that must not be blocked
         }
         await deleteDoc(ref);
-        // The gap is gone — re-derive the task counter so its sheet/earnings/monitor drop it too.
-        await reconcileTaskTimerFromSessions(taskId, ownerUid);
-        return { ok: true };
+        // The gap is gone — bring the task counter down with it so its sheet/earnings/monitor stop
+        // showing time the report no longer contains.
+        const rec = await reconcileTaskTimerFromSessions(taskId, ownerUid, removedMinutes);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:discardRecoveredGap', taskId });
+        return { ok: true, reconciled };
     } catch (err) {
         logError(err, { source: 'writeFail:discardRecoveredGap' });
         return { ok: false, error: 'write' };

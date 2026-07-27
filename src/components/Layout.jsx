@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { hasPersistentCache } from '../firebase';
 import { ConnectionOfflineGlyph } from './icons/connectionGlyphs';
 import AppHeader from './AppHeader';
 import BottomNavigation from './BottomNavigation';
@@ -100,9 +101,24 @@ export default function Layout({ children }) {
             {/* Offline banner — neutral slate, NOT red, so it never collides with the
                 quick-work shell (DESIGN_SYSTEM §4-C). Paired with a wifi-off icon. */}
             {!isOnline && (
-                <div className="relative z-toast flex items-center justify-center gap-2 bg-feedback-offline px-4 py-1 text-center text-caption font-medium text-white shadow-sm">
+                <div
+                    // Going offline is a state change a sighted worker sees instantly and a
+                    // screen-reader user previously never heard: the banner has a label but nothing
+                    // announced its ARRIVAL. Polite, so it waits for a pause rather than cutting in.
+                    role="status"
+                    aria-live="polite"
+                    className="relative z-toast flex items-center justify-center gap-2 bg-feedback-offline px-4 py-1 text-center text-caption font-medium text-white shadow-sm"
+                >
                     <ConnectionOfflineGlyph className="h-4 w-4 shrink-0" aria-hidden="true" />
-                    <span>Jūs esate neprisijungęs. Duomenys bus išsaugoti telefone ir sinchronizuoti vėliau.</span>
+                    {/* The durability promise is only true on the persistent cache. When Firestore
+                        fell back to memory-only storage (private browsing, storage blocked), an
+                        unsent write dies with the tab — so the banner must not tell a worker their
+                        data is safe on the phone when closing the app would lose it. */}
+                    <span>
+                        {hasPersistentCache
+                            ? 'Jūs esate neprisijungęs. Duomenys bus išsaugoti telefone ir sinchronizuoti vėliau.'
+                            : 'Jūs esate neprisijungęs. Šiame įrenginyje duomenys neišsaugomi — neuždarykite programos, kol neatsiras internetas.'}
+                    </span>
                 </div>
             )}
 

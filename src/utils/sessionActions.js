@@ -120,8 +120,18 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                         // overwrites this partial row instead of adding a second one — closing the
                         // double-credit gap the break branch never had.
                         const partialSessionId = `sess_${partialType === 'call' ? 'call' : 'qw'}_ws_${userId}_${interruptStart.getTime()}`;
+                        // ISSUED, NOT AWAITED — the same lesson the task-pause guard below learned the
+                        // hard way. A Firestore mutation promise settles only on SERVER acknowledgement,
+                        // so offline (a worker switching from a call to a break out of coverage — the
+                        // commonest secondary switch there is) awaiting this suspends startSession right
+                        // here and the `activeSession` update at the end is never even ISSUED. Close the
+                        // PWA before reconnect and the newly selected activity never entered Firestore's
+                        // durable queue at all: the server keeps the OLD session running and later
+                        // attributes the whole interval to the wrong type. Issuing without awaiting puts
+                        // this row in the local queue FIRST, and Firestore replays queued mutations in
+                        // enqueue order, so the partial still lands before the switch on reconnect.
                         try {
-                            await setDoc(doc(db, 'work_sessions', partialSessionId), {
+                            void setDoc(doc(db, 'work_sessions', partialSessionId), {
                                 taskId: `${partialType}_partial_${interruptNow.getTime()}`,
                                 taskTitle: partialTitle,
                                 userId: userId,
@@ -134,8 +144,11 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                                 isQuickWork: partialType === 'quickWork',
                                 isSystemTask: partialType === 'call',
                                 isPartial: true
-                            }, { merge: true });
-                            // Store partial doc ID on the paused session so we can rename it later
+                            }, { merge: true }).catch((e) => {
+                                logError(e, { source: 'writeFail:startSession.partialLog', userId });
+                            });
+                            // Store partial doc ID on the paused session so we can rename it later. The
+                            // id is deterministic, so it is known WITHOUT waiting for the write.
                             newPausedSession = { ...newPausedSession, partialDocId: partialSessionId };
                         } catch (e) {
                             logError(e, { source: 'writeFail:startSession.partialLog', userId });
@@ -153,8 +166,13 @@ const startSessionImpl = async (userId, type, metadata = {}) => {
                     if (partialDuration > MIN_LOGGED_SESSION_MINUTES) {
                         try {
                             // Deterministic-id break_sessions row (same shape + dedup key the final
-                            // end uses), so the server net cannot double-write this segment.
-                            await handleLegacyLogging(userId, userData, { type: 'break', startTime: userData.activeSession.startTime }, interruptNow, partialDuration);
+                            // end uses), so the server net cannot double-write this segment. ISSUED,
+                            // NOT AWAITED — identical reasoning to the quick-work/call branch above:
+                            // awaiting a write that only settles on server ACK strands the whole
+                            // session switch offline. The banked minutes are known from the local
+                            // arithmetic, not from the write, so the counter below stays correct.
+                            void handleLegacyLogging(userId, userData, { type: 'break', startTime: userData.activeSession.startTime }, interruptNow, partialDuration)
+                                .catch((e) => logError(e, { source: 'writeFail:startSession.partialBreakLog', userId }));
                             bankedBreakMinutes = partialDuration;
                         } catch (e) {
                             logError(e, { source: 'writeFail:startSession.partialBreakLog', userId });

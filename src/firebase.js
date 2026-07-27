@@ -29,6 +29,12 @@ export const auth = getAuth(app);
 // (and the ErrorBoundary) mount — which would blank the screen. Fall back to an in-memory
 // Firestore so the app still loads.
 let db;
+// Whether writes issued while offline actually SURVIVE the app being closed. The memory fallback
+// below keeps the app usable, but its queue lives only in the tab: close the PWA before reconnect
+// and every unsent timer action is gone. The UI promises a worker their time is "saved on the
+// phone", and that promise is only true on the persistent cache — so the storage layer has to
+// publish which of the two it got instead of letting the copy assume the good case.
+let persistentCache = true;
 try {
     db = initializeFirestore(app, {
         localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
@@ -36,8 +42,10 @@ try {
 } catch (err) {
     console.warn('[firebase] Persistent cache unavailable, falling back to memory cache:', err);
     db = getFirestore(app);
+    persistentCache = false;
 }
 export { db };
+export const hasPersistentCache = persistentCache;
 
 export const storage = getStorage(app);
 

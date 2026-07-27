@@ -22,6 +22,9 @@ vi.mock('firebase/firestore', () => ({
     deleteDoc: vi.fn(() => Promise.resolve()),
     getDoc: vi.fn(() => Promise.resolve({ exists: () => false })),
     getDocs: vi.fn(() => Promise.resolve({ forEach: () => {} })),
+    // Firestore's atomic increment is opaque at runtime; the fake makes the delta assertable so a
+    // test can tell an INCREMENT apart from an absolute counter rewrite.
+    increment: vi.fn((n) => ({ _increment: n })),
     query: vi.fn((...args) => ({ _query: args })),
     where: vi.fn((field, op, value) => ({ field, op, value })),
 }));
@@ -115,7 +118,9 @@ describe('claimRecoveredGap (worker claims an offline untracked gap from the rec
 describe('discardRecoveredGap (opt-out "Nedirbau" — hard-delete an auto-credited gap)', () => {
     it('hard-deletes the recovered-gap work_session by id', async () => {
         const res = await discardRecoveredGap({ sessionId: 'sess-9' });
-        expect(res).toEqual({ ok: true });
+        // `reconciled` reports whether the task's cached counter could be brought along; with no
+        // taskId there is nothing to reconcile, so it is trivially true.
+        expect(res).toEqual({ ok: true, reconciled: true });
         expect(deleteDoc).toHaveBeenCalledTimes(1);
         // Deletes the exact work_sessions doc the auto-credit created.
         expect(doc).toHaveBeenCalledWith(expect.anything(), 'work_sessions', 'sess-9');
@@ -528,7 +533,7 @@ describe('logBackdatedWorkerSession (trusted worker self-log, approval-free + ad
 
     it('persists a worker-authored, backdated session linked to the real task', async () => {
         const res = await logBackdatedWorkerSession(base);
-        expect(res).toEqual({ ok: true, id: 'generated-id', durationMinutes: 180, date: '2026-06-23' });
+        expect(res).toEqual({ ok: true, id: 'generated-id', durationMinutes: 180, date: '2026-06-23', reconciled: true });
         expect(addDoc).toHaveBeenCalledTimes(1);
 
         const payload = addDoc.mock.calls[0][1];
@@ -636,7 +641,9 @@ describe('reconcileTaskTimerFromSessions (work_sessions is canonical → re-deri
         getDocs
             .mockRejectedValueOnce(denied)
             .mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 25 }, { durationMinutes: 35 }]));
-        getDoc.mockResolvedValueOnce({ exists: () => true });
+        // No getDoc stub on purpose: with no delta this path must bail BEFORE it ever locates the
+        // task. (A queued-but-unconsumed `mockResolvedValueOnce` survives vi.clearAllMocks and would
+        // silently leak into the next test's getDoc.)
 
         const res = await reconcileTaskTimerFromSessions('t-real', 'worker-1');
 
@@ -655,6 +662,81 @@ describe('reconcileTaskTimerFromSessions (work_sessions is canonical → re-deri
         expect(taskWrite()).toBeUndefined();
     });
 
+    // DELTA MODE — the repair for the split between the canonical ledger and the task counter. The
+    // owner-scoped sum stays unwritable (it cannot see other owners' rows), but a caller that knows
+    // exactly how much credited time it just added/removed can move the counter by that much alone.
+    it('applies the caller-supplied delta as an atomic increment when the broad read is denied', async () => {
+        const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+        getDocs
+            .mockRejectedValueOnce(denied)
+            .mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 25 }]));
+        getDoc.mockResolvedValueOnce({ exists: () => true, data: () => ({ timerMinutes: 40 }) });
+
+        const res = await reconcileTaskTimerFromSessions('t-real', 'worker-1', 20);
+
+        expect(res).toEqual({ ok: true, mode: 'delta' });
+        const call = taskWrite();
+        // The INCREMENT sentinel, never the (incomplete) owner-scoped sum of 25.
+        expect(call[1].timerMinutes).toEqual({ _increment: 20 });
+        expect(call[1].timeChanged).toBe(true);
+        // manualMinutes/actualTime are only meaningful for a whole-total rewrite; a delta must not
+        // pretend to know either.
+        expect(call[1]).not.toHaveProperty('manualMinutes');
+        expect(call[1]).not.toHaveProperty('actualTime');
+    });
+
+    it('never lets a removal delta drive credited time below zero', async () => {
+        const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+        getDocs.mockRejectedValueOnce(denied).mockResolvedValueOnce(sessionsSnap([]));
+        getDoc.mockResolvedValueOnce({ exists: () => true, data: () => ({ timerMinutes: 12 }) });
+
+        const res = await reconcileTaskTimerFromSessions('t-real', 'worker-1', -30);
+
+        expect(res).toEqual({ ok: true, mode: 'delta' });
+        expect(taskWrite()[1].timerMinutes).toEqual({ _increment: -12 }); // floored at the held total
+    });
+
+    it('still refuses a partial write-back when the caller supplies NO delta', async () => {
+        const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+        getDocs.mockRejectedValueOnce(denied).mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 25 }]));
+
+        const res = await reconcileTaskTimerFromSessions('t-real', 'worker-1');
+
+        expect(res).toEqual({ ok: false, error: 'partial' });
+        expect(taskWrite()).toBeUndefined();
+    });
+
+    it('a re-claimed gap contributes NO delta, so the counter cannot outrun the ledger', async () => {
+        const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+        // The deterministic gap row ALREADY exists (a second tab/device claimed it first).
+        getDoc.mockResolvedValueOnce({ exists: () => true, data: () => ({ userId: 'u1' }) });
+        getDocs.mockRejectedValueOnce(denied).mockResolvedValueOnce(sessionsSnap([]));
+
+        const res = await claimRecoveredGap({
+            task: { id: 't1', title: 'Kostiumai' },
+            worker: { uid: 'u1' },
+            startTime: '2026-06-23T11:00:00.000Z',
+            endTime: '2026-06-23T11:20:00.000Z',
+        });
+
+        expect(res.ok).toBe(true);
+        expect(res.reconciled).toBe(false); // honest: the counter could not be moved
+        expect(taskWrite()).toBeUndefined(); // and crucially, nothing was added twice
+    });
+
+    it('discarding a gap subtracts exactly what that row credited', async () => {
+        const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
+        getDoc
+            .mockResolvedValueOnce({ exists: () => true, data: () => ({ userId: 'u1', durationMinutes: 18 }) })
+            .mockResolvedValueOnce({ exists: () => true, data: () => ({ timerMinutes: 60 }) });
+        getDocs.mockRejectedValueOnce(denied).mockResolvedValueOnce(sessionsSnap([]));
+
+        const res = await discardRecoveredGap({ sessionId: 'sess_gap_t1_1', taskId: 't1' });
+
+        expect(res).toEqual({ ok: true, reconciled: true });
+        expect(taskWrite()[1].timerMinutes).toEqual({ _increment: -18 });
+    });
+
     it('reports the denial instead of swallowing it when no owner uid is known', async () => {
         const denied = Object.assign(new Error('Missing or insufficient permissions.'), { code: 'permission-denied' });
         getDocs.mockRejectedValueOnce(denied);
@@ -668,7 +750,9 @@ describe('reconcileTaskTimerFromSessions (work_sessions is canonical → re-deri
 
     it('claimRecoveredGap reconciles under the claiming worker\'s own uid', async () => {
         getDocs.mockResolvedValueOnce(sessionsSnap([{ durationMinutes: 20 }]));
-        getDoc.mockResolvedValueOnce({ exists: () => true });
+        getDoc
+            .mockResolvedValueOnce({ exists: () => false })  // the gap row is genuinely new
+            .mockResolvedValueOnce({ exists: () => true, data: () => ({}) }); // ...and its task is live
 
         await claimRecoveredGap({
             task: { id: 't-real', title: 'Kostiumai' },

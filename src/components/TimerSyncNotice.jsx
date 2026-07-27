@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CloudOff, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { hasPersistentCache } from '../firebase';
 import {
     FAILED_STATUSES,
+    describeTimerCommand,
     listTimerCommandOutcomes,
     subscribeTimerCommands,
     updateTimerCommandStatus,
 } from '../utils/timerOutbox';
+import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { logError } from '../utils/errorLog';
 import Button from './ui/Button';
 
@@ -46,6 +49,47 @@ const failureCopy = (command) => {
     return OPENING_KINDS.has(command.kind)
         ? 'Veiksmo nepavyko įrašyti — laikmatis nebuvo paleistas. Pradėkite iš naujo.'
         : 'Veiksmo nepavyko įrašyti. Laikas už šį tarpsnį neužskaitytas.';
+};
+
+// Vilnius wall-clock HH:MM — the worker reads these next to their own shift, so the day boundary and
+// the zone must match every other time in the app, not the device's locale.
+const clock = (iso) => {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    return new Intl.DateTimeFormat('lt-LT', {
+        timeZone: 'Europe/Vilnius', hour: '2-digit', minute: '2-digit',
+    }).format(d);
+};
+
+// The concrete, reportable facts about the stretch that did NOT get credited: which task, which
+// interval, how long. Without them the worker is told time is missing but not which time — they
+// cannot reconstruct the shift, and a coordinator has nothing to correct from.
+const FailureDetail = ({ command }) => {
+    const d = describeTimerCommand(command);
+    const from = clock(d.startTime);
+    const to = clock(d.endTime);
+    const issued = clock(d.issuedAt);
+    // An interval is only meaningful with both ends; otherwise fall back to when the worker acted.
+    const span = from && to ? `${from}–${to}` : null;
+    const rows = [
+        d.taskTitle && ['Veikla', d.taskTitle],
+        span && ['Laikotarpis', span],
+        d.durationMinutes && ['Trukmė', formatMinutesToTimeString(d.durationMinutes)],
+        !span && issued && ['Veiksmo laikas', issued],
+    ].filter(Boolean);
+
+    if (!rows.length) return null;
+    return (
+        <dl className="mt-1 space-y-0.5 text-caption text-ink">
+            {rows.map(([label, value]) => (
+                <div key={label} className="flex gap-1.5">
+                    <dt className="text-ink-muted">{label}:</dt>
+                    <dd className="min-w-0 font-medium break-words">{value}</dd>
+                </div>
+            ))}
+        </dl>
+    );
 };
 
 /**
@@ -104,6 +148,12 @@ export default function TimerSyncNotice() {
         <>
             {failed.length > 0 && (
                 <section
+                    // An aria-label NAMES an element; it does not announce that the element appeared.
+                    // This surface exists precisely because it shows up long after the action — on
+                    // reconnect or a later boot — so a screen-reader user would otherwise never learn
+                    // their timer action was refused. role="alert" (assertive) is right here and only
+                    // here: paid time was lost and the worker must redo it or report it.
+                    role="alert"
                     aria-label="Neįvykę laikmačio veiksmai"
                     className="mb-4 rounded-card border border-line bg-feedback-danger-soft p-4 shadow-sm"
                 >
@@ -120,6 +170,10 @@ export default function TimerSyncNotice() {
                                         <p className="text-caption text-ink-muted">
                                             {failureCopy(command)}
                                         </p>
+                                        <FailureDetail command={command} />
+                                        <p className="mt-1 text-caption text-ink-muted">
+                                            Praneškite šiuos duomenis savo vadovui, kad laikas būtų pataisytas.
+                                        </p>
                                         <div className="mt-1">
                                             <Button variant="secondary" onClick={() => acknowledge(command)}>
                                                 Supratau
@@ -135,14 +189,26 @@ export default function TimerSyncNotice() {
 
             {queued.length > 0 && (
                 <section
+                    // Polite, not assertive: queued work is normal field operation, so it is
+                    // announced without interrupting whatever the worker is doing.
+                    role="status"
+                    aria-live="polite"
                     aria-label="Laukiantys laikmačio veiksmai"
                     className="mb-4 rounded-card border border-line bg-surface-sunken p-3"
                 >
                     <p className="flex items-start gap-2 text-caption text-ink-muted">
                         <CloudOff className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                        {/* "Saved on this device" and "credited by the server" are DIFFERENT claims,
+                            and the old copy made the second one ("laikas neprapuls") while only the
+                            first was true. A queued command can still be refused on arrival — a stale
+                            replay past the 16h window, or a revision another device already moved —
+                            so promising the time is safe sends a worker on believing pay is secured.
+                            Say what is actually known: it is stored and waiting. And when the memory
+                            fallback is in play, not even that holds — closing the app drops it. */}
                         <span>
-                            Išsaugota telefone ir laukia ryšio ({queued.length}).
-                            {' '}Laikas neprapuls — išsiųsime, kai atsiras internetas.
+                            {hasPersistentCache
+                                ? `Išsaugota telefone ir laukia ryšio (${queued.length}). Išsiųsime, kai atsiras internetas, ir pranešime, jei nepavyktų.`
+                                : `Laukia ryšio (${queued.length}). DĖMESIO: šiame įrenginyje neveikia atmintis neprisijungus — neuždarykite programos, kol neatsiras internetas, kitaip veiksmas dings.`}
                         </span>
                     </p>
                 </section>

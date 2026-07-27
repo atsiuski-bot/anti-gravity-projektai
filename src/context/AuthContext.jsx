@@ -483,6 +483,16 @@ export function AuthProvider({ children }) {
         const unsub = onSnapshot(
             doc(db, 'system_config', 'timerEngine'),
             (snap) => {
+                // A CACHE-ONLY "document missing" is not an answer, it is the absence of one. On a cold
+                // cache (first boot, cleared storage) Firestore raises exactly that snapshot before it
+                // has heard from the server, and reading it as "rollout off" resolves the gate to
+                // 'disabled' — the very guess this tri-state exists to prevent. An allowlisted worker
+                // could then start a run through the LEGACY writers moments before the server snapshot
+                // flips the gate on, leaving that run invisible behind the canonical record the UI then
+                // reads as authority. Stay 'unknown' and let the bounded timeout below decide, matching
+                // how the canonical session listener already treats cache-only state. A cached doc that
+                // DOES exist is the last server value, so it is trusted as before.
+                if (!snap.exists() && snap.metadata.fromCache) return;
                 // Targeted: this reads the `rollout` block, never the legacy `enabled` boolean —
                 // see timerEngineGate.js for why an old bundle cannot be gated any other way.
                 const on = isTimerEngineEnabledFor(snap.exists() ? snap.data() : null, currentUser.uid);

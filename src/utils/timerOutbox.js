@@ -219,6 +219,33 @@ export async function listTimerCommandOutcomes(userId) {
     });
 }
 
+// WHAT a failed command was going to record, reconstructed from the transition plan the outbox
+// already stores alongside it.
+//
+// A rejection notice that says only "Darbo užbaigimas failed" is unactionable: the worker cannot tell
+// WHICH task or WHICH stretch of the shift is missing, and neither can the coordinator they report it
+// to. The plan carries that verbatim — the credited ledger row it would have written (task title,
+// interval, minutes) and, for a command that only OPENS a run, the run it would have started. Reading
+// it back costs nothing and turns "something went wrong" into "these 47 minutes on Kostiumai are not
+// credited". Purely defensive: any field the plan does not carry comes back null rather than throwing,
+// because a notice that crashes is worse than one that is vague.
+export function describeTimerCommand(entry) {
+    const writes = Array.isArray(entry?.plan?.writes) ? entry.plan.writes : [];
+    const at = (prefix) => writes.find((w) => typeof w?.path === 'string' && w.path.startsWith(prefix));
+    // The paid-time row is the one that matters; the canonical record supplies the run for an
+    // opening command, which writes no ledger row at all.
+    const ledger = at('work_sessions/')?.data || {};
+    const run = at('active_sessions/')?.data?.run || null;
+    const minutes = ledger.durationMinutes;
+    return {
+        taskTitle: ledger.taskTitle || run?.taskTitle || null,
+        startTime: ledger.startTime || run?.startedAt || null,
+        endTime: ledger.endTime || null,
+        durationMinutes: typeof minutes === 'number' && minutes > 0 ? minutes : null,
+        issuedAt: entry?.issuedAt || null,
+    };
+}
+
 export function subscribeTimerCommands(listener) {
     listeners.add(listener);
     return () => listeners.delete(listener);

@@ -906,6 +906,47 @@ async function assertActiveCaller(callerUid, roles) {
     return data;
 }
 
+// Keep only the uids that still HOLD an overseer role.
+//
+// Demotion never clears membership: an admin flipping a Vyr. vadovas down to 'Meistras' writes
+// {role:'worker'} and their uid keeps sitting in every manager's seniorManagerIds. Copying that array
+// verbatim therefore re-mints a plain worker as an overseer on the very next stamp — and the users
+// UPDATE gate (overseesUserDoc) grants write access on closure membership ALONE, explicitly assuming
+// "a worker uid can never be in it". The manager arm below has enforced that assumption for a while;
+// the SENIOR arm did not, which is the half of a demotion that kept leaking authority.
+//
+// Same positive-disconfirmation rule throughout: an unreadable candidate is KEPT (a Firestore blip
+// must never strip a legitimate overseer from their whole team), and only a successful read showing
+// a non-overseer role drops the uid.
+async function keepOverseerRoles(uids) {
+    const kept = await Promise.all(uids.map(async (id) => {
+        try {
+            const snap = await db.collection('users').doc(id).get();
+            if (!snap.exists) return null; // deleted account — not an overseer of anyone
+            const role = snap.data().role || 'worker';
+            if (!OVERSEER_ROLES.includes(role)) {
+                logger.info('overseersFor dropped a demoted overseer from the closure', { uid: id, role });
+                return null;
+            }
+            return id;
+        } catch (err) {
+            logger.warn('overseer role verification failed', { uid: id, err: err.message });
+            return id; // unverified ≠ disproven — keep reach rather than break it on a blip
+        }
+    }));
+    return kept.filter(Boolean);
+}
+
+// Resolve a user's overseer closure.
+//
+// THROWS on a hard lookup failure — deliberately, and this is load-bearing. It used to answer an
+// unreachable Firestore with `[]`, which is not "I could not tell" but the positive claim "this
+// person has NO overseers". Every caller then acted on that claim: the session-stamp trigger skipped
+// its write and left the row invisible to the worker's real manager forever (it fires on create only,
+// so nothing ever revisits it), and the backfill would have re-stamped a whole company's rows to an
+// empty team. A thrown error instead surfaces in the function log and, for the stamp triggers, is
+// retried until the dependency answers. Absence of overseers is still returned as [] — but only when
+// that is what the data actually says.
 async function overseersFor(uid) {
     if (!uid) return [];
     try {
@@ -915,7 +956,7 @@ async function overseersFor(uid) {
         const role = u.role || 'worker';
         if (role === 'manager') {
             const seniors = u.seniorManagerIds;
-            return Array.isArray(seniors) ? seniors.filter(Boolean) : [];
+            return keepOverseerRoles(Array.isArray(seniors) ? seniors.filter(Boolean) : []);
         }
         if (role === 'seniorManager' || role === 'admin' || role === 'Administratorius') {
             return [];
@@ -951,7 +992,11 @@ async function overseersFor(uid) {
                 }
                 result.add(m);
                 const seniors = mdata.seniorManagerIds;
-                if (Array.isArray(seniors)) seniors.filter(Boolean).forEach((s) => result.add(s));
+                // Role-verified, not copied: see keepOverseerRoles — a senior demoted to worker must
+                // not be folded back into this worker's closure.
+                if (Array.isArray(seniors)) {
+                    (await keepOverseerRoles(seniors.filter(Boolean))).forEach((s) => result.add(s));
+                }
             } catch (err) {
                 logger.warn('overseersFor manager read failed', { manager: m, err: err.message });
                 result.add(m); // unverified ≠ disproven — keep reach rather than break it on a blip
@@ -959,8 +1004,11 @@ async function overseersFor(uid) {
         }));
         return [...result];
     } catch (err) {
+        // Log and RETHROW. This used to `return []`, turning "I could not find out" into the positive
+        // claim "this person has no overseers" — see the header above for what each caller then did
+        // with that claim.
         logger.warn('overseersFor failed', { uid, err: err.message });
-        return [];
+        throw err;
     }
 }
 
@@ -990,26 +1038,58 @@ async function stampOwnedDoc(event, ownerField) {
 
     const desired = await overseersFor(ownerUid);
     if (sameSet(hasStamp ? data.teamManagerIds : [], desired)) return; // already correct
-    await after.ref.update({ teamManagerIds: desired });
+    await writeStamp(after.ref, desired);
 }
 
-// Stamp a freshly created session from its owner (userId). Owner never changes on a session,
-// so onCreate is enough. Skip the write when the worker has no managers (leave the field absent
-// — the rules' .get(...,[]) default treats absent as "no manager sees it").
+// Apply the stamp, treating "the row is gone" as DONE rather than as a failure.
+//
+// This matters only because these triggers now retry: a row can legitimately disappear between its
+// create event and this handler (the recovery banner's "Nedirbau" hard-deletes a just-written gap
+// session within seconds), and an un-guarded NOT_FOUND would then be retried for days against a
+// document that will never exist again. A deleted row has no visibility to maintain, so stopping is
+// the correct outcome, not a swallowed error.
+async function writeStamp(ref, desired) {
+    try {
+        await ref.update({ teamManagerIds: desired });
+    } catch (err) {
+        if (err && (err.code === 5 || err.code === 'not-found')) return;
+        throw err;
+    }
+}
+
+// Stamp a freshly created session from its owner (userId). Owner never changes on a session, so
+// onCreate is enough.
+//
+// The stamp is written AUTHORITATIVELY — including when the computed closure is EMPTY. Skipping the
+// empty case looked free (the rules' .get(...,[]) default reads an absent field as "no manager sees
+// it") but it silently made the CLIENT the author of record for a field only this trigger is trusted
+// to set. Nothing pins teamManagerIds on session CREATE, so a worker with no managers could ship a
+// forged array and, because the trigger declined to overwrite it, keep it: any uid they named gained
+// update/delete authority over their canonical paid-time row. Writing [] costs one small update on a
+// rare path and leaves no window in which a client-supplied value survives. A genuinely failed
+// lookup no longer reaches here at all — overseersFor throws, so the invocation is retried rather
+// than stamping an empty team over a real one.
 async function stampOwnedCreate(event, ownerField) {
     const snap = event.data;
     if (!snap) return;
-    const ownerUid = snap.data()[ownerField];
+    const data = snap.data();
+    const ownerUid = data[ownerField];
     if (!ownerUid) return;
     const desired = await overseersFor(ownerUid);
-    if (!desired.length) return;
-    await snap.ref.update({ teamManagerIds: desired });
+    const current = Array.isArray(data.teamManagerIds) ? data.teamManagerIds : null;
+    if (current && sameSet(current, desired)) return; // client happened to supply the right value
+    await writeStamp(snap.ref, desired);
 }
 
-exports.stampTeamOnTaskWrite = onDocumentWritten('tasks/{id}', (event) => stampOwnedDoc(event, 'assignedUserId'));
-exports.stampTeamOnArchivedTaskWrite = onDocumentWritten('archived_tasks/{id}', (event) => stampOwnedDoc(event, 'assignedUserId'));
-exports.stampTeamOnWorkSessionCreate = onDocumentCreated('work_sessions/{id}', (event) => stampOwnedCreate(event, 'userId'));
-exports.stampTeamOnBreakSessionCreate = onDocumentCreated('break_sessions/{id}', (event) => stampOwnedCreate(event, 'userId'));
+// retry:true — the stamp decides who may SEE and ACT on a row, and these triggers are the only
+// writers of that field. A transient dependency failure previously ended the invocation for good
+// (create-only triggers are never revisited), leaving a legitimate session permanently invisible to
+// its scoped manager. Every handler here is idempotent — it recomputes the desired set and stops
+// when the row already matches — so re-running one is always safe.
+exports.stampTeamOnTaskWrite = onDocumentWritten({ document: 'tasks/{id}', retry: true }, (event) => stampOwnedDoc(event, 'assignedUserId'));
+exports.stampTeamOnArchivedTaskWrite = onDocumentWritten({ document: 'archived_tasks/{id}', retry: true }, (event) => stampOwnedDoc(event, 'assignedUserId'));
+exports.stampTeamOnWorkSessionCreate = onDocumentCreated({ document: 'work_sessions/{id}', retry: true }, (event) => stampOwnedCreate(event, 'userId'));
+exports.stampTeamOnBreakSessionCreate = onDocumentCreated({ document: 'break_sessions/{id}', retry: true }, (event) => stampOwnedCreate(event, 'userId'));
 
 // Re-stamp ALL of a user's private rows to a desired team set. Used by the membership-change
 // trigger and the one-time backfill. Chunked via BulkWriter; idempotent (skips rows already
@@ -1091,17 +1171,40 @@ exports.restampTeamOnUserChange = onDocumentUpdated('users/{id}', async (event) 
         // (2) Cascade: a manager's senior change (or any role flip) staled the closure of every
         // worker under this user — re-stamp them. (For a worker whose own managers changed, there
         // are no subordinates to cascade to; the query simply returns none.)
-        let cascaded = 0;
+        //
+        // Membership points at this user from TWO directions and a role change staled both, but only
+        // the first was ever followed. A demoted SENIOR is named in their managers' seniorManagerIds,
+        // never in anyone's teamManagerIds — so the array-contains query below missed every one of
+        // them, and the ex-senior's uid stayed in each of those managers' workers' overseerIds. That
+        // closure is exactly what the users UPDATE rule grants write authority from, so a Vyr. vadovas
+        // demoted to Meistras kept mutating their former subordinates' user docs (live-session and
+        // work-status projections included) until some unrelated event happened to re-stamp them.
+        // Following the senior edge as well is what makes a demotion actually revoke.
+        const cascadeUids = new Set();
         if (seniorChanged || roleChanged) {
-            const workersSnap = await db.collection('users')
-                .where('teamManagerIds', 'array-contains', uid).get();
-            for (const w of workersSnap.docs) {
-                const desiredW = await overseersFor(w.id);
-                await setOverseerIds(w.id, desiredW);
-                cascaded += await restampUserRows(w.id, desiredW);
+            const [asManager, asSenior] = await Promise.all([
+                db.collection('users').where('teamManagerIds', 'array-contains', uid).get(),
+                db.collection('users').where('seniorManagerIds', 'array-contains', uid).get(),
+            ]);
+            asManager.docs.forEach((d) => cascadeUids.add(d.id));
+            // A manager whose senior changed is itself re-stamped, AND every worker beneath that
+            // manager folds the manager's seniors into their own closure — so the subtree under each
+            // affected manager has to be walked too, or the revocation stops one level short.
+            for (const m of asSenior.docs) {
+                cascadeUids.add(m.id);
+                const under = await db.collection('users')
+                    .where('teamManagerIds', 'array-contains', m.id).get();
+                under.docs.forEach((d) => cascadeUids.add(d.id));
             }
         }
-        logger.info('restampTeamOnUserChange done', { uid, selfRows, cascaded });
+        cascadeUids.delete(uid); // already handled by (1)
+        let cascaded = 0;
+        for (const target of cascadeUids) {
+            const desiredT = await overseersFor(target);
+            await setOverseerIds(target, desiredT);
+            cascaded += await restampUserRows(target, desiredT);
+        }
+        logger.info('restampTeamOnUserChange done', { uid, selfRows, cascaded, cascadeTargets: cascadeUids.size });
     } catch (err) {
         logger.error('restampTeamOnUserChange failed', { uid, err: err.message });
     }
@@ -1223,12 +1326,22 @@ const DROP_ALERT_RATIO = 0.3;   // a >30% day-over-day row drop in a monitored c
 const LOOKBACK_DAYS = 2;        // anomaly scan window (catch fresh corruption); cheap and timely
 const SAMPLE_LIMIT = 20;        // cap offending-id samples kept in a report (never store unbounded)
 
-async function collectionCount(name) {
+// Every read this scan makes can fail, and each failure silently shrinks what the run actually
+// covered. Recording them in one place is what lets the report distinguish "found nothing wrong"
+// from "did not look" — the difference between a compensating control and a rubber stamp. Callers
+// pass a shared array; helpers push and degrade as before, so a partial scan still reports whatever
+// it did manage to see.
+function noteScanError(scanErrors, scan, err) {
+    if (Array.isArray(scanErrors)) scanErrors.push({ scan, message: err?.message || String(err) });
+}
+
+async function collectionCount(name, scanErrors) {
     try {
         const snap = await db.collection(name).count().get();
         return snap.data().count;
     } catch (err) {
         logger.warn('collectionCount failed', { name, err: err.message });
+        noteScanError(scanErrors, `count:${name}`, err);
         return null;
     }
 }
@@ -1239,13 +1352,14 @@ function lookbackCutoffIso() {
 }
 
 // Scan one session collection's recently-created rows for corrupt values.
-async function scanSessionAnomalies(name) {
+async function scanSessionAnomalies(name, scanErrors) {
     const cutoff = lookbackCutoffIso();
     let snap;
     try {
         snap = await db.collection(name).where('createdAt', '>=', cutoff).get();
     } catch (err) {
         logger.warn('scanSessionAnomalies query failed', { name, err: err.message });
+        noteScanError(scanErrors, `anomalies:${name}`, err);
         return { scanned: 0, anomalies: 0, samples: [] };
     }
     let anomalies = 0;
@@ -1276,7 +1390,7 @@ async function scanSessionAnomalies(name) {
 // report-only, never mutates.
 const MINUTES_PER_DAY = 24 * 60;
 
-async function scanDailyOverdraft() {
+async function scanDailyOverdraft(scanErrors) {
     const cutoff = lookbackCutoffIso();
     const totals = new Map(); // `${userId}|${date}` -> { userId, date, minutes }
     for (const name of ['work_sessions', 'break_sessions']) {
@@ -1285,6 +1399,7 @@ async function scanDailyOverdraft() {
             snap = await db.collection(name).where('createdAt', '>=', cutoff).get();
         } catch (err) {
             logger.warn('scanDailyOverdraft query failed', { name, err: err.message });
+            noteScanError(scanErrors, `overdraft:${name}`, err);
             continue;
         }
         snap.forEach((docSnap) => {
@@ -1312,7 +1427,7 @@ async function scanDailyOverdraft() {
 // SUSPICIOUS WORK DAY — a per-worker work-only day total in the (16h, 24h] moderate-inflation band
 // the combined-overdraft scan is blind to. One fetch of the recent work_sessions window feeds both;
 // the decision logic lives in ./integrityScans (pure, unit-tested standalone). Read-only.
-async function scanCreditIntegrity() {
+async function scanCreditIntegrity(scanErrors) {
     const empty = {
         orphan: { checked: 0, orphans: 0, samples: [] },
         suspicious: { checked: 0, count: 0, samples: [] },
@@ -1324,6 +1439,7 @@ async function scanCreditIntegrity() {
         snap = await db.collection('work_sessions').where('createdAt', '>=', cutoff).get();
     } catch (err) {
         logger.warn('scanCreditIntegrity query failed', { err: err.message });
+        noteScanError(scanErrors, 'creditIntegrity:query', err);
         return empty;
     }
     const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
@@ -1351,6 +1467,7 @@ async function scanCreditIntegrity() {
                 // Fail SAFE for a report-only check: on a read error treat this chunk as present so an
                 // infra hiccup never raises a false orphan alert.
                 logger.warn('scanCreditIntegrity task getAll failed', { err: err.message, coll });
+                noteScanError(scanErrors, `creditIntegrity:tasks:${coll}`, err);
                 chunk.forEach((id) => existing.add(id));
             }
         }
@@ -1418,16 +1535,22 @@ function canonicalRunOf(record, { type, taskId = null, startIso }) {
 }
 
 // Read-only probe: is this run canonical? Used BEFORE the close so the ledger id can be chosen.
-// A read failure reads as "not canonical", which degrades to the pre-engine behaviour rather than
-// blocking the stop — the projections still get written, exactly as they do today.
+//
+// Returns { ok, run }. `ok:false` means the question could not be ANSWERED — which is not the same
+// as "not canonical", though it used to be treated that way. Guessing "legacy" on a failed read is
+// actively dangerous rather than merely conservative: the net then writes the LEGACY deterministic
+// ledger id and leaves the canonical run active, so when that run is later closed properly it mints
+// sess_run_* for the very same physical interval and the stretch is credited TWICE. The two ids are
+// deliberately different, so nothing downstream can ever dedupe them. A caller that cannot get an
+// answer must defer to the next run instead of picking an engine.
 async function readCanonicalRun(uid, match) {
-    if (!uid) return null;
+    if (!uid) return { ok: true, run: null };
     try {
         const snap = await db.collection('active_sessions').doc(uid).get();
-        return snap.exists ? canonicalRunOf(snap.data(), match) : null;
+        return { ok: true, run: snap.exists ? canonicalRunOf(snap.data(), match) : null };
     } catch (err) {
         logger.warn('canonical run read failed', { uid, err: err.message });
-        return null;
+        return { ok: false, run: null };
     }
 }
 
@@ -1471,21 +1594,27 @@ async function releaseCanonicalRun(uid, match) {
 // genuine continuous session never exceeds 16h, and legitimate long (25-70h) jobs accrue via many
 // PAUSED sessions, never one running run — so this never clips real work. The worker's own
 // activeSession/workStatus is reconciled client-side by the orphan-recovery hook on next app load.
-async function autoStopForgottenTimers() {
+//
+// ORDERING IS THE CORRECTNESS ARGUMENT HERE. Stopping a task is a one-way door: once timerStatus
+// leaves 'running' the task no longer matches this scan's query, so nothing retries it. Every step
+// that must not be lost therefore happens BEFORE that door closes — credit the ledger first, stop
+// the projection second, retire the canonical record last — and any step that cannot be completed
+// abandons the candidate untouched for the next run rather than half-applying the transition.
+async function autoStopForgottenTimers(scanErrors) {
     let snap;
     try {
         snap = await db.collection('tasks').where('timerStatus', '==', 'running').get();
     } catch (err) {
         logger.warn('autoStopForgottenTimers query failed', { err: err.message });
-        return { scanned: 0, stopped: 0, samples: [] };
+        noteScanError(scanErrors, 'autoStopForgottenTimers:query', err);
+        return { scanned: 0, stopped: 0, deferred: 0, samples: [] };
     }
     const nowMs = Date.now();
     const nowIso = new Date().toISOString();
     let stopped = 0;
+    let deferred = 0;
     const samples = [];
     const audits = [];
-    const writer = db.bulkWriter();
-    const creditWrites = [];
     const canonicalReleases = [];
     // Filter first, then process: choosing the ledger id needs an active_sessions read per hit, and
     // forEach cannot await. The candidate set is tiny by construction (only runs past the 16h
@@ -1521,7 +1650,17 @@ async function autoStopForgottenTimers() {
         // Does the revisioned engine own this run? If so its canonical record has to be retired too,
         // and the credit must land on the id the engine's own closer would have used.
         const canonicalMatch = { type: 'task', taskId: docSnap.id, startIso: t.timerStartedAt };
-        const canonicalRun = await readCanonicalRun(t.assignedUserId, canonicalMatch);
+        const probe = await readCanonicalRun(t.assignedUserId, canonicalMatch);
+        // Unreadable ≠ legacy. Guessing here picks the WRONG deterministic ledger id and leaves the
+        // canonical run active, so the engine's own later close mints a second row for the identical
+        // interval — a double credit no downstream dedupe can catch, because the two ids differ by
+        // construction. Defer the whole candidate; it is still 'running' and the next scan retries it.
+        if (!probe.ok) {
+            deferred += 1;
+            logger.warn('autoStopForgottenTimers deferred — canonical state unreadable', { id: docSnap.id });
+            continue;
+        }
+        const canonicalRun = probe.run;
 
         const update = {
             timerStatus: 'paused',
@@ -1538,8 +1677,14 @@ async function autoStopForgottenTimers() {
             update.timerRunId = null;
             update.timerProjectionVersion = TIMER_ENGINE_VERSION;
         }
-        writer.update(docSnap.ref, update);
 
+        // (1) CREDIT FIRST. This write used to run after the projection had already been paused, as
+        // best-effort — so a transient failure was logged, swallowed, and then permanently lost: the
+        // task was no longer 'running', so no later scan could ever pick it up and pay the missing
+        // stretch. Writing the ledger row first inverts the failure mode into a harmless one. If it
+        // fails, the task stays running and the next scan recomputes the identical row (the id is
+        // keyed on the run, and beatMs cannot move once the app is gone) and tries again. If it
+        // succeeds but the stop below does not, the same deterministic id makes the retry a no-op.
         if (credited) {
             // Deterministic id so a re-fired scan hits ALREADY_EXISTS via createIfAbsent rather than
             // double-crediting — and, crucially, the SAME id the run's other possible closer would
@@ -1549,11 +1694,11 @@ async function autoStopForgottenTimers() {
             // client closer (mirrors taskSessionDocId in taskActions.js) — both locked by
             // firebaseConsistency.test.js. The onCreate stamp trigger denormalizes teamManagerIds,
             // so reports scope it like any timer-logged session.
-            creditWrites.push({
-                ref: db.collection('work_sessions').doc(
-                    canonicalRun ? `sess_run_${canonicalRun.runId}` : `sess_task_${docSnap.id}_${startMs}`
-                ),
-                data: {
+            const creditRef = db.collection('work_sessions').doc(
+                canonicalRun ? `sess_run_${canonicalRun.runId}` : `sess_task_${docSnap.id}_${startMs}`
+            );
+            try {
+                await createIfAbsent(creditRef, {
                     taskId: docSnap.id,
                     taskTitle: t.title || 'Nežinoma užduotis',
                     userId: t.assignedUserId,
@@ -1567,9 +1712,28 @@ async function autoStopForgottenTimers() {
                     ...(canonicalRun
                         ? { runId: canonicalRun.runId, engineVersion: TIMER_ENGINE_VERSION }
                         : {}),
-                },
-            });
+                });
+            } catch (err) {
+                deferred += 1;
+                logger.warn('autoStopForgottenTimers deferred — credit write failed', { id: docSnap.id, err: err.message });
+                continue; // leave the task running so the next scan can pay this stretch
+            }
         }
+
+        // (2) STOP THE PROJECTION, guarded on the snapshot this decision was made from. The old
+        // BulkWriter update carried no precondition, so a worker who closed the stale run and started
+        // a NEW one on the same task during the scan had that fresh run paused by a decision computed
+        // from a document that no longer existed — while the canonical release (which DOES re-check
+        // inside a transaction) correctly spared it, splitting the two authorities apart. lastUpdateTime
+        // makes the write fail instead of clobbering, and a failure just defers to the next run.
+        try {
+            await docSnap.ref.update(update, { lastUpdateTime: docSnap.updateTime });
+        } catch (err) {
+            deferred += 1;
+            logger.warn('autoStopForgottenTimers deferred — task changed during the scan', { id: docSnap.id, err: err.message });
+            continue;
+        }
+
         if (canonicalRun) canonicalReleases.push({ uid: t.assignedUserId, match: canonicalMatch });
 
         stopped += 1;
@@ -1577,17 +1741,6 @@ async function autoStopForgottenTimers() {
         // Key on the stopped running interval (taskId + its start) so a retry recomputes the SAME
         // idempotency key — the create() in appendSystemDecision then dedups the audit, not the effect.
         audits.push({ taskId: docSnap.id, startIso: t.timerStartedAt, elapsedMin: Math.round(elapsedMin), creditedMin: Math.round(creditedMin), canonical: !!canonicalRun });
-    }
-    await writer.close();
-
-    // Persist the credited work_sessions AFTER the task writes land. Deterministic ids → a retried
-    // scan dedups via createIfAbsent. Best-effort: a credit-write failure never undoes the stop.
-    for (const w of creditWrites) {
-        try {
-            await createIfAbsent(w.ref, w.data);
-        } catch (err) {
-            logger.warn('autoStopForgottenTimers credit write failed', { id: w.ref.id, err: err.message });
-        }
     }
 
     // Retire the canonical record LAST — only after the task projection and its ledger row have
@@ -1617,7 +1770,10 @@ async function autoStopForgottenTimers() {
             after: { timerStatus: 'paused', timerStartedAt: null, autoStopped: true, creditedMinutes: a.creditedMin },
         });
     }
-    return { scanned: snap.size, stopped, samples };
+    // `deferred` counts candidates deliberately left running because a step could not be completed
+    // safely. It is reported (and folded into the scan's completeness verdict) so a net that keeps
+    // failing to close the same timer is visible instead of looking like a quiet night.
+    return { scanned: snap.size, stopped, deferred, samples };
 }
 
 // ---------------------------------------------------------------------------
@@ -2022,7 +2178,15 @@ async function autoCloseForgottenSessions() {
             // Does the revisioned engine own this session? Probed BEFORE the close, because it picks
             // the ledger id, and retired AFTER it, so the record is never idled ahead of its credit.
             const canonicalMatch = { type: session.type, startIso: session.startTime };
-            const canonicalRun = await readCanonicalRun(uid, canonicalMatch);
+            const probe = await readCanonicalRun(uid, canonicalMatch);
+            // An UNREADABLE canonical record is not a legacy one. Choosing an engine on a guess picks
+            // the ledger id, and the wrong id is what lets one physical interval be credited twice.
+            // Leave this session for the next run; nothing here is time-critical.
+            if (!probe.ok) {
+                logger.warn('autoCloseForgottenSessions deferred — canonical state unreadable', { uid });
+                continue;
+            }
+            const canonicalRun = probe.run;
 
             // (1) Credit the clamped time as a record (sub-minute taps are discarded, as on the client).
             if (durationMinutes > MIN_LOGGED_SECONDARY_MINUTES) {
@@ -2122,11 +2286,14 @@ exports.dailyIntegrityScan = onSchedule(
     async () => {
         const nowIso = new Date().toISOString();
         const day = lithuanianDay(new Date()); // reuse the Vilnius-day formatter defined above
+        // Anything that stopped this run from seeing the whole picture. Collected, not swallowed —
+        // see the severity derivation below for why an incomplete scan must never read as clean.
+        const scanErrors = [];
 
         // (1) Volume canary — compare current counts against the previous stored snapshot.
         const counts = {};
         await Promise.all(MONITORED_COLLECTIONS.map(async (name) => {
-            counts[name] = await collectionCount(name);
+            counts[name] = await collectionCount(name, scanErrors);
         }));
         const countsRef = db.collection('integrity_reports').doc('_counts');
         const prevSnap = await countsRef.get();
@@ -2145,34 +2312,45 @@ exports.dailyIntegrityScan = onSchedule(
         const anomalyReport = {};
         let totalAnomalies = 0;
         for (const name of ['work_sessions', 'break_sessions']) {
-            const r = await scanSessionAnomalies(name);
+            const r = await scanSessionAnomalies(name, scanErrors);
             anomalyReport[name] = r;
             totalAnomalies += r.anomalies;
         }
 
         // (2b) Additive-corruption scan — same lookback window, catches duplicated/overlapping
         //      rows that (2) cannot see because no single row is out of range.
-        const dailyOverdraft = await scanDailyOverdraft();
+        const dailyOverdraft = await scanDailyOverdraft(scanErrors);
 
         // (2c) Credit-integrity — orphaned task-credit rows + moderate work-day inflation the (2b)
         //      24h wire misses (ADR 0021 R-04 compensating-control tightening). Report-only.
-        const creditIntegrity = await scanCreditIntegrity();
+        const creditIntegrity = await scanCreditIntegrity(scanErrors);
 
         // (3) Task timer integrity — stop forgotten running timers, and surface the stale backlog.
-        const autoStoppedTimers = await autoStopForgottenTimers();
+        const autoStoppedTimers = await autoStopForgottenTimers(scanErrors);
         // (3b) Secondary-session integrity — close abandoned break/call/quick-work sessions the
         //      client resume logic deliberately leaves running until the worker reopens.
         const autoClosedSessions = await autoCloseForgottenSessions();
         const staleBacklog = await scanStaleTasks();
 
+        // COMPLETENESS IS PART OF THE VERDICT. Severity used to be derived purely from what the scan
+        // FOUND, so a run whose reads had failed reported 'ok' — the one word an operator reads as
+        // "the ledger is fine". That is the worst possible failure mode for a control ADR 0021 names
+        // as the compensating check for accepted risk R-04: real corruption and a transient backend
+        // fault at the same time produced a clean bill of health. An incomplete run is now at least a
+        // warning, and says so explicitly, so "clean" only ever means "looked everywhere and found
+        // nothing".
+        const complete = scanErrors.length === 0;
         const critical = drops.length > 0;
-        const warning = totalAnomalies > 0 || dailyOverdraft.offenders > 0 ||
+        const warning = !complete || totalAnomalies > 0 || dailyOverdraft.offenders > 0 ||
             creditIntegrity.orphan.orphans > 0 || creditIntegrity.suspicious.count > 0 ||
-            autoStoppedTimers.stopped > 0 || autoClosedSessions.closed > 0;
+            autoStoppedTimers.stopped > 0 || autoStoppedTimers.deferred > 0 ||
+            autoClosedSessions.closed > 0;
         const report = {
             day,
             ranAt: nowIso,
             severity: critical ? 'critical' : (warning ? 'warning' : 'ok'),
+            complete,
+            scanErrors,
             counts,
             drops,
             anomalies: anomalyReport,
@@ -2186,7 +2364,16 @@ exports.dailyIntegrityScan = onSchedule(
 
         try {
             await db.collection('integrity_reports').doc(day).set(report, { merge: true });
-            await countsRef.set({ counts, updatedAt: nowIso }, { merge: true });
+            // Persist ONLY the counts that were actually measured. A failed count returns null, and
+            // writing that null replaced the previous day's real number with a non-number — which the
+            // drop comparison then skips, quietly disarming the mass-delete canary for the following
+            // run as well. Keeping the last known-good value means one failed count costs one day of
+            // comparison, not two, and never destroys the baseline it is supposed to be compared to.
+            const measured = {};
+            MONITORED_COLLECTIONS.forEach((name) => {
+                if (typeof counts[name] === 'number') measured[name] = counts[name];
+            });
+            await countsRef.set({ counts: measured, updatedAt: nowIso }, { merge: true });
         } catch (err) {
             logger.error('dailyIntegrityScan write failed', { err: err.message });
         }
@@ -2197,6 +2384,9 @@ exports.dailyIntegrityScan = onSchedule(
             logger.warn('INTEGRITY: anomalies / auto-stops detected', { totalAnomalies, anomalyReport, autoStoppedTimers });
         } else {
             logger.info('INTEGRITY: clean', { counts });
+        }
+        if (!complete) {
+            logger.error('INTEGRITY: scan INCOMPLETE — coverage gaps, do not read this run as clean', { scanErrors });
         }
         if (dailyOverdraft.offenders > 0) {
             logger.warn('INTEGRITY: user-day overdraft (>24h combined session minutes) — possible duplicate rows', dailyOverdraft);
