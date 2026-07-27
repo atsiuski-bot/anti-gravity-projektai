@@ -20,7 +20,6 @@ user-facing UI copy, *WORKZ* for the repo/protocol.
 
 ## Tech & architecture
 
-- **React 18 + Vite + Tailwind CSS**, PWA via `vite-plugin-pwa`.
 - **Firebase** backend: Auth (Google sign-in), Firestore (tasks, users, sessions, calendar),
   Storage (attachments). Rules in `firestore.rules` / `storage.rules`.
 - **Hosting: Cloudflare Pages** (primary — a push to `main` auto-deploys
@@ -28,9 +27,6 @@ user-facing UI copy, *WORKZ* for the repo/protocol.
   deploying in parallel. Backend stays Firebase.
 - Routing: a single app route `/` with **tab-based navigation via context**
   (`NavigationContext`); only `/login` is a separate route.
-- Key source areas: `src/pages/` (Login, Dashboard, WorkerView, ManagerView),
-  `src/components/`, `src/context/` (Auth, Users, Navigation), `src/hooks/`, `src/utils/`
-  (tokenized logic already exists: `priority.js`, `taskConstants.js`, `timeUtils.js`).
 - **Signature UI trait:** the whole-screen background color reflects the active session
   (red = quick work, blue = call, amber = break, green = task running). This is intentional —
   see the design system before touching it.
@@ -168,26 +164,6 @@ Firebase-shaped STRIDE pass + 10-item checklist in
 [`docs/security/threat-model-checklist.md`](./docs/security/threat-model-checklist.md). It is
 the gate that runs *before* the irreversible, human-only deploy — owner pins, self-escalation,
 scoped-manager write boundaries, shape/range validation, and session-race/double-credit traps.
-
-## Folder structure
-
-```
-workz/
-├── AGENTS.md                  # Cross-tool entry point
-├── CLAUDE.md                  # This file
-├── README.md                  # Project summary
-├── docs/
-│   ├── README.md              # Docs map
-│   ├── decisions-log.md       # Chronological decision index (read first)
-│   ├── design/
-│   │   ├── DESIGN_SYSTEM.md    # The design bible
-│   │   └── tokens.md           # Canonical tokens + tailwind block
-│   └── adr/                    # Architecture Decision Records
-├── src/                       # App source (pages, components, context, hooks, utils)
-├── firestore.rules / storage.rules
-├── .agent/workflows/          # Operational runbooks (e.g. deploy)
-└── vite.config.js / tailwind.config.js / netlify.toml / firebase.json
-```
 
 ## Decision logging — hybrid
 
