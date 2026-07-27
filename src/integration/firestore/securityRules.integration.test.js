@@ -4,7 +4,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { addDoc, collection, doc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, doc, getDoc, setDoc, updateDoc, writeBatch } from 'firebase/firestore';
 import { readFile } from 'node:fs/promises';
 
 // Exploit-regression oracles for the authorization fixes from the 2026-07-10 full sweep:
@@ -412,6 +412,19 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                     startTime: '2026-07-11T00:00:00.000Z', endTime: '2026-07-11T00:30:00.000Z',
                     durationMinutes: 30, date: '2026-07-11', engineVersion: 2,
                 },
+                // A settled command in TARGET's log — the READ-arm fixture. Shape is irrelevant to the
+                // read rule; only the CALLER's scope decides.
+                [`users/${TARGET_ID}/timer_commands/seed-cmd`]: {
+                    commandId: 'seed-cmd',
+                    userId: TARGET_ID,
+                    kind: 'start-task',
+                    expectedRevision: 4,
+                    expectedRunId: null,
+                    runId: 'run-1',
+                    appliedRevision: 5,
+                    issuedAt: '2026-07-11T00:00:00.000Z',
+                    engineVersion: 2,
+                },
                 // TARGET's pending calendar request. managerIds addresses BOTH scoped managers
                 // (client-supplied, so it is NOT a security boundary) — the rule must scope by the
                 // owner's overseer closure regardless, so only the in-scope manager may act.
@@ -465,6 +478,44 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                     doc(authedDb(IN_SCOPE_MGR), `users/${TARGET_ID}/timer_commands`, 'fe-cmd-1'),
                     forceEndCommand(IN_SCOPE_MGR)
                 )
+            );
+        });
+
+        // ---- R-08 (read arm): live-timer READS are bounded by the same subtree as the writes -----
+        // The force-idle WRITE was scoped, but READ stayed bare isManagerOrAdmin(), so a scoped manager
+        // could still watch ANOTHER team's live run and command log. Both reads are by document id, so
+        // narrowing them cannot break a collection query (the broad-READ doctrine does not apply).
+        it('an OUT-OF-SCOPE scoped manager cannot read the live session', async () => {
+            await assertFails(getDoc(doc(authedDb(OUT_SCOPE_MGR), 'active_sessions', TARGET_ID)));
+        });
+
+        it('an IN-SCOPE scoped manager may read the live session (force-end flow preserved)', async () => {
+            await assertSucceeds(getDoc(doc(authedDb(IN_SCOPE_MGR), 'active_sessions', TARGET_ID)));
+        });
+
+        it('a whole-company admin may read any live session regardless of subtree', async () => {
+            await assertSucceeds(getDoc(doc(authedDb(WHOLE_TEAM_ADMIN), 'active_sessions', TARGET_ID)));
+        });
+
+        it('the worker may still read their OWN live session (hot listener path)', async () => {
+            await assertSucceeds(getDoc(doc(authedDb(TARGET_ID), 'active_sessions', TARGET_ID)));
+        });
+
+        it('an OUT-OF-SCOPE scoped manager cannot read the command log', async () => {
+            await assertFails(
+                getDoc(doc(authedDb(OUT_SCOPE_MGR), `users/${TARGET_ID}/timer_commands`, 'seed-cmd'))
+            );
+        });
+
+        it('an IN-SCOPE scoped manager may read the command log (replay check preserved)', async () => {
+            await assertSucceeds(
+                getDoc(doc(authedDb(IN_SCOPE_MGR), `users/${TARGET_ID}/timer_commands`, 'seed-cmd'))
+            );
+        });
+
+        it('the worker may still read their OWN command log', async () => {
+            await assertSucceeds(
+                getDoc(doc(authedDb(TARGET_ID), `users/${TARGET_ID}/timer_commands`, 'seed-cmd'))
             );
         });
 
@@ -773,6 +824,182 @@ describeEmulator('audit 2026-07-22 — notification forgery + audit-trail re-poi
                     { type: 'add', at: '2026-07-22T09:00:00.000Z' },
                 ],
             }));
+        });
+    });
+
+    // ---- P2 #10: bounded client-clock skew -------------------------------------------------
+    // The invariant is ASYMMETRIC on purpose: a session records work that already happened, so its
+    // end may be arbitrarily EARLIER than server time (an offline worker syncing hours later) but
+    // never LATER. These cases pin both directions — the tolerance is what stops an honest fast
+    // clock from costing someone their pay, and the deny is what stops a rolled-forward clock from
+    // minting paid time. All times are computed from the real clock, because the rule compares
+    // against `request.time`, which the emulator serves as genuine server-now.
+    describe('P2 #10: a session may not END in the server future', () => {
+        const MIN = 60 * 1000;
+        const HOUR = 60 * MIN;
+        // A minimal, otherwise-valid own row: passes ownership, durationInRange and the R-04
+        // provenance pin, so the ONLY thing under test is where endTime sits relative to now.
+        function ownSession(endMs, startMs) {
+            return {
+                userId: WORKER_ID,
+                taskId: 'task-a',
+                taskTitle: 'Task A',
+                startTime: new Date(startMs ?? endMs - 30 * MIN).toISOString(),
+                endTime: new Date(endMs).toISOString(),
+                durationMinutes: 30,
+                date: '2026-07-28',
+            };
+        }
+
+        it('a session closing right now is accepted (the ordinary online close)', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-now'), ownSession(Date.now()))
+            );
+        });
+
+        it('a session that ended 6h ago is accepted — the offline-sync case must never be punished', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-past'), ownSession(Date.now() - 6 * HOUR))
+            );
+        });
+
+        it('a session that ended 30 DAYS ago is accepted — there is deliberately no lower bound', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-old'), ownSession(Date.now() - 30 * 24 * HOUR))
+            );
+        });
+
+        it('a clock pushed 8h forward is REJECTED (the whole-extra-shift attack)', async () => {
+            await assertFails(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-fwd8'), ownSession(Date.now() + 8 * HOUR))
+            );
+        });
+
+        it('a clock pushed a full day forward is REJECTED', async () => {
+            await assertFails(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-fwd1d'), ownSession(Date.now() + 24 * HOUR))
+            );
+        });
+
+        it('a device 10 min fast is still accepted — inside the tolerance, so no honest pay is lost', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-fast10'), ownSession(Date.now() + 10 * MIN))
+            );
+        });
+
+        it('a break that ends 8h in the future is REJECTED too', async () => {
+            await assertFails(
+                setDoc(doc(workerDb(), 'break_sessions', 'skew-break-fwd'), {
+                    userId: WORKER_ID,
+                    startTime: new Date(Date.now() + 7 * HOUR).toISOString(),
+                    endTime: new Date(Date.now() + 8 * HOUR).toISOString(),
+                    durationMinutes: 60,
+                    date: '2026-07-28',
+                    isBreak: true,
+                })
+            );
+        });
+
+        it('a break closing now is accepted (the legitimate flow is preserved)', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'break_sessions', 'skew-break-now'), {
+                    userId: WORKER_ID,
+                    startTime: new Date(Date.now() - 20 * MIN).toISOString(),
+                    endTime: new Date().toISOString(),
+                    durationMinutes: 20,
+                    date: '2026-07-28',
+                    isBreak: true,
+                })
+            );
+        });
+
+        // Permissiveness — the guard must never brick a row whose shape it was not built to judge.
+        it('a row with NO endTime at all is accepted (absent field passes unjudged)', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-noend'), {
+                    userId: WORKER_ID,
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    durationMinutes: 15,
+                    date: '2026-07-28',
+                })
+            );
+        });
+
+        it('a row with a non-ISO endTime is accepted (legacy shapes pass unjudged, never error-denied)', async () => {
+            await assertSucceeds(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-legacy'), {
+                    userId: WORKER_ID,
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    endTime: '2026/07/28 14:00',
+                    durationMinutes: 15,
+                    date: '2026-07-28',
+                })
+            );
+        });
+
+        // UPDATE arm: judged only when the write actually CHANGES endTime, so an already-stored bad
+        // row stays remediable and unrelated edits are never re-litigated.
+        it('an update that leaves endTime untouched is accepted even on a future-dated row', async () => {
+            await seed({
+                'work_sessions/skew-stored-bad': {
+                    userId: WORKER_ID,
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    startTime: new Date(Date.now() + 9 * HOUR).toISOString(),
+                    endTime: new Date(Date.now() + 10 * HOUR).toISOString(),
+                    durationMinutes: 60,
+                    date: '2026-07-28',
+                    teamManagerIds: [],
+                },
+            });
+            await assertSucceeds(
+                updateDoc(doc(workerDb(), 'work_sessions', 'skew-stored-bad'), {
+                    isDeleted: true,
+                    deletedAt: new Date().toISOString(),
+                })
+            );
+        });
+
+        it('an update that PUSHES endTime into the server future is rejected', async () => {
+            await seed({
+                'work_sessions/skew-stored-ok': {
+                    userId: WORKER_ID,
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    startTime: new Date(Date.now() - 60 * MIN).toISOString(),
+                    endTime: new Date(Date.now() - 30 * MIN).toISOString(),
+                    durationMinutes: 30,
+                    date: '2026-07-28',
+                    teamManagerIds: [],
+                },
+            });
+            await assertFails(
+                updateDoc(doc(workerDb(), 'work_sessions', 'skew-stored-ok'), {
+                    endTime: new Date(Date.now() + 8 * HOUR).toISOString(),
+                })
+            );
+        });
+
+        it('an update that CORRECTS a future-dated row back to a sane end is accepted (remediation)', async () => {
+            await seed({
+                'work_sessions/skew-fixme': {
+                    userId: WORKER_ID,
+                    taskId: 'task-a',
+                    taskTitle: 'Task A',
+                    startTime: new Date(Date.now() + 9 * HOUR).toISOString(),
+                    endTime: new Date(Date.now() + 10 * HOUR).toISOString(),
+                    durationMinutes: 60,
+                    date: '2026-07-28',
+                    teamManagerIds: [],
+                },
+            });
+            await assertSucceeds(
+                updateDoc(doc(workerDb(), 'work_sessions', 'skew-fixme'), {
+                    endTime: new Date(Date.now() - 5 * MIN).toISOString(),
+                })
+            );
         });
     });
 });

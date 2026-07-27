@@ -2,6 +2,25 @@
 /*
  * One-time migration — stamp `userId` (+ `teamManagerIds`) onto legacy go-live sessions.
  * ---------------------------------------------------------------------------------------
+ * ✅ STATUS: ALREADY APPLIED IN PRODUCTION — verified 2026-07-28 by read-only MCP query, NOT by
+ * running this script. Do not re-run it expecting work; it is idempotent, so a re-run is harmless
+ * but pointless. Evidence:
+ *   • `work_sessions` where workerId != "" — 200 unique rows sampled from BOTH ends of the
+ *     workerId ordering, covering all 4 distinct legacy owners and the whole target window
+ *     (2026-01-04 → 2026-04-01). ZERO lack `userId`; ZERO have userId !== workerId; ZERO lack
+ *     `teamManagerIds`. Legacy rows originally carried NONE of those fields, so their presence on
+ *     every sampled row IS this script's fingerprint.
+ *   • `break_sessions` where workerId != "" — returns NOTHING, so that arm had no legacy rows.
+ *   • 15 rows carry `teamManagerIds: []`. Correct, not a miss: they belong to uid
+ *     1SeD8RBlBkT0rXpkIlhkLAOVah02 ("Andrius" in workerName), whose users/ doc NO LONGER EXISTS,
+ *     so overseersFor() legitimately resolves to []. (The current Andrius Katinas is a DIFFERENT
+ *     uid, m2TAj74OFaRpkU2gpAgLyADg4TF3.) Those rows stay visible to admins and whole-team
+ *     managers; they are simply outside every team scope, which is right — there is no team.
+ * CAVEAT: the sample is 200 rows, not an exhaustive scan. Firestore cannot query "field is
+ * missing", and an exhaustive count needs a darbo-planavimas service-account key, which is
+ * founder-held (only a GA4 key is present locally). If you ever want the exhaustive proof, the
+ * DRY-RUN below is the way — it writes nothing and prints the true count.
+ * ---------------------------------------------------------------------------------------
  * WHY: the earliest production sessions (≈2026-01-04 → 2026-03-31, the go-live quarter) were
  * written with the OLD owner field `workerId` and carry NO `userId` and NO `teamManagerIds`.
  * The schema later switched to `userId` (first `userId` rows appear 2026-04-02). Because every

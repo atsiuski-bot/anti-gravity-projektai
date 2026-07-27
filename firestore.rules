@@ -214,6 +214,58 @@ service cloud.firestore {
              data.get('end', '') is string;
     }
 
+    // ---- Client wall-clock trust: bounded skew (audit P2 #10) ---------------
+    // A session row RECORDS WORK THAT ALREADY HAPPENED, so its end instant can never be later than
+    // the moment the write reaches the server. The asymmetry is the whole point, and it is what
+    // makes this safe for an offline-first field app:
+    //   * endTime EARLIER than server time is NORMAL and stays allowed, with no lower bound at all —
+    //     a worker who finishes at 15:00 with no signal and syncs at 17:00 must not be punished.
+    //   * endTime LATER than server time is PHYSICALLY IMPOSSIBLE. The only way to produce it is a
+    //     device clock pushed forward, which is the one way to inflate paid time that needs no
+    //     tooling at all — just the phone's own settings screen. Until now nothing checked it:
+    //     every credited number in this app is client-authored (ADR 0021).
+    //
+    // Parsed out of the ISO STRING rather than added as a numeric field ON PURPOSE. The ledger row
+    // has ~22 write sites spread over four layers (the canonical plan builder, the legacy closers,
+    // the admin edit/backdate path, and the Cloud Functions auto-close net) with NO shared
+    // row-builder, so a new field would mean editing every one of them on the most safety-critical
+    // path in the product. Keeping the check here leaves the write path completely untouched.
+    //
+    // TOLERANCE = 1h, and it is deliberately generous — this is the ONE knob to tune. The two error
+    // modes are not symmetric: wrongly DENYING an honest write loses a worker's pay (and offline it
+    // fails late and quietly), while wrongly ALLOWING one costs at most the tolerance per closed
+    // session. This whole codebase's priority is never losing worked time, so the tolerance is set
+    // well past any plausible honest device (auto-synced phones drift by seconds; even a phone
+    // someone deliberately set "a few minutes fast" passes) while still killing the gross attack —
+    // rolling the clock to tomorrow to claim a whole extra shift is now impossible, and the residual
+    // gain is capped at 1h per session on top of the existing 16h client clamp / 24h durationInRange.
+    function isIsoInstant(value) {
+      return value is string &&
+             value.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}.*');
+    }
+    function isoInstantMillis(value) {
+      return timestamp.date(int(value[0:4]), int(value[5:7]), int(value[8:10])).toMillis() +
+             int(value[11:13]) * 3600000 +
+             int(value[14:16]) * 60000 +
+             int(value[17:19]) * 1000;
+    }
+    // Shape-guarded and PERMISSIVE, exactly like the duration/shape guards above: the check runs
+    // ONLY on a string matching the 'YYYY-MM-DDTHH:MM:SS' prefix that every writer's toISOString()
+    // produces. Absent, empty, legacy or any unanticipated shape passes unjudged, so this can never
+    // brick a write it was not designed to evaluate. (Parsing a malformed string would raise an
+    // evaluation error, which DENIES — the same trap as bare dot access on a missing field.)
+    function endTimeNotInServerFuture(data) {
+      return !isIsoInstant(data.get('endTime', '')) ||
+             isoInstantMillis(data.get('endTime', '')) <= request.time.toMillis() + 3600000;
+    }
+    // On UPDATE, judge only a write that actually CHANGES endTime — so a soft-delete, a rename or a
+    // teamManagerIds touch never re-litigates a value it does not set, and an already-stored
+    // out-of-bounds row stays REMEDIABLE rather than frozen.
+    function endTimeOkForUpdate() {
+      return request.resource.data.get('endTime', '') == resource.data.get('endTime', '') ||
+             endTimeNotInServerFuture(request.resource.data);
+    }
+
     // A task's priority (if present) must be one of the canonical UPPERCASE tokens, and
     // estimatedTimeMinutes (if present) a non-negative number within a sane ceiling (1000h). Mirrors
     // the write-path canonicalization (priority.js / timeUtils) so a future code path cannot
@@ -410,6 +462,8 @@ service cloud.firestore {
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && overseesUser(request.resource.data.userId))
                             ) && durationInRange(request.resource.data)
+                            // Audit P2 #10: the credited interval may not END in the server's future.
+                            && endTimeNotInServerFuture(request.resource.data)
                             // Audit R-04 (provenance pin): createdByAdmin is the manager correction
                             // stamp (createWorkSession, the sole cross-user authoring tool). A NON-manager
                             // self-logging their own time — gap-claim, backdate, and the legacy call/
@@ -435,6 +489,7 @@ service cloud.firestore {
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
                             ) && durationOkForUpdate()
+                            && endTimeOkForUpdate()
                             && request.resource.data.get('userId', '') == resource.data.get('userId', '')
                             && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete:        if isUserActive() && (
@@ -496,8 +551,18 @@ service cloud.firestore {
     }
 
     match /active_sessions/{userId} {
+      // READ is scoped exactly like the force-idle WRITE below. The broad-READ doctrine at L134-144
+      // exists for collections the app queries COLLECTION-WIDE (one unreadable row fails the whole
+      // query); it does not apply here — every client read of this collection is by DOCUMENT ID
+      // (own-session listener, manager force-end, command replay), so narrowing cannot break a query.
+      // The role set is unchanged (canSeeWholeTeam() || isScopedOverseer() == isManagerOrAdmin()); a
+      // scoped/senior manager now additionally needs the target in their overseer closure, so they can
+      // no longer watch ANOTHER team's live run. The own-uid branch is first, so the hot per-session
+      // listener short-circuits before any extra get().
       allow read: if isUserActive() &&
-                  (request.auth.uid == userId || isManagerOrAdmin());
+                  (request.auth.uid == userId ||
+                   canSeeWholeTeam() ||
+                   (isScopedOverseer() && overseesUser(userId)));
       allow create: if isUserActive() &&
                     request.auth.uid == userId &&
                     validActiveSessionRecord(request.resource.data, userId) &&
@@ -534,8 +599,13 @@ service cloud.firestore {
     // reboot distinguish "the original batch committed but this tab died before observing ACK" from
     // "still queued", and makes replay idempotent. Client updates/deletes are forbidden.
     match /users/{userId}/timer_commands/{commandId} {
+      // Same read/write symmetry as active_sessions above: reads are by document id only (the replay
+      // path's commandExists check), so scoping is safe, and a scoped/senior manager may only read the
+      // command log of a user inside their overseer closure.
       allow read: if isUserActive() &&
-                  (userId == request.auth.uid || isManagerOrAdmin());
+                  (userId == request.auth.uid ||
+                   canSeeWholeTeam() ||
+                   (isScopedOverseer() && overseesUser(userId)));
       allow create: if isUserActive() &&
                     request.resource.data.commandId == commandId &&
                     request.resource.data.userId == userId &&
@@ -585,7 +655,11 @@ service cloud.firestore {
                               createOwnsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && overseesUser(request.resource.data.userId))
-                            ) && durationInRange(request.resource.data);
+                            ) && durationInRange(request.resource.data)
+                            // Audit P2 #10: a break cannot END in the server's future either. Break
+                            // time is not payable, but it IS the day's allowance — and an unbounded
+                            // clock here would leave one half of the session ledger unguarded.
+                            && endTimeNotInServerFuture(request.resource.data);
       // Update carries THREE guards (composed with &&): the duration guard (main), the userId pin
       // (full-sweep F5 — no re-pointing the record to a colleague), and the teamManagerIds pin
       // (audit R-05). break_sessions is stamped by a CREATE-ONLY Cloud Function too, so a forged
@@ -596,6 +670,7 @@ service cloud.firestore {
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
                             ) && durationOkForUpdate()
+                            && endTimeOkForUpdate()
                             && request.resource.data.get('userId', '') == resource.data.get('userId', '')
                             && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete:        if isUserActive() && (

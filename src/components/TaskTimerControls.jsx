@@ -918,7 +918,6 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                         icon={Play}
                         onClick={isPaused ? handleResume : handleStart}
                         disabled={isSecondarySessionActive}
-                        title={isSecondarySessionActive ? getInterruptionReason(activeSessionType) : undefined}
                         className="flex-[2] whitespace-nowrap"
                     >
                         {isPaused ? 'Tęsti' : 'Pradėti'} {elapsedString !== '00:00' ? elapsedString : ''}
@@ -932,12 +931,26 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
                     icon={Square}
                     onClick={openFinish}
                     disabled={isSecondarySessionActive}
-                    title={isSecondarySessionActive ? getInterruptionReason(activeSessionType) : undefined}
                     className="flex-1 whitespace-nowrap text-ink-muted"
                 >
                     Užbaigti
                 </Button>
             </div>
+
+            {/* Why the whole row above is dead. The reason used to live ONLY in `title=`, which is
+                unreachable for the two audiences that need it most: a phone has no hover, and a
+                disabled button is not focusable, so assistive tech never reaches the tooltip either.
+                A worker on a break therefore saw three greyed-out controls and no explanation. One
+                shared line — all three buttons are disabled by the same cause. */}
+            {isSecondarySessionActive && (
+                <div
+                    role="status"
+                    className="mt-2 flex items-center gap-1.5 text-caption font-medium text-ink-muted"
+                >
+                    <Clock className="h-3.5 w-3.5 flex-shrink-0" aria-hidden="true" />
+                    {getInterruptionReason(activeSessionType)}
+                </div>
+            )}
 
             {actionError && (
                 <div

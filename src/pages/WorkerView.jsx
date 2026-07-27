@@ -52,16 +52,22 @@ export default function WorkerView() {
     const { currentUser, userRole, userData, timerEngineEnabled } = useAuth();
     const { usersMap, loading: usersLoading } = useUsers();
     const { activeTab, scrollPositions } = useNavigation();
-    const [tasks, setTasks] = useState([]);
-    // Has the tasks listener reported at least once? An empty `tasks` array means "nothing loaded
+    // Raw task docs, exactly as the listener delivered them. Name enrichment, visibility filtering
+    // and ordering all happen in the memos below, NOT inside the snapshot callback — see the
+    // subscription's dependency note.
+    const [rawTasks, setRawTasks] = useState([]);
+    // Has the tasks listener reported at least once? An empty task array means "nothing loaded
     // yet" and "this worker genuinely has no tasks" alike, and the empty state cannot tell them
     // apart — so a worker with a RUNNING timer was shown "Kol kas užduočių nėra" plus a "Sukurti
     // užduotį" button on every reload, while the shell colour and header pill simultaneously said a
     // task was running. The window is not brief: the listener below does not even start until the
-    // whole users collection resolves. Latches ON only — the effect re-arms on every roster write
-    // (usersMap is a dependency, and heartbeats touch user docs), and resetting would re-flash the
-    // spinner over an already-populated list once a minute.
+    // whole users collection resolves. Latches ON only, so a populated list can never flash back to
+    // a spinner.
     const [tasksLoaded, setTasksLoaded] = useState(false);
+    // Bumped once a minute so the CLOCK-dependent part of the ordering re-runs without a new
+    // snapshot: a running task's completion fraction (spent vs estimated) grows as it runs, and that
+    // is sort key 4. Nothing else in the pipeline reads the clock except the personal day window.
+    const [minuteTick, setMinuteTick] = useState(0);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingTask, setEditingTask] = useState(null);
     // Post-completion earnings popup payload ({ task, totalMinutes }). No longer set from an event
@@ -72,6 +78,48 @@ export default function WorkerView() {
     const [completionPhoto, setCompletionPhoto] = useState(null);
 
     const [error, setError] = useState(null);
+
+    // Enrichment + visibility. Pure derivation over the raw docs, so a roster change re-labels the
+    // list without touching the subscription. Deliberately clock-free apart from the day window, and
+    // its items keep a stable identity across the minute ticks below.
+    const visibleTasks = useMemo(() => {
+        const enriched = rawTasks.map(task => ({
+            ...task,
+            assignedUserName: task.assignedUserId && usersMap[task.assignedUserId]
+                ? usersMap[task.assignedUserId].displayName || usersMap[task.assignedUserId].email
+                : null,
+            assignedWorkerColor: task.assignedUserId && usersMap[task.assignedUserId]
+                ? usersMap[task.assignedUserId].color || null
+                : null,
+            creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
+                ? usersMap[task.createdBy].displayName || usersMap[task.createdBy].email
+                : null)
+        }));
+        // Personal day window: keep done tasks only for the current "work day" (03:00–03:00
+        // Vilnius). Unapproved own tasks stay visible — the worker must see their own
+        // pending-approval item; only the SHARED team list hides those.
+        return scopePersonalDayWindow(filterTasksByVisibility(enriched));
+    }, [rawTasks, usersMap]);
+
+    // Canonical order, re-derived on each minute tick because sort key 4 (completion fraction) grows
+    // as a task runs — the order can change with no data change at all. The PREVIOUS array is
+    // returned verbatim when nothing actually moved: this identity is a dependency of the recovery
+    // and time-monitor hooks below, so handing them a fresh array every minute would re-arm
+    // Firestore work on a tick that changed nothing. Reference equality is the right test here
+    // because visibleTasks keeps its item identities between ticks.
+    const lastOrderedRef = React.useRef([]);
+    const tasks = useMemo(() => {
+        const ordered = sortWorkerTasks(visibleTasks);
+        const previous = lastOrderedRef.current;
+        if (previous.length === ordered.length
+            && previous.every((task, index) => task === ordered[index])) {
+            return previous;
+        }
+        lastOrderedRef.current = ordered;
+        return ordered;
+        // minuteTick is the clock input described above — it carries no value, only a change.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [visibleTasks, minuteTick]);
 
     // Task time monitoring — 80% warning and 100% limit
     const { warningPopup, limitPopup, dismissWarning, requestExtension, finishFromLimit } = useTaskTimeMonitor(tasks);
@@ -111,37 +159,10 @@ export default function WorkerView() {
             );
 
             unsubscribe = onSnapshot(q, (snapshot) => {
-                let tasksData = snapshot.docs.map(doc => ({
+                setRawTasks(snapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
-                }));
-
-                // Enrich tasks with worker names
-                tasksData = tasksData.map(task => ({
-                    ...task,
-                    assignedUserName: task.assignedUserId && usersMap[task.assignedUserId]
-                        ? usersMap[task.assignedUserId].displayName || usersMap[task.assignedUserId].email
-                        : null,
-                    assignedWorkerColor: task.assignedUserId && usersMap[task.assignedUserId]
-                        ? usersMap[task.assignedUserId].color || null
-                        : null,
-                    creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
-                        ? usersMap[task.createdBy].displayName || usersMap[task.createdBy].email
-                        : null)
-                }));
-
-                // Apply visibility filtering based on day of week and time
-                tasksData = filterTasksByVisibility(tasksData);
-
-                // Personal day window: keep done tasks only for the current "work day" (03:00–03:00
-                // Vilnius). Unapproved own tasks stay visible — the worker must see their own
-                // pending-approval item; only the SHARED team list hides those.
-                tasksData = scopePersonalDayWindow(tasksData);
-
-                // Sort by Day -> Priority
-                tasksData = sortWorkerTasks(tasksData);
-
-                setTasks(tasksData);
+                })));
                 setTasksLoaded(true);
                 setError(null);
             }, (err) => {
@@ -179,27 +200,27 @@ export default function WorkerView() {
         };
         window.addEventListener('request-completion-photo', handleCompletionPhoto);
 
-        const filterInterval = setInterval(() => {
-            setTasks(currentTasks => {
-                const filtered = filterTasksByVisibility(currentTasks);
-                const newlySorted = sortWorkerTasks(filtered);
-
-                // Only update state if length or order changed
-                if (currentTasks.length !== newlySorted.length) return newlySorted;
-                for (let i = 0; i < currentTasks.length; i++) {
-                    if (currentTasks[i].id !== newlySorted[i].id) return newlySorted;
-                }
-                return currentTasks; // No change, prevent re-render
-            });
-        }, 60000); // Every minute
-
         return () => {
             unsubscribe();
             window.removeEventListener('open-task-modal', handleOpenTaskModal);
             window.removeEventListener('request-completion-photo', handleCompletionPhoto);
-            clearInterval(filterInterval);
         };
-    }, [currentUser, usersLoading, usersMap]);
+        // usersMap is deliberately NOT a dependency — the same trap useManagerData documents.
+        // UsersContext rebuilds it as a brand-new object inside its whole-collection onSnapshot, so
+        // its identity changes on EVERY write to ANY user doc, and a running session heartbeats its
+        // user doc once a minute. Depending on it tore down and re-created this listener (plus both
+        // window listeners) several times a minute per connected device, and Firestore bills the
+        // initial snapshot of each new listener — so a worker re-read their whole task list because
+        // an unrelated colleague's timer ticked. The names it supplies are applied in the
+        // visibleTasks memo above, which is free to re-run on every roster change.
+    }, [currentUser, usersLoading]);
+
+    // The clock tick for the ordering (see minuteTick). Its own effect with no dependencies, so it
+    // is never torn down by an unrelated re-subscription.
+    useEffect(() => {
+        const id = setInterval(() => setMinuteTick(tick => tick + 1), 60000);
+        return () => clearInterval(id);
+    }, []);
 
     const handleEditTask = React.useCallback((task) => {
         setEditingTask(task);

@@ -46,6 +46,13 @@ export default defineConfig({
         id: '/',
         start_url: '/',
         scope: '/',
+        // Deliberately light, NOT the dark canvas. The manifest has no media-query form, so these
+        // are one fixed pair for both themes — and every generated icon is composited on a WHITE
+        // field (see scripts/generate-pwa-assets.cjs), so a dark background_color would put a white
+        // icon tile on a near-black Android splash. Dark mode is served where it CAN be: the iOS
+        // startup images ship light+dark via prefers-color-scheme, and index.html rewrites the live
+        // theme-color meta to #0E1117 before first paint. Do not "fix" this to dark in isolation —
+        // it only works if the icon field changes with it.
         theme_color: '#ffffff',
         background_color: '#ffffff',
         display: 'standalone',

@@ -56,13 +56,18 @@ hardcoded values as legacy to be migrated, not as precedent.
 
 ## 3. Brand
 
-- **Name:** **WORKZ.** This is the only product name. The legacy "Viduramžiai.LT" name has
-  been retired — it must not appear in code, titles, manifests, comments, or copy. If you
-  find it, remove it.
-- **Wordmark:** a typographic wordmark set in the system font, weight 800, tight tracking:
-  **`WORKZ`**. No separate logo asset is required yet; a dedicated logo is a future task.
-- **Where it shows:** the login screen (today it has no brand at all), the PWA manifest /
-  install prompt, and the document title.
+- **Name:** **Gildija** — the only *user-facing* product name, and the one that belongs in UI
+  copy, the document title and the PWA manifest. **WORKZ** is the repository / protocol name
+  (this document, `CLAUDE.md`, commit scopes); it must never surface to a user. The legacy
+  "Viduramžiai.LT" name has been retired — it must not appear in code, titles, manifests,
+  comments, or copy. If you find it, remove it.
+- **Wordmark:** the **`BrandMark`** component — the indigo Gildija glyph on a white rounded
+  "app-icon" tile — beside the visible **`Gildija`** wordmark. The white tile is deliberate and
+  theme-invariant: indigo-on-dark loses contrast, and the tile matches the app-icon chip the iOS
+  splash screens show. Master art is `brand/logo.png`; regenerate icons and splashes with
+  `scripts/generate-pwa-assets.cjs` rather than hand-editing anything under `public/`.
+- **Where it shows:** the login screen, the mobile app header, the desktop side rail, the PWA
+  manifest / install prompt, and the document title.
 - **Accent color:** **indigo** (`brand` token, §tokens). Deliberately *not* blue, because
   blue is the "call" session state (§4) — keeping the brand accent distinct from a session
   color prevents users from reading a button as a state.

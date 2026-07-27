@@ -14,6 +14,12 @@ import { setAgentsEnabled } from '../domain/agentControl';
 import { decideDisabledLogin } from '../utils/accountStatus';
 import { applyPendingSessionProjection } from '../utils/sessionProjection';
 import { isTimerEngineEnabledFor } from '../utils/timerEngineGate';
+// Statically imported on purpose. This was a dynamic import to keep the engine out of the eager
+// bundle, but seven components (both timer controls, the three secondary timers, both recovery
+// hooks) import it statically anyway — so it is always in the main chunk and the dynamic form only
+// bought a Rollup "dynamically imported but also statically imported" warning plus a promise hop on
+// every boot and every `online` event.
+import { replayQueuedTimerCommands } from '../utils/timerCommandEngine';
 
 // How long the rollout-config listener may stay unresolved before the timer controls fall back to
 // the legacy path. Long enough that a normal (even slow) first snapshot wins; short enough that an
@@ -521,8 +527,7 @@ export function AuthProvider({ children }) {
         if (!currentUser?.uid) return;
         const userId = currentUser.uid;
         const replay = () => {
-            import('../utils/timerCommandEngine')
-                .then(({ replayQueuedTimerCommands }) => replayQueuedTimerCommands(userId))
+            replayQueuedTimerCommands(userId)
                 .catch((error) => logError(error, {
                     source: 'timerCommandEngine.bootReplay',
                     userId,

@@ -179,9 +179,17 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
         };
         updateSpentTime();
 
-        // Update more frequently for running tasks, but only if running
-        const intervalTime = isRunning ? 1000 : 10000;
-        const interval = setInterval(updateSpentTime, intervalTime);
+        // Only a RUNNING task grows on its own — the same rule useActiveTaskElapsedMinutes states.
+        // calculateCurrentTotalMinutes reads the clock ONLY inside its `timerStatus === 'running'`
+        // branch; for every other task it is a pure function of stored fields, so the old 10 s idle
+        // interval re-derived an identical number forever. That ran on EVERY card in the list (a
+        // dozen phone-side timers doing nothing) while the value it watched could not change without
+        // a task write — which re-runs this effect anyway via the `task` dependency.
+        // Gate on the field the CALCULATION uses as well as the session-aware isRunning: the two can
+        // briefly disagree (a pause write still in flight), and freezing a still-growing total is the
+        // one failure this card must not have.
+        if (!isRunning && task.timerStatus !== 'running') return undefined;
+        const interval = setInterval(updateSpentTime, 1000);
         return () => clearInterval(interval);
     }, [task, isRunning]);
 
