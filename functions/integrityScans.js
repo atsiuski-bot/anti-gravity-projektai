@@ -130,6 +130,76 @@ function classifySuspiciousWorkDays(rows, dayOf, sampleLimit = DEFAULT_SAMPLE_LI
     return { checked: totals.size, count: offenders.length, samples: offenders.slice(0, sampleLimit) };
 }
 
+// Slack on the server-span check below. Honest timer work always fits inside the span with room to
+// spare, so this only has to absorb bookkeeping noise (a row written under a deterministic id before
+// the final duration lands, rounding, a task created moments before the run). Generous on purpose:
+// this is a report-only check whose real enemy is alarm fatigue, not a missed minute.
+const SERVER_SPAN_GRACE_MINUTES = 30;
+
+/**
+ * SERVER-SPAN classification — the one credit check that does not take the client's word for
+ * anything.
+ *
+ * Every other guard in this system reasons about instants the PHONE asserted, so a device whose
+ * clock lies can shift them all together. This one compares the claimed duration against two
+ * timestamps Firestore assigned itself, which no client can influence: when the TASK document was
+ * created, and when the SESSION row was last written. A timer cannot credit more work than the
+ * server has seen the task exist — so a row claiming 9h against a task the server first saw 20
+ * minutes ago is impossible, whatever its start and end strings say.
+ *
+ * This is the detection-shaped form of "bound the duration by server-elapsed time". The door-level
+ * form is unbuildable today: it needs a server-anchored START, and an offline start's server
+ * timestamp resolves only on arrival, so it would compute a span SHORTER than the real work and
+ * reject honest pay (see firestore.rules endTimeNotInServerFuture, ADR 0021). Measured after the
+ * fact instead, that failure mode costs a line in a report rather than a worker's wages — which is
+ * exactly why the bound can be stated here and not there.
+ *
+ * Deliberately blind to two things, and both are correct:
+ *   • HAND-AUTHORED intents (backdate, recovered gap, manager correction) describe work that
+ *     happened before the row existed, so the span says nothing about them — excluded, not judged.
+ *   • A session on an OLD task. The span is then days wide and swallows anything, so this cannot see
+ *     inflation on a long-running task. What it does see is inflation on a task created shortly
+ *     before the claim — the shape a self-created task carrying a fabricated session takes, which
+ *     matters here because most tasks are self-assigned.
+ *
+ * @param {Array<Object>} rows - work_sessions docs as { id, serverAnchorMs, ...data }, where
+ *   serverAnchorMs is the row's Firestore updateTime in ms (the LAST server write — later than
+ *   createTime, so a row that grew in place is never judged against its first, smaller state).
+ * @param {Map<string, number>} taskCreateMsById - taskId → the task doc's Firestore createTime in ms.
+ * @param {number} [sampleLimit]
+ * @returns {{ checked: number, count: number, samples: Array<Object> }}
+ */
+function findImpossibleSpanSessions(rows, taskCreateMsById, sampleLimit = DEFAULT_SAMPLE_LIMIT) {
+    let checked = 0;
+    let count = 0;
+    const samples = [];
+    for (const row of rows) {
+        if (!isReferentialTaskSession(row)) continue;
+        if (row.isBackdated || row.isRecoveredGap || row.isManualSession) continue;
+        const dur = row.durationMinutes;
+        if (typeof dur !== 'number' || !Number.isFinite(dur) || dur <= 0) continue;
+        const taskMs = taskCreateMsById instanceof Map ? taskCreateMsById.get(row.taskId) : undefined;
+        const rowMs = row.serverAnchorMs;
+        // Either anchor missing → unmeasurable, not suspicious. Skipping keeps this fail-SAFE: a
+        // task whose createTime could not be read never becomes a false accusation.
+        if (typeof taskMs !== 'number' || typeof rowMs !== 'number') continue;
+        checked += 1;
+        const spanMinutes = (rowMs - taskMs) / 60000;
+        if (dur <= spanMinutes + SERVER_SPAN_GRACE_MINUTES) continue;
+        count += 1;
+        if (samples.length < sampleLimit) {
+            samples.push({
+                id: row.id,
+                taskId: row.taskId,
+                userId: row.userId || null,
+                durationMinutes: dur,
+                serverSpanMinutes: Math.round(spanMinutes),
+            });
+        }
+    }
+    return { checked, count, samples };
+}
+
 /**
  * Migration telemetry (ADR-0020 step 6 gate instrument). Step 6 — "stop legacy writes only after
  * telemetry shows no active legacy clients/runs" — needs a signal for how much credited work is
@@ -159,9 +229,11 @@ function classifyEngineAdoption(rows) {
 module.exports = {
     SUSPICIOUS_DAY_WORK_MINUTES,
     IMPOSSIBLE_DAY_MINUTES,
+    SERVER_SPAN_GRACE_MINUTES,
     isReferentialTaskSession,
     collectReferentialTaskIds,
     findOrphanSessions,
     classifySuspiciousWorkDays,
+    findImpossibleSpanSessions,
     classifyEngineAdoption,
 };

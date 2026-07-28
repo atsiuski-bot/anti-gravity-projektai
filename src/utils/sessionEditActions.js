@@ -459,6 +459,46 @@ export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTi
     }
 };
 
+/**
+ * Apply a worker's requested new END to their session — the manager's one-tap answer to a
+ * session_correction_request.
+ *
+ * A worker cannot lengthen their own credited time, so an increase arrives as a request carrying the
+ * exact instant they are asking for. Until now the manager had to retype that instant into the
+ * session editor; this closes the loop by replaying it through the SAME editWorkSession path, so the
+ * result is indistinguishable from a hand-made correction: identical audit stamps, the once-only
+ * original snapshot, the counter re-derive, and the "your paid time was corrected" notice back to the
+ * worker. It is deliberately NOT a new write path — the manager's authority and its audit trail stay
+ * in one place.
+ *
+ * The session is re-read from Firestore rather than trusted from the notification, for two reasons:
+ * the request may be days old and the row may have moved or been deleted since, and the START must
+ * come from the stored row (only the end is under negotiation).
+ *
+ * @param {Object} args - { sessionId, endTime, reason, editor }
+ * @returns {Promise<{ok:boolean, error?:string, durationMinutes?:number, date?:string}>}
+ *   error 'gone' — the row no longer exists (already corrected, or deleted).
+ */
+export const applyRequestedSessionEnd = async ({ sessionId, endTime, reason, editor } = {}) => {
+    if (!sessionId || !endTime) return { ok: false, error: 'missing' };
+    let session;
+    try {
+        const snap = await getDoc(doc(db, 'work_sessions', sessionId));
+        if (!snap.exists()) return { ok: false, error: 'gone' };
+        session = { id: snap.id, ...snap.data() };
+    } catch (err) {
+        logError(err, { source: 'readFail:applyRequestedSessionEnd', sessionId });
+        return { ok: false, error: 'write' };
+    }
+    if (session.isDeleted) return { ok: false, error: 'gone' };
+    return editWorkSession(session, {
+        startTime: session.startTime,
+        endTime,
+        reason: (reason || '').trim() || 'Patvirtintas meistro prašymas pataisyti laiką',
+        editor,
+    });
+};
+
 // ── Worker self-service REDUCTION (one-way, approval-free) ──────────────────────────────────────
 // The commonest honest error in the field is a timer left running: the worker finished at 16:00 and
 // noticed at 18:30. Until now they could only FLAG the row and wait for a manager, so over-credited

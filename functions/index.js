@@ -26,7 +26,7 @@ const { getFirestore } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
 const { appendSystemDecision } = require('./decisionLog');
-const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, classifyEngineAdoption } = require('./integrityScans');
+const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, findImpossibleSpanSessions, classifyEngineAdoption } = require('./integrityScans');
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -1439,6 +1439,7 @@ async function scanCreditIntegrity(scanErrors) {
     const empty = {
         orphan: { checked: 0, orphans: 0, samples: [] },
         suspicious: { checked: 0, count: 0, samples: [] },
+        serverSpan: { checked: 0, count: 0, samples: [] },
         engineAdoption: { total: 0, engineV2: 0, legacy: 0, legacyPct: 0 },
     };
     const cutoff = lookbackCutoffIso();
@@ -1450,12 +1451,28 @@ async function scanCreditIntegrity(scanErrors) {
         noteScanError(scanErrors, 'creditIntegrity:query', err);
         return empty;
     }
-    const rows = snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() }));
+    // serverAnchorMs is Firestore's OWN updateTime for the row — the one instant in a work_sessions
+    // document that no client authored. The server-span check below is built on it (and on the task's
+    // createTime, captured in the same getAll pass), which is what makes that check independent of the
+    // device clock every other guard has to trust. updateTime rather than createTime on purpose: it is
+    // the LAST server write, so a row created small and grown in place is judged against its final
+    // state and never falsely accused.
+    // Stamped AFTER the spread so a stored field of the same name can never shadow the server's own
+    // value — the whole point of this anchor is that the client cannot author it.
+    const rows = snap.docs.map((docSnap) => ({
+        id: docSnap.id,
+        ...docSnap.data(),
+        serverAnchorMs: docSnap.updateTime ? docSnap.updateTime.toMillis() : null,
+    }));
 
     // Orphan: verify every REFERENTIAL row's task exists. Distinct real taskIds are few over a 2-day
     // window; batch-get them and treat any absent task as an orphaned credit row.
     const taskIds = collectReferentialTaskIds(rows);
     const existing = new Set();
+    // The same pass also records each task's Firestore createTime — the second server-authored anchor
+    // the span check needs. Captured here rather than in a separate query because these documents are
+    // being fetched anyway, so the check costs no extra reads.
+    const taskCreateMs = new Map();
     // A referential row's task may legitimately live in `tasks` OR — once confirmed and archived by the
     // daily archive job (same doc id) — in `archived_tasks`, or in `deleted_tasks` after a soft delete.
     // Check all three before calling a row orphaned; otherwise EVERY normally-completed-then-archived
@@ -1470,7 +1487,11 @@ async function scanCreditIntegrity(scanErrors) {
             const chunk = missing.slice(i, i + 300);
             try {
                 const docs = await db.getAll(...chunk.map((id) => db.collection(coll).doc(id)));
-                docs.forEach((d) => { if (d.exists) existing.add(d.id); });
+                docs.forEach((d) => {
+                    if (!d.exists) return;
+                    existing.add(d.id);
+                    if (d.createTime && !taskCreateMs.has(d.id)) taskCreateMs.set(d.id, d.createTime.toMillis());
+                });
             } catch (err) {
                 // Fail SAFE for a report-only check: on a read error treat this chunk as present so an
                 // infra hiccup never raises a false orphan alert.
@@ -1489,12 +1510,17 @@ async function scanCreditIntegrity(scanErrors) {
     };
     const suspicious = classifySuspiciousWorkDays(rows, dayOf);
 
+    // Server-span: the only credit check that trusts no client-authored instant. A timer cannot
+    // credit more work than the SERVER has seen its task exist, measured between two Firestore-
+    // assigned timestamps. See findImpossibleSpanSessions for why this is a detection and not a rule.
+    const serverSpan = findImpossibleSpanSessions(rows, taskCreateMs);
+
     // Migration telemetry (ADR-0020 step 6): engineVersion==2 adoption over the same rows. The gate
     // to retire the legacy self-write sites (roadmap P8) watches this trend toward zero legacy timer
     // authorship. Dormant engine (flag absent) reads ~100% legacy — the baseline, not an alarm.
     const engineAdoption = classifyEngineAdoption(rows);
 
-    return { orphan, suspicious, engineAdoption };
+    return { orphan, suspicious, serverSpan, engineAdoption };
 }
 
 // Hard ceiling for a SINGLE continuous running timer — MIRROR of src/utils/timeUtils
@@ -2351,6 +2377,7 @@ exports.dailyIntegrityScan = onSchedule(
         const critical = drops.length > 0;
         const warning = !complete || totalAnomalies > 0 || dailyOverdraft.offenders > 0 ||
             creditIntegrity.orphan.orphans > 0 || creditIntegrity.suspicious.count > 0 ||
+            creditIntegrity.serverSpan.count > 0 ||
             autoStoppedTimers.stopped > 0 || autoStoppedTimers.deferred > 0 ||
             autoClosedSessions.closed > 0;
         const report = {
@@ -2404,6 +2431,9 @@ exports.dailyIntegrityScan = onSchedule(
         }
         if (creditIntegrity.suspicious.count > 0) {
             logger.warn('INTEGRITY: suspicious work-day total (>16h work, <24h) — possible moderate inflation', creditIntegrity.suspicious);
+        }
+        if (creditIntegrity.serverSpan.count > 0) {
+            logger.warn('INTEGRITY: session credits more work than the SERVER has seen its task exist — clock-independent inflation signal', creditIntegrity.serverSpan);
         }
         // Migration telemetry (ADR-0020 step 6): report the revisioned-engine adoption baseline every
         // run, so the legacy-drain trend is visible before retiring the legacy write sites (roadmap P8).

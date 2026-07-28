@@ -1023,6 +1023,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 sessionRef: item.id || null,
                 userId: currentUser?.uid,
                 userName: actorName,
+                // MACHINE-READABLE ask. commentText carries the same instant for a human to read, but
+                // prose cannot be applied — these two fields are what let the manager's card settle
+                // the request in one tap instead of retyping it into the session editor. Null when the
+                // worker changed no time (a plain complaint), which is exactly when the card must fall
+                // back to the manual shortcut.
+                requestedEndTime: endISO || null,
+                requestedReason: trimmed,
             });
             setActionError('');
         } catch (err) {

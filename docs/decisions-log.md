@@ -33,6 +33,29 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-07-28** — **Server-span credit check + one-tap approval of a time-correction request**
+  (follow-ups to [ADR 0023](./adr/0023-worker-self-service-time-reduction.md)). Two pieces.
+  **(1) Server-span detection** (`functions/integrityScans.js` `findImpossibleSpanSessions`, wired
+  into `dailyIntegrityScan`): the only credit check that trusts NO client-authored instant. It
+  compares a session's claimed duration against two timestamps Firestore assigns itself — the TASK
+  doc's `createTime` and the session row's `updateTime` — because a timer cannot credit more work
+  than the server has seen its task exist. This is the DETECTION-shaped form of "bound the duration
+  by server-elapsed time"; the door-level form stays unbuildable (it needs a server-anchored START,
+  and an offline start's server timestamp resolves only on arrival, so it would compute a span
+  SHORTER than the real work and reject honest pay — ADR 0021's deferred rework). Measured after the
+  fact, a false positive costs a report line instead of wages, which is exactly why the bound can be
+  stated here and not in the rules. Deliberately blind to hand-authored intents (backdate / recovered
+  gap / manager correction — they describe work predating the row) and to sessions on OLD tasks (the
+  span swallows them); what it DOES see is inflation on a task created shortly before the claim,
+  which matters because most tasks are self-assigned. 30min grace, fail-safe on a missing anchor,
+  report-only, no extra Firestore reads (both anchors ride the existing orphan-check `getAll`).
+  **(2) One-tap approval**: the worker's request now carries `requestedEndTime` alongside the prose,
+  so the manager's bell card can settle it with `applyRequestedSessionEnd` — which re-reads the row
+  and replays the ask through the SAME `editWorkSession` path a manual fix uses (identical audit
+  stamps, counter re-derive, worker notice, and the `selfAdjusted:false` clear the one-way guard
+  needs). The button appears ONLY when both the row ref and a concrete end are present; a plain
+  complaint keeps the manual route. A vanished row resolves the card instead of failing forever.
+
 - **2026-07-28** — **Client clock-skew tolerance tightened from 1h to 2min** (founder decision;
   `firestore.rules` `endTimeNotInServerFuture`). The bound is asymmetric on purpose: a session's end
   may be arbitrarily EARLIER than server time (the offline-sync case) but never later. Reassessing

@@ -12,6 +12,8 @@ const {
     collectReferentialTaskIds,
     findOrphanSessions,
     classifySuspiciousWorkDays,
+    findImpossibleSpanSessions,
+    SERVER_SPAN_GRACE_MINUTES,
     classifyEngineAdoption,
 } = require('./integrityScans');
 
@@ -118,5 +120,70 @@ assert.strictEqual(adoptEmpty.legacyPct, 0);
 const adoptDormant = classifyEngineAdoption([{}, { engineVersion: 1 }, { isSystemTask: true }]);
 assert.strictEqual(adoptDormant.legacyPct, 100);
 assert.strictEqual(adoptDormant.engineV2, 0);
+
+// 6. findImpossibleSpanSessions — the clock-independent check. A timer cannot credit more work than
+// the SERVER has seen its task exist, measured between two Firestore-assigned timestamps.
+const MIN = 60 * 1000;
+const T0 = 1_760_000_000_000;                 // task created (server)
+const spanTasks = new Map([['taskOld', T0], ['taskNew', T0]]);
+
+// Honest: 8h of work, row last written 9h after the task appeared — comfortably inside the span.
+const honest = findImpossibleSpanSessions(
+    [{ id: 's1', taskId: 'taskOld', userId: 'u1', durationMinutes: 480, serverAnchorMs: T0 + 540 * MIN }],
+    spanTasks,
+);
+assert.strictEqual(honest.checked, 1);
+assert.strictEqual(honest.count, 0);
+
+// Impossible: 9h claimed against a task the server first saw 20 minutes before the row was written.
+const impossible = findImpossibleSpanSessions(
+    [{ id: 's2', taskId: 'taskNew', userId: 'u2', durationMinutes: 540, serverAnchorMs: T0 + 20 * MIN }],
+    spanTasks,
+);
+assert.strictEqual(impossible.count, 1);
+assert.strictEqual(impossible.samples[0].id, 's2');
+assert.strictEqual(impossible.samples[0].serverSpanMinutes, 20);
+
+// The grace is real: a claim exactly at span+grace passes, one minute beyond it does not.
+const atGrace = findImpossibleSpanSessions(
+    [{ id: 's3', taskId: 'taskNew', durationMinutes: 60 + SERVER_SPAN_GRACE_MINUTES, serverAnchorMs: T0 + 60 * MIN }],
+    spanTasks,
+);
+assert.strictEqual(atGrace.count, 0);
+const pastGrace = findImpossibleSpanSessions(
+    [{ id: 's4', taskId: 'taskNew', durationMinutes: 61 + SERVER_SPAN_GRACE_MINUTES, serverAnchorMs: T0 + 60 * MIN }],
+    spanTasks,
+);
+assert.strictEqual(pastGrace.count, 1);
+
+// HAND-AUTHORED intents describe work that predates the row, so the span says nothing — never judged.
+const handAuthored = findImpossibleSpanSessions(
+    [
+        { id: 'b1', taskId: 'taskNew', durationMinutes: 540, serverAnchorMs: T0 + MIN, isBackdated: true },
+        { id: 'g1', taskId: 'taskNew', durationMinutes: 540, serverAnchorMs: T0 + MIN, isRecoveredGap: true },
+        { id: 'm1', taskId: 'taskNew', durationMinutes: 540, serverAnchorMs: T0 + MIN, isManualSession: true },
+    ],
+    spanTasks,
+);
+assert.strictEqual(handAuthored.checked, 0);
+assert.strictEqual(handAuthored.count, 0);
+
+// System sessions (call / quick-work) carry a synthetic taskId and are out of scope entirely.
+const systemRows = findImpossibleSpanSessions(
+    [{ id: 'q1', taskId: 'quick_1720000000000', durationMinutes: 540, serverAnchorMs: T0 + MIN }],
+    spanTasks,
+);
+assert.strictEqual(systemRows.checked, 0);
+
+// FAIL-SAFE: a missing anchor on either side is unmeasurable, never an accusation.
+const unmeasurable = findImpossibleSpanSessions(
+    [
+        { id: 'n1', taskId: 'taskNew', durationMinutes: 540, serverAnchorMs: null },
+        { id: 'n2', taskId: 'unknownTask', durationMinutes: 540, serverAnchorMs: T0 + MIN },
+    ],
+    spanTasks,
+);
+assert.strictEqual(unmeasurable.checked, 0);
+assert.strictEqual(unmeasurable.count, 0);
 
 console.log('integrityScans.test.cjs: all assertions passed');

@@ -52,6 +52,7 @@ import {
     reconcileTaskTimerFromSessions,
     validateSelfReduction,
     reduceOwnWorkSession,
+    applyRequestedSessionEnd,
     MIN_SELF_REDUCED_MINUTES,
 } from './sessionEditActions';
 import { MAX_SESSION_MINUTES, MAX_BACKDATE_DAYS } from './timeUtils';
@@ -906,5 +907,55 @@ describe('reduceOwnWorkSession (worker shortens their own logged time)', () => {
         expect(payload.userId).toBe('u1');
         expect(payload.day).toBe('2026-07-28');
         expect(payload.summary).toBe('9h → 7h');
+    });
+});
+
+
+// ── Manager settles a worker's time-correction request in one tap ───────────────────────────────
+// The point of this path is that it is NOT a new write: it re-reads the row (the request may be
+// days old) and replays the requested end through the SAME admin editor a manual fix uses, so the
+// audit stamps, the counter re-derive and the worker notice are identical.
+describe('applyRequestedSessionEnd (one-tap approval of a requested end)', () => {
+    const stored = {
+        userId: 'u1',
+        taskId: 't-real',
+        startTime: '2026-07-28T06:00:00.000Z',
+        endTime: '2026-07-28T13:00:00.000Z',
+        durationMinutes: 420,
+    };
+
+    it('replays the requested end through editWorkSession, keeping the STORED start', async () => {
+        getDoc.mockResolvedValueOnce({ exists: () => true, id: 'ws-1', data: () => stored });
+        const res = await applyRequestedSessionEnd({
+            sessionId: 'ws-1',
+            endTime: '2026-07-28T15:00:00.000Z',
+            reason: 'Meistras dirbo ilgiau',
+            editor: { uid: 'mgr1', displayName: 'Vadovas' },
+        });
+        expect(res.ok).toBe(true);
+        expect(res.durationMinutes).toBe(540); // an INCREASE — only a manager may author this
+
+        const updates = updateDoc.mock.calls[0][1];
+        expect(updates.endTime).toBe('2026-07-28T15:00:00.000Z');
+        expect(updates.startTime).toBe('2026-07-28T06:00:00.000Z'); // only the end was negotiable
+        expect(updates.editedBy).toBe('mgr1');
+        // Hands the row back to unrestricted manager authorship, or the rules' one-way guard would
+        // reject this very increase on a row the worker had previously shortened.
+        expect(updates.selfAdjusted).toBe(false);
+    });
+
+    it('reports a vanished row as settled rather than retrying forever', async () => {
+        getDoc.mockResolvedValueOnce({ exists: () => false });
+        expect(await applyRequestedSessionEnd({ sessionId: 'gone', endTime: '2026-07-28T15:00:00.000Z' }))
+            .toEqual({ ok: false, error: 'gone' });
+        getDoc.mockResolvedValueOnce({ exists: () => true, id: 'x', data: () => ({ ...stored, isDeleted: true }) });
+        expect((await applyRequestedSessionEnd({ sessionId: 'x', endTime: '2026-07-28T15:00:00.000Z' })).error)
+            .toBe('gone');
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('refuses without a session id or a requested end', async () => {
+        expect((await applyRequestedSessionEnd({ endTime: 'x' })).error).toBe('missing');
+        expect((await applyRequestedSessionEnd({ sessionId: 's' })).error).toBe('missing');
     });
 });

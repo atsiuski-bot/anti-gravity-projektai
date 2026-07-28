@@ -20,6 +20,7 @@ import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MOD
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
 import { getLithuanianWeekId } from '../utils/timeUtils';
+import { applyRequestedSessionEnd } from '../utils/sessionEditActions';
 import { DeleteConfirmationModal } from './TaskDetailsModals';
 import IconButton from './ui/IconButton';
 import Button from './ui/Button';
@@ -176,6 +177,7 @@ export default function ManagerNotifications({ onClose }) {
     const [bulkApprovingCal, setBulkApprovingCal] = useState(false); // batch "approve all calendar requests" in flight
     const [markingAll, setMarkingAll] = useState(false); // "mark all read" in flight
     const [grantingExt, setGrantingExt] = useState(null); // notif.id of an in-flight one-tap time grant
+    const [applyingTime, setApplyingTime] = useState(null); // notif.id of an in-flight one-tap time correction
 
 
     // 1. Calendar Notifications (manager-only — workers don't monitor the team calendar)
@@ -642,6 +644,35 @@ export default function ManagerNotifications({ onClose }) {
             setActionError('Nepavyko pratęsti laiko. Bandykite dar kartą.');
         } finally {
             setGrantingExt(null);
+        }
+    };
+
+    // One-tap settle for a worker's time-correction request. A worker cannot lengthen their own
+    // credited time, so the ask arrives as a request carrying the exact instant they want — this
+    // replays it through the SAME admin session editor the manual fix uses, so the audit trail,
+    // the task-counter re-derive and the worker's "your paid time was corrected" notice are all
+    // identical to a hand-made correction. The manual shortcut stays for anything that needs
+    // judgement (a different start, a wrong task, a split).
+    const handleApplyTimeRequest = async (notif) => {
+        if (!notif?.sessionRef || !notif?.requestedEndTime || applyingTime) return;
+        setApplyingTime(notif.id);
+        clearActionFeedback();
+        const result = await applyRequestedSessionEnd({
+            sessionId: notif.sessionRef,
+            endTime: notif.requestedEndTime,
+            reason: notif.requestedReason,
+            editor: currentUser,
+        });
+        setApplyingTime(null);
+        if (result.ok) {
+            await handleDismissTask(notif.id);
+        } else if (result.error === 'gone') {
+            // The row was already corrected or removed — the request is settled either way, so clear
+            // it rather than leaving a card that can never succeed.
+            setActionNotice('Šio įrašo nebėra — prašymas išvalytas.');
+            await handleDismissTask(notif.id);
+        } else {
+            setActionError('Nepavyko pritaikyti laiko. Pataisykite veiklos ataskaitoje.');
         }
     };
 
@@ -1380,6 +1411,10 @@ export default function ManagerNotifications({ onClose }) {
                     // duration in commentText) and offers a benign dismiss plus a shortcut that opens
                     // that sub-tab directly — never a task delete (this notif carries no taskId).
                     if (notif.type === 'session_correction_request') {
+                        // A request is one-tap settleable only when it carries BOTH the row it is about
+                        // and the exact end the worker asked for. Older requests (and plain complaints
+                        // that changed no time) carry neither, so they keep the manual route only.
+                        const canApplyRequest = !!(notif.sessionRef && notif.requestedEndTime);
                         return (
                             <div key={notif.id} className="bg-feedback-warning-soft border border-feedback-warning-border rounded-lg p-4 relative shadow-sm animate-in fade-in slide-in-from-top-2 max-w-xl">
                                 <div className="flex flex-col gap-3">
@@ -1388,7 +1423,11 @@ export default function ManagerNotifications({ onClose }) {
                                         <div className="min-w-0 text-sm text-feedback-warning-text">
                                             <p><UserChip userId={notif.userId} name={notif.userName} /> pranešė apie klaidą veiklos laike:</p>
                                             {notif.commentText && <p className="mt-2 text-xs italic border-l-2 border-feedback-warning-border pl-2">&quot;{notif.commentText}&quot;</p>}
-                                            <p className="mt-2 text-xs">Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“ — pasirinkite šio meistro dieną.</p>
+                                            <p className="mt-2 text-xs">
+                                                {canApplyRequest
+                                                    ? 'Galite patvirtinti prašomą pabaigos laiką iš karto arba pataisyti rankiniu būdu: „Kom. kalendorius“ → „Veiklos ataskaita“.'
+                                                    : 'Pataisykite įrašą: „Kom. kalendorius“ → „Veiklos ataskaita“ — pasirinkite šio meistro dieną.'}
+                                            </p>
                                         </div>
                                     </div>
                                     {!readOnly && (
@@ -1396,7 +1435,26 @@ export default function ManagerNotifications({ onClose }) {
                                             className="mt-1"
                                             actions={[
                                                 { key: 'ack', label: 'Supratau', icon: Check, variant: 'secondary', onClick: () => handleDismissTask(notif.id) },
-                                                { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: 'primary', onClick: () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); } },
+                                                // The one-tap settle only appears when the worker named a
+                                                // concrete new end. A plain complaint carries no instant to
+                                                // apply, so the manual route stays the only honest option.
+                                                ...(canApplyRequest
+                                                    ? [{
+                                                        key: 'apply',
+                                                        label: 'Patvirtinti laiką',
+                                                        // Three buttons collapse to icon-only on a
+                                                        // phone; a clock icon alone would not say
+                                                        // whether it applies or opens, so this one
+                                                        // keeps a short label through the collapse.
+                                                        compactLabel: 'Patvirtinti',
+                                                        icon: Clock,
+                                                        variant: 'primary',
+                                                        loading: applyingTime === notif.id,
+                                                        disabled: !!applyingTime,
+                                                        onClick: () => handleApplyTimeRequest(notif),
+                                                    }]
+                                                    : []),
+                                                { key: 'open', label: 'Atidaryti veiklos ataskaitą', icon: Edit, variant: canApplyRequest ? 'secondary' : 'primary', onClick: () => { setActiveTab('team-calendar'); window.dispatchEvent(new CustomEvent('open-team-report')); onClose?.(); } },
                                             ]}
                                         />
                                     )}
