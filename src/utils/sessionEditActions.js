@@ -231,7 +231,14 @@ export const editWorkSession = async (session, { startTime, endTime, reason, edi
         editedByName: editor?.displayName || editor?.email || 'Nežinomas',
         editedAt: nowIso,
         editReason: trimmedReason,
-        updatedAt: nowIso
+        updatedAt: nowIso,
+        // Hand the row back to unrestricted (manager) authorship. A row a worker shortened via
+        // reduceOwnWorkSession carries selfAdjusted:true, and because an updateDoc is judged on the
+        // MERGED result that flag would still be set on THIS write — where the rules' one-way guard
+        // would then forbid an admin from ever raising the duration again. Clearing it is both
+        // semantically right (the row is now an admin correction, not a worker self-reduction) and
+        // what keeps the manager's editor the unconstrained authority it has always been.
+        selfAdjusted: false
     };
 
     // Snapshot the original exactly once. On a second edit `session.edited` is already true, so
@@ -448,6 +455,158 @@ export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTi
         return { ok: true, id: ref.id, durationMinutes: derived.durationMinutes, date: derived.date, reconciled };
     } catch (err) {
         logError(err, { source: 'writeFail:logBackdatedWorkerSession' });
+        return { ok: false, error: 'write' };
+    }
+};
+
+// ── Worker self-service REDUCTION (one-way, approval-free) ──────────────────────────────────────
+// The commonest honest error in the field is a timer left running: the worker finished at 16:00 and
+// noticed at 18:30. Until now they could only FLAG the row and wait for a manager, so over-credited
+// time sat in the reports (and in pay) until someone else got to it. This lets them correct it
+// themselves — but strictly in ONE direction.
+//
+// The asymmetry is the whole design, and it is a claim about INCENTIVE, not about trust:
+//   * SHORTENING is self-punishing. A worker giving back time they were already credited has nothing
+//     to gain, so requiring an approval buys no safety — it only delays a correction everyone wants
+//     and leaves the wrong number in the meantime.
+//   * LENGTHENING pays the person asking for it. That is exactly what an approval gate is for, so an
+//     increase never travels this path at all: the UI turns it into a session_correction_request the
+//     manager applies with the editor they already have.
+// The rules mirror this with a one-way guard keyed on the `selfAdjusted` marker these writes set
+// (firestore.rules selfAdjustOkForUpdate), so the direction is enforced at the door and not only in
+// the client. It is a PRODUCT gate rather than a security boundary — the create rule still lets any
+// worker mint a session, so this bounds the honest-mistake path, it does not close ADR 0021.
+
+/** The smallest duration a self-reduction may leave behind. Shorter than this is a deletion, which
+ *  stays an admin action (it needs the soft-delete audit trail, not a 0-minute row). */
+export const MIN_SELF_REDUCED_MINUTES = 1;
+
+// Validate a worker's proposed new END for one of their OWN sessions. PURE — the caller supplies the
+// stored row and the candidate instant, so the UI can show the consequence live and the action layer
+// can re-check it before writing, from the one definition. Returns { ok, error, durationMinutes,
+// date, deltaMinutes }; `error` is a stable code the UI maps to copy. Codes extend
+// deriveSessionFields' (invalid/order/tooLong) with:
+//   'missing'    — no row / no start instant to measure from;
+//   'deleted'    — already soft-deleted, nothing to correct;
+//   'running'    — the session has not finished yet (stop the timer instead);
+//   'unsupported'— the row carries no numeric credited duration, so "less than before" is undefined
+//                  and the rules' one-way guard could not judge the write either;
+//   'notShorter' — the proposed end is not EARLIER than the stored one (an increase — needs approval);
+//   'tooShort'   — the remainder falls under MIN_SELF_REDUCED_MINUTES.
+export const validateSelfReduction = (session, endISO) => {
+    if (!session?.id || !session?.startTime || !session?.endTime) return { ok: false, error: 'missing' };
+    if (session.isDeleted) return { ok: false, error: 'deleted' };
+    if (session.isActive) return { ok: false, error: 'running' };
+    const before = sessionDurationOf(session);
+    if (before === null) return { ok: false, error: 'unsupported' };
+
+    const derived = deriveSessionFields(session.startTime, endISO);
+    if (!derived.ok) return { ok: false, error: derived.error };
+
+    const currentEndMs = new Date(session.endTime).getTime();
+    const nextEndMs = new Date(endISO).getTime();
+    if (isNaN(currentEndMs)) return { ok: false, error: 'unsupported' };
+    // BOTH ends of the claim must move down: the wall-clock end AND the credited minutes. They can
+    // disagree on a row whose stored duration was clamped (a 20h orphan capped at 16h), and it is the
+    // credited number that reaches pay — so requiring both is what makes "shorter" unambiguous, and
+    // it is the same pair the rules and the UI reason about.
+    if (nextEndMs >= currentEndMs || derived.durationMinutes >= before) return { ok: false, error: 'notShorter' };
+    if (derived.durationMinutes < MIN_SELF_REDUCED_MINUTES) return { ok: false, error: 'tooShort' };
+
+    return {
+        ok: true,
+        error: null,
+        durationMinutes: derived.durationMinutes,
+        date: derived.date,
+        // Negative by construction — what the task's cached counter must give back.
+        deltaMinutes: derived.durationMinutes - before,
+    };
+};
+
+/**
+ * A worker shortens one of their OWN already-logged sessions, without approval.
+ *
+ * Only the END moves: the start stays exactly as the timer recorded it, so the correction can never
+ * relocate a session into another day or over another one. durationMinutes + date are re-derived from
+ * the new pair by the same derivation reports read, the TRUE original is snapshotted once (shared
+ * with the admin editor's audit fields, so one "Koreguota" badge explains both), and the row is
+ * stamped selfAdjusted so the rules' one-way guard applies to it from here on.
+ *
+ * The admins get an INFORMATIONAL notice — the same posture as an approval-free backdated entry: the
+ * change stands on its own, but it is never invisible. Best-effort and fired after the (already
+ * persisted) write, so a notification failure can never undo the correction.
+ *
+ * EXACTLY-ONCE (caller contract): the task counter is moved by a DELTA, because a plain worker's
+ * by-taskId session read is denied and the owner-scoped sum is provably incomplete. Submitting the
+ * same correction twice would therefore subtract twice, so the caller must not re-issue it on an
+ * unknown outcome — the modal gates on `busy` for exactly this reason. (The reconcile floors a
+ * removal at what the counter actually holds, so the worst case is a stale counter, never a negative
+ * one.)
+ *
+ * @param {Object} args - { session, worker, endTime, reason, adminUids }
+ * @returns {Promise<{ok:boolean, error?:string, durationMinutes?:number, date?:string, reconciled?:boolean}>}
+ */
+export const reduceOwnWorkSession = async ({ session, worker, endTime, reason, adminUids } = {}) => {
+    if (!worker?.uid) return { ok: false, error: 'user' };
+    if (!session?.id) return { ok: false, error: 'missing' };
+    // Own rows only. The rules allow an owner OR a manager to update a session, so without this an
+    // accidental manager call would take the worker-facing (guarded, one-way) path over someone
+    // else's time instead of the admin editor's audited one.
+    if (session.userId && session.userId !== worker.uid) return { ok: false, error: 'owner' };
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) return { ok: false, error: 'reason' };
+
+    const check = validateSelfReduction(session, endTime);
+    if (!check.ok) return { ok: false, error: check.error };
+
+    const nowIso = new Date().toISOString();
+    const workerName = worker.displayName || worker.email || null;
+    const updates = {
+        endTime,
+        durationMinutes: check.durationMinutes,
+        date: check.date,
+        // Audit, shared with the admin editor so every corrected row reads the same way in the UI…
+        edited: true,
+        editedBy: worker.uid,
+        editedByName: workerName || 'Nežinomas',
+        editedAt: nowIso,
+        editReason: trimmedReason,
+        // …plus the marker that says WHO corrected it and, to the rules, that this row's duration may
+        // only ever move down from here (until a manager edit clears it).
+        selfAdjusted: true,
+        selfAdjustedAt: nowIso,
+        updatedAt: nowIso,
+    };
+    // Snapshot the TRUE original exactly once — same rule as editWorkSession: on an already-edited
+    // row the first-captured original is kept, so the audit always points back at what the timer
+    // actually recorded rather than at the previous correction.
+    if (!session.edited) {
+        updates.originalStartTime = session.startTime ?? null;
+        updates.originalEndTime = session.endTime ?? null;
+        updates.originalDurationMinutes = sessionDurationOf(session);
+    }
+
+    try {
+        await updateDoc(doc(db, 'work_sessions', session.id), updates);
+        const rec = await reconcileTaskTimerFromSessions(session.taskId, worker.uid, check.deltaMinutes);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:reduceOwnWorkSession', taskId: session.taskId });
+        // FYI to every admin that credited time was reduced without approval. notifyMany dedupes and
+        // drops the actor, so an admin correcting their own row never self-notifies; userId == the
+        // worker's uid satisfies the rules' provenance check on a worker-authored notification.
+        await notifyMany(adminUids, {
+            type: 'time_self_reduced',
+            actorUid: worker.uid,
+            actorName: workerName,
+            userId: worker.uid,
+            userName: workerName,
+            day: check.date,
+            taskTitle: session.taskTitle || null,
+            summary: `${formatMinutesToTimeString(sessionDurationOf(session))} → ${formatMinutesToTimeString(check.durationMinutes)}`,
+            reason: trimmedReason,
+        });
+        return { ok: true, durationMinutes: check.durationMinutes, date: check.date, reconciled };
+    } catch (err) {
+        logError(err, { source: 'writeFail:reduceOwnWorkSession', sessionId: session.id });
         return { ok: false, error: 'write' };
     }
 };

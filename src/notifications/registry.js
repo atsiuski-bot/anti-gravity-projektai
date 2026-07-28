@@ -289,6 +289,24 @@ export const NOTIFICATIONS = {
         },
     },
 
+    // ── Worker → admin (oversight: credited time was reduced without approval) ───────────────────
+    // A worker shortened one of their OWN logged sessions (typically a timer left running). The
+    // change needs no approval — giving time back is self-punishing, and the rules only ever let it
+    // move DOWN — but it must not be invisible, so every admin gets the same FYI posture as an
+    // approval-free backdated entry: WHO + the affected day. 'info', never 'action': there is
+    // nothing for the admin to decide.
+    time_self_reduced: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => {
+            const name = clamp(n.userName);
+            const day = n.day || 'Veiklos laikas';
+            return { title: 'Meistras sumažino savo laiką', body: name ? `${name} · ${day}` : day };
+        },
+    },
+
     // ── System → worker (deadline closing in → priority auto-raised) ─────────────────────────────
     task_priority_escalated: {
         category: 'info',

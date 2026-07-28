@@ -562,6 +562,9 @@ describe('notification copy lockstep (functions copyForRequestNotification ↔ c
     task_completion: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     time_extension_request: [{ taskTitle: 'Sutvarkyti sandėlį' }],
     session_correction_request: [{ day: '2026-06-20', commentText: '  klaida   trukmėje ' }, { day: '2026-06-20' }, {}],
+    // Worker → admin FYI that credited time was self-reduced. Same shape as backdated_time_logged
+    // (name clamped, day fallback), so the samples exercise the same three branches.
+    time_self_reduced: [{ userName: '  Simona   Petraitienė ', day: '2026-07-28' }, { day: '2026-07-28' }, {}],
     new_comment: [{ taskTitle: 'Užduotis', commentText: '  ilgas\n komentaras ' }, { taskTitle: 'Užduotis' }, {}],
     new_photo: [{ taskTitle: 'Užduotis' }, {}],
     task_assigned: [{ taskTitle: 'Užduotis' }],

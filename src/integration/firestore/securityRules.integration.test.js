@@ -189,6 +189,44 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
         );
     });
 
+    // ---- Worker self-service reduction is ONE-WAY ----
+    // A worker may shorten their own credited time without approval, but never lengthen it: an
+    // increase has to go through the manager. The guard is keyed on the `selfAdjusted` marker the
+    // self-service write sets, so it constrains only that path — the live timer, which legitimately
+    // GROWS a session's duration as work continues, must stay unaffected.
+    it('one-way: a worker may shorten their own session when it carries the self-adjust marker', async () => {
+        await assertSucceeds(
+            updateDoc(doc(workerDb(), 'work_sessions', 'ws-1'), {
+                durationMinutes: 40, // 60 → 40
+                endTime: '2026-07-10T09:40:00.000Z',
+                selfAdjusted: true,
+            })
+        );
+    });
+
+    it('one-way: the same worker may NOT lengthen it', async () => {
+        await assertFails(
+            updateDoc(doc(workerDb(), 'work_sessions', 'ws-1'), {
+                durationMinutes: 90, // 60 → 90
+                selfAdjusted: true,
+            })
+        );
+    });
+
+    it('one-way: an unchanged duration still passes, so a soft-delete of a self-adjusted row works', async () => {
+        await assertSucceeds(
+            updateDoc(doc(workerDb(), 'work_sessions', 'ws-1'), { selfAdjusted: true, isDeleted: true })
+        );
+    });
+
+    it('one-way: a write WITHOUT the marker is untouched — the live timer may still grow a session', async () => {
+        await assertSucceeds(
+            updateDoc(doc(workerDb(), 'work_sessions', 'ws-1'), {
+                durationMinutes: 120, // the partial → final growth every quick-work/call close does
+            })
+        );
+    });
+
     // ---- R-04: a non-manager may not forge admin provenance on a self-logged session ----
     // createdByAdmin is the manager correction stamp; a worker forging it disguises a self-minted
     // row as an approved correction. The pin forbids it ONLY on the non-manager self-owned branch.
