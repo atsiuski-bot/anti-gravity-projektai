@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
-import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
+import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
+import { validateSelfReduction, reduceOwnWorkSession } from '../utils/sessionEditActions';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
@@ -58,11 +59,11 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const openEditSession = (item, targetUser, dayTotal) => setSessionEditTarget({ mode: 'edit', session: item, targetUser, dayTotal });
     const openCreateSession = (targetUser, dayTotal) => setSessionEditTarget({ mode: 'create', session: null, targetUser, dayTotal });
 
-    // Worker self-service: flag one of MY OWN logged-time rows as wrong. A worker cannot edit a
-    // session (that stays admin-only via SessionEditModal), so instead they send the manager a
-    // correction request — a notification carrying the row's day + duration + the worker's reason.
-    // The manager then opens the day timeline and fixes it with the editor they already have.
-    // `errorReportTarget` holds the timeline item awaiting a reason; null when the prompt is closed.
+    // Worker self-service: correct one of MY OWN logged-time rows. The direction decides who settles
+    // it — a SHORTER session applies immediately (a timer left running is the common case, and giving
+    // time back cannot be abused), while a longer one becomes a correction request the manager
+    // applies with the editor they already have. Both live behind one affordance and one modal.
+    // `errorReportTarget` holds the timeline item being corrected; null when the prompt is closed.
     const [errorReportTarget, setErrorReportTarget] = useState(null);
     // The worker's managers, the recipients of any correction request. Mirrors QuickWorkTimer's
     // resolution: the team (teamManagerIds), falling back to the single legacy defaultManager.
@@ -72,12 +73,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
             : (userData?.defaultManager ? [userData.defaultManager] : []);
         return ids.filter(Boolean);
     }, [userData?.teamManagerIds, userData?.defaultManager]);
-    // A row is reportable when it is the signed-in worker's OWN real, finished work session — not a
-    // break, gap, live session, or legacy synthetic adjustment — and they actually have a manager to
-    // route it to. Admins/managers use the inline editor instead, so the affordance is workers-only.
+    // A row is correctable when it is the signed-in worker's OWN real, finished work session — not a
+    // break, gap, live session, or legacy synthetic adjustment. Admins/managers use the inline editor
+    // instead, so the affordance is workers-only. Note there is deliberately NO manager requirement:
+    // a self-reduction needs nobody's approval, so a worker with no manager assigned can still fix an
+    // over-long row (the modal disables only the request half when there is no one to ask).
     const canReportRow = (item) =>
         !isManagerRole(userRole) &&
-        myManagerIds.length > 0 &&
         item.type === 'session' &&
         !item.isActive &&
         !item.isManualAdjustment &&
@@ -958,20 +960,58 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // have no edit right); we send a correction REQUEST the manager resolves with their own editor.
     // The row's day + time span + credited duration are folded into the message so the manager can
     // find the exact session, and the worker's free-text reason is the only thing they type.
-    const handleSubmitErrorReport = async (reason) => {
+    // The worker submitted a correction for one of their own logged rows. The DIRECTION decides the
+    // path, and the modal has already resolved which one applies:
+    //   • 'reduce'  — the new end is earlier, so the correction is applied immediately. Giving back
+    //                 credited time is self-punishing, so an approval would only delay a fix
+    //                 everyone wants; the admins get an FYI and the rules enforce the one-way-ness.
+    //   • 'request' — anything else (a longer session, or a complaint that needs no time change) is
+    //                 sent to the manager as the correction request this surface already had. The
+    //                 worker never writes an increase themselves.
+    // Returns nothing; a failure surfaces in the shared inline banner and leaves the modal's own
+    // error copy to the modal.
+    const handleSubmitTimeCorrection = async ({ mode, endISO, reason }) => {
         const item = errorReportTarget;
         const trimmed = (reason || '').trim();
-        if (!item || !trimmed || myManagerIds.length === 0) {
+        if (!item || !trimmed) {
             setErrorReportTarget(null);
             return;
         }
         const day = item.date || getLithuanianDateString(item.startTime);
+        const actorName = formatDisplayName(currentUser?.displayName || currentUser?.email) || currentUser?.email || '';
+
+        if (mode === 'reduce') {
+            // Write against the STORED row, not the timeline projection: the projection sanitizes
+            // duration for display, and the one-way guard compares against what is actually credited.
+            const stored = sessions.find((s) => s.id === item.id);
+            const result = await reduceOwnWorkSession({
+                session: stored || item,
+                worker: { uid: currentUser?.uid, displayName: currentUser?.displayName, email: currentUser?.email },
+                endTime: endISO,
+                reason: trimmed,
+                adminUids,
+            });
+            if (result.ok) {
+                setActionError('');
+            } else {
+                setActionError('Nepavyko sumažinti laiko. Bandykite vėl.');
+            }
+            setErrorReportTarget(null);
+            return;
+        }
+
+        if (myManagerIds.length === 0) {
+            setErrorReportTarget(null);
+            return;
+        }
         const span = `${formatTime(item.startTime)}–${formatTime(item.endTime)}`;
         const dur = formatMinutesToTimeString(item.duration);
         const label = item.title || 'Veikla';
-        // One human line the manager reads in the bell: what, when, how long, and why it's wrong.
-        const commentText = `Pranešimas apie klaidą veiklos laike. ${day} ${span} (${dur}) — „${label}“. Priežastis: ${trimmed}`;
-        const actorName = formatDisplayName(currentUser?.displayName || currentUser?.email) || currentUser?.email || '';
+        // One human line the manager reads in the bell: what, when, how long, and why it's wrong —
+        // plus, when the worker proposed a concrete new end, the exact value they are asking for, so
+        // the manager can apply it in the session editor without a follow-up conversation.
+        const wanted = endISO ? ` Prašoma pabaiga: ${formatTime(endISO)}.` : '';
+        const commentText = `Pranešimas apie klaidą veiklos laike. ${day} ${span} (${dur}) — „${label}“.${wanted} Priežastis: ${trimmed}`;
         try {
             await notifyMany(myManagerIds, {
                 type: 'session_correction_request',
@@ -1531,7 +1571,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                             <IconButton icon={Pencil} label="Redaguoti sesijos laiką" onClick={() => openEditSession(item, sessionEditTargetUser, totalWorkedMinutes)} />
                                         )}
                                         {reportable && (
-                                            <IconButton icon={Flag} label="Pranešti apie klaidą" onClick={() => setErrorReportTarget(item)} />
+                                            <IconButton icon={Pencil} label="Koreguoti savo laiką" onClick={() => setErrorReportTarget(item)} />
                                         )}
                                     </div>
                                 </li>
@@ -1590,7 +1630,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                                     <IconButton icon={Pencil} label="Redaguoti sesijos laiką" onClick={() => openEditSession(item, sessionEditTargetUser, totalWorkedMinutes)} />
                                                 )}
                                                 {reportable && (
-                                                    <IconButton icon={Flag} label="Pranešti apie klaidą" onClick={() => setErrorReportTarget(item)} />
+                                                    <IconButton icon={Pencil} label="Koreguoti savo laiką" onClick={() => setErrorReportTarget(item)} />
                                                 )}
                                             </span>
                                         </td>
@@ -1804,12 +1844,15 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                 />
             )}
 
-            {/* Worker error-report prompt — collects a free-text reason, then sends the worker's
-                manager(s) a correction request for the flagged time row. */}
+            {/* Worker self-correction prompt — the worker states when they actually finished. An
+                earlier end is applied on the spot; anything else is routed to the manager as a
+                correction request. The live listeners refresh the timeline after a reduction. */}
             {errorReportTarget && (
                 <SessionErrorReportModal
                     item={errorReportTarget}
-                    onSubmit={handleSubmitErrorReport}
+                    storedSession={sessions.find((s) => s.id === errorReportTarget.id) || null}
+                    canRequest={myManagerIds.length > 0}
+                    onSubmit={handleSubmitTimeCorrection}
                     onClose={() => setErrorReportTarget(null)}
                 />
             )}
@@ -1834,36 +1877,81 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     );
 }
 
-// Worker error-report prompt — a tiny reason collector. A worker cannot edit their own logged time
-// (that stays an admin action), so when a row is wrong they type WHY and we notify their manager,
-// who fixes it with the session editor. Mirrors SessionEditModal's reason field + ConfirmDialog
-// gating so the two correction paths feel like one family. The row's day/time/duration are shown
-// read-only as context so the worker confirms they are flagging the right segment.
-function SessionErrorReportModal({ item, onSubmit, onClose }) {
+// Validation-error code → Lithuanian copy for the self-correction modal. Codes come from
+// validateSelfReduction; 'notShorter' is NOT an error here — it is the branch that routes the
+// correction to the manager — so it has no entry.
+const SELF_CORRECT_ERROR_COPY = {
+    order: 'Pabaiga turi būti vėlesnė už pradžią.',
+    tooLong: 'Sesija viršija 16 val. — patikrinkite laiką.',
+    tooShort: 'Turi likti bent 1 min. Jei visai nedirbote, praneškite koordinatoriui.',
+    invalid: 'Neteisingas laikas.',
+    missing: 'Šios eilutės koreguoti negalima.',
+    deleted: 'Ši eilutė jau pašalinta.',
+    running: 'Veikla dar vyksta — pirma ją sustabdykite.',
+    unsupported: 'Šios eilutės laiko pakeisti negalima — praneškite koordinatoriui.',
+};
+
+// Worker self-correction prompt for ONE of their own logged rows. The worker states when they
+// ACTUALLY finished, and the direction of that answer decides what happens — the whole point of the
+// screen, so it is stated in the copy before they type, not discovered after they submit:
+//   • an EARLIER end shortens the row and is applied immediately (approval-free, admins informed);
+//   • a LATER or unchanged end cannot be self-applied, so it is sent to the manager as the
+//     correction request this surface already had — with the requested end carried along.
+// The remaining duration is derived live from the same validator the write uses, so the consequence
+// is visible before saving and the modal can never offer a "reduce" the action layer would refuse.
+function SessionErrorReportModal({ item, storedSession, canRequest, onSubmit, onClose }) {
     const [reason, setReason] = useState('');
+    const [endTimeStr, setEndTimeStr] = useState(() => formatTime(item.endTime));
     const [submitting, setSubmitting] = useState(false);
     const fieldId = useId();
 
     const span = `${formatTime(item.startTime)} – ${formatTime(item.endTime)}`;
     const dur = formatMinutesToTimeString(item.duration);
     const day = item.date || getLithuanianDateString(item.startTime);
-    const canSend = reason.trim().length > 0;
+
+    // The proposed end as a real instant. The clock field carries no date, so it is anchored to the
+    // Vilnius calendar day the session ENDED on — the same wall-clock→ISO conversion the backdate
+    // modal uses, which is what keeps a session that ran past midnight anchored to the right day.
+    const endDay = getLithuanianDateString(item.endTime);
+    const endISO = endTimeStr ? vilniusWallClockToISO(endDay, endTimeStr) : null;
+
+    // Judge the proposal against the STORED row (what is actually credited), falling back to the
+    // timeline projection when the raw row is not in view.
+    const check = useMemo(
+        () => (endISO ? validateSelfReduction(storedSession || item, endISO) : null),
+        [endISO, storedSession, item]
+    );
+    // 'notShorter' is the manager branch, not a failure; every other code is a real blocker.
+    const blockingError = check && !check.ok && check.error !== 'notShorter' ? check.error : null;
+    const mode = check?.ok ? 'reduce' : 'request';
+    const unchanged = endTimeStr === formatTime(item.endTime);
+
+    const canSend =
+        reason.trim().length > 0 &&
+        !blockingError &&
+        (mode === 'reduce' || canRequest);
 
     const handleSend = async () => {
         if (!canSend || submitting) return;
         setSubmitting(true);
         try {
-            await onSubmit(reason);
+            // The reduce path moves the task counter by a DELTA, so it must be submitted at most
+            // once — `submitting` (never cleared on success, the modal closes) is that guarantee.
+            await onSubmit({ mode, endISO: unchanged ? null : endISO, reason });
         } finally {
             setSubmitting(false);
         }
     };
 
+    const inputClass =
+        'min-h-touch w-full rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg ' +
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
+
     return (
         <Modal
             open
             onClose={onClose}
-            title="Pranešti apie klaidą"
+            title="Koreguoti savo laiką"
             size="md"
             closeOnBackdrop={false}
             footer={
@@ -1871,16 +1959,24 @@ function SessionErrorReportModal({ item, onSubmit, onClose }) {
                     <Button variant="secondary" fullWidth onClick={onClose} disabled={submitting}>
                         Atšaukti
                     </Button>
-                    <Button variant="primary" fullWidth icon={Flag} loading={submitting} disabled={!canSend} onClick={handleSend}>
-                        Siųsti koordinatoriui
+                    <Button
+                        variant="primary"
+                        fullWidth
+                        icon={mode === 'reduce' ? Clock : Flag}
+                        loading={submitting}
+                        disabled={!canSend}
+                        onClick={handleSend}
+                    >
+                        {mode === 'reduce' ? 'Sumažinti laiką' : 'Siųsti koordinatoriui'}
                     </Button>
                 </div>
             }
         >
             <div className="space-y-4">
                 <p className="text-body text-ink">
-                    Pranešite koordinatoriui, kad ši užfiksuotos veiklos laiko eilutė neteisinga. Laiko Jūs
-                    pakeisti negalite — koordinatorius jį pataisys.
+                    Jei pamiršote sustabdyti laikmatį, nurodykite, kada iš tikrųjų baigėte —{' '}
+                    <span className="font-semibold">laiką sumažinti galite pats(-i), be patvirtinimo</span>.
+                    Laiko padidinti negalima: tokį prašymą patvirtina Jūsų koordinatorius.
                 </p>
                 <div className="rounded-control border border-line bg-surface-sunken p-3">
                     <p className="text-caption uppercase font-bold tracking-wide text-ink-muted">Eilutė</p>
@@ -1889,9 +1985,44 @@ function SessionErrorReportModal({ item, onSubmit, onClose }) {
                         {day} · {span} · {dur}
                     </p>
                 </div>
+
+                <div>
+                    <label htmlFor={`${fieldId}-end`} className="mb-1 block text-caption font-medium text-ink-muted">
+                        Kada iš tikrųjų baigėte?
+                    </label>
+                    <input
+                        id={`${fieldId}-end`}
+                        type="time"
+                        value={endTimeStr}
+                        onChange={(e) => setEndTimeStr(e.target.value)}
+                        className={inputClass}
+                    />
+                </div>
+
+                {/* Live consequence — the credited duration this correction leaves behind, and which
+                    of the two paths the current answer takes. aria-live so it is announced, since it
+                    is the one thing that changes what the primary button does. */}
+                <div className="rounded-control border border-line bg-surface-sunken p-3" aria-live="polite">
+                    <div className="flex items-center justify-between gap-3">
+                        <span className="flex items-center gap-1.5 text-body text-ink-muted">
+                            <Clock className="h-4 w-4" aria-hidden="true" /> Nauja trukmė
+                        </span>
+                        <span className="font-mono text-body-lg font-bold text-brand">
+                            {check?.ok ? formatMinutesToTimeString(check.durationMinutes) : '—'}
+                        </span>
+                    </div>
+                    <p className="mt-2 text-caption text-ink-muted">
+                        {check?.ok
+                            ? 'Bus pritaikyta iš karto. Apie pakeitimą informuojami administratoriai.'
+                            : canRequest
+                              ? 'Laikas nebus sumažintas — bus išsiųstas prašymas koordinatoriui.'
+                              : 'Jums nepriskirtas koordinatorius, todėl prašymo išsiųsti negalima. Galite tik sumažinti laiką.'}
+                    </p>
+                </div>
+
                 <div>
                     <label htmlFor={`${fieldId}-reason`} className="mb-1 block text-caption font-medium text-ink-muted">
-                        Kas negerai? (privaloma)
+                        Kodėl? (privaloma)
                     </label>
                     <textarea
                         id={`${fieldId}-reason`}
@@ -1899,9 +2030,15 @@ function SessionErrorReportModal({ item, onSubmit, onClose }) {
                         onChange={(e) => setReason(e.target.value)}
                         rows={3}
                         placeholder="pvz. Pamiršau sustabdyti laikmatį — baigiau 16:00, ne 18:30"
-                        className="min-h-touch w-full rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        className={inputClass}
                     />
                 </div>
+
+                {blockingError && (
+                    <p className="rounded-control bg-feedback-danger-soft p-3 text-body text-feedback-danger-text">
+                        {SELF_CORRECT_ERROR_COPY[blockingError] || SELF_CORRECT_ERROR_COPY.invalid}
+                    </p>
+                )}
             </div>
         </Modal>
     );

@@ -50,6 +50,9 @@ import {
     claimRecoveredGap,
     discardRecoveredGap,
     reconcileTaskTimerFromSessions,
+    validateSelfReduction,
+    reduceOwnWorkSession,
+    MIN_SELF_REDUCED_MINUTES,
 } from './sessionEditActions';
 import { MAX_SESSION_MINUTES, MAX_BACKDATE_DAYS } from './timeUtils';
 
@@ -780,5 +783,128 @@ describe('reconcileTaskTimerFromSessions (work_sessions is canonical → re-deri
         const call = taskWrite();
         expect(call[0]._path).toBe('tasks/t-real');
         expect(call[1].timerMinutes).toBe(40);
+    });
+});
+
+// ── Worker self-service reduction (one-way, approval-free) ──────────────────────────────────────
+// The direction is the whole feature, so it is asserted from both sides: a shorter end writes and
+// credits the negative delta, and anything that is NOT strictly shorter is refused with the
+// 'notShorter' code the UI uses to route the correction to a manager instead.
+describe('validateSelfReduction (direction gate)', () => {
+    const session = {
+        id: 'ws-1',
+        startTime: '2026-07-28T06:00:00.000Z',
+        endTime: '2026-07-28T15:00:00.000Z',
+        durationMinutes: 540,
+    };
+
+    it('accepts an EARLIER end and derives the remaining duration, day and negative delta', () => {
+        const r = validateSelfReduction(session, '2026-07-28T13:00:00.000Z');
+        expect(r).toEqual({ ok: true, error: null, durationMinutes: 420, date: '2026-07-28', deltaMinutes: -120 });
+    });
+
+    it('refuses a LATER end — an increase never travels this path', () => {
+        expect(validateSelfReduction(session, '2026-07-28T17:00:00.000Z').error).toBe('notShorter');
+    });
+
+    it('refuses an UNCHANGED end', () => {
+        expect(validateSelfReduction(session, '2026-07-28T15:00:00.000Z').error).toBe('notShorter');
+    });
+
+    it('refuses when the wall clock moves down but the CREDITED duration would not', () => {
+        // A row whose stored credit (300) is far below its wall-clock span (540) — the shape a
+        // clamped/corrected session leaves behind. Pulling the end back to 13:00 still derives 420
+        // min, MORE than the 300 actually credited, so the payable number would RISE — refused.
+        const clamped = { ...session, durationMinutes: 300 };
+        expect(validateSelfReduction(clamped, '2026-07-28T13:00:00.000Z').error).toBe('notShorter');
+    });
+
+    it('refuses a row with no numeric credited duration (the rules could not judge it either)', () => {
+        expect(validateSelfReduction({ ...session, durationMinutes: undefined }, '2026-07-28T13:00:00.000Z').error)
+            .toBe('unsupported');
+    });
+
+    it('refuses a still-running or already-deleted row', () => {
+        expect(validateSelfReduction({ ...session, isActive: true }, '2026-07-28T13:00:00.000Z').error).toBe('running');
+        expect(validateSelfReduction({ ...session, isDeleted: true }, '2026-07-28T13:00:00.000Z').error).toBe('deleted');
+    });
+
+    it('refuses an inverted pair and a remainder under the floor', () => {
+        expect(validateSelfReduction(session, '2026-07-28T05:00:00.000Z').error).toBe('order');
+        expect(MIN_SELF_REDUCED_MINUTES).toBe(1);
+        // 30 seconds of remainder rounds to 0.5 min — below the floor, so it is a deletion, not a
+        // reduction, and stays an admin action.
+        expect(validateSelfReduction(session, '2026-07-28T06:00:30.000Z').error).toBe('tooShort');
+    });
+});
+
+describe('reduceOwnWorkSession (worker shortens their own logged time)', () => {
+    const worker = { uid: 'u1', displayName: 'Simona' };
+    const session = {
+        id: 'ws-1',
+        taskId: 't-real',
+        taskTitle: 'Kostiumai',
+        userId: 'u1',
+        startTime: '2026-07-28T06:00:00.000Z',
+        endTime: '2026-07-28T15:00:00.000Z',
+        durationMinutes: 540,
+    };
+    const args = { session, worker, endTime: '2026-07-28T13:00:00.000Z', reason: '  pamiršau sustabdyti  ', adminUids: ['a1', 'a2'] };
+
+    it('writes the shortened pair, the self-adjust marker and the once-only original snapshot', async () => {
+        const res = await reduceOwnWorkSession(args);
+        expect(res.ok).toBe(true);
+        expect(res.durationMinutes).toBe(420);
+
+        const updates = updateDoc.mock.calls[0][1];
+        expect(updates.endTime).toBe('2026-07-28T13:00:00.000Z');
+        expect(updates.durationMinutes).toBe(420);
+        expect(updates.date).toBe('2026-07-28');
+        // startTime is never rewritten — a correction may shorten a session, never relocate it.
+        expect('startTime' in updates).toBe(false);
+        expect(updates.selfAdjusted).toBe(true);
+        expect(updates.edited).toBe(true);
+        expect(updates.editedBy).toBe('u1');
+        expect(updates.editReason).toBe('pamiršau sustabdyti'); // trimmed
+        expect(updates.originalEndTime).toBe('2026-07-28T15:00:00.000Z');
+        expect(updates.originalDurationMinutes).toBe(540);
+    });
+
+    it('does NOT re-snapshot the original on an already-corrected row', async () => {
+        await reduceOwnWorkSession({ ...args, session: { ...session, edited: true } });
+        expect('originalEndTime' in updateDoc.mock.calls[0][1]).toBe(false);
+    });
+
+    it('refuses an increase, a foreign row, a blank reason and a missing worker — writing nothing', async () => {
+        expect((await reduceOwnWorkSession({ ...args, endTime: '2026-07-28T17:00:00.000Z' })).error).toBe('notShorter');
+        expect((await reduceOwnWorkSession({ ...args, session: { ...session, userId: 'someone-else' } })).error).toBe('owner');
+        expect((await reduceOwnWorkSession({ ...args, reason: '   ' })).error).toBe('reason');
+        expect((await reduceOwnWorkSession({ ...args, worker: null })).error).toBe('user');
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('gives the removed minutes back to the task counter as a NEGATIVE delta', async () => {
+        // A plain worker's broad by-taskId read is denied, so reconcile falls back to the owner-scoped
+        // sum and applies the delta by atomic increment rather than rewriting the whole counter.
+        const denied = Object.assign(new Error('denied'), { code: 'permission-denied' });
+        getDocs.mockRejectedValueOnce(denied);
+        getDocs.mockResolvedValueOnce({ forEach: () => {} });
+        getDoc.mockResolvedValueOnce({ exists: () => true, data: () => ({ timerMinutes: 540 }) });
+
+        const res = await reduceOwnWorkSession(args);
+        expect(res.ok).toBe(true);
+        const taskCall = updateDoc.mock.calls.find((c) => c[0]._path === 'tasks/t-real');
+        expect(taskCall[1].timerMinutes).toEqual({ _increment: -120 });
+    });
+
+    it('tells the admins — informational, never an approval request', async () => {
+        await reduceOwnWorkSession(args);
+        expect(notifyMany).toHaveBeenCalledTimes(1);
+        const [recipients, payload] = notifyMany.mock.calls[0];
+        expect(recipients).toEqual(['a1', 'a2']);
+        expect(payload.type).toBe('time_self_reduced');
+        expect(payload.userId).toBe('u1');
+        expect(payload.day).toBe('2026-07-28');
+        expect(payload.summary).toBe('9h → 7h');
     });
 });

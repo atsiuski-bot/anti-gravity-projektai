@@ -207,6 +207,35 @@ service cloud.firestore {
       return request.resource.data.get('durationMinutes', 0) == resource.data.get('durationMinutes', 0) ||
              durationInRange(request.resource.data);
     }
+    // ---- Worker self-service reduction: ONE-WAY -----------------------------
+    // A worker may shorten one of their OWN logged sessions with no approval (a timer left running
+    // is the commonest honest error, and giving time back is self-punishing — see
+    // sessionEditActions.reduceOwnWorkSession). Lengthening one is the opposite incentive, so it
+    // never travels that path: it becomes a correction REQUEST the manager applies with the editor
+    // they already have. This is the door-level half of that asymmetry.
+    //
+    // Keyed on the `selfAdjusted` marker the self-service write sets, NOT on the caller's role, for
+    // two reasons. First, it judges only the new path: the live timer, every legacy closer, the
+    // Cloud Functions net and the admin editor leave the marker absent, so this can never reject a
+    // write it was not designed to evaluate — which matters because the timer legitimately GROWS a
+    // session's duration as the worker keeps working (the partial→final quick-work/call rows update
+    // the same deterministic doc id with a larger value). Second, an updateDoc is judged on the
+    // MERGED result, so a marker left behind on a row would silently constrain every later write to
+    // it — which is why the admin editor explicitly clears it back to false.
+    //
+    // The check is on durationMinutes, the number that actually reaches pay, and only when THIS
+    // write changes it — so a soft-delete, a rename or a teamManagerIds touch on an already
+    // self-adjusted row never re-litigates a value it does not set. Both operands must be numbers:
+    // a legacy row with a non-numeric duration is simply not self-reducible (the client validator
+    // refuses it for the same reason), rather than raising an evaluation error.
+    function selfAdjustOkForUpdate() {
+      return request.resource.data.get('durationMinutes', 0) == resource.data.get('durationMinutes', 0) ||
+             request.resource.data.get('selfAdjusted', false) != true ||
+             (request.resource.data.get('durationMinutes', 0) is number &&
+              resource.data.get('durationMinutes', 0) is number &&
+              request.resource.data.get('durationMinutes', 0) < resource.data.get('durationMinutes', 0));
+    }
+
     // work_hours carries no duration; its time bounds are ISO strings. Guard only that, if present,
     // start/end are strings (a bug writing a number/object/array there is rejected). Absent → pass.
     function workHoursShapeOk(data) {
@@ -484,12 +513,17 @@ service cloud.firestore {
       // (adding an unrelated manager, or hiding it from a legitimate overseer). No client write-site
       // ever changes this field on a session (only the admin-SDK trigger sets it), so pinning it
       // unchanged breaks nothing. Delete is split out because it carries no request.resource.
+      // A FOURTH guard rides along: the one-way self-reduction check, which lets a worker shorten
+      // their own credited time without approval but never lengthen it. Applied here and NOT to
+      // break_sessions, because break time is an allowance, not payable — there is no incentive to
+      // inflate it, so it needs no direction.
       allow update:        if isUserActive() && (
                               ownsUserId() ||
                               canSeeWholeTeam() ||
                               (isScopedOverseer() && inCallerTeam())
                             ) && durationOkForUpdate()
                             && endTimeOkForUpdate()
+                            && selfAdjustOkForUpdate()
                             && request.resource.data.get('userId', '') == resource.data.get('userId', '')
                             && request.resource.data.get('teamManagerIds', []) == resource.data.get('teamManagerIds', []);
       allow delete:        if isUserActive() && (

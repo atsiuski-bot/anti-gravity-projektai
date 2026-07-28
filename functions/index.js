@@ -175,6 +175,7 @@ const CATEGORY_BY_TYPE = {
     timer_running_check: 'info',
     task_over_estimate: 'info',
     backdated_time_logged: 'info',
+    time_self_reduced: 'info',
     task_priority_escalated: 'info',
     achievement: 'info',
     task_overdue: 'info',
@@ -272,6 +273,13 @@ function copyForRequestNotification(n) {
             const name = n.userName ? String(n.userName).replace(/\s+/g, ' ').trim().slice(0, 100) : '';
             const day = n.day || 'Veiklos laikas';
             return { title: 'Įrašytas atbulinis laikas', body: name ? `${name} · ${day}` : day };
+        }
+        case 'time_self_reduced': {
+            // Worker → admin: an approval-free REDUCTION of their own credited time (a timer left
+            // running). Body = WHO + day; same clamp as the registry MIRROR.
+            const name = n.userName ? String(n.userName).replace(/\s+/g, ' ').trim().slice(0, 100) : '';
+            const day = n.day || 'Veiklos laikas';
+            return { title: 'Meistras sumažino savo laiką', body: name ? `${name} · ${day}` : day };
         }
         case 'session_correction_request':
             // Worker → manager: a logged-time error report. Body = "day: note" (note clamped) or day.
