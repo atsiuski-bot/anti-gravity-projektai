@@ -349,8 +349,13 @@ export default function TaskDetailModal({
             </div>
 
             {/* Body — scrolls; fade signals more content toward the sticky footer */}
-            <div className="relative min-h-0 flex-1">
-                <div ref={bodyRef} className="h-full space-y-4 overflow-y-auto px-5 py-4">
+            {/* The scroll container takes its height from FLEXBOX (`flex-1 min-h-0`), never from a
+                percentage (`h-full`). A percentage height resolves against the parent's SPECIFIED
+                height, which is `auto` on a flex item — so on mobile engines it collapsed to
+                content height: the body never overflowed, so it never scrolled, and the dialog's
+                `overflow-hidden` simply clipped the description and comments out of reach. */}
+            <div className="relative flex min-h-0 flex-1 flex-col">
+                <div ref={bodyRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4">
                     {/* Row 1 — type glyph (call / quick work), status, priority, deadline */}
                     <div className="flex flex-wrap items-center gap-2">
                         {typeIcon && <SessionTypeIcon type={typeIcon} className="h-5 w-5" />}
