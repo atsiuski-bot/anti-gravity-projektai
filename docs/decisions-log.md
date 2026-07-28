@@ -33,6 +33,23 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-07-28** — **Client clock-skew tolerance tightened from 1h to 2min** (founder decision;
+  `firestore.rules` `endTimeNotInServerFuture`). The bound is asymmetric on purpose: a session's end
+  may be arbitrarily EARLIER than server time (the offline-sync case) but never later. Reassessing
+  what the forward tolerance actually buys showed it was ~30x larger than needed: the OFFLINE case
+  never uses it (a late-syncing write already has an end in the past), and a UNIFORMLY wrong clock
+  gains nothing (shifting the phone shifts both start and end, leaving the duration — their
+  difference — unchanged). The tolerance is therefore the ceiling on exactly ONE deliberate
+  manoeuvre: start the timer, move the clock forward mid-session, stop. Capped at 2min instead of 1h,
+  still ~60x an auto-synced phone's drift. Residual: a hand-set phone running >2min fast has its stop
+  REJECTED — raise the number first if that is ever reported (one edit + a rules deploy). Proven by
+  the emulator skew suite (30s ahead accepted, 10min ahead denied). **Rejected as unbuildable today:**
+  bounding a duration by SERVER-elapsed time between start and stop, which would make clock skew
+  irrelevant entirely. It needs a server-anchored start, and that cannot coexist with offline-first
+  starts — an offline start's server timestamp resolves only on arrival, so the server's elapsed would
+  be SHORTER than the real work and would reject honest pay. That is ADR 0021's deferred rework, not a
+  knob. Nothing at any tolerance bounds a session asserted entirely in the past (R-04, accepted risk).
+
 - **2026-07-13** — **Triage-sweep #12 accepted as a policy risk (no code change).** Founder
   decision on the triage-sweep finding that `autoCloseForgottenSessions`
   (`functions/index.js:1612`) credits an abandoned quick-work/call session up to the 16h clamp

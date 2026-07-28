@@ -919,8 +919,17 @@ describeEmulator('audit 2026-07-22 — notification forgery + audit-trail re-poi
             );
         });
 
-        it('a device 10 min fast is still accepted — inside the tolerance, so no honest pay is lost', async () => {
+        // The tolerance was tightened from 1h to 2min (2026-07-28). These two pin the new boundary
+        // from both sides: an auto-synced phone (drift measured in seconds) is still safely inside,
+        // while the mid-session clock-shift manoeuvre is now capped at 2 minutes instead of an hour.
+        it('a device seconds fast is still accepted — no honest pay is lost to ordinary drift', async () => {
             await assertSucceeds(
+                setDoc(doc(workerDb(), 'work_sessions', 'skew-fast-secs'), ownSession(Date.now() + 30 * 1000))
+            );
+        });
+
+        it('a device 10 min fast is now REJECTED — outside the tightened 2min tolerance', async () => {
+            await assertFails(
                 setDoc(doc(workerDb(), 'work_sessions', 'skew-fast10'), ownSession(Date.now() + 10 * MIN))
             );
         });

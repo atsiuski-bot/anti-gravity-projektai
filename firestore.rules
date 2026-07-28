@@ -260,14 +260,33 @@ service cloud.firestore {
     // row-builder, so a new field would mean editing every one of them on the most safety-critical
     // path in the product. Keeping the check here leaves the write path completely untouched.
     //
-    // TOLERANCE = 1h, and it is deliberately generous — this is the ONE knob to tune. The two error
-    // modes are not symmetric: wrongly DENYING an honest write loses a worker's pay (and offline it
-    // fails late and quietly), while wrongly ALLOWING one costs at most the tolerance per closed
-    // session. This whole codebase's priority is never losing worked time, so the tolerance is set
-    // well past any plausible honest device (auto-synced phones drift by seconds; even a phone
-    // someone deliberately set "a few minutes fast" passes) while still killing the gross attack —
-    // rolling the clock to tomorrow to claim a whole extra shift is now impossible, and the residual
-    // gain is capped at 1h per session on top of the existing 16h client clamp / 24h durationInRange.
+    // TOLERANCE = 2min (was 1h until 2026-07-28; founder decision) — the ONE knob here. What it
+    // actually buys is narrower than it looks, and that is why it could be tightened so far:
+    //
+    //   * The OFFLINE case never needs it. A worker who finishes at 15:00 with no signal and syncs at
+    //     17:00 writes an endTime EARLIER than request.time, which passes with no lower bound at all.
+    //     The tolerance only ever covers a write sent more or less immediately.
+    //   * A UNIFORMLY wrong clock gains nothing. Shift the phone an hour ahead and BOTH the start and
+    //     the end shift with it — the duration, which is their difference, is unchanged. There is no
+    //     inflation to defend against.
+    //   * So the tolerance is precisely the ceiling on ONE deliberate manoeuvre: start the timer, move
+    //     the clock forward mid-session, then stop. That is the only way a device clock inflates a
+    //     credited duration, and it is now capped at 2 minutes per session.
+    //
+    // The error modes remain asymmetric — wrongly DENYING an honest write loses a worker's pay (and
+    // offline it fails late and quietly), while wrongly ALLOWING one costs at most the tolerance. 2min
+    // is still ~60x the drift of an auto-synced phone (which is seconds), so it stays clear of the
+    // honest population. The residual exposure it does NOT address is a phone whose clock was set by
+    // hand and runs more than 2 minutes fast: that worker's stop is rejected. Raise this number first
+    // if such a rejection is ever reported — it is one edit and a rules deploy.
+    //
+    // What this check CANNOT do, at any tolerance: bound a duration asserted entirely in the past. A
+    // fabricated session with plausible past times is untouched by it. Closing that needs the duration
+    // bounded by SERVER-elapsed time between start and stop — which requires a server-anchored start,
+    // and a server-anchored start cannot coexist with offline-first starts (the start write's server
+    // time resolves only when it reaches the server, so an offline start would make the server's
+    // elapsed SHORTER than the real work and reject honest pay). That is the deferred rework in
+    // ADR 0021, not a knob.
     function isIsoInstant(value) {
       return value is string &&
              value.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}.*');
@@ -285,7 +304,7 @@ service cloud.firestore {
     // evaluation error, which DENIES — the same trap as bare dot access on a missing field.)
     function endTimeNotInServerFuture(data) {
       return !isIsoInstant(data.get('endTime', '')) ||
-             isoInstantMillis(data.get('endTime', '')) <= request.time.toMillis() + 3600000;
+             isoInstantMillis(data.get('endTime', '')) <= request.time.toMillis() + 120000;
     }
     // On UPDATE, judge only a write that actually CHANGES endTime — so a soft-delete, a rename or a
     // teamManagerIds touch never re-litigates a value it does not set, and an already-stored
