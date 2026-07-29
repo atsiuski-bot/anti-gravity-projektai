@@ -43,7 +43,17 @@
 //
 // 3 = the first build with a targeted rollout gate; earlier bundles have no contract at all and are
 // treated as 0 by the comparison below, so any minClientContract >= 1 excludes them.
-export const TIMER_ENGINE_CLIENT_CONTRACT = 3;
+//
+// 4 = the fleet-wide floor. Contract 3 shipped hours BEFORE the hardening that makes a canonical run
+// survivable for a worker who is not watching over it: the ledger writes that must merge over the
+// server's team stamp (a bare set has its whole close batch denied by the rules pin — the worker
+// cannot stop their timer), the nightly nets learning about active_sessions, the wedge on a task
+// deleted mid-run, the outbox replay age cap, session nesting, the break day-counter boundary, and
+// recovery no longer paying for a night's sleep. A phone still holding a contract-3 bundle would
+// claim to speak the protocol while missing all of that — and PWA updates are opt-in (a dismissable
+// "Atnaujinta versija" prompt), so such phones really do exist days later. Bumping the floor is what
+// makes "enable for everyone" mean "everyone whose build can actually be trusted with pay".
+export const TIMER_ENGINE_CLIENT_CONTRACT = 4;
 
 /**
  * Decide whether the canonical timer engine applies to this worker on this build.
