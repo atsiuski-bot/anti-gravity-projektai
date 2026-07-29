@@ -1,4 +1,5 @@
 import { cn } from '../../utils/cn';
+import bunnyBadgeAtlas from '../../assets/badges/zivile-bunny-badges-atlas.webp';
 
 /**
  * Badge — the canonical achievement "trophy" tile (DESIGN_SYSTEM §8, tokens.md §1).
@@ -54,7 +55,19 @@ const MEDALLION_SIZE = {
     md: 'h-12 w-12',
 };
 
-export default function Badge({ tier = 'bronze', name, icon: Icon, size = 'md', locked = false, className }) {
+const BUNNY_ATLAS_POSITIONS = {
+    follow_through: '0% 0%',
+    steady_rhythm: '50% 0%',
+    on_estimate: '100% 0%',
+    plans_ahead: '0% 50%',
+    on_time_start: '50% 50%',
+    approved_craft: '100% 50%',
+    thorough: '0% 100%',
+    hard_tasks: '50% 100%',
+    documented: '100% 100%',
+};
+
+export default function Badge({ tier = 'bronze', name, icon: Icon, badgeKey, bunnyTheme = false, size = 'md', locked = false, className }) {
     const t = TIERS[tier] || TIERS.bronze;
     const filledPips = locked ? 0 : t.order;
 
@@ -76,7 +89,18 @@ export default function Badge({ tier = 'bronze', name, icon: Icon, size = 'md', 
                     locked ? 'bg-surface-sunken text-ink-muted ring-line' : t.medallion
                 )}
             >
-                {Icon && <Icon className={size === 'sm' ? 'h-5 w-5' : 'h-6 w-6'} />}
+                {bunnyTheme && BUNNY_ATLAS_POSITIONS[badgeKey] ? (
+                    <span
+                        className={cn('h-full w-full rounded-full bg-cover', locked && 'grayscale opacity-40')}
+                        style={{
+                            backgroundImage: `url(${bunnyBadgeAtlas})`,
+                            backgroundPosition: BUNNY_ATLAS_POSITIONS[badgeKey],
+                            backgroundSize: '300% 300%',
+                        }}
+                    />
+                ) : (
+                    Icon && <Icon className={size === 'sm' ? 'h-5 w-5' : 'h-6 w-6'} />
+                )}
             </div>
             <div aria-hidden="true" className="mt-2 flex gap-1">
                 {[1, 2, 3, 4].map((i) => (

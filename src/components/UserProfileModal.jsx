@@ -7,7 +7,7 @@ import { useUsers } from '../context/UsersContext';
 import { useAuth } from '../context/AuthContext';
 import { useAchievements } from '../hooks/useAchievements';
 import { formatDisplayName } from '../utils/formatters';
-import { BADGE_ICONS, tierKey } from '../utils/badgeCatalog';
+import { BADGE_ICONS, tierKey, usesBunnyBadgeTheme } from '../utils/badgeCatalog';
 import { canSeeWholeTeam, isScopedOverseer, isOverseenBy, scopeRoster } from '../utils/teamScope';
 import { assignTask, humanActor, MODES } from '../domain';
 import { logError } from '../utils/errorLog';
@@ -458,6 +458,7 @@ export default function UserProfileModal({ userId, onClose }) {
 
     const user = usersMap?.[userId];
     const name = formatDisplayName(user?.displayName || user?.email || 'Narys');
+    const bunnyBadgeTheme = usesBunnyBadgeTheme(user?.email);
     const role = ROLE_META[user?.role] || ROLE_META.worker;
 
     // May the signed-in viewer see this member's work statistics? Whole-team viewers see anyone;
@@ -652,7 +653,14 @@ export default function UserProfileModal({ userId, onClose }) {
                     {achievements.length > 0 ? (
                         <div className="grid grid-cols-3 gap-4">
                             {achievements.map((a) => (
-                                <Badge key={a.id} tier={tierKey(a.tier)} name={a.name} icon={BADGE_ICONS[a.key]} />
+                                <Badge
+                                    key={a.id}
+                                    tier={tierKey(a.tier)}
+                                    name={a.name}
+                                    icon={BADGE_ICONS[a.key]}
+                                    badgeKey={a.key}
+                                    bunnyTheme={bunnyBadgeTheme}
+                                />
                             ))}
                         </div>
                     ) : (
