@@ -8,6 +8,9 @@ import {
     formatMinutesToTimeString,
     parseTimeStringToMinutes,
     getLithuanianDateString,
+    getCurrentWorkDayCutoff,
+    getWorkDayCutoff,
+    addDaysToDateString,
     MAX_SESSION_MINUTES,
 } from '../utils/timeUtils';
 import { useUsers } from '../context/UsersContext';
@@ -78,20 +81,24 @@ export default function ActiveWorkSessions({ embedded = false }) {
         };
     }, [scoped, uid]);
 
-    // Today's planned shifts, read with the same day-range shape AllUsersCalendar uses
-    // (`start` within [startOfDay, endOfDay]). We only need to know who is scheduled NOW, so we
-    // read the whole day once and overlap-filter client-side; the row is re-evaluated on the
-    // panel's own 10s tick via the rows' timers. Read-only — no per-row listener.
+    // Today's planned shifts. The window is the app's canonical WORK day — 05:00 Vilnius to the
+    // next 05:00 Vilnius — not device-local midnight. A shift that runs past midnight (a night
+    // shift, or a shift starting at 00:30) is still "today" to the worker and to every other day
+    // window in the app (task lists, Dienos statistika); a device-midnight boundary would make this
+    // panel disagree with all of them and could show a night-shift worker mid-shift as "outside
+    // today's shifts" for the last stretch before dawn. We only need to know who is scheduled NOW,
+    // so we read the whole work-day once and overlap-filter client-side; the row is re-evaluated on
+    // the panel's own 10s tick via the rows' timers. Read-only — no per-row listener.
     useEffect(() => {
-        const startOfDay = new Date();
-        startOfDay.setHours(0, 0, 0, 0);
-        const endOfDay = new Date();
-        endOfDay.setHours(23, 59, 59, 999);
+        const startOfWorkDay = getCurrentWorkDayCutoff();
+        const workDayDateStr = getLithuanianDateString(startOfWorkDay);
+        // Next work day's cutoff minus 1ms — the DST-safe end of "today" (see addDaysToDateString).
+        const endOfWorkDay = new Date(getWorkDayCutoff(addDaysToDateString(workDayDateStr, 1)).getTime() - 1);
 
         const shiftsQuery = query(
             collection(db, 'work_hours'),
-            where('start', '>=', startOfDay.toISOString()),
-            where('start', '<=', endOfDay.toISOString())
+            where('start', '>=', startOfWorkDay.toISOString()),
+            where('start', '<=', endOfWorkDay.toISOString())
         );
         const unsubShifts = onSnapshot(shiftsQuery, (snap) => {
             const rows = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -112,7 +119,9 @@ export default function ActiveWorkSessions({ embedded = false }) {
     // canonical record of worked time, and its `date` is the Vilnius calendar day the session ended
     // on — the same key reports use — so a single equality read answers "did this person work today".
     useEffect(() => {
-        const today = getLithuanianDateString(new Date());
+        // Same work-day date string as the shift window above, not raw calendar-today — a session
+        // logged between midnight and 05:00 Vilnius still belongs to the PREVIOUS work day.
+        const today = getLithuanianDateString(getCurrentWorkDayCutoff());
         const scopeConstraints = privateScopeConstraints({
             userData,
             uid,
