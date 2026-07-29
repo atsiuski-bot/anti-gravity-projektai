@@ -79,3 +79,36 @@ export const compressImage = (file, maxWidth = 3000, maxHeight = 3000, quality =
         };
     });
 };
+
+// ── Gallery thumbnails ──────────────────────────────────────────────────────────────────────────
+//
+// Every photo surface in the app draws its tiles at 64–96 CSS px, but until now each tile was the
+// FULL stored image: a ~3000px, ~0.8-quality JPEG, routinely 1–2 MB. Opening one task with eight
+// photos therefore pulled ~10 MB over a field worker's mobile data to paint eight postage stamps —
+// and the same bytes again on the next task, because nothing is shared between them.
+//
+// So a second, small rendition is uploaded ALONGSIDE the original and stored in a parallel array.
+// The original is untouched (the lightbox still opens the full-resolution photo, which is the whole
+// point of keeping 3000px), and the array is additive: a task saved before this change simply has
+// no thumb entry and every reader falls back to the original, exactly as it behaves today.
+//
+// 480px at q0.6 covers a 96px tile at 3× DPR with headroom, and lands around 30–60 kB — roughly a
+// 30× reduction per tile.
+export const THUMB_MAX_PX = 480;
+export const THUMB_QUALITY = 0.6;
+
+/**
+ * A small rendition of an already-compressed image, for gallery tiles.
+ * Returns null when the browser cannot produce one (HEIC, a corrupt file) — never throws, because a
+ * missing thumbnail must degrade to "show the original", never to a failed upload.
+ *
+ * @param {File} file - preferably the COMPRESSED file, so the work is a cheap second downscale.
+ * @returns {Promise<File|null>}
+ */
+export const makeThumbnail = async (file) => {
+    try {
+        return await compressImage(file, THUMB_MAX_PX, THUMB_MAX_PX, THUMB_QUALITY);
+    } catch {
+        return null;
+    }
+};

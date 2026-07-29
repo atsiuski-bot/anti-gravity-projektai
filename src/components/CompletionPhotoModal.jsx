@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Camera, ImagePlus, X, CheckCircle2 } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { uploadAttachments } from '../utils/attachmentUpload';
+import { uploadAttachments, padThumbs } from '../utils/attachmentUpload';
 import { notifyMany } from '../utils/notify';
 import { logError } from '../utils/errorLog';
 import { useAuth } from '../context/AuthContext';
@@ -80,10 +80,17 @@ export default function CompletionPhotoModal({ task, onClose }) {
         setError('');
         setSaving(true);
         try {
-            const urls = await uploadAttachments(photos.map((p) => p.file), currentUser.uid);
+            const { urls, thumbUrls } = await uploadAttachments(photos.map((p) => p.file), currentUser.uid);
             await updateDoc(doc(db, 'tasks', task.id), {
                 // Append to the SEPARATE completion-photo field, never the regular attachmentUrls.
                 completionPhotoUrls: [...(task.completionPhotoUrls || []), ...urls],
+                // Index-aligned gallery renditions. Padded to the CURRENT url count first, so photos
+                // added before thumbnails existed keep their slots (and fall back to the original)
+                // instead of shifting every later thumb onto the wrong photo.
+                completionPhotoThumbUrls: [
+                    ...padThumbs(task.completionPhotoThumbUrls, (task.completionPhotoUrls || []).length),
+                    ...thumbUrls,
+                ],
                 updatedAt: new Date().toISOString(),
             });
             // Let the manager know a work-end photo landed (same spine as a regular new photo);

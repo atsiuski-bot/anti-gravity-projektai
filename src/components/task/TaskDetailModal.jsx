@@ -28,7 +28,7 @@ import { deriveTaskStatus } from '../../utils/taskStatus';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, relativeDeadline } from '../../utils/timeUtils';
 import { getChecklistProgress, toggleChecklistItem } from '../../utils/checklistActions';
 import { addComment, updateComment, deleteComment, getCommentKey } from '../../utils/commentActions';
-import { uploadAttachments, MAX_ATTACHMENTS } from '../../utils/attachmentUpload';
+import { uploadAttachments, withThumbs, padThumbs, MAX_ATTACHMENTS } from '../../utils/attachmentUpload';
 import { notifyMany } from '../../utils/notify';
 import { logError } from '../../utils/errorLog';
 import { preventEnterSubmit } from '../../utils/formUtils';
@@ -138,12 +138,21 @@ export default function TaskDetailModal({
         return task.attachmentUrl ? [task.attachmentUrl] : [];
     }, [task]);
 
+    // Tiles render the small rendition, the lightbox opens the original. Derived here so both
+    // galleries below read one shape and neither has to know a thumb may be missing.
+    const imageTiles = useMemo(() => withThumbs(imageUrls, task?.attachmentThumbUrls), [imageUrls, task]);
+
     // Work-end proof photos live in their OWN field (completionPhotoUrls), shown as a separate
     // gallery from the before/during-work photos above. This is the set the "Dokumentuoja darbą"
     // badge counts.
     const completionUrls = useMemo(
         () => (task?.completionPhotoUrls?.length ? task.completionPhotoUrls : []),
         [task],
+    );
+
+    const completionTiles = useMemo(
+        () => withThumbs(completionUrls, task?.completionPhotoThumbUrls),
+        [completionUrls, task],
     );
 
     useEffect(() => {
@@ -239,9 +248,10 @@ export default function TaskDetailModal({
         setError('');
         setUploading(true);
         try {
-            const urls = await uploadAttachments(picked, currentUser.uid);
+            const { urls, thumbUrls } = await uploadAttachments(picked, currentUser.uid);
             await updateDoc(doc(db, collectionName, task.id), {
                 attachmentUrls: [...imageUrls, ...urls],
+                attachmentThumbUrls: [...padThumbs(task.attachmentThumbUrls, imageUrls.length), ...thumbUrls],
                 updatedAt: new Date().toISOString(),
             });
             // Tell the OTHER party a photo landed (manager ↔ worker), exactly like a new comment —
@@ -275,9 +285,10 @@ export default function TaskDetailModal({
         setError('');
         setUploadingCompletion(true);
         try {
-            const urls = await uploadAttachments(picked, currentUser.uid);
+            const { urls, thumbUrls } = await uploadAttachments(picked, currentUser.uid);
             await updateDoc(doc(db, collectionName, task.id), {
                 completionPhotoUrls: [...completionUrls, ...urls],
+                completionPhotoThumbUrls: [...padThumbs(task.completionPhotoThumbUrls, completionUrls.length), ...thumbUrls],
                 updatedAt: new Date().toISOString(),
             });
             await notifyMany([task.managerId, task.assignedUserId], {
@@ -650,7 +661,7 @@ export default function TaskDetailModal({
                             </div>
                             {imageUrls.length > 0 ? (
                                 <div className="flex flex-wrap gap-2">
-                                    {imageUrls.map((url, idx) => (
+                                    {imageTiles.map((photo, idx) => (
                                         <button
                                             key={idx}
                                             type="button"
@@ -661,7 +672,7 @@ export default function TaskDetailModal({
                                             className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti nuotrauką ${idx + 1}`}
                                         >
-                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
+                                            <img src={photo.thumb} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                             <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                 <ZoomIn className="h-3 w-3" aria-hidden="true" />
                                             </span>
@@ -700,7 +711,7 @@ export default function TaskDetailModal({
                             </div>
                             {completionUrls.length > 0 ? (
                                 <div className="flex flex-wrap gap-2">
-                                    {completionUrls.map((url, idx) => (
+                                    {completionTiles.map((photo, idx) => (
                                         <button
                                             key={idx}
                                             type="button"
@@ -708,7 +719,7 @@ export default function TaskDetailModal({
                                             className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti pabaigos nuotrauką ${idx + 1}`}
                                         >
-                                            <img src={url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
+                                            <img src={photo.thumb} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                             <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                 <ZoomIn className="h-3 w-3" aria-hidden="true" />
                                             </span>

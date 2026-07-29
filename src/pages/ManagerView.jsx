@@ -578,7 +578,6 @@ export default function ManagerView() {
                                 tasks={sortedTasks}
                                 onEdit={handleEditTask}
                                 role="manager"
-                                hideCheckboxes={true}
                                 gridControls={teamGridControls}
                                 dragEnabled={dragEnabled}
                             />
@@ -589,7 +588,6 @@ export default function ManagerView() {
                         tasks={sortedTasks}
                         onEdit={handleEditTask}
                         role="manager"
-                        hideCheckboxes={true}
                         gridControls={teamGridControls}
                     />
                 )}
@@ -704,7 +702,6 @@ export default function ManagerView() {
                                     tasks={sortedMyTasks}
                                     onEdit={handleEditTask}
                                     role="worker" // Mimic worker view columns/actions
-                                    hideCheckboxes={true}
                                 />
                             )}
                         </>

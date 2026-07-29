@@ -14,7 +14,8 @@ import { notify } from '../utils/notify';
 import { logError } from '../utils/errorLog';
 import { assignTask, createTask, humanActor, MODES } from '../domain';
 import { getPriorityOptions, getPriorityColor, getPriorityTextColor, normalizePriority, DEFAULT_PRIORITY } from '../utils/priority';
-import { compressImage } from '../utils/imageUtils';
+import { compressImage, makeThumbnail } from '../utils/imageUtils';
+import { withThumbs, padThumbs } from '../utils/attachmentUpload';
 import { buildChecklistItem, reconcileChecklist } from '../utils/checklistActions';
 import { parseTimeStringToMinutes } from '../utils/timeUtils';
 import { preventEnterSubmit } from '../utils/formUtils';
@@ -194,6 +195,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         tag: '',
         attachmentUrl: '',
         attachmentUrls: [], // New field for multiple attachments
+        attachmentThumbUrls: [], // index-aligned gallery renditions (see utils/attachmentUpload)
         checklist: []
     });
 
@@ -450,6 +452,9 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 tag: task.tag || '',
                 attachmentUrl: task.attachmentUrl || '', // Keep for legacy
                 attachmentUrls: existingUrls,
+                // Padded to the url count: a task photographed before thumbnails existed carries
+                // none, and an unpadded array would pair new previews with the oldest photos.
+                attachmentThumbUrls: padThumbs(task.attachmentThumbUrls, existingUrls.length),
                 checklist: task.checklist || []
             });
         } else if (editTemplate) {
@@ -473,6 +478,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 tag: '',
                 attachmentUrl: '',
                 attachmentUrls: [],
+                attachmentThumbUrls: [],
                 checklist: []
             });
             setTemplateName(editTemplate.templateName || '');
@@ -511,6 +517,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     tag: '',
                     attachmentUrl: '',
                     attachmentUrls: [],
+                    attachmentThumbUrls: [],
                     checklist: []
                 });
             })();
@@ -833,7 +840,11 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
     const removeExistingAttachment = (index) => {
         setFormData(prev => ({
             ...prev,
-            attachmentUrls: prev.attachmentUrls.filter((_, i) => i !== index)
+            attachmentUrls: prev.attachmentUrls.filter((_, i) => i !== index),
+            // The thumb array is positional, so it must lose the SAME slot — dropping only the url
+            // would slide every later photo onto its neighbour's preview.
+            attachmentThumbUrls: padThumbs(prev.attachmentThumbUrls, prev.attachmentUrls.length)
+                .filter((_, i) => i !== index),
         }));
     };
 
@@ -980,6 +991,8 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         try {
             const selectedManager = workers.find(w => w.id === formData.managerId);
             let currentAttachmentUrls = [...(formData.attachmentUrls || [])];
+            let currentAttachmentThumbUrls = [...(formData.attachmentThumbUrls || [])];
+            let newThumbUrls = [];
             // Tracked separately from the list above so the edit-path merge can append ONLY what
             // this save actually uploaded — appending the whole list would re-add a photo someone
             // else deleted while this modal sat open. See the merge below.
@@ -1007,8 +1020,25 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 );
                 const newUrls = await Promise.all(uploadPromises);
 
+                // Small gallery renditions, uploaded beside the originals. Progress-free and
+                // failure-tolerant on purpose: they are ~30x smaller than the bytes the bar is
+                // tracking, and a photo must never be lost because its preview could not be made.
+                newThumbUrls = await Promise.all(compressedFiles.map(async (file) => {
+                    const thumb = await makeThumbnail(file);
+                    if (!thumb) return null;
+                    try {
+                        return await uploadFile(thumb);
+                    } catch {
+                        return null;
+                    }
+                }));
+
                 uploadedUrls = newUrls;
                 currentAttachmentUrls = [...currentAttachmentUrls, ...newUrls];
+                currentAttachmentThumbUrls = [
+                    ...padThumbs(currentAttachmentThumbUrls, currentAttachmentUrls.length - newUrls.length),
+                    ...newThumbUrls,
+                ];
             }
 
 
@@ -1037,6 +1067,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 estimatedTimeMinutes: parseTimeStringToMinutes(formData.estimatedTime),
                 attachmentUrl: primaryAttachmentUrl,
                 attachmentUrls: currentAttachmentUrls,
+                attachmentThumbUrls: padThumbs(currentAttachmentThumbUrls, currentAttachmentUrls.length),
                 managerName: selectedManager ? (selectedManager.displayName || selectedManager.email) : '',
                 updatedAt: new Date().toISOString()
             };
@@ -1926,12 +1957,12 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                 {/* Display Existing Attachments */}
                                 {formData.attachmentUrls && formData.attachmentUrls.length > 0 && (
                                     <div className="mt-4 grid grid-cols-2 gap-2">
-                                        {formData.attachmentUrls.map((url, index) => (
+                                        {withThumbs(formData.attachmentUrls, formData.attachmentThumbUrls).map((photo, index) => (
                                             <div key={`existing-${index}`} className="relative group border rounded-lg p-1">
-                                                <a href={url} target="_blank" rel="noopener noreferrer" className="block">
+                                                <a href={photo.url} target="_blank" rel="noopener noreferrer" className="block">
                                                     {/* object-contain + sunken canvas so a tall photo shows whole,
                                                         not just its middle; ZoomIn badge marks it openable full-size. */}
-                                                    <img src={url} alt={`Priedas ${index + 1}`} className="w-full h-24 object-contain rounded bg-surface-sunken" loading="lazy" decoding="async" />
+                                                    <img src={photo.thumb} alt={`Priedas ${index + 1}`} className="w-full h-24 object-contain rounded bg-surface-sunken" loading="lazy" decoding="async" />
                                                 </a>
                                                 <span className="pointer-events-none absolute bottom-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                     <ZoomIn className="h-3 w-3" aria-hidden="true" />

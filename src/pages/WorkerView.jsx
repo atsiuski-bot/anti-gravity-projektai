@@ -430,7 +430,6 @@ export default function WorkerView() {
                                 tasks={sortedTasks}
                                 onEdit={handleEditTask}
                                 role="worker"
-                                hideCheckboxes={true}
                             />
                         </div>
                     </>

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { vi, afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
     assertFails,
     assertSucceeds,
@@ -33,6 +33,16 @@ const USER_ID = 'timer-worker';
 const MANAGER_ID = 'timer-manager';
 const emulatorAvailable = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const describeEmulator = emulatorAvailable ? describe : describe.skip;
+
+// TIMING BUDGET. These cases do not compute — they WAIT: on the emulator starting, on Firestore's
+// offline queue, and on its reconnect backoff. None of those are bounded by how fast this machine
+// is, so the runner's generic defaults are the wrong budget for them: under load (a parallel build,
+// a busy CI box) they expire mid-reconnect and the suite fails with a timeout that says nothing
+// about the code. That matters more now that /ship runs this suite as a MANDATORY gate — a gate
+// that cries wolf is one people learn to re-run past, which is exactly how a real failure gets
+// waved through. A generous explicit ceiling keeps a genuine hang bounded while making a red run
+// mean something.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 const task = (id, overrides = {}) => ({
     id,

@@ -20,8 +20,7 @@ import UserChip from './UserChip';
 import TimeChangedWarning from './task/TimeChangedWarning';
 import { formatMinutesToTimeString, calculateCurrentTotalMinutes, getLithuanianNow, MAX_SESSION_MINUTES, parseTimeStringToMinutes } from '../utils/timeUtils';
 import { deleteTask, revertTask } from '../utils/taskActions';
-import { toggleTaskCompletion } from '../utils/taskCompletionActions';
-import { approveTask, unapproveTask, completeTask, reopenTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
+import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
 import { isManagerRole } from '../utils/formatters';
 import { canEditTask } from '../utils/taskPermissions';
@@ -116,7 +115,7 @@ function HeaderCell({ label, sortMode, sort, filter, filterLabel }) {
     );
 }
 
-const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderSlots = null }) => {
+const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) => {
     const { currentUser, userRole, userData } = useAuth();
     const runUndoable = useUndoableAction();
     // Data-grid header wiring (see helpers above). Derived once per render; harmless no-ops when
@@ -192,25 +191,6 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
         } catch (e) {
             return dateStr;
         }
-    };
-
-    // Completion is a cleanly REVERSIBLE state flip, so it no longer gates behind a confirm dialog
-    // (friction before a cheap-to-undo action). It commits immediately and offers an undo for a few
-    // seconds (DESIGN_SYSTEM §8). The inverse is the audited mirror command — reopenTask undoes a
-    // completion, completeTask undoes an un-check — so the undo is itself a first-class decision.
-    const handleToggleComplete = (taskId) => {
-        const task = tasks.find(t => t.id === taskId);
-        if (!task) return;
-        const willComplete = !task.completed;
-        const actor = humanActor({ uid: currentUser.uid, displayName: currentUser.displayName, email: currentUser.email, role: userRole });
-        runUndoable({
-            run: () => toggleTaskCompletion(task, currentUser, userRole),
-            undo: () => (willComplete
-                ? reopenTask({ task }, { actor, mode: MODES.COMMIT, reason: 'undo completion' })
-                : completeTask({ task }, { actor, mode: MODES.COMMIT, reason: 'undo reopen' })),
-            message: willComplete ? 'Užduotis pažymėta atlikta.' : 'Užduotis grąžinta į sąrašą.',
-            undoneMessage: willComplete ? 'Atšaukta — užduotis grąžinta į sąrašą.' : 'Atšaukta — užduotis vėl pažymėta atlikta.',
-        });
     };
 
     // Accepting finished work (completed -> confirmed) is a cleanly reversible sign-off, so it is
@@ -461,11 +441,9 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
                 Actions are always-visible 44px controls (group-hover is invisible on touch). */}
             <ul className="divide-y divide-line md:hidden">
                 {tasks.map((task) => {
-                    const isAssignedToMe = currentUser?.uid === task.assignedUserId;
                     const totalMinutes = calculateCurrentTotalMinutes(task);
                     const hasStarted = task.status && task.status !== 'pending';
                     const showTime = totalMinutes > 0 || hasStarted;
-                    const checkboxDisabled = !isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved';
                     const links = (task.links || []).flatMap(l => l.split('\n')).filter(l => l.trim().length > 0).slice(0, 4);
                     const hasImage = (task.attachmentUrls && task.attachmentUrls.length > 0) || task.attachmentUrl;
                     return (
@@ -619,29 +597,6 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
                                 </div>
                             )}
 
-                            {/* Completion checkbox (worker) — prominent labelled control */}
-                            {!hideCheckboxes && (
-                                <label
-                                    onClick={(e) => e.stopPropagation()}
-                                    className={clsx(
-                                        'mt-3 flex items-center gap-2 min-h-touch',
-                                        checkboxDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
-                                    )}>
-                                    <input
-                                        type="checkbox"
-                                        checked={task.completed || false}
-                                        onChange={() => {
-                                            if (isAssignedToMe) {
-                                                handleToggleComplete(task.id);
-                                            }
-                                        }}
-                                        disabled={checkboxDisabled}
-                                        className="w-5 h-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
-                                    />
-                                    <span className="text-caption text-ink">Atlikta</span>
-                                </label>
-                            )}
-
                             {/* One adaptive single-line action row (lifecycle only — edit/comment live
                                 in the detail sheet), then the worker timer on its own row below. */}
                             <TaskActionRow actions={buildRowActions(task)} className="mt-3" />
@@ -664,11 +619,6 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
                                     <span className="sr-only">Pertvarkymas</span>
                                 </th>
                             )}
-                            {!hideCheckboxes && (
-                                <th className="px-2 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-11">
-                                    ✓
-                                </th>
-                            )}
                             <th className="px-2 py-3 text-left text-caption font-medium text-ink-muted uppercase tracking-wider">Užduotis</th>
                             <th className="px-1 py-1.5 text-left text-caption font-medium text-ink-muted uppercase tracking-wider w-28" aria-sort={ariaSortFor(sortCols.user)}>
                                 {gc ? <HeaderCell label="Meist." sortMode={sortCols.user} sort={gc.sort} filter={filters.user} filterLabel="Filtruoti pagal meistrą" /> : 'Meist.'}
@@ -687,10 +637,6 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
                     <tbody className="bg-surface-card divide-y divide-line">
                         <DesktopBody>
                         {tasks.map((task) => {
-                            const isAssignedToMe = currentUser?.uid === task.assignedUserId;
-                            // Same rule the mobile card derives — only the assignee may tick a task
-                            // that is not already confirmed or still awaiting approval.
-                            const checkboxDisabled = !isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved';
                             const totalMinutes = calculateCurrentTotalMinutes(task);
                             const hasStarted = task.status && task.status !== 'pending';
                             const showSpent = totalMinutes > 0 || hasStarted;
@@ -720,37 +666,6 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
                             );
                             const cells = (
                                 <>
-                                    {!hideCheckboxes && (
-                                        <td className="px-1 py-3 text-center align-top">
-                                            {/* The box is drawn at 16px so the grid stays dense, but the
-                                                LABEL around it is the target (§7: the icon may be small,
-                                                the tappable area may not). It also owns the click, so a
-                                                near-miss toggles completion instead of opening the row. */}
-                                            <label
-                                                onClick={(e) => e.stopPropagation()}
-                                                className={clsx(
-                                                    "flex min-h-touch min-w-touch items-center justify-center",
-                                                    checkboxDisabled ? "cursor-not-allowed" : "cursor-pointer"
-                                                )}
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={task.completed || false}
-                                                    onChange={() => {
-                                                        if (isAssignedToMe) {
-                                                            handleToggleComplete(task.id);
-                                                        }
-                                                    }}
-                                                    disabled={checkboxDisabled}
-                                                    aria-label="Pažymėti atlikta"
-                                                    className={clsx(
-                                                        "w-4 h-4 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1",
-                                                        checkboxDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-                                                    )}
-                                                />
-                                            </label>
-                                        </td>
-                                    )}
                                     {/* Task — title is the keyboard-accessible opener; the whole row opens on
                                         mouse click. Deadline / links / image / checklist / comments collapse into
                                         one muted indicator row in front of "Vadovas" (tag keeps its own column). */}
