@@ -17,7 +17,7 @@ const TIER_LABELS = ['Bronza', 'Sidabras', 'Auksas', 'Platina'];
  *           thresholds: number[], tier: number }} badge - a catalog entry merged with the
  *           earned tier (0 = not earned yet)
  */
-export default function BadgeDetailModal({ badge, onClose }) {
+export default function BadgeDetailModal({ badge, bunnyTheme = false, onClose }) {
     if (!badge) return null;
     const earned = badge.tier || 0;
     const Icon = BADGE_ICONS[badge.key];
@@ -29,6 +29,8 @@ export default function BadgeDetailModal({ badge, onClose }) {
                     tier={TIER_KEYS[earned - 1] || 'bronze'}
                     name={badge.name}
                     icon={Icon}
+                    badgeKey={badge.key}
+                    bunnyTheme={bunnyTheme}
                     locked={earned === 0}
                 />
                 <p className="mt-4 text-body text-ink">{badge.description}</p>

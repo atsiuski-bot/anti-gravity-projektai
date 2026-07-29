@@ -15,6 +15,8 @@ const {
     findImpossibleSpanSessions,
     SERVER_SPAN_GRACE_MINUTES,
     classifyEngineAdoption,
+    claimedTaskRun,
+    classifySessionDisagreements,
 } = require('./integrityScans');
 
 // 1. isReferentialTaskSession — only rows that SHOULD point at a real task are checked.
@@ -185,6 +187,161 @@ const unmeasurable = findImpossibleSpanSessions(
 );
 assert.strictEqual(unmeasurable.checked, 0);
 assert.strictEqual(unmeasurable.count, 0);
+
+// ARCHIVED-TASK REGRESSION (observed in production on this check's first day: 26 of 97 rows flagged,
+// every sample a NEGATIVE span). Archiving writes a new document under the same id in another
+// collection, so the copy's createTime is the archive moment — LATER than the run it is meant to
+// bound. Supplying that as the anchor turns every honest session on an archived task into an
+// accusation, so scanCreditIntegrity harvests createTime from `tasks` only and an archived task
+// arrives here anchor-less.
+//
+// First: prove the damage is real, i.e. that an archive-copy anchor really does flag honest work —
+// otherwise the caller-side restriction below would look like a precaution against nothing.
+const archivedAnchor = new Map([['archivedTask', T0 + 21 * 60 * MIN]]); // archived ~21h AFTER the run
+const wouldAccuse = findImpossibleSpanSessions(
+    [{ id: 'a1', taskId: 'archivedTask', durationMinutes: 45, serverAnchorMs: T0 + 46 * MIN }],
+    archivedAnchor,
+);
+assert.strictEqual(wouldAccuse.count, 1);
+assert.ok(wouldAccuse.samples[0].serverSpanMinutes < 0, 'archive-copy anchor yields a negative span');
+// Then: with the caller supplying no anchor for it (the fix), the same honest row is skipped.
+const archivedSkipped = findImpossibleSpanSessions(
+    [{ id: 'a1', taskId: 'archivedTask', durationMinutes: 45, serverAnchorMs: T0 + 46 * MIN }],
+    new Map(),
+);
+assert.strictEqual(archivedSkipped.checked, 0);
+assert.strictEqual(archivedSkipped.count, 0);
+
+// ---------------------------------------------------------------------------
+// 7. classifySessionDisagreements — do users/, tasks/ and active_sessions/ agree about who is
+//    working right now? Report-only cross-store reconciliation.
+// ---------------------------------------------------------------------------
+const NOW = Date.parse('2026-07-29T12:00:00.000Z');
+const agoIso = (min) => new Date(NOW - min * 60000).toISOString();
+const SETTLED = agoIso(120);   // comfortably past the settle window
+const JUST_NOW = agoIso(2);    // still mid-handshake
+const running = (id, userId, startedMin = 120) => ({ id, assignedUserId: userId, timerStartedAt: agoIso(startedMin) });
+const disagree = (input) => classifySessionDisagreements({ nowMs: NOW, ...input });
+
+// claimedTaskRun — activeSession wins, and a SECONDARY session claims no task even when the legacy
+// workStatus still reads 'running' from before the break started. Reading both would report every
+// break in the company as a conflict; this ordering is the whole reason the check stays quiet.
+assert.deepStrictEqual(
+    claimedTaskRun({ activeSession: { type: 'task', taskId: 'T1', startTime: SETTLED } }),
+    { taskId: 'T1', startIso: SETTLED, source: 'activeSession' },
+);
+assert.strictEqual(
+    claimedTaskRun({ activeSession: { type: 'break', startTime: SETTLED }, workStatus: { status: 'running', activeTaskId: 'T1' } }),
+    null,
+);
+assert.deepStrictEqual(
+    claimedTaskRun({ workStatus: { status: 'running', activeTaskId: 'T1', lastUpdated: SETTLED } }),
+    { taskId: 'T1', startIso: SETTLED, source: 'workStatus' },
+);
+assert.strictEqual(claimedTaskRun({ workStatus: { status: 'paused', activeTaskId: 'T1' } }), null);
+assert.strictEqual(claimedTaskRun({}), null);
+
+// THE HEALTHY DAY. Verified against production on 2026-07-29: two workers, two running tasks, the
+// user documents naming exactly those tasks. A check that cannot stay silent here is a check nobody
+// will read, so this case is pinned first.
+const healthy = disagree({
+    users: [
+        { id: 'U1', activeSession: { type: 'task', taskId: 'T1', startTime: SETTLED }, workStatus: { status: 'running', activeTaskId: 'T1' } },
+        { id: 'U2', activeSession: { type: 'task', taskId: 'T2', startTime: SETTLED } },
+    ],
+    runningTasks: [running('T1', 'U1'), running('T2', 'U2')],
+    taskStates: new Map([['T1', { exists: true, timerStatus: 'running' }], ['T2', { exists: true, timerStatus: 'running' }]]),
+});
+assert.strictEqual(healthy.count, 0);
+assert.strictEqual(healthy.checked, 2);
+
+// staleUserRun — the leftover the 16h auto-stop knowingly creates: it settles the task but leaves
+// the worker's own document advertising the run until they reopen the app.
+const stale = disagree({
+    users: [{ id: 'U1', activeSession: { type: 'task', taskId: 'T1', startTime: SETTLED } }],
+    runningTasks: [],
+    taskStates: new Map([['T1', { exists: true, timerStatus: 'paused' }]]),
+});
+assert.strictEqual(stale.count, 1);
+assert.strictEqual(stale.byKind.staleUserRun, 1);
+assert.strictEqual(stale.samples[0].taskId, 'T1');
+assert.strictEqual(stale.samples[0].taskTimerStatus, 'paused');
+
+// A deleted task is reported as 'missing' rather than skipped — the claim is still wrong.
+const claimsDeleted = disagree({
+    users: [{ id: 'U1', activeSession: { type: 'task', taskId: 'GONE', startTime: SETTLED } }],
+    taskStates: new Map([['GONE', { exists: false, timerStatus: null }]]),
+});
+assert.strictEqual(claimsDeleted.byKind.staleUserRun, 1);
+assert.strictEqual(claimsDeleted.samples[0].taskTimerStatus, 'missing');
+
+// SETTLE WINDOW — a claim younger than the window is a handshake in flight, not a disagreement.
+// Starting a run writes the user doc, the task doc and the canonical record separately, and an
+// offline client replays its queue whenever it reconnects.
+const inFlight = disagree({
+    users: [{ id: 'U1', activeSession: { type: 'task', taskId: 'T1', startTime: JUST_NOW } }],
+    taskStates: new Map([['T1', { exists: true, timerStatus: 'paused' }]]),
+});
+assert.strictEqual(inFlight.count, 0);
+assert.strictEqual(inFlight.checked, 1); // looked at it, declined to judge it
+
+// FAIL-SAFE — a task that could not be read is absent from taskStates, and absence of evidence must
+// never become a finding.
+const unreadable = disagree({
+    users: [{ id: 'U1', activeSession: { type: 'task', taskId: 'T1', startTime: SETTLED } }],
+    taskStates: new Map(),
+});
+assert.strictEqual(unreadable.count, 0);
+// ...as is an unparseable start instant.
+assert.strictEqual(disagree({
+    users: [{ id: 'U1', activeSession: { type: 'task', taskId: 'T1', startTime: 'not-a-date' } }],
+    taskStates: new Map([['T1', { exists: true, timerStatus: 'paused' }]]),
+}).count, 0);
+
+// multipleRunningTasks — a pauseOtherTasks that did not take. BOTH intervals accrue, which is the
+// shape that silently inflates credit. One finding per WORKER, not per extra task.
+const doubleRun = disagree({
+    users: [{ id: 'U1', activeSession: { type: 'task', taskId: 'T2', startTime: SETTLED } }],
+    runningTasks: [running('T1', 'U1', 300), running('T2', 'U1', 120), running('T3', 'U1', 90)],
+    taskStates: new Map([
+        ['T1', { exists: true, timerStatus: 'running' }],
+        ['T2', { exists: true, timerStatus: 'running' }],
+        ['T3', { exists: true, timerStatus: 'running' }],
+    ]),
+});
+assert.strictEqual(doubleRun.byKind.multipleRunningTasks, 1);
+assert.deepStrictEqual(doubleRun.samples[0].taskIds.sort(), ['T1', 'T2', 'T3']);
+// Two runs seconds apart is a pause still in flight — judged by the OLDEST run, so this is silent.
+assert.strictEqual(disagree({
+    runningTasks: [running('T1', 'U1', 2), running('T2', 'U1', 1)],
+}).byKind.multipleRunningTasks, 0);
+// Two workers with one run each is the normal healthy shape, not a conflict.
+assert.strictEqual(disagree({
+    runningTasks: [running('T1', 'U1'), running('T2', 'U2')],
+}).byKind.multipleRunningTasks, 0);
+
+// canonicalOrphanRun — the revisioned engine's record still holds a task run whose task stopped.
+const canonicalOrphan = disagree({
+    canonicalRecords: [{ uid: 'U1', status: 'active', run: { type: 'task', taskId: 'T1', runId: 'r1', startedAt: SETTLED } }],
+    taskStates: new Map([['T1', { exists: true, timerStatus: 'paused' }]]),
+});
+assert.strictEqual(canonicalOrphan.byKind.canonicalOrphanRun, 1);
+assert.strictEqual(canonicalOrphan.samples[0].runId, 'r1');
+// An idle record, or one whose task really is running, says nothing.
+assert.strictEqual(disagree({
+    canonicalRecords: [{ uid: 'U1', status: 'idle', run: null }],
+}).count, 0);
+assert.strictEqual(disagree({
+    canonicalRecords: [{ uid: 'U1', status: 'active', run: { type: 'task', taskId: 'T1', startedAt: SETTLED } }],
+    taskStates: new Map([['T1', { exists: true, timerStatus: 'running' }]]),
+}).count, 0);
+// A canonical SECONDARY run (break/call/quick-work) has no task projection to disagree with.
+assert.strictEqual(disagree({
+    canonicalRecords: [{ uid: 'U1', status: 'active', run: { type: 'break', startedAt: SETTLED } }],
+}).count, 0);
+
+// Empty input must not throw — the collections are legitimately empty on a quiet night.
+assert.strictEqual(classifySessionDisagreements({ nowMs: NOW }).count, 0);
 
 console.log('integrityScans.test.cjs: all assertions passed');
 

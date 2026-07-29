@@ -26,7 +26,8 @@ const { getFirestore } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
 const { appendSystemDecision } = require('./decisionLog');
-const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, findImpossibleSpanSessions, classifyEngineAdoption, isReferentialTaskSession, isCorrectedSession, findCounterDrift } = require('./integrityScans');
+const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, findImpossibleSpanSessions, classifyEngineAdoption, isReferentialTaskSession, isCorrectedSession, findCounterDrift, claimedTaskRun, classifySessionDisagreements } = require('./integrityScans');
+const { lithuanianDay, currentWorkDay, taskArchivable } = require('./workDay');
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -735,12 +736,8 @@ const GRACE_MINUTES = 10;
 
 // Vilnius-local calendar day (YYYY-MM-DD), matching the client's getLithuanianDateString — so the
 // planned shift and the actual first work bucket into the SAME day across the Vilnius offset.
-function lithuanianDay(date) {
-    // en-CA renders as YYYY-MM-DD; the timeZone makes it the Vilnius calendar day.
-    return new Intl.DateTimeFormat('en-CA', {
-        timeZone: 'Europe/Vilnius', year: 'numeric', month: '2-digit', day: '2-digit'
-    }).format(date);
-}
+// lithuanianDay now lives in ./workDay alongside the work-day boundary that is derived from it —
+// they are one piece of timezone reasoning and drifted apart too easily as two.
 
 // R6 — "Punktualus startas": did the worker begin REAL work near their planned shift start?
 //   plannedStart = MIN(work_hours.start) for this user/day, excluding vacation entries.
@@ -1486,6 +1483,20 @@ async function scanCreditIntegrity(scanErrors) {
     // The same pass also records each task's Firestore createTime — the second server-authored anchor
     // the span check needs. Captured here rather than in a separate query because these documents are
     // being fetched anyway, so the check costs no extra reads.
+    //
+    // ONLY FROM `tasks`, and that restriction is load-bearing. Archiving does not MOVE a document, it
+    // writes a NEW one under the same id in another collection — so an archived copy's createTime is
+    // the moment it was ARCHIVED, not the moment the task was created. Feeding that to the span check
+    // measures the run against an instant AFTER it, yielding a negative span that flags every honest
+    // session whose task has since been archived. Observed live on the check's first production day:
+    // 26 of 97 rows flagged, every sample negative (e.g. task FnG8cwzP7WwFd6vjCWgD — real creation
+    // 2026-07-27 08:41, archived 2026-07-28 05:28, its sessions reported at −1244 min). The original
+    // creation instant is not recoverable server-side once archived (the surviving `createdAt` field is
+    // client-authored, which is precisely what this check refuses to trust), so an archived task is
+    // UNMEASURABLE, not suspicious: leaving it anchor-less makes findImpossibleSpanSessions skip it via
+    // its existing fail-safe. A third documented blind spot, accepted for the same reason as the other
+    // two — a missed inflation costs a line in a report, a false accusation costs a worker's wages and
+    // trains admins to ignore the alarm.
     const taskCreateMs = new Map();
     // A referential row's task may legitimately live in `tasks` OR — once confirmed and archived by the
     // daily archive job (same doc id) — in `archived_tasks`, or in `deleted_tasks` after a soft delete.
@@ -1503,8 +1514,11 @@ async function scanCreditIntegrity(scanErrors) {
                 const docs = await db.getAll(...chunk.map((id) => db.collection(coll).doc(id)));
                 docs.forEach((d) => {
                     if (!d.exists) return;
+                    // Existence answers the ORPHAN question, and all three collections count for it.
                     existing.add(d.id);
-                    if (d.createTime && !taskCreateMs.has(d.id)) taskCreateMs.set(d.id, d.createTime.toMillis());
+                    // The span ANCHOR is a different question and only the live collection can answer
+                    // it — see the taskCreateMs declaration above for why a copy's createTime lies.
+                    if (coll === 'tasks' && d.createTime) taskCreateMs.set(d.id, d.createTime.toMillis());
                 });
             } catch (err) {
                 // Fail SAFE for a report-only check: on a read error treat this chunk as present so an
@@ -2291,17 +2305,16 @@ async function writeSecondaryCloseRecords({ uid, userName, session, startMs, dur
 // Scan every user for a genuinely-abandoned secondary session and close it, crediting the clamped
 // time. Read-then-write per user; deterministic ids keep a retry idempotent. The user base is small
 // (one company), so a full users scan once a day is cheap.
-// Takes `scanErrors` for the same reason every other scan does: this whole branch could fail — the
-// users query, a per-user close, the canonical release — and report `{closed: 0}`, which the daily
-// verdict then read as "nothing was wrong" rather than "I could not look". An unseen abandoned
-// session is uncredited pay, so a blind run must never contribute to a green report.
 async function autoCloseForgottenSessions(scanErrors) {
     let snap;
     try {
         snap = await db.collection('users').get();
     } catch (err) {
+        // A failed read here means this net did not run AT ALL — and its zeroed result is otherwise
+        // indistinguishable from "no abandoned sessions", which the severity derivation would read as
+        // clean. Recording it is what makes the scan's completeness verdict honest about this check.
         logger.warn('autoCloseForgottenSessions query failed', { err: err.message });
-        noteScanError(scanErrors, 'autoCloseForgottenSessions:query', err);
+        noteScanError(scanErrors, 'autoCloseSessions:users', err);
         return { scanned: 0, closed: 0, samples: [] };
     }
     const now = new Date();
@@ -2413,16 +2426,108 @@ async function autoCloseForgottenSessions(scanErrors) {
     return { scanned: snap.size, closed, samples };
 }
 
+// CROSS-STORE SESSION RECONCILIATION — the I/O half of classifySessionDisagreements. Report-only:
+// it reads three collections and writes nothing. See the classifier for why the three stores can
+// disagree and why this measures rather than repairs.
+//
+// Reads are scoped to what the claims actually reference: all users (the collection is small and is
+// already read whole by autoCloseForgottenSessions), the running-task query the auto-stop net
+// already uses, the canonical records, and then a batched lookup of ONLY the task ids somebody
+// claims. A task that cannot be read is left out of taskStates entirely, which the classifier treats
+// as unmeasurable rather than as a disagreement.
+async function scanSessionDisagreements(scanErrors) {
+    const empty = { checked: 0, count: 0, byKind: { staleUserRun: 0, multipleRunningTasks: 0, canonicalOrphanRun: 0 }, samples: [] };
+
+    let userSnap;
+    try {
+        userSnap = await db.collection('users').get();
+    } catch (err) {
+        logger.warn('scanSessionDisagreements users query failed', { err: err.message });
+        noteScanError(scanErrors, 'sessionDisagreements:users', err);
+        return empty;
+    }
+    const users = userSnap.docs.map((d) => {
+        const u = d.data() || {};
+        return { id: d.id, activeSession: u.activeSession, workStatus: u.workStatus };
+    });
+
+    let runningTasks = [];
+    try {
+        const snap = await db.collection('tasks').where('timerStatus', '==', 'running').get();
+        runningTasks = snap.docs.map((d) => {
+            const t = d.data() || {};
+            return { id: d.id, assignedUserId: t.assignedUserId || null, timerStartedAt: t.timerStartedAt || null };
+        });
+    } catch (err) {
+        logger.warn('scanSessionDisagreements running-task query failed', { err: err.message });
+        noteScanError(scanErrors, 'sessionDisagreements:runningTasks', err);
+        return empty;
+    }
+
+    let canonicalRecords = [];
+    try {
+        const snap = await db.collection('active_sessions').where('status', '==', 'active').get();
+        canonicalRecords = snap.docs.map((d) => {
+            const r = d.data() || {};
+            return { uid: d.id, status: r.status, run: r.run };
+        });
+    } catch (err) {
+        // The engine is live for a couple of workers, so this collection is normally tiny or empty.
+        // A failure still counts against completeness rather than passing as "no canonical runs".
+        logger.warn('scanSessionDisagreements canonical query failed', { err: err.message });
+        noteScanError(scanErrors, 'sessionDisagreements:canonical', err);
+    }
+
+    // Every task id somebody claims is running — from the user documents and the canonical records.
+    // The running-task query already carries its own state, so those ids need no second read.
+    const claimedIds = new Set();
+    for (const u of users) {
+        const claim = claimedTaskRun(u);
+        if (claim) claimedIds.add(claim.taskId);
+    }
+    for (const rec of canonicalRecords) {
+        if (rec.run && rec.run.type === 'task' && rec.run.taskId) claimedIds.add(rec.run.taskId);
+    }
+    const taskStates = new Map();
+    for (const task of runningTasks) taskStates.set(task.id, { exists: true, timerStatus: 'running' });
+    const toFetch = [...claimedIds].filter((id) => !taskStates.has(id));
+    for (let i = 0; i < toFetch.length; i += 300) {
+        const chunk = toFetch.slice(i, i + 300);
+        try {
+            const docs = await db.getAll(...chunk.map((id) => db.collection('tasks').doc(id)));
+            docs.forEach((d) => {
+                const t = d.exists ? (d.data() || {}) : null;
+                taskStates.set(d.id, { exists: d.exists, timerStatus: t ? (t.timerStatus || null) : null });
+            });
+        } catch (err) {
+            // Leave the chunk OUT of taskStates: unknown, therefore not a finding.
+            logger.warn('scanSessionDisagreements task getAll failed', { err: err.message });
+            noteScanError(scanErrors, 'sessionDisagreements:tasks', err);
+        }
+    }
+
+    return classifySessionDisagreements({
+        users,
+        runningTasks,
+        canonicalRecords,
+        taskStates,
+        nowMs: Date.now(),
+    });
+}
+
 // Surface (do NOT mutate) non-terminal tasks sitting unfinished beyond STALE_TASK_DAYS — the
 // backlog the data found (91 tasks >14d, oldest 'pending' 159d). Report-only: a manager decides to
 // finish, reassign, or drop them. createdAt is an ISO string, so the cutoff compares lexically.
-async function scanStaleTasks() {
+async function scanStaleTasks(scanErrors) {
     const cutoffIso = new Date(Date.now() - STALE_TASK_DAYS * 24 * 60 * 60 * 1000).toISOString();
     let snap;
     try {
         snap = await db.collection('tasks').where('status', 'in', STALE_STATUSES).get();
     } catch (err) {
+        // Same reasoning as autoCloseForgottenSessions: a swallowed failure here reports an empty
+        // backlog, which reads as good news rather than as no news.
         logger.warn('scanStaleTasks query failed', { err: err.message });
+        noteScanError(scanErrors, 'staleTasks:query', err);
         return { count: 0, samples: [] };
     }
     let count = 0;
@@ -2485,7 +2590,12 @@ exports.dailyIntegrityScan = onSchedule(
         // (3b) Secondary-session integrity — close abandoned break/call/quick-work sessions the
         //      client resume logic deliberately leaves running until the worker reopens.
         const autoClosedSessions = await autoCloseForgottenSessions(scanErrors);
-        const staleBacklog = await scanStaleTasks();
+        // (3c) Cross-store reconciliation — do users/, tasks/ and active_sessions/ agree about who is
+        //      working right now? Runs AFTER the two auto-repair nets on purpose: they settle what
+        //      they can first, so what this reports is the residue they left behind rather than work
+        //      still in flight. Report-only.
+        const sessionDisagreements = await scanSessionDisagreements(scanErrors);
+        const staleBacklog = await scanStaleTasks(scanErrors);
 
         // COMPLETENESS IS PART OF THE VERDICT. Severity used to be derived purely from what the scan
         // FOUND, so a run whose reads had failed reported 'ok' — the one word an operator reads as
@@ -2500,7 +2610,7 @@ exports.dailyIntegrityScan = onSchedule(
             creditIntegrity.orphan.orphans > 0 || creditIntegrity.suspicious.count > 0 ||
             creditIntegrity.serverSpan.count > 0 || creditIntegrity.counterDrift.drifted > 0 ||
             autoStoppedTimers.stopped > 0 || autoStoppedTimers.deferred > 0 ||
-            autoClosedSessions.closed > 0;
+            autoClosedSessions.closed > 0 || sessionDisagreements.count > 0;
         const report = {
             day,
             ranAt: nowIso,
@@ -2515,6 +2625,7 @@ exports.dailyIntegrityScan = onSchedule(
             creditIntegrity,
             autoStoppedTimers,
             autoClosedSessions,
+            sessionDisagreements,
             staleBacklog
         };
 
@@ -2564,6 +2675,9 @@ exports.dailyIntegrityScan = onSchedule(
         logger.info('INTEGRITY: engine adoption (work_sessions engineVersion==2 share)', creditIntegrity.engineAdoption);
         if (autoStoppedTimers.stopped > 0) logger.warn('INTEGRITY: auto-stopped forgotten timers', autoStoppedTimers);
         if (autoClosedSessions.closed > 0) logger.warn('INTEGRITY: auto-closed abandoned secondary sessions', autoClosedSessions);
+        if (sessionDisagreements.count > 0) {
+            logger.warn('INTEGRITY: session stores disagree about who is working — user doc vs task vs canonical record', sessionDisagreements);
+        }
         if (staleBacklog.count > 0) logger.info('INTEGRITY: stale backlog surfaced', { count: staleBacklog.count });
     }
 );
@@ -2879,6 +2993,94 @@ function addDaysToDayStr(dayStr, days) {
 // in-app copy and the push MIRROR both read one field (no priority→label map needed on either side).
 const ESCALATION_LABELS = { URGENT: 'Skubus', HIGH: 'Aukštas' };
 
+// ---------------------------------------------------------------------------
+// Daily archiving — sweep confirmed/deleted tasks into `archived_tasks`
+// ---------------------------------------------------------------------------
+//
+// This is a RUNTIME PORT, not a new behaviour: the same sweep already exists in the browser
+// (src/utils/automationUtils.js → archiveOldTasks), and it is deleted in the same change that adds
+// this. The rule, the statuses and the work-day boundary are carried over unchanged; only the
+// trigger moves.
+//
+// WHY IT HAD TO MOVE. The browser version ran behind a localStorage once-per-day latch, so it fired
+// only when an admin or unscoped manager happened to open the app on a browser whose storage had not
+// already recorded today. Nobody opens the app → nothing archives → Istorija quietly stops filling
+// and the active lists keep growing, with no error anywhere. Priority escalation was moved server-
+// side for exactly this reason (escalateTaskPriorities below); this is the other half of that same
+// client automation finally following it.
+//
+// ONE BATCH PER TASK-GROUP, and that is a correctness requirement rather than an optimisation. The
+// client wrote the archive copy and deleted the original as two sequential calls, and
+// cleanupAttachmentsOnTaskDelete permanently deletes a task's Storage objects when it finds no
+// archived sibling. A create that lands without its delete merely leaves the task to be swept again
+// tomorrow; a delete that lands without its create destroys completion photos irrecoverably. Both
+// writes therefore commit together or not at all.
+
+exports.archiveFinishedTasks = onSchedule(
+    // 05:30 Vilnius — after the 05:00 work-day boundary has rolled (so "yesterday" is settled) and
+    // after the 05:00 recurring generator, but before the 06:00 integrity scan, so the day's counts
+    // are measured against a swept collection rather than mid-sweep.
+    { schedule: 'every day 05:30', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const now = new Date();
+        const currentDay = currentWorkDay(now);
+        const nowIso = now.toISOString();
+
+        // Same two source sets as the client sweep: confirmed tasks, plus tasks soft-deleted with
+        // their work hours kept. 'completed' is deliberately NOT included — a completed task is still
+        // waiting to be accepted and must stay in the active pipeline.
+        const candidates = new Map();
+        for (const [field, value] of [['status', 'confirmed'], ['isDeleted', true]]) {
+            try {
+                const snap = await db.collection('tasks').where(field, '==', value).get();
+                snap.forEach((d) => candidates.set(d.id, { id: d.id, ...d.data() }));
+            } catch (err) {
+                // Abandon the whole run rather than sweep a partial view: archiving is a move, and a
+                // half-seen candidate set is not dangerous, just incomplete. Tomorrow re-runs it.
+                logger.error('archiveFinishedTasks query failed', { field, err: err.message });
+                return;
+            }
+        }
+
+        const due = [...candidates.values()].filter((t) => taskArchivable(t, currentDay));
+        if (due.length === 0) {
+            logger.info('ARCHIVE: nothing due', { currentDay, candidates: candidates.size });
+            return;
+        }
+
+        // 2 writes per task; the Firestore batch ceiling is 500 operations.
+        const CHUNK = 200;
+        let archived = 0;
+        const failures = [];
+        for (let i = 0; i < due.length; i += CHUNK) {
+            const chunk = due.slice(i, i + CHUNK);
+            const batch = db.batch();
+            for (const task of chunk) {
+                const { id, ...data } = task;
+                batch.set(db.collection('archived_tasks').doc(id), {
+                    ...data,
+                    archivedAt: nowIso,
+                    archivedBy: 'system_automation',
+                });
+                batch.delete(db.collection('tasks').doc(id));
+            }
+            try {
+                await batch.commit();
+                archived += chunk.length;
+            } catch (err) {
+                // A failed batch changed nothing (batches are atomic), so the tasks simply stay put
+                // and the next run retries them. Recorded so a chunk that keeps failing is visible.
+                logger.error('archiveFinishedTasks batch failed', { size: chunk.length, err: err.message });
+                failures.push({ size: chunk.length, error: err.message });
+            }
+        }
+
+        logger.info('ARCHIVE: swept finished tasks', {
+            currentDay, archived, due: due.length, failures: failures.length,
+        });
+    }
+);
+
 exports.escalateTaskPriorities = onSchedule(
     // 04:30 Vilnius — after the 03:00 work-day flip, before the 05:00 recurring generator and the
     // managers' ~09:00 creation peak, so a freshly-urgent task is escalated before the day starts.
@@ -2957,104 +3159,6 @@ exports.escalateTaskPriorities = onSchedule(
         }
 
         logger.info('escalateTaskPriorities done', { todayStr, escalated, notified });
-    }
-);
-
-// ---------------------------------------------------------------------------
-// Daily archive sweep — move finished/deleted tasks out of the live list
-// ---------------------------------------------------------------------------
-//
-// This was the last daily job still running in the BROWSER (src/utils/automationUtils.js), and it
-// inherited that placement's two structural faults: it only happened if a privileged user happened
-// to open the app, and its once-per-day latch was written BEFORE the work ran, so a failed sweep was
-// not retried until the next day. Priority escalation moved server-side for the same reason; this
-// completes that migration.
-//
-// The client pass is deliberately KEPT as a fallback (its latch is now success-gated), because a
-// code push does not deploy functions — until this is deployed the browser is still the only thing
-// archiving. Once both run, the second one finds nothing: archiving is defined by a query over live
-// `tasks`, so whoever gets there first empties the candidate set. The copy+delete is ONE batch here
-// (the client does two separate writes), so a task can never exist in both collections or neither.
-//
-// MIRROR of the client rule: a task is archivable when it is `confirmed` or soft-deleted AND its
-// relevant instant (deletedAt → confirmedAt → updatedAt) falls in a work day strictly BEFORE the
-// current one. The work day flips at WORK_DAY_START_HOUR Vilnius, not midnight, so a task confirmed
-// at 02:00 still belongs to the previous day's list and must not be swept out from under the worker.
-const WORK_DAY_START_HOUR = 5; // MIRROR of src/utils/timeUtils WORK_DAY_START_HOUR
-
-// The Vilnius wall-clock hour of an instant — the one thing lithuanianDay() alone cannot answer, and
-// what decides whether we are still inside the previous work day.
-function vilniusHour(date) {
-    return parseInt(new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Europe/Vilnius', hour: 'numeric', hour12: false,
-    }).format(date), 10);
-}
-
-// The work day that is CURRENT at `now` — MIRROR of getCurrentWorkDayCutoff's day semantics, as a
-// plain YYYY-MM-DD string (day strings sort lexically, so the comparison below needs no Date math).
-function currentWorkDayStr(now) {
-    const day = lithuanianDay(now);
-    return vilniusHour(now) < WORK_DAY_START_HOUR ? addDaysToDayStr(day, -1) : day;
-}
-
-exports.archiveFinishedTasks = onSchedule(
-    // 05:15 Vilnius — after the work-day boundary (so "yesterday" is settled) and after the 04:30 /
-    // 04:45 deadline jobs, which want to see the tasks while they are still live.
-    { schedule: 'every day 05:15', timeZone: 'Europe/Vilnius' },
-    async () => {
-        const now = new Date();
-        const cutoffDay = currentWorkDayStr(now);
-        const nowIso = now.toISOString();
-
-        let confirmedSnap;
-        let deletedSnap;
-        try {
-            [confirmedSnap, deletedSnap] = await Promise.all([
-                db.collection('tasks').where('status', '==', 'confirmed').get(),
-                db.collection('tasks').where('isDeleted', '==', true).get(),
-            ]);
-        } catch (err) {
-            // Throw, don't swallow: a scheduled function that returns quietly on a failed read looks
-            // identical in the logs to a night with nothing to archive.
-            logger.error('archiveFinishedTasks query failed', { err: err.message });
-            throw err;
-        }
-
-        // A confirmed task can also be soft-deleted, so the two queries overlap — dedupe by id.
-        const candidates = new Map();
-        confirmedSnap.docs.forEach((d) => candidates.set(d.id, d));
-        deletedSnap.docs.forEach((d) => candidates.set(d.id, d));
-
-        let archived = 0;
-        let failed = 0;
-        for (const docSnap of candidates.values()) {
-            const t = docSnap.data() || {};
-            const relevant = t.deletedAt || t.confirmedAt || t.updatedAt;
-            if (!relevant) continue; // undatable — leave it visible rather than archive blind
-            const parsed = new Date(relevant);
-            if (Number.isNaN(parsed.getTime())) continue;
-            if (lithuanianDay(parsed) >= cutoffDay) continue; // still this work day's business
-
-            try {
-                // ONE atomic batch: the copy and the removal land together or not at all. Guarded on
-                // the snapshot we read, so a task edited (or un-confirmed) mid-sweep is skipped
-                // instead of being archived from a stale view — it simply qualifies again tomorrow.
-                const batch = db.batch();
-                batch.set(db.collection('archived_tasks').doc(docSnap.id), {
-                    ...t,
-                    archivedAt: nowIso,
-                    archivedBy: 'system_automation',
-                });
-                batch.delete(docSnap.ref, { lastUpdateTime: docSnap.updateTime });
-                await batch.commit();
-                archived += 1;
-            } catch (err) {
-                failed += 1;
-                logger.warn('archiveFinishedTasks archive failed', { taskId: docSnap.id, err: err.message });
-            }
-        }
-
-        logger.info('archiveFinishedTasks done', { cutoffDay, scanned: candidates.size, archived, failed });
     }
 );
 
