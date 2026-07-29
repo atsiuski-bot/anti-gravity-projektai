@@ -1142,8 +1142,12 @@ async function setOverseerIds(uid, desired) {
         await ref.update({ overseerIds: desired });
         return true;
     } catch (err) {
+        // RETHROW. Swallowing this made a failed re-stamp indistinguishable from "nothing to change",
+        // so a demotion whose closure write failed left the ex-overseer's uid in overseerIds — and
+        // that array IS the users-update write gate. The trigger above is retried, so surfacing the
+        // failure is what eventually revokes the access.
         logger.warn('setOverseerIds failed', { uid, err: err.message });
-        return false;
+        throw err;
     }
 }
 
@@ -1152,7 +1156,13 @@ async function setOverseerIds(uid, desired) {
 // 0005/0007). A manager's senior change CASCADES: every worker under that manager folds the
 // manager's seniors into their own closure, so they must be re-stamped too. Membership changes are
 // rare and crews small, so the fan-out (one manager's workers × their rows) is acceptable.
-exports.restampTeamOnUserChange = onDocumentUpdated('users/{id}', async (event) => {
+// retry:true for the same reason the stamp triggers carry it — and here the stake is REVOCATION, not
+// just visibility. A demotion is exactly one write to users/{id}; this trigger is the only thing that
+// then rewrites the closures that grant the demoted person write access to their old crew. It fires
+// once, so a transient failure used to be permanent: nothing revisits a role change. Idempotent by
+// construction (every desired set is recomputed from current state, and sameSet skips a no-op write),
+// so a retry is free.
+exports.restampTeamOnUserChange = onDocumentUpdated({ document: 'users/{id}', retry: true }, async (event) => {
     const uid = event.params.id;
     const before = event.data.before.data() || {};
     const after = event.data.after.data() || {};
@@ -1214,7 +1224,10 @@ exports.restampTeamOnUserChange = onDocumentUpdated('users/{id}', async (event) 
         }
         logger.info('restampTeamOnUserChange done', { uid, selfRows, cascaded, cascadeTargets: cascadeUids.size });
     } catch (err) {
+        // Rethrow so the platform retries (see the retry:true note above). Logging alone turned a
+        // half-applied closure rewrite into the permanent state.
         logger.error('restampTeamOnUserChange failed', { uid, err: err.message });
+        throw err;
     }
 });
 
@@ -1590,12 +1603,39 @@ async function readCanonicalRun(uid, match) {
 
 // Retire the canonical record for a run this net just closed. The match is re-checked INSIDE the
 // transaction, so a client command landing between the probe above and this write wins the race
-// intact instead of being clobbered by a stale revision. Best-effort: a failure here never undoes
-// the projection writes that already landed (the next nightly scan re-runs the same match).
+// intact instead of being clobbered by a stale revision.
+//
+// THIS IS THE ONE STEP NOTHING RETRIES, so it must not fail quietly. Both nets clear the PROJECTION
+// before getting here, and both find their candidates by that projection ('timerStatus == running',
+// 'activeSession != null') — so once it is cleared the run is invisible to every later scan, and a
+// swallowed failure leaves active_sessions claiming an active run forever. That is the wedged worker
+// the canonical nets exist to prevent: their next start is refused as already-running. Hence a
+// bounded in-process retry (a transaction contention/blip is the realistic failure), and a caller
+// that must record the residue rather than count the close as clean.
+//
+// Returns { released, error }: `error` set ONLY when the question could not be answered — a clean
+// `released:false` just means the record had already moved on (a client won the race), which is the
+// correct no-op, not a fault.
+const CANONICAL_RELEASE_ATTEMPTS = 3;
+
 async function releaseCanonicalRun(uid, match) {
+    let lastErr = null;
+    for (let attempt = 1; attempt <= CANONICAL_RELEASE_ATTEMPTS; attempt += 1) {
+        const outcome = await releaseCanonicalRunOnce(uid, match);
+        if (!outcome.error) return outcome;
+        lastErr = outcome.error;
+        logger.warn('canonical run release attempt failed', { uid, attempt, err: lastErr.message });
+    }
+    logger.error('canonical run release EXHAUSTED — active_sessions may still claim a closed run', {
+        uid, err: lastErr && lastErr.message,
+    });
+    return { released: false, error: lastErr };
+}
+
+async function releaseCanonicalRunOnce(uid, match) {
     const ref = db.collection('active_sessions').doc(uid);
     try {
-        return await db.runTransaction(async (tx) => {
+        const released = await db.runTransaction(async (tx) => {
             const snap = await tx.get(ref);
             if (!snap.exists) return false;
             const record = snap.data() || {};
@@ -1614,9 +1654,9 @@ async function releaseCanonicalRun(uid, match) {
             });
             return true;
         });
+        return { released, error: null };
     } catch (err) {
-        logger.warn('canonical run release failed', { uid, err: err.message });
-        return false;
+        return { released: false, error: err };
     }
 }
 
@@ -1784,7 +1824,11 @@ async function autoStopForgottenTimers(scanErrors) {
     // credited time, and there is no credited time here to withhold. Minting a 0-minute row instead
     // would put a phantom entry in the worker's own session list for work that was never proven.
     for (const r of canonicalReleases) {
-        await releaseCanonicalRun(r.uid, r.match);
+        const outcome = await releaseCanonicalRun(r.uid, r.match);
+        // A release that could not be COMPLETED is a coverage gap, not a quiet success: the task is
+        // already paused, so no later scan will retry it, and the run stays claimed. Fold it into the
+        // scan's completeness verdict so the night cannot read as clean while a worker is wedged.
+        if (outcome.error) noteScanError(scanErrors, `autoStopForgottenTimers:release:${r.uid}`, outcome.error);
     }
 
     // Audit each auto-stop under the SYSTEM actor (ADR 0015), AFTER the writes land. Best-effort:
@@ -2181,12 +2225,17 @@ async function writeSecondaryCloseRecords({ uid, userName, session, startMs, dur
 // Scan every user for a genuinely-abandoned secondary session and close it, crediting the clamped
 // time. Read-then-write per user; deterministic ids keep a retry idempotent. The user base is small
 // (one company), so a full users scan once a day is cheap.
-async function autoCloseForgottenSessions() {
+// Takes `scanErrors` for the same reason every other scan does: this whole branch could fail — the
+// users query, a per-user close, the canonical release — and report `{closed: 0}`, which the daily
+// verdict then read as "nothing was wrong" rather than "I could not look". An unseen abandoned
+// session is uncredited pay, so a blind run must never contribute to a green report.
+async function autoCloseForgottenSessions(scanErrors) {
     let snap;
     try {
         snap = await db.collection('users').get();
     } catch (err) {
         logger.warn('autoCloseForgottenSessions query failed', { err: err.message });
+        noteScanError(scanErrors, 'autoCloseForgottenSessions:query', err);
         return { scanned: 0, closed: 0, samples: [] };
     }
     const now = new Date();
@@ -2246,7 +2295,12 @@ async function autoCloseForgottenSessions() {
             // alone would leave active_sessions still claiming an active break/call/quick-work, and
             // every later transition is planned from that record — so the worker would be refused a
             // new session on a run the server had already closed.
-            if (canonicalRun) await releaseCanonicalRun(uid, canonicalMatch);
+            if (canonicalRun) {
+                const outcome = await releaseCanonicalRun(uid, canonicalMatch);
+                // The live flags are already cleared above, so this user no longer matches the scan's
+                // own candidate test — nothing retries. Report the residue instead of losing it.
+                if (outcome.error) noteScanError(scanErrors, `autoCloseForgottenSessions:release:${uid}`, outcome.error);
+            }
 
             // Tell the worker their forgotten timer was auto-closed and time credited — so recovered
             // paid time is never an unexplained entry. Only when real time was logged (a sub-minute
@@ -2272,6 +2326,7 @@ async function autoCloseForgottenSessions() {
             audits.push({ uid, type: session.type, startIso: session.startTime, durationMinutes: Math.round(durationMinutes) });
         } catch (err) {
             logger.warn('autoCloseForgottenSessions close failed', { uid, type: session.type, err: err.message });
+            noteScanError(scanErrors, `autoCloseForgottenSessions:close:${uid}`, err);
         }
     }
 
@@ -2363,7 +2418,7 @@ exports.dailyIntegrityScan = onSchedule(
         const autoStoppedTimers = await autoStopForgottenTimers(scanErrors);
         // (3b) Secondary-session integrity — close abandoned break/call/quick-work sessions the
         //      client resume logic deliberately leaves running until the worker reopens.
-        const autoClosedSessions = await autoCloseForgottenSessions();
+        const autoClosedSessions = await autoCloseForgottenSessions(scanErrors);
         const staleBacklog = await scanStaleTasks();
 
         // COMPLETENESS IS PART OF THE VERDICT. Severity used to be derived purely from what the scan

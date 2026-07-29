@@ -931,6 +931,7 @@ describe('applyRequestedSessionEnd (one-tap approval of a requested end)', () =>
             endTime: '2026-07-28T15:00:00.000Z',
             reason: 'Meistras dirbo ilgiau',
             editor: { uid: 'mgr1', displayName: 'Vadovas' },
+            expectedUserId: 'u1',
         });
         expect(res.ok).toBe(true);
         expect(res.durationMinutes).toBe(540); // an INCREASE — only a manager may author this
@@ -946,16 +947,36 @@ describe('applyRequestedSessionEnd (one-tap approval of a requested end)', () =>
 
     it('reports a vanished row as settled rather than retrying forever', async () => {
         getDoc.mockResolvedValueOnce({ exists: () => false });
-        expect(await applyRequestedSessionEnd({ sessionId: 'gone', endTime: '2026-07-28T15:00:00.000Z' }))
+        expect(await applyRequestedSessionEnd({ sessionId: 'gone', endTime: '2026-07-28T15:00:00.000Z', expectedUserId: 'u1' }))
             .toEqual({ ok: false, error: 'gone' });
         getDoc.mockResolvedValueOnce({ exists: () => true, id: 'x', data: () => ({ ...stored, isDeleted: true }) });
-        expect((await applyRequestedSessionEnd({ sessionId: 'x', endTime: '2026-07-28T15:00:00.000Z' })).error)
+        expect((await applyRequestedSessionEnd({ sessionId: 'x', endTime: '2026-07-28T15:00:00.000Z', expectedUserId: 'u1' })).error)
             .toBe('gone');
         expect(updateDoc).not.toHaveBeenCalled();
     });
 
+    // The confused-deputy guard. The session id arrives from a WORKER-authored notification, and the
+    // write below carries the MANAGER's authority — so a request naming a colleague's row must be
+    // refused here, not silently applied to somebody else's paid time.
+    it('refuses a row that does not belong to the requester', async () => {
+        getDoc.mockResolvedValueOnce({ exists: () => true, id: 'ws-1', data: () => stored });
+        expect((await applyRequestedSessionEnd({
+            sessionId: 'ws-1',
+            endTime: '2026-07-28T15:00:00.000Z',
+            editor: { uid: 'mgr1' },
+            expectedUserId: 'someone-else',
+        })).error).toBe('owner');
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    // An unattributed request cannot be verified, so it cannot be one-tapped either.
+    it('refuses when the request names no requester', async () => {
+        expect((await applyRequestedSessionEnd({ sessionId: 'ws-1', endTime: '2026-07-28T15:00:00.000Z' })).error)
+            .toBe('owner');
+    });
+
     it('refuses without a session id or a requested end', async () => {
-        expect((await applyRequestedSessionEnd({ endTime: 'x' })).error).toBe('missing');
-        expect((await applyRequestedSessionEnd({ sessionId: 's' })).error).toBe('missing');
+        expect((await applyRequestedSessionEnd({ endTime: 'x', expectedUserId: 'u1' })).error).toBe('missing');
+        expect((await applyRequestedSessionEnd({ sessionId: 's', expectedUserId: 'u1' })).error).toBe('missing');
     });
 });

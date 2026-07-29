@@ -75,6 +75,15 @@
       ]
     },
     {
+      "//": "The SCOPED-manager twin of the assignedUserId+archivedAt ASC entry above. useWorkerStats bounds its archived-task read with archivedAt >= windowStart, and a scoped manager/senior carries the array-contains scope instead of the owner equality — so the pair needs its own ascending composite. Only the DESCENDING variant existed, which serves the list views but not this range, leaving the worker-stats panel to FAILED_PRECONDITION for that role alone.",
+      "collectionGroup": "archived_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamManagerIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "archivedAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "work_sessions",
       "queryScope": "COLLECTION",
       "fields": [

@@ -951,7 +951,20 @@ service cloud.firestore {
                         ])
                     && (!('commentText' in request.resource.data) ||
                         (request.resource.data.commentText is string &&
-                         request.resource.data.commentText.size() <= 2000));
+                         request.resource.data.commentText.size() <= 2000))
+                    // A NAMED ROW MUST BE THE CALLER'S OWN. `sessionRef` is not decoration: the
+                    // manager's card applies the requested end to that exact work_session using the
+                    // MANAGER's authority. Provenance above only proves the caller stamped their own
+                    // uid on the notification — it says nothing about who owns the row it points at,
+                    // so a request could name a colleague's session and have an admin move somebody
+                    // else's paid time in one tap (a confused deputy; the client re-checks too).
+                    // Only the one client write-site that sets this field ("Koreguoti savo laiką")
+                    // is affected, and it always names the caller's own row.
+                    && (request.resource.data.get('sessionRef', null) == null ||
+                        (request.resource.data.sessionRef is string &&
+                         exists(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionRef)) &&
+                         get(/databases/$(database)/documents/work_sessions/$(request.resource.data.sessionRef))
+                           .data.get('userId', '') == request.auth.uid));
       allow update: if isUserActive() && resource.data.recipientId == request.auth.uid;
       allow delete: if isUserActive() &&
                     (resource.data.recipientId == request.auth.uid || isManagerOrAdmin());

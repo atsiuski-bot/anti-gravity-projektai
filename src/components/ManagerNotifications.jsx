@@ -662,6 +662,11 @@ export default function ManagerNotifications({ onClose }) {
             endTime: notif.requestedEndTime,
             reason: notif.requestedReason,
             editor: currentUser,
+            // The row must belong to the worker who asked. Nothing upstream can prove that: the
+            // notification names the session, and the write below carries the MANAGER's authority —
+            // so an unverified apply would let a request point at a colleague's session and move
+            // their paid time on the manager's behalf.
+            expectedUserId: notif.userId,
         });
         setApplyingTime(null);
         if (result.ok) {
@@ -671,6 +676,10 @@ export default function ManagerNotifications({ onClose }) {
             // it rather than leaving a card that can never succeed.
             setActionNotice('Šio įrašo nebėra — prašymas išvalytas.');
             await handleDismissTask(notif.id);
+        } else if (result.error === 'owner') {
+            // The named row is not the requester's. Never settle this in one tap — leave the card so
+            // a human looks at it in the session editor.
+            setActionError('Prašymas nurodo ne šio meistro įrašą — patikrinkite veiklos ataskaitoje.');
         } else {
             setActionError('Nepavyko pritaikyti laiko. Pataisykite veiklos ataskaitoje.');
         }

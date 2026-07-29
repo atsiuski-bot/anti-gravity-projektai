@@ -49,7 +49,15 @@ const AllUsersCalendar = lazyWithRecovery(() => import('../components/AllUsersCa
 const Reports = lazyWithRecovery(() => import('../components/Reports'));
 
 export default function WorkerView() {
-    const { currentUser, userRole, userData, timerEngineEnabled } = useAuth();
+    const { currentUser, userRole, userData, timerEngineEnabled, timerEngineResolved } = useAuth();
+    // Which recovery net owns an orphaned run is a question about the ENGINE, so it cannot be
+    // answered before the rollout flag resolves. `!timerEngineEnabled` answered "legacy" during that
+    // window — and the legacy closer only clears the projection flags, so it could tear down the
+    // visible half of a canonical run and leave active_sessions still claiming it active, which is
+    // exactly the wedged state the canonical nets exist to prevent. Recovery is never urgent (it runs
+    // on app open, and re-runs), so the honest answer while unresolved is to run neither net.
+    // (The canonical side needs no such guard: 'enabled' already implies resolved.)
+    const legacyRecoveryOwns = timerEngineResolved && !timerEngineEnabled;
     const { usersMap, loading: usersLoading } = useUsers();
     const { activeTab, scrollPositions } = useNavigation();
     // Raw task docs, exactly as the listener delivered them. Name enrichment, visibility filtering
@@ -131,7 +139,7 @@ export default function WorkerView() {
     // Crash/reload recovery — heartbeat-aware: continue a briefly-reloaded timer, but pause a
     // genuinely abandoned one (auto-crediting the untracked gap, opt-out) so it neither credits
     // hours of ghost time nor silently drops real offline work.
-    useOrphanedTaskRecovery(tasks, currentUser, !timerEngineEnabled);
+    useOrphanedTaskRecovery(tasks, currentUser, legacyRecoveryOwns);
     useRevisionedTaskRecovery(tasks, currentUser, userData, timerEngineEnabled);
 
     // Heartbeat for the running secondary session (break/call/quick-work) — lets the recovery below
@@ -143,7 +151,7 @@ export default function WorkerView() {
     // multi-day "ghost" gap.
     // Split by owning engine, exactly like the task recovery above: the legacy closer only clears
     // projection flags, so it must not run against a canonical run.
-    useOrphanedSessionRecovery(currentUser, !timerEngineEnabled);
+    useOrphanedSessionRecovery(currentUser, legacyRecoveryOwns);
     useRevisionedSecondaryRecovery(currentUser, userData, timerEngineEnabled);
 
 

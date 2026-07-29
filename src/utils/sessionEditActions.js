@@ -475,12 +475,23 @@ export const logBackdatedWorkerSession = async ({ task, worker, startTime, endTi
  * the request may be days old and the row may have moved or been deleted since, and the START must
  * come from the stored row (only the end is under negotiation).
  *
- * @param {Object} args - { sessionId, endTime, reason, editor }
+ * OWNERSHIP IS CHECKED HERE, not assumed. `sessionId` arrives from a worker-authored notification
+ * document, and the rules that gate its creation cannot see who owns the row it names. The manager
+ * tapping "apply" then writes with THEIR authority — so without this check a worker could point a
+ * request at a colleague's session and have an admin unwittingly move somebody else's paid time
+ * (a confused deputy). The caller passes the uid the request claims to be from; the stored row must
+ * agree.
+ *
+ * @param {Object} args - { sessionId, endTime, reason, editor, expectedUserId }
  * @returns {Promise<{ok:boolean, error?:string, durationMinutes?:number, date?:string}>}
- *   error 'gone' — the row no longer exists (already corrected, or deleted).
+ *   error 'gone'  — the row no longer exists (already corrected, or deleted).
+ *   error 'owner' — the row belongs to someone other than the requester: refuse, never guess.
  */
-export const applyRequestedSessionEnd = async ({ sessionId, endTime, reason, editor } = {}) => {
+export const applyRequestedSessionEnd = async ({ sessionId, endTime, reason, editor, expectedUserId } = {}) => {
     if (!sessionId || !endTime) return { ok: false, error: 'missing' };
+    // A request that does not say who it is from cannot be verified, so it cannot be applied in one
+    // tap either — the manual session editor remains the route for those.
+    if (!expectedUserId) return { ok: false, error: 'owner' };
     let session;
     try {
         const snap = await getDoc(doc(db, 'work_sessions', sessionId));
@@ -491,6 +502,7 @@ export const applyRequestedSessionEnd = async ({ sessionId, endTime, reason, edi
         return { ok: false, error: 'write' };
     }
     if (session.isDeleted) return { ok: false, error: 'gone' };
+    if (session.userId !== expectedUserId) return { ok: false, error: 'owner' };
     return editWorkSession(session, {
         startTime: session.startTime,
         endTime,
