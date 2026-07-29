@@ -19,8 +19,11 @@ import { calculateCurrentTotalMinutes } from '../utils/timeUtils';
  * `minutes` stays `null` while no task is running or its document has not arrived yet, so the caller
  * can render nothing rather than flash a placeholder 0; `estimatedTime` is empty when unplanned.
  *
+ * The task DOCUMENT is handed back too, so the pill's own card can be opened from the copy already
+ * subscribed here instead of a second listener on the same document — one subscription, one truth.
+ *
  * @param {string|null|undefined} taskId the running task's id (null when idle)
- * @returns {{minutes: number|null, estimatedTime: string}}
+ * @returns {{minutes: number|null, estimatedTime: string, task: Object|null}}
  */
 export const useActiveTaskElapsedMinutes = (taskId) => {
     const [task, setTask] = useState(null);
@@ -58,5 +61,6 @@ export const useActiveTaskElapsedMinutes = (taskId) => {
     return {
         minutes,
         estimatedTime: typeof task?.estimatedTime === 'string' ? task.estimatedTime.trim() : '',
+        task,
     };
 };

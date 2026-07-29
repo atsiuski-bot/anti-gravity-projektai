@@ -1,6 +1,8 @@
+import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import ActiveSessionReadout from './ActiveSessionReadout';
+import ActiveWorkModal from './ActiveWorkModal';
 import NotificationBell from './NotificationBell';
 import Avatar from './ui/Avatar';
 import BrandMark from './ui/BrandMark';
@@ -21,9 +23,15 @@ import { cn } from '../utils/cn';
  * region: a screen reader would re-read the pill every second (ActiveSessionReadout documents the
  * same rule).
  */
-function ActiveTaskPill({ session, taskTitle, taskId }) {
-    const { minutes, estimatedTime } = useActiveTaskElapsedMinutes(taskId);
+function ActiveTaskPill({ session, taskTitle, taskId, onTask }) {
+    const { minutes, estimatedTime, task } = useActiveTaskElapsedMinutes(taskId);
     const title = taskTitle?.trim();
+
+    // Hand the subscribed document up so tapping the pill can open the task's own card without a
+    // second listener on the same doc. Reported on every change, so the card always holds the live
+    // copy rather than the one captured when it opened.
+    useEffect(() => { onTask?.(task); }, [task, onTask]);
+
     return (
         <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-line bg-surface-card px-3 py-1 shadow-sm">
             <session.Icon className={cn('h-4 w-4 shrink-0 wz-pulse-soft', session.accent)} aria-hidden="true" />
@@ -55,9 +63,9 @@ function ActiveTaskPill({ session, taskTitle, taskId }) {
  * This replaces the old full-width session strip: the icon + label still pairs with the
  * whole-screen session colour, so colour is never the sole signal (DESIGN_SYSTEM §4-A).
  */
-function SessionPill({ sessionType, session, taskTitle, taskId }) {
+function SessionPill({ sessionType, session, taskTitle, taskId, onTask }) {
     if (sessionType === 'task' && session) {
-        return <ActiveTaskPill session={session} taskTitle={taskTitle} taskId={taskId} />;
+        return <ActiveTaskPill session={session} taskTitle={taskTitle} taskId={taskId} onTask={onTask} />;
     }
     return <ActiveSessionReadout />;
 }
@@ -74,23 +82,50 @@ function SessionPill({ sessionType, session, taskTitle, taskId }) {
 export default function AppHeader({ sessionType, session }) {
     const { currentUser, userData } = useAuth();
     const { activeTab, setActiveTab } = useNavigation();
+    const [showActiveWork, setShowActiveWork] = useState(false);
+    const [activeTask, setActiveTask] = useState(null);
+
+    // The pill answers "what is running"; opening it answers "and what exactly is that" — the task's
+    // own card, or the session card for a break/call/quick work. Wrapped in a button rather than made
+    // clickable in place so it is reachable by keyboard and announced as an action; it fills the
+    // header's full height, which is what gives the small pill a 48 px touch target (§ touch size).
+    const openable = Boolean(sessionType);
 
     return (
         <header className="sticky top-0 z-nav flex h-12 items-center justify-between gap-2 border-b border-line bg-surface-card/95 px-3 backdrop-blur-sm sm:px-4">
             <div className="flex min-w-0 flex-1 items-center">
                 {sessionType ? (
-                    <SessionPill
-                        sessionType={sessionType}
-                        session={session}
-                        taskTitle={userData?.activeSession?.taskTitle}
-                        // Legacy fallback mirrors Layout's own: a running task with no activeSession
-                        // is still identified by workStatus.activeTaskId, so its time still shows.
-                        taskId={userData?.activeSession?.taskId || userData?.workStatus?.activeTaskId || null}
-                    />
+                    <button
+                        type="button"
+                        onClick={() => setShowActiveWork(true)}
+                        aria-label="Atidaryti vykstančią veiklą"
+                        aria-haspopup="dialog"
+                        className="flex h-12 min-w-0 items-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                    >
+                        <SessionPill
+                            sessionType={sessionType}
+                            session={session}
+                            taskTitle={userData?.activeSession?.taskTitle}
+                            // Legacy fallback mirrors Layout's own: a running task with no
+                            // activeSession is still identified by workStatus.activeTaskId, so its
+                            // time still shows.
+                            taskId={userData?.activeSession?.taskId || userData?.workStatus?.activeTaskId || null}
+                            onTask={setActiveTask}
+                        />
+                    </button>
                 ) : (
                     <BrandMark size="sm" />
                 )}
             </div>
+
+            {openable && (
+                <ActiveWorkModal
+                    isOpen={showActiveWork}
+                    onClose={() => setShowActiveWork(false)}
+                    sessionType={sessionType}
+                    task={activeTask}
+                />
+            )}
 
             <div className="flex items-center gap-1">
                 <NotificationBell />
