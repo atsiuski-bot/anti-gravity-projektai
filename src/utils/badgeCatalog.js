@@ -20,6 +20,12 @@ export const BADGE_ICONS = {
 // Awarded docs store the tier as a number (1-4); <Badge> takes the tier KEY.
 export const TIER_KEYS = ['bronze', 'silver', 'gold', 'platinum'];
 
+// One member's profile can carry a personal visual treatment without changing the server-awarded
+// achievement rules, thresholds, or any other member's presentation.
+export function usesBunnyBadgeTheme(email) {
+    return String(email || '').trim().toLowerCase() === 'zivile@medievalclub.org';
+}
+
 export function tierKey(tier) {
     return TIER_KEYS[(tier || 1) - 1] || 'bronze';
 }

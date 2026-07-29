@@ -16,7 +16,7 @@ import { cn } from '../utils/cn';
 import { normalizeWorkLocation } from '../utils/workLocation';
 import { forceAppUpdate } from '../utils/appUpdate';
 import { normalizeUserTemplates, MAX_USER_TEMPLATES, MAX_TEMPLATE_LABEL } from '../utils/quickWorkTemplates';
-import { BADGE_ICONS, BADGE_CATALOG, tierKey } from '../utils/badgeCatalog';
+import { BADGE_ICONS, BADGE_CATALOG, tierKey, usesBunnyBadgeTheme } from '../utils/badgeCatalog';
 import { formatStatValue } from '../utils/workerStats';
 import { rangeForPreset } from '../utils/statsPeriods';
 import BadgeDetailModal from '../components/BadgeDetailModal';
@@ -203,6 +203,7 @@ export default function ProfilePage() {
     const photoURL = userData?.photoURL || currentUser?.photoURL || null;
     const fullName = userData?.displayName || currentUser?.displayName || '';
     const email = currentUser?.email || userData?.email || '';
+    const bunnyBadgeTheme = usesBunnyBadgeTheme(email);
     const role = ROLE_META[userRole] || ROLE_META.worker;
     // Default ON: a missing field means notifications were never turned off.
     const notificationsEnabled = userData?.notificationsEnabled !== false;
@@ -470,6 +471,8 @@ export default function ProfilePage() {
                                 tier={tierKey(b.tier)}
                                 name={b.name}
                                 icon={BADGE_ICONS[b.key]}
+                                badgeKey={b.key}
+                                bunnyTheme={bunnyBadgeTheme}
                                 locked={b.tier === 0}
                             />
                             <BadgeProgress badge={b} progress={progress[b.key]} />
@@ -839,7 +842,7 @@ export default function ProfilePage() {
             )}
 
             {selectedBadge && (
-                <BadgeDetailModal badge={selectedBadge} onClose={() => setSelectedBadge(null)} />
+                <BadgeDetailModal badge={selectedBadge} bunnyTheme={bunnyBadgeTheme} onClose={() => setSelectedBadge(null)} />
             )}
         </div>
     );
