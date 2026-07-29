@@ -7,6 +7,7 @@ import {
     calculateCurrentTotalMinutes,
     formatMinutesToTimeString,
     parseTimeStringToMinutes,
+    getLithuanianDateString,
     MAX_SESSION_MINUTES,
 } from '../utils/timeUtils';
 import { useUsers } from '../context/UsersContext';
@@ -17,7 +18,7 @@ import UserChip from './UserChip';
 import IconButton from './ui/IconButton';
 import ConfirmDialog from './ui/ConfirmDialog';
 import EmptyState from './ui/EmptyState';
-import { isScopedOverseer, scopeRoster, isOverseenBy, canSeeWholeTeam } from '../utils/teamScope';
+import { isScopedOverseer, scopeRoster, isOverseenBy, canSeeWholeTeam, privateScopeConstraints } from '../utils/teamScope';
 import { endSessionForUser } from '../utils/sessionAdmin';
 
 // When the panel flags a live session as "galimai pasenusi" (probably a dead-phone ghost) and
@@ -36,6 +37,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
     const { currentUser, userData } = useAuth();
     const [tasks, setTasks] = useState([]);
     const [shifts, setShifts] = useState([]); // today's work_hours rows (for planned-but-not-started)
+    const [workedTodayIds, setWorkedTodayIds] = useState(() => new Set()); // uids with logged work today
     const [isCollapsed, setIsCollapsed] = useState(false);
     // The worker whose session the manager is about to force-end (drives the confirm dialog).
     const [endTarget, setEndTarget] = useState(null);
@@ -102,6 +104,43 @@ export default function ActiveWorkSessions({ embedded = false }) {
             unsubShifts();
         };
     }, []);
+
+    // Who has ALREADY logged work today. "Nepradėta" is a claim about the whole day, not about this
+    // instant: without this, a worker who started, worked and then stopped (finished a task, went on
+    // an untimed pause, ended the run early) falls straight back into the idle list and the panel
+    // repeats "suplanuota, bet nepradėta" for someone who provably did start. work_sessions is the
+    // canonical record of worked time, and its `date` is the Vilnius calendar day the session ended
+    // on — the same key reports use — so a single equality read answers "did this person work today".
+    useEffect(() => {
+        const today = getLithuanianDateString(new Date());
+        const scopeConstraints = privateScopeConstraints({
+            userData,
+            uid,
+            effectiveRole: userData?.role,
+            ownerField: 'userId',
+        });
+        const sessionsQuery = query(
+            collection(db, 'work_sessions'),
+            where('date', '==', today),
+            ...scopeConstraints
+        );
+        const unsubSessions = onSnapshot(sessionsQuery, (snap) => {
+            const ids = new Set();
+            snap.docs.forEach((d) => {
+                const data = d.data();
+                if (data.isDeleted) return;
+                if (data.userId) ids.add(data.userId);
+            });
+            setWorkedTodayIds(ids);
+        }, (error) => {
+            console.error("ActiveWorkSessions: Today's Sessions Listener Error:", error);
+        });
+
+        return () => {
+            unsubSessions();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- userData is re-read through the stable `scoped` flag; depending on the object itself would re-subscribe on every user-doc snapshot
+    }, [scoped, uid]);
 
     // Active Sessions Logic
     const activeSessions = useMemo(() => {
@@ -210,6 +249,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
             const user = byUser.get(shift.userId);
             if (!user) continue;                 // outside the viewer's scope
             if (user.activeSession) continue;    // already live — shown in the active section
+            if (workedTodayIds.has(user.id)) continue; // already worked today — "nepradėta" would be false
             if (shift.isVacation) continue;      // absence, not a work shift
             if (seen.has(user.id)) continue;     // one row per worker even with multiple shifts
             const start = new Date(shift.start).getTime();
@@ -225,7 +265,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
             });
         }
         return rows;
-    }, [shifts, users]);
+    }, [shifts, users, workedTodayIds]);
 
     if (usersLoading) return null;
 
