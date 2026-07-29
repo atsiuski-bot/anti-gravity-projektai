@@ -7,8 +7,6 @@ import BottomNavigation from './BottomNavigation';
 import SideRail from './SideRail';
 import InstallPrompt from './InstallPrompt';
 import BatteryOptimizationNudge from './BatteryOptimizationNudge';
-import { runDailyAutomation } from '../utils/automationUtils';
-import { canSeeWholeTeam } from '../utils/teamScope';
 import { useSessionNotification } from '../hooks/useSessionNotification';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import { getSessionColors, IDLE_SHELL } from '../utils/sessionColors';
@@ -21,15 +19,11 @@ import OnboardingWelcome from './OnboardingWelcome';
 export default function Layout({ children }) {
     const { userData, isTakingBreak, workStatus } = useAuth();
 
-    // Run the full daily automation (promote + archive) once per day. Gated to WHOLE-TEAM
-    // viewers (admins / unscoped managers): it reads & writes EVERY user's tasks, which a scoped
-    // manager neither may do (tighter rules) nor should. Both this and Dashboard call the same
-    // gated entry point, so neither can consume the daily latch with only a partial subset.
-    useEffect(() => {
-        if (canSeeWholeTeam(userData)) {
-            runDailyAutomation();
-        }
-    }, [userData]);
+    // The daily automation that used to run here is gone. Priority escalation moved to
+    // escalateTaskPriorities and archiving to archiveFinishedTasks (05:30 Vilnius) — both scheduled
+    // Cloud Functions. Running it in the browser meant it fired only when an admin or unscoped
+    // manager happened to open the app on a device whose localStorage had not already recorded
+    // today, so nobody opening the app meant nothing archived, silently and with no error anywhere.
 
     const [isOnline, setIsOnline] = useState(navigator.onLine);
 

@@ -154,13 +154,19 @@ const SERVER_SPAN_GRACE_MINUTES = 30;
  * fact instead, that failure mode costs a line in a report rather than a worker's wages — which is
  * exactly why the bound can be stated here and not there.
  *
- * Deliberately blind to two things, and both are correct:
+ * Deliberately blind to three things, and all three are correct:
  *   • HAND-AUTHORED intents (backdate, recovered gap, manager correction) describe work that
  *     happened before the row existed, so the span says nothing about them — excluded, not judged.
  *   • A session on an OLD task. The span is then days wide and swallows anything, so this cannot see
  *     inflation on a long-running task. What it does see is inflation on a task created shortly
  *     before the claim — the shape a self-created task carrying a fabricated session takes, which
  *     matters here because most tasks are self-assigned.
+ *   • A session on an ARCHIVED or deleted task. Archiving writes a NEW document under the same id in
+ *     another collection, so the copy's createTime is the archive moment, not the creation moment —
+ *     an anchor that is not merely imprecise but points the WRONG WAY, producing a negative span that
+ *     accuses honest work. The caller therefore supplies an anchor only for tasks still in `tasks`
+ *     (see scanCreditIntegrity), and an absent anchor lands on the skip below. This blindness is why
+ *     the check reads a shrinking window: the older a run, the likelier its task is archived.
  *
  * @param {Array<Object>} rows - work_sessions docs as { id, serverAnchorMs, ...data }, where
  *   serverAnchorMs is the row's Firestore updateTime in ms (the LAST server write — later than
@@ -226,8 +232,174 @@ function classifyEngineAdoption(rows) {
     return { total, engineV2, legacy, legacyPct };
 }
 
+// How long a claimed run must have stood before a disagreement counts. Below this, the three stores
+// are simply mid-handshake: starting or stopping a run touches the user doc, the task doc and (for
+// the revisioned engine) the canonical record as separate writes, and an offline client replays its
+// queue in its own time. Generous on purpose — this check reports, it does not repair, and its only
+// real enemy is being noisy enough to ignore.
+const SESSION_SETTLE_MINUTES = 30;
+
+const RUNNING = 'running';
+
+function msOf(iso) {
+    const ms = new Date(iso || '').getTime();
+    return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * The task run a user document CLAIMS is in progress, or null.
+ *
+ * `activeSession` is the current source of truth and `workStatus` its legacy predecessor, so the
+ * legacy field is consulted ONLY when there is no activeSession at all. That ordering is what keeps
+ * this quiet: a worker on a break has activeSession.type==='break' while workStatus may still read
+ * 'running' from before the break began, and reading both would report every break as a conflict.
+ */
+function claimedTaskRun(user) {
+    const as = user && user.activeSession;
+    if (as && as.type === 'task') {
+        return as.taskId ? { taskId: as.taskId, startIso: as.startTime || null, source: 'activeSession' } : null;
+    }
+    if (as) return null; // a secondary session (break/call/quickWork) claims no task
+    const ws = user && user.workStatus;
+    if (ws && ws.status === RUNNING && ws.activeTaskId) {
+        return { taskId: ws.activeTaskId, startIso: ws.lastUpdated || null, source: 'workStatus' };
+    }
+    return null;
+}
+
+/**
+ * CROSS-STORE RECONCILIATION — do the three places that independently answer "who is working right
+ * now" actually agree?
+ *
+ * The stores are `users/{uid}` (what the worker's phone last announced), `tasks/{id}.timerStatus`
+ * (what the task itself believes) and `active_sessions/{uid}` (the revisioned engine's canonical
+ * record). Every existing check reasons INSIDE one of them, so a disagreement BETWEEN them has never
+ * been anybody's job — including the one the server creates itself: the 16h auto-stop settles the
+ * task and the canonical record but deliberately leaves the worker's own document to be reconciled
+ * client-side on next app load, so a worker who simply never reopens the app keeps a user document
+ * advertising a run that ended.
+ *
+ * REPORT-ONLY, and that is a design decision rather than a first step deferred. Repairing would mean
+ * re-entering the credit → stop → release ordering that the auto-stop net took several audit rounds
+ * to get right, and picking the wrong ledger id there double-credits an interval in a way nothing
+ * downstream can dedupe. Measure the disagreements first; let the observed volume and shape decide
+ * whether repair is warranted at all.
+ *
+ * Three disagreement kinds, chosen because each has an unambiguous reading:
+ *   • staleUserRun — the user document names a running task the task document says is not running
+ *     (or that no longer exists). The leftover described above.
+ *   • multipleRunningTasks — one worker with two tasks running at once, i.e. a pauseOtherTasks that
+ *     did not take. Both intervals then accrue, so this is the shape that silently inflates credit.
+ *   • canonicalOrphanRun — the engine's canonical record still holds an active task run whose task
+ *     is not running. The engine is live for only a couple of workers, so this is normally empty;
+ *     it exists so widening the rollout cannot quietly break the pairing.
+ *
+ * @param {Object} input
+ * @param {Array<Object>} input.users - [{ id, activeSession, workStatus }]
+ * @param {Array<Object>} input.runningTasks - tasks with timerStatus==='running': [{ id, assignedUserId, timerStartedAt }]
+ * @param {Array<Object>} input.canonicalRecords - [{ uid, status, run }] from active_sessions
+ * @param {Map<string, Object>} input.taskStates - taskId → { exists, timerStatus } for every claimed task
+ * @param {number} input.nowMs
+ * @param {number} [input.settleMinutes]
+ * @param {number} [input.sampleLimit]
+ * @returns {{ checked: number, count: number, byKind: Object, samples: Array<Object> }}
+ */
+function classifySessionDisagreements({
+    users = [],
+    runningTasks = [],
+    canonicalRecords = [],
+    taskStates = new Map(),
+    nowMs,
+    settleMinutes = SESSION_SETTLE_MINUTES,
+    sampleLimit = DEFAULT_SAMPLE_LIMIT,
+} = {}) {
+    const byKind = { staleUserRun: 0, multipleRunningTasks: 0, canonicalOrphanRun: 0 };
+    const samples = [];
+    let checked = 0;
+    const settleMs = settleMinutes * 60000;
+    // Unparseable or future start → unmeasurable, so it is never a finding. Same fail-safe posture as
+    // the span check: a missing anchor must not become an accusation.
+    const settled = (startIso) => {
+        const ms = msOf(startIso);
+        return ms !== null && nowMs - ms > settleMs;
+    };
+    const add = (kind, sample) => {
+        byKind[kind] += 1;
+        if (samples.length < sampleLimit) samples.push({ kind, ...sample });
+    };
+
+    // (1) staleUserRun — one per user, over every user that claims a task run.
+    for (const user of users) {
+        const claim = claimedTaskRun(user);
+        if (!claim) continue;
+        checked += 1;
+        if (!settled(claim.startIso)) continue;
+        const state = taskStates.get(claim.taskId);
+        // An unreadable task is not a stale claim — absence of evidence again.
+        if (state === undefined) continue;
+        if (state.exists && state.timerStatus === RUNNING) continue;
+        add('staleUserRun', {
+            userId: user.id,
+            taskId: claim.taskId,
+            claimedSince: claim.startIso || null,
+            source: claim.source,
+            taskTimerStatus: state.exists ? (state.timerStatus || null) : 'missing',
+        });
+    }
+
+    // (2) multipleRunningTasks — one finding per worker, not per extra task, so a worker with three
+    //     stuck runs is one problem to go and look at rather than three.
+    const runsByUser = new Map();
+    for (const task of runningTasks) {
+        if (!task || !task.assignedUserId) continue;
+        const list = runsByUser.get(task.assignedUserId) || [];
+        list.push(task);
+        runsByUser.set(task.assignedUserId, list);
+    }
+    for (const [userId, list] of runsByUser) {
+        if (list.length < 2) continue;
+        // Require the OLDEST run to be settled: two runs seconds apart is a pause still in flight,
+        // whereas an old run still standing beside a new one is the failure worth naming.
+        const oldest = list
+            .map((t) => ({ t, ms: msOf(t.timerStartedAt) }))
+            .filter((x) => x.ms !== null)
+            .sort((a, b) => a.ms - b.ms)[0];
+        if (!oldest || !settled(oldest.t.timerStartedAt)) continue;
+        add('multipleRunningTasks', {
+            userId,
+            taskIds: list.map((t) => t.id),
+            oldestStartedAt: oldest.t.timerStartedAt || null,
+        });
+    }
+
+    // (3) canonicalOrphanRun — the engine's record vs the task projection.
+    for (const record of canonicalRecords) {
+        if (!record || record.status !== 'active') continue;
+        const run = record.run;
+        if (!run || run.type !== 'task' || !run.taskId) continue;
+        checked += 1;
+        if (!settled(run.startedAt)) continue;
+        const state = taskStates.get(run.taskId);
+        if (state === undefined) continue;
+        if (state.exists && state.timerStatus === RUNNING) continue;
+        add('canonicalOrphanRun', {
+            userId: record.uid || null,
+            taskId: run.taskId,
+            runId: run.runId || null,
+            claimedSince: run.startedAt || null,
+            taskTimerStatus: state.exists ? (state.timerStatus || null) : 'missing',
+        });
+    }
+
+    const count = byKind.staleUserRun + byKind.multipleRunningTasks + byKind.canonicalOrphanRun;
+    return { checked, count, byKind, samples };
+}
+
 module.exports = {
     SUSPICIOUS_DAY_WORK_MINUTES,
+    SESSION_SETTLE_MINUTES,
+    claimedTaskRun,
+    classifySessionDisagreements,
     IMPOSSIBLE_DAY_MINUTES,
     SERVER_SPAN_GRACE_MINUTES,
     isReferentialTaskSession,

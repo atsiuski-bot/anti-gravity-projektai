@@ -36,6 +36,9 @@ import {
   TIMER_HEARTBEAT_CONTINUE_MS,
   getLithuanianDateString,
   parseTimeStringToMinutes,
+  WORK_DAY_START_HOUR,
+  getWorkDayCutoff,
+  getCurrentWorkDayCutoff,
 } from '../utils/timeUtils.js';
 import { isManagerRole, isAdminRole } from '../utils/formatters.js';
 import { TIMER_ENGINE_VERSION } from '../utils/timerTransitionPlan.js';
@@ -51,6 +54,20 @@ const SRC = resolve(ROOT, 'src');
 const read = (rel) => readFileSync(resolve(ROOT, rel), 'utf8');
 
 const FUNCTIONS_SRC = read('functions/index.js');
+
+/**
+ * Load functions/workDay.js — the server's Vilnius day + work-day boundary helpers — as a live
+ * module rather than slicing it out of a bigger file by text markers. It has no requires of its
+ * own, so evaluating it with a stub `module` is enough. Loading the WHOLE module (instead of one
+ * hand-picked function) means every helper it exports stays comparable against its client twin,
+ * and moving a function inside the file can no longer break this gate.
+ */
+const WORK_DAY_SRC = read('functions/workDay.js');
+function loadWorkDayModule() {
+  const mod = { exports: {} };
+  new Function('module', 'exports', WORK_DAY_SRC)(mod, mod.exports);
+  return mod.exports;
+}
 const RULES_SRC = read('firestore.rules');
 const TASK_MODAL_SRC = read('src/components/TaskModal.jsx');
 const SESSION_ACTIONS_SRC = read('src/utils/sessionActions.js');
@@ -837,17 +854,7 @@ describe('on-time grace window lockstep (functions GRACE_MINUTES ↔ client ON_T
 // =============================================================================================
 
 describe('Lithuanian calendar-day lockstep (functions lithuanianDay ↔ client getLithuanianDateString)', () => {
-  function buildServerLithuanianDay() {
-    const start = FUNCTIONS_SRC.indexOf('function lithuanianDay');
-    const end = FUNCTIONS_SRC.indexOf('// R6', start);
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error('Could not slice lithuanianDay out of functions/index.js — markers moved; update this test.');
-    }
-    const block = FUNCTIONS_SRC.slice(start, end);
-    return new Function(`${block}\n;return lithuanianDay;`)();
-  }
-
-  const serverLithuanianDay = buildServerLithuanianDay();
+  const serverLithuanianDay = loadWorkDayModule().lithuanianDay;
 
   const instants = [
     '2026-01-01T00:00:00.000Z',   // plain UTC midnight
@@ -873,6 +880,68 @@ describe('Lithuanian calendar-day lockstep (functions lithuanianDay ↔ client g
       }
     }
     expect(disagreements, `Lithuanian calendar-day copies diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// WORK-DAY BOUNDARY LOCKSTEP — archiving moved from the browser to a scheduled Cloud Function
+// (archiveFinishedTasks), so the SERVER now decides when a finished task leaves the active lists
+// while the CLIENT still decides what it shows in them. They read the same 05:00 Vilnius boundary
+// from two separate copies of the same date math. If those drift, tasks disappear from a manager's
+// screen a cycle early or linger a cycle late — with no error anywhere, because each side is
+// internally consistent. The DST transitions are the realistic drift point: the boundary's UTC hour
+// moves with the offset.
+// =============================================================================================
+
+describe('work-day boundary lockstep (functions workDay.js ↔ client timeUtils)', () => {
+  const workDay = loadWorkDayModule();
+
+  it('the server work-day start hour equals the client one', () => {
+    expect(workDay.WORK_DAY_START_HOUR).toBe(WORK_DAY_START_HOUR);
+  });
+
+  it('server and client place the boundary at the same instant, across DST', () => {
+    const days = [
+      '2026-01-10',  // winter, UTC+2
+      '2026-03-28',  // day before spring-forward
+      '2026-03-29',  // spring-forward day itself
+      '2026-03-30',  // day after
+      '2026-06-21',  // summer, UTC+3
+      '2026-10-24',  // day before fall-back
+      '2026-10-25',  // fall-back day
+      '2026-10-26',  // day after
+      '2026-12-31',  // year boundary
+    ];
+    const disagreements = [];
+    for (const day of days) {
+      const server = workDay.workDayCutoffUtc(day).toISOString();
+      const client = getWorkDayCutoff(day).toISOString();
+      if (server !== client) disagreements.push(`${day}: server=${server} client=${client}`);
+    }
+    expect(disagreements, `work-day cutoffs diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+
+  it('server and client agree which work day an instant belongs to', () => {
+    const instants = [
+      '2026-06-21T12:00:00.000Z',  // mid-afternoon Vilnius: plainly today
+      '2026-06-20T23:00:00.000Z',  // 02:00 Vilnius: before the boundary, still yesterday
+      '2026-06-21T01:00:00.000Z',  // 04:00 Vilnius: the night-shift band the 05:00 boundary exists for
+      '2026-06-21T02:00:00.000Z',  // exactly ON the summer boundary
+      '2026-01-10T02:59:00.000Z',  // one minute before the winter boundary
+      '2026-01-10T03:00:00.000Z',  // exactly ON the winter boundary
+      '2026-03-29T01:30:00.000Z',  // inside the spring-forward hour
+      '2026-10-25T01:30:00.000Z',  // inside the repeated fall-back hour
+      '2026-01-01T01:00:00.000Z',  // year boundary, before the cutoff
+    ];
+    const disagreements = [];
+    for (const iso of instants) {
+      const now = new Date(iso);
+      const server = workDay.currentWorkDay(now);
+      // The client exposes the boundary INSTANT; its work day is that instant's Vilnius date.
+      const client = getLithuanianDateString(getCurrentWorkDayCutoff(now));
+      if (server !== client) disagreements.push(`${iso}: server=${server} client=${client}`);
+    }
+    expect(disagreements, `work-day derivation diverged:\n${disagreements.join('\n')}`).toEqual([]);
   });
 });
 

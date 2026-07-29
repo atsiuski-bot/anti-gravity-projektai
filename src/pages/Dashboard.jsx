@@ -1,10 +1,8 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import { isManagerRole } from '../utils/formatters';
-import { canSeeWholeTeam } from '../utils/teamScope';
 import AdminBootstrap from '../components/AdminBootstrap';
-import { runDailyAutomation } from '../utils/automationUtils';
 import { Spinner } from '../components/ui/Loading';
 import { lazyWithRecovery } from '../utils/appUpdate';
 const ManagerView = lazyWithRecovery(() => import('./ManagerView'));
@@ -12,24 +10,12 @@ const WorkerView = lazyWithRecovery(() => import('./WorkerView'));
 const ProfilePage = lazyWithRecovery(() => import('./ProfilePage'));
 
 export default function Dashboard() {
-    const { userRole, userData } = useAuth();
+    const { userRole } = useAuth();
     const { activeTab } = useNavigation();
     const showProfile = activeTab === 'profile';
 
-    useEffect(() => {
-        const runAutomation = async () => {
-            // Only WHOLE-TEAM viewers (admins / unscoped managers) run the team-wide automation:
-            // it promotes and archives EVERY user's tasks. A scoped manager neither may do that
-            // (the tightened rules deny writes outside their team) nor should consume the
-            // once-per-day latch with a partial run. Mirrors the gate in Layout.jsx. `userData`
-            // is in the deps so the effect re-runs once auth resolves it (undefined at mount).
-            if (canSeeWholeTeam(userData)) {
-                console.log("[Dashboard] Running daily automation...");
-                await runDailyAutomation();
-            }
-        };
-        runAutomation();
-    }, [userData]);
+    // The once-per-day client automation that used to run here has moved to scheduled Cloud
+    // Functions (escalateTaskPriorities, archiveFinishedTasks). See the note in Layout.jsx.
 
     return (
         <>

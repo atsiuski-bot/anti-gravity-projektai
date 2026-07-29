@@ -10,18 +10,30 @@ import { useAuth } from '../context/AuthContext';
 import { AGENT_CONTROL_COLLECTION, AGENT_CONTROL_DOC_ID } from '../domain';
 import Card from './ui/Card';
 import Button from './ui/Button';
+import UserChip from './UserChip';
 import EmptyState from './ui/EmptyState';
 import Select from './ui/Select';
 import { Spinner } from './ui/Loading';
 import { logError } from '../utils/errorLog';
 import { cn } from '../utils/cn';
+import { deriveIntegrityView } from './auditDashboard.helpers';
 
 /**
  * AuditDashboard — admin-only window onto the AI-native command substrate's two read surfaces
  * (ADR 0015 + ADR 0011):
  *
  *   1. INTEGRITY REPORTS — the daily durability monitor's output (`integrity_reports/{YYYY-MM-DD}`):
- *      volume canary, value anomalies, auto-stopped forgotten timers, stale backlog.
+ *      volume canary, value anomalies, auto-stopped forgotten timers, stale backlog, the
+ *      credit-integrity net (orphaned credit / implausible work days / server-span impossibilities)
+ *      and the run's own COMPLETENESS.
+ *
+ *      The card renders the report doc as written — deliberately, and it did not always. The scan
+ *      has persisted `complete`, `scanErrors`, `dailyOverdraft`, `creditIntegrity` and
+ *      `autoStoppedTimers.deferred` for a long time while this card showed none of them, so the
+ *      entire R-04 credit net was invisible to every human, and a run that had FAILED half its
+ *      reads painted the same "Dėmesio" pill as a run that looked everywhere and found one stale
+ *      task. Detection nobody can see is not a control. Anything a future scan adds to the report
+ *      belongs here too.
  *   2. DECISION LOG — the append-only event spine (`decision_log`): every consequential command,
  *      stamped with WHO decided (human / agent / system), WHAT, WHY, and a compact before→after.
  *
@@ -129,12 +141,151 @@ function KvBlock({ title, data }) {
     );
 }
 
+/**
+ * One sample row from a scan's `samples` array. The shapes differ per scan (orphan rows carry
+ * taskId + durationMinutes, suspicious days carry date + minutes, auto-closed sessions carry a
+ * session type…), so this renders GENERICALLY: the person as the canonical UserChip when the sample
+ * names one, then whatever other keys the sample happens to carry. A bespoke renderer per shape
+ * would have to be extended every time a scan learns a new field — and the field it forgot to
+ * render is exactly the evidence an admin needed.
+ */
+function SampleLine({ sample }) {
+    const uid = sample.userId || sample.uid || null;
+    const rest = Object.entries(sample).filter(([k]) => k !== 'userId' && k !== 'uid');
+    return (
+        <li className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line py-1.5 first:border-t-0">
+            {uid && <UserChip userId={uid} size="sm" linkToProfile={false} className="min-w-0" />}
+            {rest.map(([k, v]) => (
+                <span key={k} className="text-caption text-ink-muted">
+                    {k}: <span className="font-medium text-ink">{fmtVal(v)}</span>
+                </span>
+            ))}
+        </li>
+    );
+}
+
+/**
+ * A finding the daily scan already records. Renders the count and — when the scan captured
+ * examples — an expandable list of them, because a bare number ("orfanai: 3") tells an admin that
+ * something is wrong but not WHICH record, and they cannot query Firestore to find out.
+ */
+function FindingRow({ icon: Icon, label, hint, count, samples }) {
+    const [open, setOpen] = useState(false);
+    const list = Array.isArray(samples) ? samples : [];
+    return (
+        <li className="rounded-control border border-feedback-warning-border bg-feedback-warning-soft p-2.5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="flex min-w-0 items-start gap-2">
+                    <Icon className="mt-0.5 h-4 w-4 shrink-0 text-feedback-warning-text" aria-hidden="true" />
+                    <div className="min-w-0">
+                        <p className="text-caption font-semibold text-feedback-warning-text">
+                            {label}: <span className="tabular-nums">{count}</span>
+                        </p>
+                        {hint && <p className="mt-0.5 text-caption text-ink-muted">{hint}</p>}
+                    </div>
+                </div>
+                {list.length > 0 && (
+                    <Button
+                        variant="ghost"
+                        size="md"
+                        onClick={() => setOpen((v) => !v)}
+                        aria-expanded={open}
+                        className="shrink-0 px-2 text-caption"
+                    >
+                        {open ? 'Slėpti' : `Rodyti (${list.length})`}
+                    </Button>
+                )}
+            </div>
+            {open && list.length > 0 && (
+                <ul className="mt-2 rounded-control bg-surface-card px-2.5 py-1">
+                    {list.map((s, i) => <SampleLine key={s.id || `${s.userId || s.uid || 'x'}-${s.date || i}`} sample={s} />)}
+                </ul>
+            )}
+        </li>
+    );
+}
+
+// Presentation for each credit-integrity finding the derivation can return, keyed by its `key`.
+// Copy lives here (Lithuanian UI strings); the decision of WHETHER a finding fired lives in the
+// pure helper, so it can be asserted against real report documents.
+const CREDIT_FINDING_UI = {
+    orphan: {
+        icon: FileClock,
+        label: 'Įskaityta be užduoties',
+        hint: 'Darbo sesija nurodo užduotį, kurios nėra — įskaitytas laikas be realaus darbo.',
+    },
+    suspicious: {
+        icon: AlertTriangle,
+        label: 'Neįtikėtina darbo diena (>16 val.)',
+        hint: 'Vieno žmogaus vienos dienos darbo suma per didelė, bet dar po 24 val. riba.',
+    },
+    serverSpan: {
+        icon: AlertOctagon,
+        label: 'Įskaityta daugiau, nei užduotis egzistuoja',
+        hint: 'Nepriklauso nuo telefono laikrodžio: sesija įskaito daugiau laiko, nei serveris matė užduotį.',
+    },
+    overdraft: {
+        icon: AlertOctagon,
+        label: 'Dienos suma virš 24 val.',
+        hint: 'Fiziškai neįmanoma — galimi dubliuoti ar persidengiantys įrašai.',
+    },
+};
+
+// Cross-store reconciliation findings — the same shape, from the other side of the question.
+const SESSION_FINDING_UI = {
+    staleUserRun: {
+        icon: Timer,
+        label: 'Darbuotojo telefone laikmatis vis dar „veikia“',
+        hint: 'Serveryje veikla jau baigta, bet darbuotojo įraše ji tebežymima kaip vykstanti.',
+    },
+    multipleRunningTasks: {
+        icon: AlertOctagon,
+        label: 'Vienam žmogui veikia kelios veiklos',
+        hint: 'Ankstesnė veikla nesustojo paleidus naują — laikas skaičiuojamas dukart.',
+    },
+    canonicalOrphanRun: {
+        icon: AlertTriangle,
+        label: 'Likęs sesijos įrašas be veikiančios užduoties',
+        hint: 'Naujojo laikmačio įrašas tebeskelbia darbą, kurio užduotis jau sustabdyta.',
+    },
+};
+
+// One findings block: explicit rows when something fired, one calm line when nothing did.
+function FindingsSection({ title, findings, ui, checked }) {
+    return (
+        <div className="mt-3">
+            <p className="text-caption font-semibold uppercase tracking-wide text-ink-muted">{title}</p>
+            {findings.length > 0 ? (
+                <ul className="mt-1.5 space-y-1.5">
+                    {findings.map((f) => (
+                        <FindingRow
+                            key={f.key}
+                            icon={ui[f.key].icon}
+                            label={ui[f.key].label}
+                            hint={ui[f.key].hint}
+                            count={f.count}
+                            samples={f.samples}
+                        />
+                    ))}
+                </ul>
+            ) : (
+                <p className="mt-1 inline-flex items-center gap-1.5 text-caption text-ink-muted">
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-feedback-success-text" aria-hidden="true" />
+                    Neatitikimų nerasta ({checked.toLocaleString('lt-LT')} patikrinimų).
+                </p>
+            )}
+        </div>
+    );
+}
+
 function IntegrityReportCard({ report, prominent }) {
     const counts = report.counts && typeof report.counts === 'object' ? report.counts : {};
     const drops = Array.isArray(report.drops) ? report.drops : [];
-    const stopped = report.autoStoppedTimers?.stopped || 0;
-    const anomalies = report.totalAnomalies || 0;
-    const stale = report.staleBacklog?.count || 0;
+    const {
+        incomplete, scanErrors, anomalies, stopped, deferred, autoClosed, stale,
+        creditFindings, creditChecked, hasCreditSection,
+        sessionFindings, sessionChecked, hasSessionSection,
+    } = deriveIntegrityView(report);
 
     return (
         <Card className={cn('p-4', prominent && 'border-l-4', prominent && (SEVERITY[report.severity] || SEVERITY.ok).cls.split(' ').find((c) => c.startsWith('border-')))}>
@@ -145,6 +296,26 @@ function IntegrityReportCard({ report, prominent }) {
                 </div>
                 <span className="text-caption text-ink-muted">Paleista {formatTs(report.ranAt)}</span>
             </div>
+
+            {/* NO FALSE GREEN. An incomplete run must never be read as a clean one — say so first,
+                above every count, because the counts below are exactly what cannot be trusted. */}
+            {incomplete && (
+                <div className="mt-3 rounded-control border border-feedback-danger-border bg-feedback-danger-soft p-2.5">
+                    <p className="flex items-center gap-1.5 text-caption font-semibold text-feedback-danger-text">
+                        <AlertOctagon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        Patikra apžiūrėjo ne viską — šie skaičiai nereiškia, kad viskas tvarkoje.
+                    </p>
+                    {scanErrors.length > 0 && (
+                        <ul className="mt-1 space-y-0.5">
+                            {scanErrors.map((e, i) => (
+                                <li key={`${e.scan}-${i}`} className="text-caption text-feedback-danger-text">
+                                    {e.scan}: {e.message}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
 
             {/* Row counts per monitored collection (the volume canary's raw input). */}
             {Object.keys(counts).length > 0 && (
@@ -169,11 +340,40 @@ function IntegrityReportCard({ report, prominent }) {
                     <Timer className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     Sustabdyti laikmačiai: <span className="font-semibold">{stopped}</span>
                 </span>
+                <span className={cn('inline-flex items-center gap-1.5', deferred > 0 ? 'text-feedback-danger-text' : 'text-ink-muted')}>
+                    <Power className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    Nepavyko sustabdyti: <span className="font-semibold">{deferred}</span>
+                </span>
+                <span className={cn('inline-flex items-center gap-1.5', autoClosed > 0 ? 'text-feedback-warning-text' : 'text-ink-muted')}>
+                    <Timer className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    Uždarytos pamirštos sesijos: <span className="font-semibold">{autoClosed}</span>
+                </span>
                 <span className="inline-flex items-center gap-1.5 text-ink-muted">
                     <FileClock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     Pasenusios užduotys: <span className="font-semibold">{stale}</span>
                 </span>
             </div>
+
+            {/* The two report-only nets: is recorded time real (credit), and is running time real
+                (cross-store). Both render the same way — findings explicitly with evidence, a clean
+                run collapsed to ONE calm line — so the section proves it ran without leaving
+                permanent zeros an admin would learn to skip past. */}
+            {hasCreditSection && (
+                <FindingsSection
+                    title="Įskaityto laiko vientisumas"
+                    findings={creditFindings}
+                    ui={CREDIT_FINDING_UI}
+                    checked={creditChecked}
+                />
+            )}
+            {hasSessionSection && (
+                <FindingsSection
+                    title="Kas dirba dabar — ar visos vietos sutaria"
+                    findings={sessionFindings}
+                    ui={SESSION_FINDING_UI}
+                    checked={sessionChecked}
+                />
+            )}
 
             {/* Volume drop = the data-loss alarm; surface it loudly when present. */}
             {drops.length > 0 && (
