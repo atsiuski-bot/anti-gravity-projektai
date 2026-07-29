@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useId } from 'react';
+import { useState, useEffect, useMemo, useCallback, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
@@ -193,6 +193,10 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         // Clear previous data to avoid stale state
         setDailyStats(null);
         setSessions([]);
+        // Breaks must be cleared here for the same reason work sessions are: stepping to a day with
+        // NO break rows otherwise kept the previous day's rows on screen, so an entirely idle day
+        // reported the last worked day's break total (and its first/last activity span) as its own.
+        setBreakSessions([]);
         setScheduledTasks([]);
         setFinishedTasks([]);
         setAllLoadedTasks([]);
@@ -555,11 +559,23 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     // resolved against each user's isTest flag — applied to every session/timeline source below.
     const testUserIds = useMemo(() => new Set((users || []).filter(u => u.isTest).map(u => u.id)), [users]);
 
+    // Second line of defence against showing one span's rows under another's. The listeners already
+    // constrain `date` to [rangeStart, rangeEnd] server-side, so on clean state this drops nothing —
+    // but it makes the displayed totals a function of the SELECTED span rather than of whatever the
+    // state array happens to hold. Without it, correctness rested on every state array being cleared
+    // on re-subscribe, and the one array that was missed (breaks) made an idle day report the last
+    // worked day's break total as its own. Applied symmetrically to work and breaks so the two
+    // halves of a day can never describe different spans.
+    const isWithinSelectedRange = useCallback(
+        (row) => !!row?.date && row.date >= rangeStart && row.date <= rangeEnd,
+        [rangeStart, rangeEnd]
+    );
+
     // ALL sessions go into the timeline — Quick Work and Calls are regular work sessions,
     // they were previously excluded to avoid double-count with manualTasks but that caused them to vanish.
     const validSessions = useMemo(
-        () => sessions.filter(s => showTestUsers || !testUserIds.has(resolveUserId(s))),
-        [sessions, showTestUsers, testUserIds]
+        () => sessions.filter(s => isWithinSelectedRange(s) && (showTestUsers || !testUserIds.has(resolveUserId(s)))),
+        [sessions, showTestUsers, testUserIds, isWithinSelectedRange]
     );
 
     // Active Sessions Integration
@@ -630,7 +646,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     }, [users, isRange, selectedDate, selectedUserId, currentTime, showTestUsers, testUserIds]);
 
     const allValidSessions = useMemo(() => [...validSessions, ...activeTaskSessionsForToday], [validSessions, activeTaskSessionsForToday]);
-    const allBreakSessions = useMemo(() => [...breakSessions.filter(s => showTestUsers || !testUserIds.has(resolveUserId(s))), ...activeBreaksForToday], [breakSessions, activeBreaksForToday, showTestUsers, testUserIds]);
+    const allBreakSessions = useMemo(() => [...breakSessions.filter(s => isWithinSelectedRange(s) && (showTestUsers || !testUserIds.has(resolveUserId(s)))), ...activeBreaksForToday], [breakSessions, activeBreaksForToday, showTestUsers, testUserIds, isWithinSelectedRange]);
 
     // Flagged when any session was clamped by the read-side guard — surfaces a "⚠ patikrinti"
     // banner so a manager can spot a corrupt row instead of trusting a quiet (capped) sum.
