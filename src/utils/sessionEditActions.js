@@ -256,7 +256,14 @@ export const editWorkSession = async (session, { startTime, endTime, reason, edi
         // Re-derive the linked task's cached counter from its sessions so the task sheet / earnings /
         // monitor match the report after this correction (no-op for a synthetic-id session). The
         // session's OWNER (not the editing admin) is what makes the sessions query readable.
-        await reconcileTaskTimerFromSessions(session.taskId, session.userId);
+        //
+        // The ledger row and the counter are TWO writes and cannot be made one — the re-derive needs
+        // a QUERY over the task's sessions, which a Firestore client transaction cannot contain. So
+        // the drift is structural, and the only honest handling is to never let it be silent: the
+        // sibling correction paths already record the outcome and return it, this one discarded it,
+        // which is exactly how a permanently stale card total left no trace anywhere.
+        const rec = await reconcileTaskTimerFromSessions(session.taskId, session.userId);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:editWorkSession', taskId: session.taskId });
         // Tell the worker their PAID time was corrected by an admin. The notify() recipient===actor
         // guard drops an admin editing their OWN session, so this never self-notifies. Best-effort:
         // a notification failure must never undo the (already-persisted) correction, so it is fired
@@ -277,7 +284,7 @@ export const editWorkSession = async (session, { startTime, endTime, reason, edi
             reason: trimmedReason,
             taskTitle: session.taskTitle || null,
         });
-        return { ok: true, durationMinutes: derived.durationMinutes, date: derived.date };
+        return { ok: true, durationMinutes: derived.durationMinutes, date: derived.date, reconciled };
     } catch (err) {
         logError(err, { source: 'writeFail:editWorkSession', sessionId: session.id });
         return { ok: false, error: 'write' };
@@ -302,8 +309,11 @@ export const deleteWorkSession = async (session, { reason, editor } = {}) => {
     try {
         await updateDoc(doc(db, 'work_sessions', session.id), updates);
         // The removed session no longer counts toward the report — re-derive the task counter so its
-        // sheet/earnings/monitor drop the same time (no-op for a synthetic-id session).
-        await reconcileTaskTimerFromSessions(session.taskId, session.userId);
+        // sheet/earnings/monitor drop the same time (no-op for a synthetic-id session). Same
+        // two-writes-cannot-be-one argument as editWorkSession — so the outcome is recorded and
+        // returned rather than dropped.
+        const rec = await reconcileTaskTimerFromSessions(session.taskId, session.userId);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:deleteWorkSession', taskId: session.taskId });
         // Tell the worker an admin removed one of their logged (paid) sessions. Same self-edit guard
         // and best-effort posture as editWorkSession. The day comes from the stored bucket (or the
         // session's start), so the worker knows which day's total changed.
@@ -318,7 +328,7 @@ export const deleteWorkSession = async (session, { reason, editor } = {}) => {
             reason: trimmedReason || null,
             taskTitle: session.taskTitle || null,
         });
-        return { ok: true };
+        return { ok: true, reconciled };
     } catch (err) {
         logError(err, { source: 'writeFail:deleteWorkSession', sessionId: session.id });
         return { ok: false, error: 'write' };

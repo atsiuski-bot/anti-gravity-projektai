@@ -661,7 +661,7 @@ export default function TaskDetailModal({
                                             className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti nuotrauką ${idx + 1}`}
                                         >
-                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-contain" />
+                                            <img src={url} alt={`Nuotrauka ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                             <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                 <ZoomIn className="h-3 w-3" aria-hidden="true" />
                                             </span>
@@ -708,7 +708,7 @@ export default function TaskDetailModal({
                                             className="relative h-24 w-24 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
                                             aria-label={`Peržiūrėti pabaigos nuotrauką ${idx + 1}`}
                                         >
-                                            <img src={url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-contain" />
+                                            <img src={url} alt={`Pabaigos nuotrauka ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                             <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                 <ZoomIn className="h-3 w-3" aria-hidden="true" />
                                             </span>

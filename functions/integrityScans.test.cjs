@@ -187,3 +187,84 @@ assert.strictEqual(unmeasurable.checked, 0);
 assert.strictEqual(unmeasurable.count, 0);
 
 console.log('integrityScans.test.cjs: all assertions passed');
+
+// ── Counter drift (task card vs. the session ledger) ────────────────────────────────────────────
+// A correction writes the ledger row and the task's cached counter as two separate writes that
+// cannot be made atomic (the re-derive needs a query). These assertions lock the detector that makes
+// a failed second write visible instead of permanent.
+{
+    const {
+        isCorrectedSession,
+        taskCreditedMinutes,
+        findCounterDrift,
+        COUNTER_DRIFT_TOLERANCE_MINUTES,
+    } = require('./integrityScans');
+
+    // Only rows that PROVE a correction happened put their task in scope.
+    assert.strictEqual(isCorrectedSession({ editedAt: '2026-07-28T10:00:00Z' }), true);
+    assert.strictEqual(isCorrectedSession({ isDeleted: true }), true);
+    assert.strictEqual(isCorrectedSession({ selfAdjusted: true }), true);
+    assert.strictEqual(isCorrectedSession({ originalDurationMinutes: 480 }), true);
+    assert.strictEqual(isCorrectedSession({ durationMinutes: 60 }), false); // an ordinary timer row
+    assert.strictEqual(isCorrectedSession(null), false);
+
+    // The counter MIRRORS calculateCurrentTotalMinutes: timer + manual + legacy adjustments.
+    assert.strictEqual(taskCreditedMinutes({ timerMinutes: 300, manualMinutes: 60 }), 360);
+    assert.strictEqual(taskCreditedMinutes({ timerMinutes: 300, timeAdjustments: [{ minutes: 30 }, { minutes: -10 }] }), 320);
+    assert.strictEqual(taskCreditedMinutes({}), 0);
+
+    const rows = [
+        { id: 's1', taskId: 'drifted', editedAt: '2026-07-28T10:00:00Z' },
+        { id: 's2', taskId: 'agreeing', editedAt: '2026-07-28T10:00:00Z' },
+        { id: 's3', taskId: 'untouched' },                       // never corrected → out of scope
+        { id: 's4', taskId: 'quick_1720000000000', editedAt: 'x' }, // synthetic → not referential
+    ];
+    const tasks = new Map([
+        ['drifted', { timerMinutes: 540 }],   // ledger says 420 — the stale card
+        ['agreeing', { timerMinutes: 420 }],
+        ['untouched', { timerMinutes: 999 }],
+    ]);
+    const ledger = new Map([['drifted', 420], ['agreeing', 420], ['untouched', 60]]);
+
+    const res = findCounterDrift(rows, tasks, ledger);
+    assert.strictEqual(res.checked, 2, 'only corrected, referential tasks are in scope');
+    assert.strictEqual(res.drifted, 1);
+    assert.deepStrictEqual(res.samples, [
+        { taskId: 'drifted', counterMinutes: 540, ledgerMinutes: 420, deltaMinutes: 120 },
+    ]);
+
+    // A RUNNING task legitimately holds an uncommitted stretch — never reported as drift.
+    const running = findCounterDrift(
+        [{ id: 's1', taskId: 't', editedAt: 'x' }],
+        new Map([['t', { timerMinutes: 0, timerStatus: 'running' }]]),
+        new Map([['t', 480]])
+    );
+    assert.strictEqual(running.drifted, 0);
+
+    // An UNREADABLE ledger is "could not tell", not "the ledger is zero" — otherwise a failed query
+    // would accuse every corrected task at once.
+    const unreadable = findCounterDrift(
+        [{ id: 's1', taskId: 't', editedAt: 'x' }],
+        new Map([['t', { timerMinutes: 480 }]]),
+        new Map()
+    );
+    assert.strictEqual(unreadable.drifted, 0);
+
+    // A missing task is the ORPHAN scan's signal, not this one's — no double-reporting.
+    const orphaned = findCounterDrift(
+        [{ id: 's1', taskId: 'gone', editedAt: 'x' }],
+        new Map(),
+        new Map([['gone', 60]])
+    );
+    assert.strictEqual(orphaned.drifted, 0);
+
+    // Rounding across paths differs by a minute; only a real gap is reported.
+    const withinTolerance = findCounterDrift(
+        [{ id: 's1', taskId: 't', editedAt: 'x' }],
+        new Map([['t', { timerMinutes: 420 + COUNTER_DRIFT_TOLERANCE_MINUTES }]]),
+        new Map([['t', 420]])
+    );
+    assert.strictEqual(withinTolerance.drifted, 0);
+}
+
+console.log('integrityScans: counter-drift assertions passed');

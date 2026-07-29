@@ -48,7 +48,7 @@ function SortableHeaderButton({ label, mode, sort }) {
             onClick={() => sort.set(active ? 'none' : mode)}
             aria-pressed={active}
             className={clsx(
-                'inline-flex items-center gap-1 rounded px-1 py-1.5 text-caption font-medium uppercase tracking-wider',
+                'inline-flex min-h-touch items-center gap-1 rounded px-1 py-1.5 text-caption font-medium uppercase tracking-wider',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
                 active ? 'text-brand' : 'text-ink-muted hover:text-ink'
             )}
@@ -63,11 +63,13 @@ function SortableHeaderButton({ label, mode, sort }) {
     );
 }
 
-// The per-column filter funnel. A compact, dense trigger (NOT the 44px IconButton) so the
-// whole "label + sort + funnel" cluster fits inside a narrow data-grid column instead of
-// overflowing into the neighbour — this is what made it ambiguous which funnel owned which
-// column. Desktop-only header (md:block, mouse-driven), so a sub-44px target is acceptable
-// under §9 dual density, matching SortableHeaderButton's footprint. Active = filled brand.
+// The per-column filter funnel. The ICON stays small so the "label + sort + funnel" cluster still
+// reads as one compact unit inside a narrow data-grid column — but the TAP TARGET is a full 44x44,
+// which is the rule and not a density trade. The previous note here claimed §9 dual density
+// permitted a sub-44px control on a desktop-only header; it does not. §9 licenses denser *tables*,
+// while §2 states the opposite in as many words: we never trade the 44px touch target (§7) for
+// fitting more on screen. `md+` is also where tablets live, so "desktop" never meant "no touch".
+// Active = filled brand.
 function ColumnFilter({ filter, label }) {
     const active = filter.value !== '' && filter.value != null;
     const selectedLabel = active ? (filter.options.find((o) => o.value === filter.value)?.label ?? '') : '';
@@ -86,7 +88,7 @@ function ColumnFilter({ filter, label }) {
                     aria-label={name}
                     title={name}
                     className={clsx(
-                        'inline-flex shrink-0 items-center justify-center rounded p-1 transition-colors',
+                        'inline-flex min-h-touch min-w-touch shrink-0 items-center justify-center rounded p-1 transition-colors',
                         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
                         active ? 'bg-brand text-white' : 'text-ink-muted hover:bg-surface-sunken hover:text-ink'
                     )}
@@ -663,7 +665,7 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
                                 </th>
                             )}
                             {!hideCheckboxes && (
-                                <th className="px-2 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-10">
+                                <th className="px-2 py-3 text-center text-caption font-medium text-ink-muted uppercase tracking-wider w-11">
                                     ✓
                                 </th>
                             )}
@@ -686,6 +688,9 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
                         <DesktopBody>
                         {tasks.map((task) => {
                             const isAssignedToMe = currentUser?.uid === task.assignedUserId;
+                            // Same rule the mobile card derives — only the assignee may tick a task
+                            // that is not already confirmed or still awaiting approval.
+                            const checkboxDisabled = !isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved';
                             const totalMinutes = calculateCurrentTotalMinutes(task);
                             const hasStarted = task.status && task.status !== 'pending';
                             const showSpent = totalMinutes > 0 || hasStarted;
@@ -717,22 +722,33 @@ const TaskTable = ({ tasks, onEdit, role, hideCheckboxes, gridControls, reorderS
                                 <>
                                     {!hideCheckboxes && (
                                         <td className="px-1 py-3 text-center align-top">
-                                            <input
-                                                type="checkbox"
-                                                checked={task.completed || false}
+                                            {/* The box is drawn at 16px so the grid stays dense, but the
+                                                LABEL around it is the target (§7: the icon may be small,
+                                                the tappable area may not). It also owns the click, so a
+                                                near-miss toggles completion instead of opening the row. */}
+                                            <label
                                                 onClick={(e) => e.stopPropagation()}
-                                                onChange={() => {
-                                                    if (isAssignedToMe) {
-                                                        handleToggleComplete(task.id);
-                                                    }
-                                                }}
-                                                disabled={!isAssignedToMe || task.status === 'confirmed' || task.status === 'unapproved'}
-                                                aria-label="Pažymėti atlikta"
                                                 className={clsx(
-                                                    "mt-1 w-4 h-4 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1",
-                                                    isAssignedToMe && task.status !== 'confirmed' && task.status !== 'unapproved' ? "cursor-pointer" : "cursor-not-allowed opacity-50"
+                                                    "flex min-h-touch min-w-touch items-center justify-center",
+                                                    checkboxDisabled ? "cursor-not-allowed" : "cursor-pointer"
                                                 )}
-                                            />
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    checked={task.completed || false}
+                                                    onChange={() => {
+                                                        if (isAssignedToMe) {
+                                                            handleToggleComplete(task.id);
+                                                        }
+                                                    }}
+                                                    disabled={checkboxDisabled}
+                                                    aria-label="Pažymėti atlikta"
+                                                    className={clsx(
+                                                        "w-4 h-4 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1",
+                                                        checkboxDisabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
+                                                    )}
+                                                />
+                                            </label>
                                         </td>
                                     )}
                                     {/* Task — title is the keyboard-accessible opener; the whole row opens on

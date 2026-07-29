@@ -238,7 +238,7 @@ describe('editWorkSession (in-place edit + once-only audit snapshot)', () => {
             durationMinutes: 60,
         };
         const res = await editWorkSession(session, validEdit);
-        expect(res).toEqual({ ok: true, durationMinutes: 210, date: '2026-06-23' });
+        expect(res).toEqual({ ok: true, durationMinutes: 210, date: '2026-06-23', reconciled: true });
         expect(updateDoc).toHaveBeenCalledTimes(1);
 
         const updates = updateDoc.mock.calls[0][1];
@@ -298,7 +298,7 @@ describe('deleteWorkSession (soft delete + audit trail)', () => {
             { id: 's1' },
             { reason: '  orphaned 16h timer  ', editor: { uid: 'admin1', displayName: 'Admin One' } }
         );
-        expect(res).toEqual({ ok: true });
+        expect(res).toEqual({ ok: true, reconciled: true });
         expect(updateDoc).toHaveBeenCalledTimes(1);
 
         const updates = updateDoc.mock.calls[0][1];

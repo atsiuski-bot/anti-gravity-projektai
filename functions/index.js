@@ -26,7 +26,7 @@ const { getFirestore } = require('firebase-admin/firestore');
 const { getMessaging } = require('firebase-admin/messaging');
 const { getStorage } = require('firebase-admin/storage');
 const { appendSystemDecision } = require('./decisionLog');
-const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, findImpossibleSpanSessions, classifyEngineAdoption } = require('./integrityScans');
+const { collectReferentialTaskIds, findOrphanSessions, classifySuspiciousWorkDays, findImpossibleSpanSessions, classifyEngineAdoption, isReferentialTaskSession, isCorrectedSession, findCounterDrift } = require('./integrityScans');
 
 initializeApp();
 setGlobalOptions({ region: 'europe-west1', maxInstances: 10 });
@@ -1454,6 +1454,7 @@ async function scanCreditIntegrity(scanErrors) {
         suspicious: { checked: 0, count: 0, samples: [] },
         serverSpan: { checked: 0, count: 0, samples: [] },
         engineAdoption: { total: 0, engineV2: 0, legacy: 0, legacyPct: 0 },
+        counterDrift: { checked: 0, drifted: 0, samples: [] },
     };
     const cutoff = lookbackCutoffIso();
     let snap;
@@ -1533,7 +1534,72 @@ async function scanCreditIntegrity(scanErrors) {
     // authorship. Dormant engine (flag absent) reads ~100% legacy — the baseline, not an alarm.
     const engineAdoption = classifyEngineAdoption(rows);
 
-    return { orphan, suspicious, serverSpan, engineAdoption };
+    // Counter drift — the task card's cached total vs. the canonical ledger, for tasks whose ledger
+    // was actually corrected. See findCounterDrift for why this cannot be made atomic at the source.
+    const counterDrift = await scanCounterDrift(rows, scanErrors);
+
+    return { orphan, suspicious, serverSpan, engineAdoption, counterDrift };
+}
+
+// The I/O half of the counter-drift check. Two reads per corrected task — the task itself and the
+// FULL by-taskId session sum — so it is bounded: only corrected tasks qualify, and the count is
+// capped, with the drop REPORTED rather than silently truncated.
+const COUNTER_DRIFT_TASK_CAP = 200;
+
+async function scanCounterDrift(rows, scanErrors) {
+    const empty = { checked: 0, drifted: 0, samples: [] };
+    const correctedIds = [...new Set(
+        rows.filter((r) => isReferentialTaskSession(r) && isCorrectedSession(r)).map((r) => r.taskId)
+    )];
+    if (correctedIds.length === 0) return empty;
+
+    const ids = correctedIds.slice(0, COUNTER_DRIFT_TASK_CAP);
+    if (correctedIds.length > ids.length) {
+        logger.warn('scanCounterDrift capped — not every corrected task was checked this run', {
+            corrected: correctedIds.length, checked: ids.length,
+        });
+    }
+
+    // The task doc, from wherever it lives now (a confirmed task is archived nightly, same id).
+    const tasks = new Map();
+    for (const coll of ['tasks', 'archived_tasks']) {
+        const missing = ids.filter((id) => !tasks.has(id));
+        if (missing.length === 0) break;
+        for (let i = 0; i < missing.length; i += 300) {
+            const chunk = missing.slice(i, i + 300);
+            try {
+                const docs = await db.getAll(...chunk.map((id) => db.collection(coll).doc(id)));
+                docs.forEach((d) => { if (d.exists) tasks.set(d.id, d.data()); });
+            } catch (err) {
+                logger.warn('scanCounterDrift task getAll failed', { coll, err: err.message });
+                noteScanError(scanErrors, `counterDrift:tasks:${coll}`, err);
+            }
+        }
+    }
+
+    // The FULL ledger sum per task. A window-limited sum would read as drift on every task with an
+    // older session, so this deliberately queries by taskId rather than reusing `rows`.
+    const ledgerMinutes = new Map();
+    for (const id of ids) {
+        if (!tasks.has(id)) continue; // orphan — findOrphanSessions owns that signal
+        try {
+            const snap = await db.collection('work_sessions').where('taskId', '==', id).get();
+            let total = 0;
+            snap.forEach((d) => {
+                const s = d.data();
+                if (s.isDeleted) return;
+                if (typeof s.durationMinutes === 'number' && s.durationMinutes > 0) total += s.durationMinutes;
+            });
+            ledgerMinutes.set(id, total);
+        } catch (err) {
+            // Leave the id OUT of the map: findCounterDrift treats an absent sum as "could not tell"
+            // rather than as a zero ledger, which would accuse every task of drifting.
+            logger.warn('scanCounterDrift ledger query failed', { taskId: id, err: err.message });
+            noteScanError(scanErrors, `counterDrift:ledger:${id}`, err);
+        }
+    }
+
+    return findCounterDrift(rows, tasks, ledgerMinutes, SAMPLE_LIMIT);
 }
 
 // Hard ceiling for a SINGLE continuous running timer — MIRROR of src/utils/timeUtils
@@ -2432,7 +2498,7 @@ exports.dailyIntegrityScan = onSchedule(
         const critical = drops.length > 0;
         const warning = !complete || totalAnomalies > 0 || dailyOverdraft.offenders > 0 ||
             creditIntegrity.orphan.orphans > 0 || creditIntegrity.suspicious.count > 0 ||
-            creditIntegrity.serverSpan.count > 0 ||
+            creditIntegrity.serverSpan.count > 0 || creditIntegrity.counterDrift.drifted > 0 ||
             autoStoppedTimers.stopped > 0 || autoStoppedTimers.deferred > 0 ||
             autoClosedSessions.closed > 0;
         const report = {
@@ -2486,6 +2552,9 @@ exports.dailyIntegrityScan = onSchedule(
         }
         if (creditIntegrity.suspicious.count > 0) {
             logger.warn('INTEGRITY: suspicious work-day total (>16h work, <24h) — possible moderate inflation', creditIntegrity.suspicious);
+        }
+        if (creditIntegrity.counterDrift.drifted > 0) {
+            logger.warn('INTEGRITY: task counter disagrees with the session ledger after a correction — the card/earnings total is stale, work_sessions is canonical', creditIntegrity.counterDrift);
         }
         if (creditIntegrity.serverSpan.count > 0) {
             logger.warn('INTEGRITY: session credits more work than the SERVER has seen its task exist — clock-independent inflation signal', creditIntegrity.serverSpan);
@@ -2888,6 +2957,104 @@ exports.escalateTaskPriorities = onSchedule(
         }
 
         logger.info('escalateTaskPriorities done', { todayStr, escalated, notified });
+    }
+);
+
+// ---------------------------------------------------------------------------
+// Daily archive sweep — move finished/deleted tasks out of the live list
+// ---------------------------------------------------------------------------
+//
+// This was the last daily job still running in the BROWSER (src/utils/automationUtils.js), and it
+// inherited that placement's two structural faults: it only happened if a privileged user happened
+// to open the app, and its once-per-day latch was written BEFORE the work ran, so a failed sweep was
+// not retried until the next day. Priority escalation moved server-side for the same reason; this
+// completes that migration.
+//
+// The client pass is deliberately KEPT as a fallback (its latch is now success-gated), because a
+// code push does not deploy functions — until this is deployed the browser is still the only thing
+// archiving. Once both run, the second one finds nothing: archiving is defined by a query over live
+// `tasks`, so whoever gets there first empties the candidate set. The copy+delete is ONE batch here
+// (the client does two separate writes), so a task can never exist in both collections or neither.
+//
+// MIRROR of the client rule: a task is archivable when it is `confirmed` or soft-deleted AND its
+// relevant instant (deletedAt → confirmedAt → updatedAt) falls in a work day strictly BEFORE the
+// current one. The work day flips at WORK_DAY_START_HOUR Vilnius, not midnight, so a task confirmed
+// at 02:00 still belongs to the previous day's list and must not be swept out from under the worker.
+const WORK_DAY_START_HOUR = 5; // MIRROR of src/utils/timeUtils WORK_DAY_START_HOUR
+
+// The Vilnius wall-clock hour of an instant — the one thing lithuanianDay() alone cannot answer, and
+// what decides whether we are still inside the previous work day.
+function vilniusHour(date) {
+    return parseInt(new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Europe/Vilnius', hour: 'numeric', hour12: false,
+    }).format(date), 10);
+}
+
+// The work day that is CURRENT at `now` — MIRROR of getCurrentWorkDayCutoff's day semantics, as a
+// plain YYYY-MM-DD string (day strings sort lexically, so the comparison below needs no Date math).
+function currentWorkDayStr(now) {
+    const day = lithuanianDay(now);
+    return vilniusHour(now) < WORK_DAY_START_HOUR ? addDaysToDayStr(day, -1) : day;
+}
+
+exports.archiveFinishedTasks = onSchedule(
+    // 05:15 Vilnius — after the work-day boundary (so "yesterday" is settled) and after the 04:30 /
+    // 04:45 deadline jobs, which want to see the tasks while they are still live.
+    { schedule: 'every day 05:15', timeZone: 'Europe/Vilnius' },
+    async () => {
+        const now = new Date();
+        const cutoffDay = currentWorkDayStr(now);
+        const nowIso = now.toISOString();
+
+        let confirmedSnap;
+        let deletedSnap;
+        try {
+            [confirmedSnap, deletedSnap] = await Promise.all([
+                db.collection('tasks').where('status', '==', 'confirmed').get(),
+                db.collection('tasks').where('isDeleted', '==', true).get(),
+            ]);
+        } catch (err) {
+            // Throw, don't swallow: a scheduled function that returns quietly on a failed read looks
+            // identical in the logs to a night with nothing to archive.
+            logger.error('archiveFinishedTasks query failed', { err: err.message });
+            throw err;
+        }
+
+        // A confirmed task can also be soft-deleted, so the two queries overlap — dedupe by id.
+        const candidates = new Map();
+        confirmedSnap.docs.forEach((d) => candidates.set(d.id, d));
+        deletedSnap.docs.forEach((d) => candidates.set(d.id, d));
+
+        let archived = 0;
+        let failed = 0;
+        for (const docSnap of candidates.values()) {
+            const t = docSnap.data() || {};
+            const relevant = t.deletedAt || t.confirmedAt || t.updatedAt;
+            if (!relevant) continue; // undatable — leave it visible rather than archive blind
+            const parsed = new Date(relevant);
+            if (Number.isNaN(parsed.getTime())) continue;
+            if (lithuanianDay(parsed) >= cutoffDay) continue; // still this work day's business
+
+            try {
+                // ONE atomic batch: the copy and the removal land together or not at all. Guarded on
+                // the snapshot we read, so a task edited (or un-confirmed) mid-sweep is skipped
+                // instead of being archived from a stale view — it simply qualifies again tomorrow.
+                const batch = db.batch();
+                batch.set(db.collection('archived_tasks').doc(docSnap.id), {
+                    ...t,
+                    archivedAt: nowIso,
+                    archivedBy: 'system_automation',
+                });
+                batch.delete(docSnap.ref, { lastUpdateTime: docSnap.updateTime });
+                await batch.commit();
+                archived += 1;
+            } catch (err) {
+                failed += 1;
+                logger.warn('archiveFinishedTasks archive failed', { taskId: docSnap.id, err: err.message });
+            }
+        }
+
+        logger.info('archiveFinishedTasks done', { cutoffDay, scanned: candidates.size, archived, failed });
     }
 );
 

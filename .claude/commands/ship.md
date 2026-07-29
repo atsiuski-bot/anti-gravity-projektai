@@ -121,6 +121,33 @@ node -e "require.resolve('vitest/package.json')" >/dev/null 2>&1 && echo RUNNER_
   npm test
   ```
   Non-zero exit → **STOP**: "Tests failed — not shipping." Show the failing output.
+
+**Functions gate** — the `functions/` suites run on bare node (no runner, no emulator, ~1 s), and
+they lock the classifiers the nightly integrity nets decide with. There is no cost argument for
+skipping them, so they are **mandatory**:
+
+```bash
+npm run test:functions
+```
+- Non-zero exit → **STOP**: "Functions tests failed — not shipping."
+
+**Emulator gate** — `npm test` *includes* `src/integration/firestore/**` but every file in it
+self-skips without `FIRESTORE_EMULATOR_HOST`, so a plain run prints "5 skipped" and a
+**rules or stateful-timer regression sails through the gate**. Those suites are the only thing that
+ever exercises `firestore.rules`. Run them for real:
+
+```bash
+npm run test:firestore
+```
+- Non-zero exit → **STOP**: "Emulator suite failed — not shipping." Show the failing output.
+- If the emulator cannot START (no Firebase CLI, no Java) → **do not silently continue**. Report it
+  as a **coverage gap in the ship summary**, naming what went unverified (rules + stateful timer
+  paths), and say so again in step 8. Only skip when the diff touches neither `firestore.rules` nor
+  any timer/session write path; if it does, treat it as a **STOP** and ask the user how to proceed.
+
+> Both gates are cheap in absolute terms (~1 s and ~40 s). The reason they were optional was habit,
+> not cost — and the practical effect was that the two suites guarding the highest-stakes code in the
+> repo were the two that never ran.
 - `RUNNER_MISSING` → **STOP**: "Test runner not installed in this worktree's module-resolution
   path — not shipping without the test gate. Run `npm install` here (or refresh the primary
   checkout's `node_modules` so worktrees resolve `vitest` from the parent, like lint/build),
@@ -181,6 +208,9 @@ State plainly:
   via the Firebase MCP, not the deploy log.
 - **No silent test skip.** The test gate (step 5) is part of the gate now; if the runner is
   unavailable it STOPs with remediation rather than pushing untested ([ADR 0013](../../docs/adr/0013-test-gate-for-time-credit.md)).
+  That now covers all three tiers — unit, `functions/`, and the **emulator** suites that are the only
+  exercise `firestore.rules` ever gets. A skipped tier must be *named in the ship report*, never
+  quietly absorbed into a green run.
 
 > **Before `/ship`, consider `/debug`.** `/ship` is a fail-fast lint+build+test gate on the
 > *code*; it does not reason about **blast radius** — a new index/callable/rule the push

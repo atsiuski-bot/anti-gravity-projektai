@@ -226,8 +226,102 @@ function classifyEngineAdoption(rows) {
     return { total, engineV2, legacy, legacyPct };
 }
 
+// ── Counter drift (task card vs. the session ledger) ────────────────────────────────────────────
+//
+// A task carries a DENORMALISED credited total (timerMinutes + manualMinutes) that the task sheet,
+// the earnings popup and the time-limit monitor read; `work_sessions` is the canonical ledger the
+// reports sum. Every correction path writes BOTH — and cannot write them atomically, because
+// re-deriving the counter needs a QUERY over the task's sessions and a Firestore client transaction
+// cannot contain one. So the ledger lands, the counter may not, and the two surfaces then disagree
+// about the same task's pay with nothing anywhere to say which is right.
+//
+// The client already logs a failed re-derive, but a log is not a control: nobody reads it, and the
+// drift is permanent (no path revisits a correction). This is the compensating detector — report
+// only, mirroring the R-04 posture: the counter is never rewritten from here, because a server-side
+// guess at credited pay is a far worse failure than a visible mismatch.
+//
+// SCOPE IS THE FALSE-POSITIVE CONTROL. Only tasks whose ledger was actually CORRECTED are checked
+// (a row carrying an edit / soft-delete / self-reduction marker). A task nobody corrected can drift
+// only through paths this scan cannot judge, and flagging those would bury the real signal.
+
+// Legacy per-task manual offsets that are NOT sessions and are deliberately added on top of the
+// re-derived counter — mirrored here or every task carrying one reads as drifted.
+function timeAdjustmentMinutes(task) {
+    const adjustments = task && task.timeAdjustments;
+    if (!Array.isArray(adjustments)) return 0;
+    let total = 0;
+    for (const a of adjustments) {
+        const m = a && a.minutes;
+        if (typeof m === 'number' && Number.isFinite(m)) total += m;
+    }
+    return total;
+}
+
+/** The credited total a task's own fields claim — MIRROR of calculateCurrentTotalMinutes. */
+function taskCreditedMinutes(task) {
+    if (!task) return 0;
+    const timer = typeof task.timerMinutes === 'number' && Number.isFinite(task.timerMinutes) ? task.timerMinutes : 0;
+    const manual = typeof task.manualMinutes === 'number' && Number.isFinite(task.manualMinutes) ? task.manualMinutes : 0;
+    return timer + manual + timeAdjustmentMinutes(task);
+}
+
+/** True when this row proves its task's ledger was corrected after the fact. */
+function isCorrectedSession(row) {
+    if (!row) return false;
+    return Boolean(row.editedAt || row.isDeleted || row.selfAdjusted || row.originalDurationMinutes != null);
+}
+
+// A running task legitimately shows a counter BEHIND its ledger (the current stretch is not written
+// until pause), and rounding differs by a minute across paths, so only a real gap is reported.
+const COUNTER_DRIFT_TOLERANCE_MINUTES = 2;
+
+/**
+ * Compare each corrected task's cached counter against the summed ledger.
+ *
+ * @param {Array<Object>} rows       - the recent work_sessions window, as { id, ...data }.
+ * @param {Map<string, Object>} tasks - taskId → task doc data, for the corrected tasks only.
+ * @param {Map<string, number>} ledgerMinutes - taskId → sum of that task's non-deleted sessions
+ *        (the FULL by-taskId sum, not the window's — a partial sum would read as drift).
+ * @param {number} [sampleLimit]
+ * @returns {{ checked: number, drifted: number, samples: Array<Object> }}
+ */
+function findCounterDrift(rows, tasks, ledgerMinutes, sampleLimit = DEFAULT_SAMPLE_LIMIT) {
+    const corrected = new Set();
+    for (const row of rows) {
+        if (!isReferentialTaskSession(row)) continue;
+        if (isCorrectedSession(row)) corrected.add(row.taskId);
+    }
+
+    let drifted = 0;
+    const samples = [];
+    for (const taskId of corrected) {
+        const task = tasks.get(taskId);
+        if (!task) continue;               // orphan — already owned by findOrphanSessions
+        if (task.timerStatus === 'running') continue; // uncommitted stretch, not drift
+        const ledger = ledgerMinutes.get(taskId);
+        if (typeof ledger !== 'number') continue;     // unreadable → not a positive claim of drift
+        const counter = taskCreditedMinutes(task);
+        const delta = counter - ledger;
+        if (Math.abs(delta) <= COUNTER_DRIFT_TOLERANCE_MINUTES) continue;
+        drifted += 1;
+        if (samples.length < sampleLimit) {
+            samples.push({
+                taskId,
+                counterMinutes: Math.round(counter),
+                ledgerMinutes: Math.round(ledger),
+                deltaMinutes: Math.round(delta),
+            });
+        }
+    }
+    return { checked: corrected.size, drifted, samples };
+}
+
 module.exports = {
     SUSPICIOUS_DAY_WORK_MINUTES,
+    COUNTER_DRIFT_TOLERANCE_MINUTES,
+    isCorrectedSession,
+    taskCreditedMinutes,
+    findCounterDrift,
     IMPOSSIBLE_DAY_MINUTES,
     SERVER_SPAN_GRACE_MINUTES,
     isReferentialTaskSession,

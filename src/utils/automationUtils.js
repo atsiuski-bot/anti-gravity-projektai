@@ -10,36 +10,42 @@ import { getLithuanianNow, getLithuanianDateString, getWorkDayCutoff, addDaysToD
 // the worker reliably). Only ARCHIVING remains client-side below.
 
 /**
- * Checks if automation should run today.
- * Uses localStorage to track last run date.
+ * Has today's sweep already run to completion? READ-ONLY — the latch is claimed only after the work
+ * actually succeeds (see runDailyAutomation).
  */
 export function shouldRunAutomation() {
-    const lastRun = localStorage.getItem('lastAutomationRun');
-    const today = getLithuanianDateString(); // YYYY-MM-DD
-
-    if (lastRun !== today) {
-        localStorage.setItem('lastAutomationRun', today);
-        return true;
-    }
-
-    return false;
+    return localStorage.getItem('lastAutomationRun') !== getLithuanianDateString(); // YYYY-MM-DD
 }
 
 /**
- * Runs the client-side daily automation (now just ARCHIVING) behind the once-per-day latch.
- * Both Dashboard and Layout call this; defining the latch and the work it gates together keeps
- * them from drifting. Priority escalation moved server-side (see the note at the top of this file),
- * so the only remaining browser-side daily job is sweeping confirmed/deleted tasks into the archive.
+ * Runs the client-side daily archive sweep behind a once-per-day latch.
+ *
+ * THE LATCH IS CLAIMED ON SUCCESS, NOT ON ATTEMPT. It used to be stamped the moment the check ran,
+ * so the first app-open of the day consumed the day's only chance: if the sweep then failed
+ * (offline, a permission blip, a mid-flight tab close), nothing retried until tomorrow and the
+ * finished tasks stayed in everyone's live list for another full day. Marking the day done only
+ * after the work completes turns every later app-open into a free retry — and re-running a
+ * successful sweep is harmless anyway, because it is defined by a query that finds nothing once the
+ * tasks have moved.
+ *
+ * This is now a FALLBACK for the scheduled archiveFinishedTasks Cloud Function, which does the same
+ * sweep daily regardless of who opens the app. Kept because a code push does not deploy functions,
+ * and because whichever runs second simply finds an empty candidate set.
  */
 export async function runDailyAutomation() {
     if (!shouldRunAutomation()) return;
-    await archiveOldTasks();
+    const ok = await archiveOldTasks();
+    if (ok) localStorage.setItem('lastAutomationRun', getLithuanianDateString());
 }
 
 /**
  * ARCHIVE OLD TASKS
  * Checks for tasks that are 'completed' or 'confirmed' and were finished BEFORE today.
  * Moves them to 'archived_tasks'.
+ *
+ * @returns {Promise<boolean>} true when the whole sweep completed — the ONLY condition under which
+ *   the caller may mark the day done. A partial sweep (one task's archive threw) reports false so
+ *   the next app-open retries the remainder.
  */
 export async function archiveOldTasks() {
     try {
@@ -100,7 +106,9 @@ export async function archiveOldTasks() {
         if (archivedCount > 0) {
             console.log(`[Automation] Archived ${archivedCount} old confirmed/deleted tasks.`);
         }
+        return true;
     } catch (error) {
         console.error("[Automation] Error archiving tasks:", error);
+        return false;
     }
 }

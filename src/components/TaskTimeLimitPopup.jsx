@@ -193,7 +193,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                                     <div key={p.url} className="relative h-16 w-16 overflow-hidden rounded-control border border-line bg-surface-sunken">
                                         {/* object-contain (not -cover) so a tall phone photo shows whole, not just
                                             its middle; the sunken canvas fills the letterbox bands around it. */}
-                                        <img src={p.url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-contain" />
+                                        <img src={p.url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                         {/* Tap target is the full ≥44px button (WCAG 2.5.5); it
                                             sits inside the corner so the tile's overflow-hidden
                                             doesn't clip it, and the visible ~20px circle is pinned

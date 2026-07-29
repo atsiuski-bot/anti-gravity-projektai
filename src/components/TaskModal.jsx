@@ -1931,7 +1931,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                 <a href={url} target="_blank" rel="noopener noreferrer" className="block">
                                                     {/* object-contain + sunken canvas so a tall photo shows whole,
                                                         not just its middle; ZoomIn badge marks it openable full-size. */}
-                                                    <img src={url} alt={`Priedas ${index + 1}`} className="w-full h-24 object-contain rounded bg-surface-sunken" />
+                                                    <img src={url} alt={`Priedas ${index + 1}`} className="w-full h-24 object-contain rounded bg-surface-sunken" loading="lazy" decoding="async" />
                                                 </a>
                                                 <span className="pointer-events-none absolute bottom-1.5 right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                     <ZoomIn className="h-3 w-3" aria-hidden="true" />

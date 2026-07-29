@@ -23,8 +23,8 @@ vi.mock('./timeUtils', async (importActual) => ({
 
 import { getDocs } from 'firebase/firestore';
 import { archiveTask } from './taskActions';
-import { getLithuanianNow } from './timeUtils';
-import { archiveOldTasks } from './automationUtils';
+import { getLithuanianNow, getLithuanianDateString } from './timeUtils';
+import { archiveOldTasks, runDailyAutomation } from './automationUtils';
 
 // NOTE: deadline-based priority escalation moved to a scheduled Cloud Function
 // (functions/index.js → escalateTaskPriorities); its Vilnius-bucketing behaviour is covered by the
@@ -113,5 +113,46 @@ describe('archiveOldTasks — work-day cutoff flips at 05:00 Vilnius', () => {
 
         const archivedIds = archiveTask.mock.calls.map((c) => c[0].id);
         expect(archivedIds).not.toContain('lateEvening');
+    });
+});
+
+// ── The once-per-day latch ──────────────────────────────────────────────────────────────────────
+// The latch used to be stamped when the check RAN, so the day's first app-open consumed its only
+// chance and a failed sweep waited until tomorrow. It is now claimed only after the work succeeds.
+describe('runDailyAutomation — the day is marked done only after a successful sweep', () => {
+    let store;
+
+    beforeEach(() => {
+        store = new Map();
+        globalThis.localStorage = {
+            getItem: (k) => (store.has(k) ? store.get(k) : null),
+            setItem: (k, v) => store.set(k, String(v)),
+        };
+        // 15:00 Vilnius — past the boundary, so the work-day is the same calendar day throughout.
+        getLithuanianNow.mockReturnValue(new Date('2026-06-21T12:00:00Z'));
+    });
+
+    it('retries on the next open when the sweep failed', async () => {
+        getDocs.mockRejectedValueOnce(new Error('offline'));
+        await runDailyAutomation();
+        expect(store.get('lastAutomationRun')).toBeUndefined();
+
+        // Second open, same day: the query is attempted AGAIN rather than short-circuited.
+        getDocs
+            .mockResolvedValueOnce(snapshotOf([{ id: 'old', status: 'confirmed', confirmedAt: '2026-06-19T10:00:00Z' }]))
+            .mockResolvedValueOnce(snapshotOf([]));
+        await runDailyAutomation();
+        expect(archiveTask.mock.calls.map((c) => c[0].id)).toContain('old');
+        expect(store.get('lastAutomationRun')).toBe(getLithuanianDateString());
+    });
+
+    it('does not sweep twice once the day succeeded', async () => {
+        getDocs.mockResolvedValueOnce(snapshotOf([])).mockResolvedValueOnce(snapshotOf([]));
+        await runDailyAutomation();
+        expect(store.get('lastAutomationRun')).toBe(getLithuanianDateString());
+
+        getDocs.mockClear();
+        await runDailyAutomation();
+        expect(getDocs).not.toHaveBeenCalled();
     });
 });

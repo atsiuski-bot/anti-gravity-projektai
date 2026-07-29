@@ -1,14 +1,19 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useNavigation } from '../context/NavigationContext';
 import ActiveSessionReadout from './ActiveSessionReadout';
-import ActiveWorkModal from './ActiveWorkModal';
 import NotificationBell from './NotificationBell';
 import Avatar from './ui/Avatar';
 import BrandMark from './ui/BrandMark';
 import { useActiveTaskElapsedMinutes } from '../hooks/useActiveTaskElapsedMinutes';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
 import { cn } from '../utils/cn';
+
+// The header ships in the BASE bundle (it is on every screen), and this modal pulls the whole task
+// detail sheet in behind it — so importing it eagerly put a sheet that opens on a deliberate tap
+// into the bytes every worker downloads before first paint. Lazy: the pill is what is always
+// present, the sheet is fetched the first time someone opens it.
+const ActiveWorkModal = lazy(() => import('./ActiveWorkModal'));
 
 /**
  * ActiveTaskPill — the running-task readout in the top bar: icon + "Vyksta veikla" + the task TITLE
@@ -118,13 +123,17 @@ export default function AppHeader({ sessionType, session }) {
                 )}
             </div>
 
-            {openable && (
-                <ActiveWorkModal
-                    isOpen={showActiveWork}
-                    onClose={() => setShowActiveWork(false)}
-                    sessionType={sessionType}
-                    task={activeTask}
-                />
+            {/* Mounted only once opened, so the chunk is fetched on the tap that needs it — not on
+                every render of a header that is always on screen. */}
+            {openable && showActiveWork && (
+                <Suspense fallback={null}>
+                    <ActiveWorkModal
+                        isOpen={showActiveWork}
+                        onClose={() => setShowActiveWork(false)}
+                        sessionType={sessionType}
+                        task={activeTask}
+                    />
+                </Suspense>
             )}
 
             <div className="flex items-center gap-1">

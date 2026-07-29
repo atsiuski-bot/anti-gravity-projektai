@@ -1541,7 +1541,7 @@ export default function ManagerNotifications({ onClose }) {
                                                     // its middle; ZoomIn badge signals it opens full-size in a new tab.
                                                     className="relative block h-20 w-20 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
                                                 >
-                                                    <img src={url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" />
+                                                    <img src={url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                                     <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                         <ZoomIn className="h-3 w-3" aria-hidden="true" />
                                                     </span>
