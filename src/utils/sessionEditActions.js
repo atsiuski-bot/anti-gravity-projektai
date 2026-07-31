@@ -673,6 +673,115 @@ export const reduceOwnWorkSession = async ({ session, worker, endTime, reason, a
     }
 };
 
+// ── Worker self-service START correction (per-user admin grant, either direction) ───────────────
+// reduceOwnWorkSession only ever moves the END down. That covers the commonest honest error (a
+// forgotten stop) but not its mirror — a worker who started the timer late, or forgot to start it
+// at all until partway through the task — where the credited time needs to move UP. Raising paid
+// time is exactly the incentive an approval gate exists for, so this path is NOT open to every
+// worker: it exists only for an admin's explicit per-user canEditOwnStartTime grant (mirrors
+// canBackdateTime — a PRODUCT gate the UI enforces, not a rules-level direction guard, because the
+// grant itself is what stands in for the approval a raise would otherwise need).
+//
+// Only the START moves; end/duration-derivation is the same deriveSessionFields every other
+// correction uses, so a session can never be relocated to another day or exceed the 16h ceiling
+// through this path either.
+
+// Validate a worker's proposed new START for one of their OWN sessions. PURE — mirrors
+// validateSelfReduction's shape/error codes (missing/deleted/running/invalid/order/tooLong) but
+// carries NO direction constraint: the caller (the admin-gated UI) is what makes raising credited
+// time possible here, not a stored marker on the row.
+export const validateOwnStartCorrection = (session, startISO) => {
+    if (!session?.id || !session?.startTime || !session?.endTime) return { ok: false, error: 'missing' };
+    if (session.isDeleted) return { ok: false, error: 'deleted' };
+    if (session.isActive) return { ok: false, error: 'running' };
+
+    const derived = deriveSessionFields(startISO, session.endTime);
+    if (!derived.ok) return { ok: false, error: derived.error };
+
+    return {
+        ok: true,
+        error: null,
+        durationMinutes: derived.durationMinutes,
+        date: derived.date,
+        deltaMinutes: derived.durationMinutes - (sessionDurationOf(session) ?? 0),
+    };
+};
+
+/**
+ * A worker (granted canEditOwnStartTime) corrects the START of one of their OWN already-logged
+ * sessions, in either direction, without further approval.
+ *
+ * Only the START moves: durationMinutes + date are re-derived from the new pair by the same
+ * derivation reports read, the TRUE original is snapshotted once (shared with the admin editor's
+ * audit fields), and — unlike reduceOwnWorkSession — the row is stamped selfAdjusted:false, since
+ * this path can raise the duration and must never leave the one-way "shorten only" marker behind
+ * to constrain a later admin edit.
+ *
+ * The admins get the same INFORMATIONAL notice posture as every other approval-free self-service
+ * path here: the change stands on its own, but it is never invisible.
+ *
+ * EXACTLY-ONCE (caller contract): see reduceOwnWorkSession — the task counter moves by a DELTA, so
+ * the caller must not re-issue this on an unknown outcome.
+ *
+ * @param {Object} args - { session, worker, startTime, reason, adminUids }
+ * @returns {Promise<{ok:boolean, error?:string, durationMinutes?:number, date?:string, reconciled?:boolean}>}
+ */
+export const correctOwnSessionStart = async ({ session, worker, startTime, reason, adminUids } = {}) => {
+    if (!worker?.uid) return { ok: false, error: 'user' };
+    if (!session?.id) return { ok: false, error: 'missing' };
+    // Own rows only — mirrors reduceOwnWorkSession's guard against an accidental manager call
+    // taking this (unaudited, approval-free) path over someone else's time.
+    if (session.userId && session.userId !== worker.uid) return { ok: false, error: 'owner' };
+    const trimmedReason = (reason || '').trim();
+    if (!trimmedReason) return { ok: false, error: 'reason' };
+
+    const check = validateOwnStartCorrection(session, startTime);
+    if (!check.ok) return { ok: false, error: check.error };
+
+    const nowIso = new Date().toISOString();
+    const workerName = worker.displayName || worker.email || null;
+    const beforeMinutes = sessionDurationOf(session);
+    const updates = {
+        startTime,
+        durationMinutes: check.durationMinutes,
+        date: check.date,
+        edited: true,
+        editedBy: worker.uid,
+        editedByName: workerName || 'Nežinomas',
+        editedAt: nowIso,
+        editReason: trimmedReason,
+        // Bidirectional by design — never lock this row into reduceOwnWorkSession's one-way guard.
+        selfAdjusted: false,
+        updatedAt: nowIso,
+    };
+    if (!session.edited) {
+        updates.originalStartTime = session.startTime ?? null;
+        updates.originalEndTime = session.endTime ?? null;
+        updates.originalDurationMinutes = beforeMinutes;
+    }
+
+    try {
+        await updateDoc(doc(db, 'work_sessions', session.id), updates);
+        const rec = await reconcileTaskTimerFromSessions(session.taskId, worker.uid, check.deltaMinutes);
+        const reconciled = noteReconcileOutcome(rec, { source: 'reconcile:correctOwnSessionStart', taskId: session.taskId });
+        await notifyMany(adminUids, {
+            type: 'time_self_start_corrected',
+            actorUid: worker.uid,
+            actorName: workerName,
+            userId: worker.uid,
+            userName: workerName,
+            day: check.date,
+            taskTitle: session.taskTitle || null,
+            summary: `${formatMinutesToTimeString(beforeMinutes)} → ${formatMinutesToTimeString(check.durationMinutes)}`,
+            reason: trimmedReason,
+        });
+        return { ok: true, durationMinutes: check.durationMinutes, date: check.date, reconciled };
+    } catch (err) {
+        logError(err, { source: 'writeFail:correctOwnSessionStart', sessionId: session.id });
+        return { ok: false, error: 'write' };
+    }
+};
+
 // A worker claims the untracked GAP that the crash/reload recovery surfaced — the stretch between
 // their timer's last heartbeat and the app reopening, when the app was closed (no signal in the
 // field, phone killed the tab) but they kept working. The recovery already credited up to the last

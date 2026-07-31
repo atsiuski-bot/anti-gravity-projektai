@@ -177,6 +177,7 @@ const CATEGORY_BY_TYPE = {
     task_over_estimate: 'info',
     backdated_time_logged: 'info',
     time_self_reduced: 'info',
+    time_self_start_corrected: 'info',
     task_priority_escalated: 'info',
     achievement: 'info',
     task_overdue: 'info',
@@ -281,6 +282,13 @@ function copyForRequestNotification(n) {
             const name = n.userName ? String(n.userName).replace(/\s+/g, ' ').trim().slice(0, 100) : '';
             const day = n.day || 'Veiklos laikas';
             return { title: 'Meistras sumažino savo laiką', body: name ? `${name} · ${day}` : day };
+        }
+        case 'time_self_start_corrected': {
+            // Trusted worker → admin: an approval-free correction of their own session START (either
+            // direction). Body = WHO + day; same clamp as the registry MIRROR.
+            const name = n.userName ? String(n.userName).replace(/\s+/g, ' ').trim().slice(0, 100) : '';
+            const day = n.day || 'Veiklos laikas';
+            return { title: 'Meistras pakoregavo veiklos pradžią', body: name ? `${name} · ${day}` : day };
         }
         case 'session_correction_request':
             // Worker → manager: a logged-time error report. Body = "day: note" (note clamped) or day.
