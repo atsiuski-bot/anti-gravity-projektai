@@ -15,6 +15,12 @@ import { installStaleChunkRecovery } from './utils/appUpdate.js'
 installGlobalErrorLogging();
 installStaleChunkRecovery();
 
+// Disarm the boot watchdog in index.html. Reaching this line proves the entry module parsed and
+// ran, so a white screen from here on is React's problem (ErrorBoundary) or the network's — both
+// of which have their own recovery. Set BEFORE createRoot so a render that throws synchronously
+// still counts as "booted" and hands the failure to the boundary instead of the watchdog.
+window.__workzBooted = true;
+
 // Console handles for the one-off DB migration + task diagnostic — DEV ONLY.
 //
 // These shipped in the production bundle, which put an unaudited BULK TASK REWRITE one console line
