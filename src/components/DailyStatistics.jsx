@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useId } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, doc, updateDoc, setDoc, deleteDoc } from 'firebase/firestore';
 import { formatMinutesToTimeString, getLithuanianDateString, getLithuanianWeekday, getWorkDayCutoff, addDaysToDateString, calculateCurrentTotalMinutes, clampSessionMinutes, sanitizeReportMinutes, isImplausibleSessionMinutes, injectInactiveGaps, vilniusWallClockToISO, MAX_BACKDATE_DAYS } from '../utils/timeUtils';
-import { validateSelfReduction, reduceOwnWorkSession } from '../utils/sessionEditActions';
+import { validateSelfReduction, reduceOwnWorkSession, validateOwnStartCorrection, correctOwnSessionStart } from '../utils/sessionEditActions';
 import { formatDisplayName, formatTime, isManagerRole, resolveUserId, resolveUserName } from '../utils/formatters';
 import { privateScopeConstraints, isScopedOverseer } from '../utils/teamScope';
 import { useAuth } from '../context/AuthContext';
@@ -93,6 +93,13 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     const canFillGaps =
         !isManagerRole(userRole) &&
         userData?.canBackdateTime === true &&
+        selectedUserId === currentUser?.uid;
+    // Self-service START correction: a worker granted canEditOwnStartTime, looking at THEIR OWN
+    // day, may correct a logged session's start in either direction (see correctOwnSessionStart).
+    // Gated the same way as canFillGaps — own timeline only.
+    const canEditOwnStart =
+        !isManagerRole(userRole) &&
+        userData?.canEditOwnStartTime === true &&
         selectedUserId === currentUser?.uid;
     const adminUids = useMemo(
         () => (users || [])
@@ -981,12 +988,14 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
     //   • 'reduce'  — the new end is earlier, so the correction is applied immediately. Giving back
     //                 credited time is self-punishing, so an approval would only delay a fix
     //                 everyone wants; the admins get an FYI and the rules enforce the one-way-ness.
+    //   • 'start'   — the worker is granted canEditOwnStartTime, so a corrected start (either
+    //                 direction) is also applied immediately; admins get the same FYI.
     //   • 'request' — anything else (a longer session, or a complaint that needs no time change) is
     //                 sent to the manager as the correction request this surface already had. The
     //                 worker never writes an increase themselves.
     // Returns nothing; a failure surfaces in the shared inline banner and leaves the modal's own
     // error copy to the modal.
-    const handleSubmitTimeCorrection = async ({ mode, endISO, reason }) => {
+    const handleSubmitTimeCorrection = async ({ mode, endISO, startISO, reason }) => {
         const item = errorReportTarget;
         const trimmed = (reason || '').trim();
         if (!item || !trimmed) {
@@ -995,6 +1004,24 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
         }
         const day = item.date || getLithuanianDateString(item.startTime);
         const actorName = formatDisplayName(currentUser?.displayName || currentUser?.email) || currentUser?.email || '';
+
+        if (mode === 'start') {
+            const stored = sessions.find((s) => s.id === item.id);
+            const result = await correctOwnSessionStart({
+                session: stored || item,
+                worker: { uid: currentUser?.uid, displayName: currentUser?.displayName, email: currentUser?.email },
+                startTime: startISO,
+                reason: trimmed,
+                adminUids,
+            });
+            if (result.ok) {
+                setActionError('');
+            } else {
+                setActionError('Nepavyko pakoreguoti pradžios laiko. Bandykite vėl.');
+            }
+            setErrorReportTarget(null);
+            return;
+        }
 
         if (mode === 'reduce') {
             // Write against the STORED row, not the timeline projection: the projection sanitizes
@@ -1875,6 +1902,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                     item={errorReportTarget}
                     storedSession={sessions.find((s) => s.id === errorReportTarget.id) || null}
                     canRequest={myManagerIds.length > 0}
+                    canEditStart={canEditOwnStart}
                     onSubmit={handleSubmitTimeCorrection}
                     onClose={() => setErrorReportTarget(null)}
                 />
@@ -1901,8 +1929,8 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
 }
 
 // Validation-error code → Lithuanian copy for the self-correction modal. Codes come from
-// validateSelfReduction; 'notShorter' is NOT an error here — it is the branch that routes the
-// correction to the manager — so it has no entry.
+// validateSelfReduction/validateOwnStartCorrection; 'notShorter' is NOT an error here — it is the
+// branch that routes the end-correction to the manager — so it has no entry.
 const SELF_CORRECT_ERROR_COPY = {
     order: 'Pabaiga turi būti vėlesnė už pradžią.',
     tooLong: 'Sesija viršija 16 val. — patikrinkite laiką.',
@@ -1914,17 +1942,27 @@ const SELF_CORRECT_ERROR_COPY = {
     unsupported: 'Šios eilutės laiko pakeisti negalima — praneškite koordinatoriui.',
 };
 
-// Worker self-correction prompt for ONE of their own logged rows. The worker states when they
-// ACTUALLY finished, and the direction of that answer decides what happens — the whole point of the
-// screen, so it is stated in the copy before they type, not discovered after they submit:
-//   • an EARLIER end shortens the row and is applied immediately (approval-free, admins informed);
-//   • a LATER or unchanged end cannot be self-applied, so it is sent to the manager as the
-//     correction request this surface already had — with the requested end carried along.
-// The remaining duration is derived live from the same validator the write uses, so the consequence
-// is visible before saving and the modal can never offer a "reduce" the action layer would refuse.
-function SessionErrorReportModal({ item, storedSession, canRequest, onSubmit, onClose }) {
-    const [reason, setReason] = useState('');
+// The reason a canEditOwnStartTime worker sees pre-filled the moment this modal opens — a plain
+// baseline they can freely edit or clear, so the row's audit trail is never blank by accident.
+const START_CORRECTION_DEFAULT_REASON = 'Darbo laiko pradžios korekcija';
+
+// Worker self-correction prompt for ONE of their own logged rows.
+//   • START field (only rendered for a worker granted canEditStart): free-direction, applied
+//     immediately the moment it is the one changed — the admin grant IS the approval, so there is
+//     no manager branch for it. The reason field starts pre-filled with a baseline correction
+//     reason for these workers, editable like any other field.
+//   • END field: unchanged behavior — an EARLIER end shortens the row and applies immediately
+//     (approval-free, admins informed); a LATER or unchanged end is sent to the manager as a
+//     correction request instead.
+// If both fields are changed in the same submission, the start correction takes priority (it is
+// the more trusted, unconditionally-permitted path) and the end value is left untouched.
+// The remaining duration is derived live from the same validators the writes use, so the
+// consequence is visible before saving and the modal can never offer an action the action layer
+// would refuse.
+function SessionErrorReportModal({ item, storedSession, canRequest, canEditStart = false, onSubmit, onClose }) {
+    const [reason, setReason] = useState(() => (canEditStart ? START_CORRECTION_DEFAULT_REASON : ''));
     const [endTimeStr, setEndTimeStr] = useState(() => formatTime(item.endTime));
+    const [startTimeStr, setStartTimeStr] = useState(() => formatTime(item.startTime));
     const [submitting, setSubmitting] = useState(false);
     const fieldId = useId();
 
@@ -1937,30 +1975,54 @@ function SessionErrorReportModal({ item, storedSession, canRequest, onSubmit, on
     // modal uses, which is what keeps a session that ran past midnight anchored to the right day.
     const endDay = getLithuanianDateString(item.endTime);
     const endISO = endTimeStr ? vilniusWallClockToISO(endDay, endTimeStr) : null;
+    // Same anchoring for the proposed start, on the day the session STARTED.
+    const startDay = getLithuanianDateString(item.startTime);
+    const startISO = startTimeStr ? vilniusWallClockToISO(startDay, startTimeStr) : null;
 
-    // Judge the proposal against the STORED row (what is actually credited), falling back to the
+    // Judge each proposal against the STORED row (what is actually credited), falling back to the
     // timeline projection when the raw row is not in view.
     const check = useMemo(
         () => (endISO ? validateSelfReduction(storedSession || item, endISO) : null),
         [endISO, storedSession, item]
     );
-    // 'notShorter' is the manager branch, not a failure; every other code is a real blocker.
-    const blockingError = check && !check.ok && check.error !== 'notShorter' ? check.error : null;
-    const mode = check?.ok ? 'reduce' : 'request';
+    const startCheck = useMemo(
+        () => (canEditStart && startISO ? validateOwnStartCorrection(storedSession || item, startISO) : null),
+        [canEditStart, startISO, storedSession, item]
+    );
+    const startChanged = startTimeStr !== formatTime(item.startTime);
     const unchanged = endTimeStr === formatTime(item.endTime);
+
+    // The start correction takes priority whenever it is the field the worker actually touched —
+    // it is the unconditionally-permitted (admin-granted) path, so it never has to defer to the
+    // end field's reduce/request branching.
+    const mode = canEditStart && startChanged ? 'start' : check?.ok ? 'reduce' : 'request';
+    const blockingError =
+        mode === 'start'
+            ? startCheck && !startCheck.ok
+                ? startCheck.error
+                : null
+            // 'notShorter' is the manager branch, not a failure; every other code is a real blocker.
+            : check && !check.ok && check.error !== 'notShorter'
+              ? check.error
+              : null;
 
     const canSend =
         reason.trim().length > 0 &&
         !blockingError &&
-        (mode === 'reduce' || canRequest);
+        (mode === 'start' ? !!startCheck?.ok : mode === 'reduce' || canRequest);
 
     const handleSend = async () => {
         if (!canSend || submitting) return;
         setSubmitting(true);
         try {
-            // The reduce path moves the task counter by a DELTA, so it must be submitted at most
-            // once — `submitting` (never cleared on success, the modal closes) is that guarantee.
-            await onSubmit({ mode, endISO: unchanged ? null : endISO, reason });
+            // The reduce/start paths move the task counter by a DELTA, so each must be submitted at
+            // most once — `submitting` (never cleared on success, the modal closes) is that guarantee.
+            await onSubmit({
+                mode,
+                endISO: mode === 'reduce' ? (unchanged ? null : endISO) : null,
+                startISO: mode === 'start' ? startISO : null,
+                reason,
+            });
         } finally {
             setSubmitting(false);
         }
@@ -1985,12 +2047,12 @@ function SessionErrorReportModal({ item, storedSession, canRequest, onSubmit, on
                     <Button
                         variant="primary"
                         fullWidth
-                        icon={mode === 'reduce' ? Clock : Flag}
+                        icon={mode === 'request' ? Flag : Clock}
                         loading={submitting}
                         disabled={!canSend}
                         onClick={handleSend}
                     >
-                        {mode === 'reduce' ? 'Sumažinti laiką' : 'Siųsti koordinatoriui'}
+                        {mode === 'start' ? 'Koreguoti pradžią' : mode === 'reduce' ? 'Sumažinti laiką' : 'Siųsti koordinatoriui'}
                     </Button>
                 </div>
             }
@@ -2000,6 +2062,12 @@ function SessionErrorReportModal({ item, storedSession, canRequest, onSubmit, on
                     Jei pamiršote sustabdyti laikmatį, nurodykite, kada iš tikrųjų baigėte —{' '}
                     <span className="font-semibold">laiką sumažinti galite pats(-i), be patvirtinimo</span>.
                     Laiko padidinti negalima: tokį prašymą patvirtina Jūsų koordinatorius.
+                    {canEditStart && (
+                        <>
+                            {' '}Jums taip pat suteikta teisė koreguoti{' '}
+                            <span className="font-semibold">veiklos pradžios laiką bet kuria kryptimi</span>, be patvirtinimo.
+                        </>
+                    )}
                 </p>
                 <div className="rounded-control border border-line bg-surface-sunken p-3">
                     <p className="text-caption uppercase font-bold tracking-wide text-ink-muted">Eilutė</p>
@@ -2008,6 +2076,21 @@ function SessionErrorReportModal({ item, storedSession, canRequest, onSubmit, on
                         {day} · {span} · {dur}
                     </p>
                 </div>
+
+                {canEditStart && (
+                    <div>
+                        <label htmlFor={`${fieldId}-start`} className="mb-1 block text-caption font-medium text-ink-muted">
+                            Kada iš tikrųjų pradėjote?
+                        </label>
+                        <input
+                            id={`${fieldId}-start`}
+                            type="time"
+                            value={startTimeStr}
+                            onChange={(e) => setStartTimeStr(e.target.value)}
+                            className={inputClass}
+                        />
+                    </div>
+                )}
 
                 <div>
                     <label htmlFor={`${fieldId}-end`} className="mb-1 block text-caption font-medium text-ink-muted">
@@ -2023,23 +2106,33 @@ function SessionErrorReportModal({ item, storedSession, canRequest, onSubmit, on
                 </div>
 
                 {/* Live consequence — the credited duration this correction leaves behind, and which
-                    of the two paths the current answer takes. aria-live so it is announced, since it
-                    is the one thing that changes what the primary button does. */}
+                    of the paths the current answer takes. aria-live so it is announced, since it is
+                    the one thing that changes what the primary button does. */}
                 <div className="rounded-control border border-line bg-surface-sunken p-3" aria-live="polite">
                     <div className="flex items-center justify-between gap-3">
                         <span className="flex items-center gap-1.5 text-body text-ink-muted">
                             <Clock className="h-4 w-4" aria-hidden="true" /> Nauja trukmė
                         </span>
                         <span className="font-mono text-body-lg font-bold text-brand">
-                            {check?.ok ? formatMinutesToTimeString(check.durationMinutes) : '—'}
+                            {mode === 'start'
+                                ? startCheck?.ok
+                                    ? formatMinutesToTimeString(startCheck.durationMinutes)
+                                    : '—'
+                                : check?.ok
+                                  ? formatMinutesToTimeString(check.durationMinutes)
+                                  : '—'}
                         </span>
                     </div>
                     <p className="mt-2 text-caption text-ink-muted">
-                        {check?.ok
-                            ? 'Bus pritaikyta iš karto. Apie pakeitimą informuojami administratoriai.'
-                            : canRequest
-                              ? 'Laikas nebus sumažintas — bus išsiųstas prašymas koordinatoriui.'
-                              : 'Jums nepriskirtas koordinatorius, todėl prašymo išsiųsti negalima. Galite tik sumažinti laiką.'}
+                        {mode === 'start'
+                            ? startCheck?.ok
+                                ? 'Bus pritaikyta iš karto. Apie pakeitimą informuojami administratoriai.'
+                                : 'Nurodykite teisingą pradžios laiką, kad pakeitimą būtų galima pritaikyti.'
+                            : check?.ok
+                              ? 'Bus pritaikyta iš karto. Apie pakeitimą informuojami administratoriai.'
+                              : canRequest
+                                ? 'Laikas nebus sumažintas — bus išsiųstas prašymas koordinatoriui.'
+                                : 'Jums nepriskirtas koordinatorius, todėl prašymo išsiųsti negalima. Galite tik sumažinti laiką.'}
                     </p>
                 </div>
 

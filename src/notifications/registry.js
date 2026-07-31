@@ -307,6 +307,23 @@ export const NOTIFICATIONS = {
         },
     },
 
+    // ── Trusted worker → admin (oversight: own session START corrected, either direction) ─────────
+    // A worker granted canEditOwnStartTime corrected the START of one of their OWN logged sessions —
+    // unlike time_self_reduced this may move the credited duration UP or down, so it needs the same
+    // per-user admin grant as backdated_time_logged rather than being open to everyone. FYI to every
+    // admin: WHO + the affected day. 'info', never 'action': there is nothing for the admin to decide.
+    time_self_start_corrected: {
+        category: 'info',
+        sound: 'info',
+        push: true,
+        link: TAB_TASKS,
+        copy: (n) => {
+            const name = clamp(n.userName);
+            const day = n.day || 'Veiklos laikas';
+            return { title: 'Meistras pakoregavo veiklos pradžią', body: name ? `${name} · ${day}` : day };
+        },
+    },
+
     // ── System → worker (deadline closing in → priority auto-raised) ─────────────────────────────
     task_priority_escalated: {
         category: 'info',

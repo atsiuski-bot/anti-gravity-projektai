@@ -463,6 +463,49 @@ function BackdateToggle({ user, onToggle }) {
     );
 }
 
+// Per-user switch granting approval-free, EITHER-DIRECTION correction of a logged session's START
+// time. Unlike BackdateToggle's grant (which only lets a worker ADD a missed past session), this
+// one lets a worker RAISE credited time on a row they already have — so it stays a deliberate
+// admin-only grant, never a default-on behavior. Same switch-role shape as BackdateToggle.
+function StartTimeCorrectionToggle({ user, onToggle }) {
+    const on = user.canEditOwnStartTime === true;
+    return (
+        <button
+            type="button"
+            role="switch"
+            aria-checked={on}
+            onClick={() => onToggle(user)}
+            className={cn(
+                'flex w-full items-center justify-between gap-3 rounded-control border p-3 text-left min-h-touch',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                on ? 'border-brand bg-brand/5' : 'border-line bg-surface-card hover:bg-surface-sunken/60'
+            )}
+        >
+            <span>
+                <span className="block text-body font-medium text-ink-strong">Darbo laiko pradžios korekcija</span>
+                <span className="mt-0.5 block text-caption text-ink-muted">
+                    Pats koreguoja savo veiklos pradžios laiką bet kuria kryptimi — be patvirtinimo;
+                    administratoriai gauna pranešimą.
+                </span>
+            </span>
+            <span
+                className={cn(
+                    'relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors',
+                    on ? 'bg-brand' : 'bg-line'
+                )}
+                aria-hidden="true"
+            >
+                <span
+                    className={cn(
+                        'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                        on ? 'translate-x-6' : 'translate-x-1'
+                    )}
+                />
+            </span>
+        </button>
+    );
+}
+
 function BlockButton({ user, isSelf, onRequest, fullWidth, iconOnly }) {
     const pending = isPendingUser(user);
     // The action only ever toggles isDisabled — nothing is deleted — so the enable side reads
@@ -966,6 +1009,21 @@ export default function UserManagement() {
         }
     };
 
+    // Grant/revoke approval-free, either-direction correction of a worker's own session START time.
+    // Admin-only — enforced by firestore.rules (the canEditOwnStartTime pin), mirroring
+    // handleToggleBackdate above.
+    const handleToggleStartTimeCorrection = async (user) => {
+        setError('');
+        try {
+            await updateDoc(doc(db, 'users', user.id), {
+                canEditOwnStartTime: !(user.canEditOwnStartTime === true),
+            });
+        } catch (err) {
+            console.error("Error updating start-time correction permission:", err);
+            setError('Nepavyko atnaujinti pradžios korekcijos teisės. Bandykite dar kartą.');
+        }
+    };
+
     const requestBlock = (user) => {
         if (user.id === currentUser?.uid) {
             setError('Negalite užblokuoti savęs.');
@@ -1228,6 +1286,9 @@ export default function UserManagement() {
                                 {isAdmin && (
                                     <BackdateToggle user={user} onToggle={handleToggleBackdate} />
                                 )}
+                                {isAdmin && (
+                                    <StartTimeCorrectionToggle user={user} onToggle={handleToggleStartTimeCorrection} />
+                                )}
                                 {isAdmin && user.role === 'worker' && (
                                     <PayRateButton user={user} onEdit={setPayRateUser} fullWidth />
                                 )}
@@ -1365,8 +1426,9 @@ export default function UserManagement() {
                                     {expanded && isAdmin && (
                                         <tr className="bg-surface-sunken/30">
                                             <td colSpan={6} className="px-4 pb-3 pt-1">
-                                                <div className="max-w-xl">
+                                                <div className="max-w-xl space-y-2">
                                                     <BackdateToggle user={user} onToggle={handleToggleBackdate} />
+                                                    <StartTimeCorrectionToggle user={user} onToggle={handleToggleStartTimeCorrection} />
                                                 </div>
                                             </td>
                                         </tr>

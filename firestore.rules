@@ -362,6 +362,7 @@ service cloud.firestore {
                     && request.resource.data.get('scopedManager', false) == false
                     && request.resource.data.get('isTest', false) == false
                     && request.resource.data.get('canBackdateTime', false) == false
+                    && request.resource.data.get('canEditOwnStartTime', false) == false
                     && request.resource.data.get('teamManagerIds', []) == []
                     && request.resource.data.get('seniorManagerIds', []) == []
                     && request.resource.data.get('overseerIds', []) == []
@@ -412,7 +413,7 @@ service cloud.firestore {
                     && request.resource.data.get('overseerIds', []) == resource.data.get('overseerIds', [])
                     // ADMIN-ONLY FIELDS. A non-admin may change NONE of these; only an admin may set
                     // role (no self-mint), team/senior membership + scope (ADR 0005/0007), payRate
-                    // (ADR 0012), canBackdateTime (per-user admin grant), or isTest (audit R-07 — no
+                    // (ADR 0012), canBackdateTime / canEditOwnStartTime (per-user admin grants), or isTest (audit R-07 — no
                     // self-exclusion from reports/pay). Consolidated into ONE isAdmin() branch (was 8
                     // separate `isAdmin() || …` conjuncts): logically identical — a non-admin must
                     // leave every one of these unchanged either way — but it evaluates isAdmin() ONCE.
@@ -428,6 +429,7 @@ service cloud.firestore {
                         request.resource.data.get('defaultSeniorManager', '') == resource.data.get('defaultSeniorManager', '') &&
                         request.resource.data.get('payRate', {}) == resource.data.get('payRate', {}) &&
                         request.resource.data.get('canBackdateTime', false) == resource.data.get('canBackdateTime', false) &&
+                        request.resource.data.get('canEditOwnStartTime', false) == resource.data.get('canEditOwnStartTime', false) &&
                         request.resource.data.get('isTest', false) == resource.data.get('isTest', false)
                     ));
       allow delete: if isAdmin();
