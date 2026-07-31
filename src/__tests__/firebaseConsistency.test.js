@@ -50,6 +50,8 @@ import {
   notificationCategory,
   notificationLink,
   notificationActions,
+  DIRECT_PUSH_ACTIONS,
+  directNotificationActions,
   PUSH_ACTION_IDS,
   MAX_PUSH_ACTIONS,
 } from '../notifications/registry.js';
@@ -721,22 +723,40 @@ describe('notification category lockstep (functions CATEGORY_BY_TYPE ↔ client 
 //     and the PRODUCT rule that only an 'action'-category notification may carry a decision button.
 // =============================================================================================
 
+// Same slicing trick as CATEGORY_BY_TYPE, shared by both button maps. The values are arrays of
+// object literals, so the first '};' after the marker is still the map's own close ('}]' and '}, {'
+// contain no '};').
+const serverPushActionMap = (name) => {
+  const marker = `const ${name} = {`;
+  const start = FUNCTIONS_SRC.indexOf(marker);
+  if (start === -1) {
+    throw new Error(`Could not find ${name} in functions/index.js — marker moved; update this test.`);
+  }
+  const end = FUNCTIONS_SRC.indexOf('};', start);
+  if (end === -1) {
+    throw new Error(`Could not find the end of ${name} in functions/index.js — update this test.`);
+  }
+  const block = FUNCTIONS_SRC.slice(start, end + 2);
+  return new Function(`${block}\n;return ${name};`)();
+};
+
+// The platform + product contract every declared button lives under, whichever map declares it.
+const pushActionProblems = (type, actions) => {
+  const problems = [];
+  if (actions.length > MAX_PUSH_ACTIONS) {
+    problems.push(`${type}: ${actions.length} buttons — the OS renders at most ${MAX_PUSH_ACTIONS}, the rest vanish silently`);
+  }
+  const ids = actions.map((a) => a.action);
+  if (new Set(ids).size !== ids.length) problems.push(`${type}: duplicate button ids (${ids.join(', ')})`);
+  for (const a of actions) {
+    if (!PUSH_ACTION_IDS.includes(a.action)) problems.push(`${type}: unknown button id "${a.action}" — the app has no handler for it`);
+    if (!a.title || !a.title.trim()) problems.push(`${type}: button "${a.action}" has no title`);
+  }
+  return problems;
+};
+
 describe('notification push-action lockstep (functions PUSH_ACTIONS_BY_TYPE ↔ client registry)', () => {
-  // Same slicing trick as CATEGORY_BY_TYPE. The values are arrays of object literals, so the first
-  // '};' after the marker is still the map's own close ('}]' and '}, {' contain no '};').
-  const serverActions = (() => {
-    const marker = 'const PUSH_ACTIONS_BY_TYPE = {';
-    const start = FUNCTIONS_SRC.indexOf(marker);
-    if (start === -1) {
-      throw new Error('Could not find PUSH_ACTIONS_BY_TYPE in functions/index.js — marker moved; update this test.');
-    }
-    const end = FUNCTIONS_SRC.indexOf('};', start);
-    if (end === -1) {
-      throw new Error('Could not find the end of PUSH_ACTIONS_BY_TYPE in functions/index.js — update this test.');
-    }
-    const block = FUNCTIONS_SRC.slice(start, end + 2);
-    return new Function(`${block}\n;return PUSH_ACTIONS_BY_TYPE;`)();
-  })();
+  const serverActions = serverPushActionMap('PUSH_ACTIONS_BY_TYPE');
 
   const typesWithActions = Object.keys(NOTIFICATIONS).filter((t) => notificationActions(t).length > 0);
 
@@ -761,19 +781,7 @@ describe('notification push-action lockstep (functions PUSH_ACTIONS_BY_TYPE ↔ 
   });
 
   it('every declared button obeys the platform contract (<=2 per type, known id, real title)', () => {
-    const problems = [];
-    for (const type of typesWithActions) {
-      const actions = notificationActions(type);
-      if (actions.length > MAX_PUSH_ACTIONS) {
-        problems.push(`${type}: ${actions.length} buttons — the OS renders at most ${MAX_PUSH_ACTIONS}, the rest vanish silently`);
-      }
-      const ids = actions.map((a) => a.action);
-      if (new Set(ids).size !== ids.length) problems.push(`${type}: duplicate button ids (${ids.join(', ')})`);
-      for (const a of actions) {
-        if (!PUSH_ACTION_IDS.includes(a.action)) problems.push(`${type}: unknown button id "${a.action}" — the app has no handler for it`);
-        if (!a.title || !a.title.trim()) problems.push(`${type}: button "${a.action}" has no title`);
-      }
-    }
+    const problems = typesWithActions.flatMap((type) => pushActionProblems(type, notificationActions(type)));
     expect(problems, `push action buttons break their contract:\n${problems.join('\n')}`).toEqual([]);
   });
 
@@ -788,6 +796,68 @@ describe('notification push-action lockstep (functions PUSH_ACTIONS_BY_TYPE ↔ 
     // strings), taking down the push for EVERY type rather than just the button-less ones.
     expect(FUNCTIONS_SRC).toContain('const pushActions = PUSH_ACTIONS_BY_TYPE[n.type];');
     expect(FUNCTIONS_SRC).toContain('...(pushActions ? { actions: JSON.stringify(pushActions) } : {}),');
+  });
+});
+
+// =============================================================================================
+// 7c-bis. DIRECT PUSH-ACTION LOCKSTEP — a few pushes are sent straight from their own collection's
+//     trigger instead of through `request_notifications`, so they have no registry entry and the
+//     mirror above cannot see them. Their buttons live in DIRECT_PUSH_ACTIONS on both sides and get
+//     the SAME lock: without it the Cloud Function would be the only place the button set exists,
+//     and a rename there would ship a button the app silently refuses to execute.
+//
+//     Today: `calendar_request` (notifyOnCalendarRequest → the manager's calendar-approval card).
+// =============================================================================================
+
+describe('direct push-action lockstep (functions DIRECT_PUSH_ACTIONS ↔ client registry)', () => {
+  const serverDirect = serverPushActionMap('DIRECT_PUSH_ACTIONS');
+  const directTypes = Object.keys(DIRECT_PUSH_ACTIONS);
+
+  it('the registry and the server map declare buttons for the same set of types', () => {
+    expect(Object.keys(serverDirect).sort()).toEqual(directTypes.slice().sort());
+  });
+
+  it('server buttons === registry buttons for every type (ids, titles AND order)', () => {
+    const disagreements = [];
+    for (const type of directTypes) {
+      const client = directNotificationActions(type);
+      const server = serverDirect[type] || [];
+      if (JSON.stringify(server) !== JSON.stringify(client)) {
+        disagreements.push(`${type}: server=${JSON.stringify(server)} client=${JSON.stringify(client)}`);
+      }
+    }
+    expect(disagreements, `direct push action buttons diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+
+  it('every declared button obeys the platform contract (<=2 per type, known id, real title)', () => {
+    const problems = directTypes.flatMap((type) => pushActionProblems(type, directNotificationActions(type)));
+    expect(problems, `direct push action buttons break their contract:\n${problems.join('\n')}`).toEqual([]);
+  });
+
+  it('a type belongs to exactly one of the two maps', () => {
+    // Overlap would make "which buttons does this type get" depend on which sender happened to fire
+    // — the registry map is keyed by request_notification type, this one by the type a direct sender
+    // stamps into the payload, and the app dispatches on a single flat id space.
+    const both = directTypes.filter((t) => t in NOTIFICATIONS);
+    expect(both, `declared in BOTH push-button maps: ${both.join(', ')}`).toEqual([]);
+  });
+
+  it('the calendar sender attaches its buttons, guarded exactly like the registry sender', () => {
+    // Same reasoning as the request_notification sender: an unguarded spread would put an
+    // `actions: undefined` key into the FCM data map, where every value must be a string, and throw
+    // at send time — losing the whole notification rather than just its buttons.
+    expect(FUNCTIONS_SRC).toContain("const pushActions = DIRECT_PUSH_ACTIONS['calendar_request'];");
+    expect(FUNCTIONS_SRC).toContain('...(pushActions ? { actions: JSON.stringify(pushActions) } : {}),');
+  });
+
+  it('the calendar push is an action-category notification', () => {
+    // Mirror of the registry rule that only an 'action' notification may carry a decision button.
+    // This sender hardcodes its category rather than reading a map, so assert it at the call site.
+    const start = FUNCTIONS_SRC.indexOf('exports.notifyOnCalendarRequest');
+    const block = FUNCTIONS_SRC.slice(start, FUNCTIONS_SRC.indexOf('});', start));
+    expect(start).toBeGreaterThan(-1);
+    expect(block).toContain("type: 'calendar_request'");
+    expect(block).toContain("category: 'action'");
   });
 });
 

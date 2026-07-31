@@ -82,6 +82,7 @@ Which types get buttons, and why only these three:
 | `task_approval` | Patvirtinti · Atidaryti | approve is one tap and undoable; Redaguoti opens an editor and Ištrinti is irreversible |
 | `task_completion` | Priimti · Atidaryti | sign-off is one tap and undoable; Grąžinti reopens the task *and* the editor |
 | `time_extension_request` | Pratęsti +30 min · Atidaryti | the common grant; "+1 val." would crowd out Atidaryti, and a refusal the worker is waiting on deserves context |
+| `calendar_request` | Patvirtinti · Atidaryti | *(amendment, follow-up 1 — see below)* approve is one tap; Atmesti blocks the worker's planning and deserves the card's context |
 
 The exclusions are the load-bearing part of the decision:
 
@@ -95,9 +96,9 @@ The exclusions are the load-bearing part of the decision:
   first" is one tap instead of a hunt. It is deliberately *not* wired to the existing "open the task"
   handler, which dismisses the notification — on an approval request that would silently discard the
   very decision the manager came to make.
-- **Calendar approval requests are out of scope for v1.** They ride a different collection and a
+- **Calendar approval requests were out of scope for v1.** They ride a different collection and a
   different sender (`notifyOnCalendarRequest`), outside the registry the mirror test locks. Deferred
-  rather than special-cased.
+  rather than special-cased — and delivered in the amendment below.
 
 ### Mechanics
 
@@ -142,11 +143,48 @@ option B by accident.
   checkout — the buttons only reach a device once the sender ships them. The client half is inert
   until then (no `actions` in the payload ⇒ today's notification, unchanged).
 
+## Amendment — 2026-07-31: calendar approval requests (follow-up 1)
+
+`calendar_request` now carries **Patvirtinti · Atidaryti**. Nothing above changes; the question was
+only *where the declaration lives* so the drift lock still reaches it.
+
+A `calendar_request` push is not a `request_notification` — it is fanned out by its own
+collection trigger — so it cannot take a registry entry: the registry's keys **are** the
+request_notification types, and the copy/category mirrors are locked against that key set, so an
+entry there would fail the very gate it was meant to satisfy. Special-casing it out of the
+assertions was the other option and was rejected: the value of the lock is that it has no holes.
+
+So the boundary is made explicit instead. A second map, **`DIRECT_PUSH_ACTIONS`**, declares buttons
+for push types that do not ride `request_notifications`, keyed by the `type` its sender stamps into
+the payload, mirrored in `functions/index.js` under the same name and locked by its own lockstep
+suite — ids, titles, order, the ≤2/known-id/real-title contract, and a **disjointness** assertion so
+a type can never be declared in both maps and leave "which buttons apply" depending on the sender.
+
+Two mechanics differ from the v1 types and are the parts worth remembering:
+
+- **Atmesti gets no button**, on the same rule that keeps "Nepratęsti" off the extension push: a
+  refusal blocks the worker's planning until they resubmit, so it belongs where the reason text and
+  the requested times are on screen. Approve is the one-tap answer; refusal is a considered one.
+- **The type guard cannot key on `type` here.** A `calendar_requests` doc's own `type` is the *kind
+  of change* (`add`/`edit`/`delete`), not the notification type, so the intent is matched on the
+  card's `source`. The runner table therefore holds a predicate per entry rather than a type string,
+  which also lets one action id (`approve`) mean two different decisions — disambiguated by which
+  feed the notification came from, never by what the payload claimed to be.
+
+The execution path is unchanged and that is the point: the intent runs `handleApproveCalendarRequest`,
+the very handler the card's Patvirtinti calls, which delegates to the shared `approveCalendarRequest`
+writer the "Kalendoriaus istorija" tab also uses. The "someone else already decided" guard comes for
+free — the listener keeps only `status === 'pending'`, so a resolved request has already left the feed
+and the intent reports it as settled instead of writing.
+
 ## Follow-ups
 
-1. **Calendar approval buttons** (`notifyOnCalendarRequest` — Patvirtinti / Atmesti). The highest-volume
-   remaining decision; needs the mirror lock extended past the registry's collection boundary.
+1. ~~**Calendar approval buttons.**~~ Done — see the amendment above.
 2. **Real-device QA once deployed.** The client chain is covered by unit tests and a live check of the
    cold-start URL capture; what no test can prove is a real Android notification rendering two buttons
    and a real iPhone ignoring them gracefully. Do this on the founder's own phone after the deploy.
 3. **Revisit option B only if** the open-the-app step measurably slows the daily loop.
+4. **Legacy `calendar_requests` docs** carrying only a `managerId` (no `managerIds` array) still get a
+   push but no card, because the bell's listener queries the array — so a button on one of those
+   reports "already resolved". Pre-existing and self-clearing (these resolve within a day), noted here
+   only so it is not re-diagnosed as a button bug.

@@ -176,6 +176,10 @@ export default function ManagerNotifications({ onClose }) {
     // alone cannot tell "still loading" from "nothing to show", and a push intent has to know the
     // difference: acting on a not-yet-loaded feed would silently do nothing.
     const [taskNotifsLoaded, setTaskNotifsLoaded] = useState(false);
+    // The same "has the first snapshot landed" flag for the calendar-approval listener, which is a
+    // SEPARATE source a push intent can also target. Without it a calendar intent racing the
+    // listener would find an empty array and wrongly report the request as already resolved.
+    const [calRequestsLoaded, setCalRequestsLoaded] = useState(false);
     const [historyNotifications, setHistoryNotifications] = useState([]); // read request_notifications, lazy-loaded
     const [calendarHistory, setCalendarHistory] = useState([]); // dismissed calendar_notifications, lazy-loaded
     const [calendarRequestHistory, setCalendarRequestHistory] = useState([]); // resolved calendar_requests, lazy-loaded
@@ -257,7 +261,9 @@ export default function ManagerNotifications({ onClose }) {
     // for everyone. Legacy docs predating `managerIds` carried only a single `managerId`; those
     // transient pending requests won't appear until re-submitted (acceptable — they resolve daily).
     useEffect(() => {
-        if (!currentUser || !isManager) { setCalendarRequests([]); return undefined; }
+        // A non-manager has no calendar feed to wait for, so settle the gate rather than leaving a
+        // push intent hanging on a listener that will never run.
+        if (!currentUser || !isManager) { setCalendarRequests([]); setCalRequestsLoaded(true); return undefined; }
 
         const q = query(
             collection(db, 'calendar_requests'),
@@ -269,8 +275,11 @@ export default function ManagerNotifications({ onClose }) {
                 .map(doc => ({ id: doc.id, source: 'calendar_approval', ...doc.data() }))
                 .filter(r => r.status === 'pending');
             setCalendarRequests(requests);
+            setCalRequestsLoaded(true);
         }, (error) => {
             console.error("ManagerNotifications: Calendar Requests Listener Error:", error);
+            // A failed listener still settles the feed — see the task listener above.
+            setCalRequestsLoaded(true);
         });
 
         return () => unsubscribe();
@@ -871,7 +880,16 @@ export default function ManagerNotifications({ onClose }) {
     //
     // The intent is checked against the notification's TYPE before it runs: a stale bundle or a
     // hand-edited URL can name any pair it likes, and the wrong handler on the wrong notification is
-    // exactly the kind of thing that must fail into "show the card and let a human decide".
+    // exactly the kind of thing that must fail into "show the card and let a human decide". The check
+    // reads the LIVE feed doc rather than the type the push claimed, so a payload cannot talk its way
+    // into a handler.
+    //
+    // Two of the feed's three sources can be the target of a decision button, and they are matched
+    // differently. A request_notification carries the notification type itself (`task_approval`, …);
+    // a calendar-approval card is a `calendar_requests` doc whose own `type` is the KIND of change
+    // ('add'/'edit'/'delete'), so its identity is `source`. Hence a predicate per runner rather than
+    // a type string — and hence one action id ('approve') can legitimately mean two different
+    // decisions, disambiguated by which source the notification came from.
     const handledIntentRef = useRef(0);
     useEffect(() => {
         if (!pushIntent?.action) return;
@@ -882,9 +900,9 @@ export default function ManagerNotifications({ onClose }) {
         // The decision card lives in the live feed. An intent arriving while the user reads Istorija
         // switches the panel back rather than quietly doing nothing.
         if (view !== 'active') { setView('active'); return; }
-        // Wait for the first snapshot — acting on a feed that has not loaded would find nothing and
-        // wrongly report the request as already resolved.
-        if (!taskNotifsLoaded) return;
+        // Wait for the first snapshot of BOTH decision sources — acting on a feed that has not
+        // loaded would find nothing and wrongly report the request as already resolved.
+        if (!taskNotifsLoaded || !calRequestsLoaded) return;
 
         handledIntentRef.current = pushIntent.seq;
         clearPushIntent();
@@ -892,7 +910,10 @@ export default function ManagerNotifications({ onClose }) {
         // 'Atidaryti' asks for nothing but the card, and the panel is already open by now.
         if (pushIntent.action === 'open') return;
 
-        const notif = taskNotifications.find((n) => n.id === pushIntent.notifId);
+        // Both senders stamp the push's notifId with the SOURCE DOC's id, which is also the id the
+        // respective listener keys its cards on — so one lookup by id covers either feed.
+        const notif = taskNotifications.find((n) => n.id === pushIntent.notifId)
+            || calendarRequests.find((r) => r.id === pushIntent.notifId);
         if (!notif) {
             // Someone else got there first (or the request was cleared on another device). Say so —
             // a button that appears to do nothing reads as a bug.
@@ -900,17 +921,18 @@ export default function ManagerNotifications({ onClose }) {
             return;
         }
 
-        const runners = {
-            approve: { type: 'task_approval', run: (n) => handleApproveTask(n) },
-            confirm: { type: 'task_completion', run: (n) => handleConfirmOneCompletion(n) },
-            extend30: { type: 'time_extension_request', run: (n) => handleGrantExtension(n, '30min') },
-        };
-        const runner = runners[pushIntent.action];
-        // Unknown action, or one aimed at the wrong type → leave the card on screen untouched.
-        if (!runner || runner.type !== notif.type) return;
+        const runners = [
+            { action: 'approve', matches: (n) => n.source === 'task' && n.type === 'task_approval', run: (n) => handleApproveTask(n) },
+            { action: 'confirm', matches: (n) => n.source === 'task' && n.type === 'task_completion', run: (n) => handleConfirmOneCompletion(n) },
+            { action: 'extend30', matches: (n) => n.source === 'task' && n.type === 'time_extension_request', run: (n) => handleGrantExtension(n, '30min') },
+            { action: 'approve', matches: (n) => n.source === 'calendar_approval', run: (n) => handleApproveCalendarRequest(n) },
+        ];
+        const runner = runners.find((r) => r.action === pushIntent.action && r.matches(notif));
+        // Unknown action, or one aimed at the wrong kind of notification → leave the card untouched.
+        if (!runner) return;
         runner.run(notif);
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on a NEW intent (or once the feed settles); the handlers are re-created every render and would re-fire this.
-    }, [pushIntent, taskNotifsLoaded, taskNotifications, view, clearPushIntent]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on a NEW intent (or once the feeds settle); the handlers are re-created every render and would re-fire this.
+    }, [pushIntent, taskNotifsLoaded, taskNotifications, calRequestsLoaded, calendarRequests, view, clearPushIntent]);
 
     // Audit R-08: the calendar listener reads the whole company for the week (no subtree field exists
     // on the doc to query by), so a scoped/senior manager must NOT be shown — nor allowed to dismiss —

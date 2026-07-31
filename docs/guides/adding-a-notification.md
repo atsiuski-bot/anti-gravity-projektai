@@ -156,6 +156,20 @@ Rules that the test gate enforces, and the reasoning behind each:
 for Android/desktop — never the only way to reach a decision. The tap-on-the-body path must stay
 sufficient on its own.
 
+### If the push does not ride `request_notifications`
+
+A few pushes are sent straight from their own collection's trigger, so they have no registry entry —
+today that is `calendar_request` (`notifyOnCalendarRequest`). Their buttons are declared in
+**`DIRECT_PUSH_ACTIONS`**, keyed by the `type` the sender stamps into the push payload, mirrored in a
+map of the same name in `functions/index.js` and locked by the same consistency test. Everything above
+still applies; only steps 1–2 change map. Two extra things to get right:
+
+- **`notifId` must be the id the feed's cards are keyed on** — the intent finds its card by that id
+  alone, so a sender that stamps anything else produces a button that reports "already resolved".
+- **The intent is matched on whatever identifies that card.** A `request_notification` is matched on
+  its `type`; a `calendar_requests` doc's own `type` is the *kind of change* (`add`/`edit`/`delete`),
+  so it is matched on `source` instead. Never let an action run without such a check.
+
 ## Done-checklist
 
 Before calling a new notification finished:
@@ -163,8 +177,8 @@ Before calling a new notification finished:
 - [ ] Registry entry added (`category`, `copy`, `sound`, `push`, `link`, and `actions` if it carries
       decision buttons).
 - [ ] Server `copyForRequestNotification` mirror case added, identical output.
-- [ ] If it declares `actions`: `PUSH_ACTIONS_BY_TYPE` mirrored **and** the intent wired to the
-      matching in-app handler in `ManagerNotifications`.
+- [ ] If it declares `actions`: `PUSH_ACTIONS_BY_TYPE` (or `DIRECT_PUSH_ACTIONS` for a non-registry
+      sender) mirrored **and** the intent wired to the matching in-app handler in `ManagerNotifications`.
 - [ ] `SAMPLES` payload added in `firebaseConsistency.test.js`.
 - [ ] The write goes through `notify()` / `notifyMany()` — no inline `addDoc`.
 - [ ] If server-fired: a Cloud Function writes the doc (no new push sender needed).

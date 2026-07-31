@@ -199,6 +199,15 @@ const PUSH_ACTIONS_BY_TYPE = {
     time_extension_request: [{ action: 'extend30', title: 'Pratęsti +30 min' }, { action: 'open', title: 'Atidaryti' }],
 };
 
+// MIRROR of the client registry's DIRECT_PUSH_ACTIONS — buttons for pushes sent straight from their
+// own collection trigger instead of through `request_notifications`, so they have no entry in the
+// registry map above and none of its mirrors apply to them. Keyed by the `type` this file stamps
+// into the push data payload. Locked by the same test, and under the same rules: <=2 buttons, ids
+// the app can execute, nothing destructive, and no authority — the button hands over an intent.
+const DIRECT_PUSH_ACTIONS = {
+    calendar_request: [{ action: 'approve', title: 'Patvirtinti' }, { action: 'open', title: 'Atidaryti' }],
+};
+
 function copyForRequestNotification(n) {
     const title = n.taskTitle || 'Gildija';
     switch (n.type) {
@@ -373,14 +382,21 @@ exports.notifyOnCalendarRequest = onDocumentCreated('calendar_requests/{id}', as
         : (r.managerId ? [r.managerId] : []);
     if (!recipients.length) return;
     const who = r.userName || 'Meistras';
+    // OS-level decision buttons (ADR 0024). Same guarded shape as notifyOnRequestNotification: FCM
+    // data values must all be strings, so they ride as JSON and the key is omitted entirely when the
+    // type declares none — an `actions: undefined` key would throw at send time and lose the push.
+    const pushActions = DIRECT_PUSH_ACTIONS['calendar_request'];
     try {
         await Promise.all(recipients.map((uid) =>
             sendToUser(uid, { title: 'Kalendoriaus keitimo prašymas', body: who }, {
                 type: 'calendar_request',
                 // A pending approval is a decision owed → 'action' (sticky on a desktop push).
                 category: 'action',
-                // Per-event id → unique tag, so multiple pending requests don't collapse onto one slot.
+                // Per-event id → unique tag, so multiple pending requests don't collapse onto one
+                // slot. It is ALSO the id the bell's calendar cards are keyed on (the listener maps
+                // doc.id → card id), which is what lets a tapped button find the right card.
                 notifId: String(event.params.id),
+                ...(pushActions ? { actions: JSON.stringify(pushActions) } : {}),
                 link: '/?tab=team-calendar'
             })
         ));

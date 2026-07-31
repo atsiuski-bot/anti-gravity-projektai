@@ -436,6 +436,34 @@ export const notificationLink = (type) => NOTIFICATIONS[type]?.link || TAB_TASKS
  */
 export const notificationActions = (type) => NOTIFICATIONS[type]?.actions || [];
 
+/**
+ * PUSH BUTTONS FOR NOTIFICATIONS THAT DO NOT RIDE `request_notifications`.
+ *
+ * A handful of pushes are sent straight from their own collection's trigger rather than through the
+ * `request_notifications` pipeline, so they have no entry in NOTIFICATIONS above and cannot get one:
+ * the map's keys ARE the request_notification types, and the copy/category mirrors are locked against
+ * that key set. Their buttons still have to live in one declared, test-locked place — otherwise the
+ * only copy of the button set would be the Cloud Function, and the app would be dispatching on ids
+ * nothing on this side knows about.
+ *
+ * So they get their own map, keyed by the `type` the sender stamps into the push data payload. The
+ * same drift lock applies (firebaseConsistency.test.js compares ids, titles and order against the
+ * server's mirror), and the same rules do: at most two buttons, nothing destructive, `open` writes
+ * nothing, and the button only ever hands the app an intent — it never decides anything itself.
+ *
+ * calendar_request — a worker's pending planned-hours change (`calendar_requests`, fanned out to
+ * every one of their managers by notifyOnCalendarRequest). Patvirtinti is the card's own approve.
+ * "Atmesti" is deliberately absent: a refusal blocks the worker's planning until they resubmit, so
+ * it is exactly the decision that deserves the card's context (the reason text, the requested times)
+ * rather than a lockscreen reflex — the same reasoning that keeps "Nepratęsti" off the extension push.
+ */
+export const DIRECT_PUSH_ACTIONS = {
+    calendar_request: [ACTION_APPROVE, ACTION_OPEN],
+};
+
+/** The OS-level push buttons for a non-`request_notifications` push type. Always an array. */
+export const directNotificationActions = (type) => DIRECT_PUSH_ACTIONS[type] || [];
+
 /** Every action id the app knows how to execute. The service worker sends nothing else. */
 export const PUSH_ACTION_IDS = [ACTION_OPEN, ACTION_APPROVE, ACTION_CONFIRM, ACTION_EXTEND_30].map((a) => a.action);
 
