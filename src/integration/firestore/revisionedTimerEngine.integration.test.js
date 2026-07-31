@@ -1087,4 +1087,97 @@ describeEmulator('revisioned offline timer engine', () => {
         // ONE row, not a proven row plus a "manual correction" the worker never made.
         expect(gap.exists()).toBe(false);
     });
+
+    // ---- A device whose clock runs fast (serverClock.js) --------------------------------------
+    // The reported failure, reproduced against the REAL ruleset: a worker could start work from a
+    // machine several minutes fast, but every stop was refused with permission-denied — the batch is
+    // atomic, so the ledger row's rejection took the revision bump and the task projection with it,
+    // and the worker stayed canonically live with the stretch uncredited. The same account worked
+    // fine from a phone. These cases pin BOTH halves: the failure the device clock causes, and the
+    // fact that stamping in the server's frame credits exactly the same minutes.
+    describe('a device whose clock runs fast', () => {
+        const MIN = 60 * 1000;
+        const SKEW = 10 * MIN;
+        const iso = (ms) => new Date(ms).toISOString();
+
+        it('starts fine but CANNOT stop — the batch dies whole and the run stays active', async () => {
+            const db = workerDb();
+            const deviceNow = Date.now() + SKEW;
+
+            // A start carries no endTime, so no rule judges the device's clock: this is why the
+            // worker could begin work and only discovered the problem when trying to stop.
+            await assertSucceeds(applyTimerTransitionPlan(db, planTaskStart({
+                task: task('task-a'),
+                userId: USER_ID,
+                userData: userData(),
+                activeRecord: null,
+                commandId: 'cmd-skew-start',
+                runId: 'run-skew',
+                issuedAt: iso(deviceNow - 30 * MIN),
+            })));
+
+            const active = await adminRead(`active_sessions/${USER_ID}`);
+            const runningTask = await adminRead('tasks/task-a');
+            await assertFails(applyTimerTransitionPlan(db, planTaskPause({
+                task: { id: runningTask.id, ...runningTask.data() },
+                userId: USER_ID,
+                userData: userData({
+                    type: 'task', taskId: 'task-a', runId: 'run-skew',
+                    startTime: iso(deviceNow - 30 * MIN),
+                }),
+                activeRecord: active.data(),
+                commandId: 'cmd-skew-pause',
+                issuedAt: iso(deviceNow),
+            })));
+
+            const [activeAfter, taskAfter, ledgerAfter] = await Promise.all([
+                adminRead(`active_sessions/${USER_ID}`),
+                adminRead('tasks/task-a'),
+                adminRead('work_sessions/sess_run_run-skew'),
+            ]);
+            expect(activeAfter.data(), 'the worker is left canonically live')
+                .toMatchObject({ status: 'active', revision: 1 });
+            expect(taskAfter.data().timerStatus).toBe('running');
+            expect(ledgerAfter.exists(), 'not one minute was credited').toBe(false);
+        });
+
+        it('stops normally once both ends are stamped in the server frame, crediting the SAME time', async () => {
+            const db = workerDb();
+            // What serverNowISO() produces on that same 10-min-fast machine: the offset is applied
+            // to every stamp, so start and end move together and their difference is untouched.
+            const anchoredNow = Date.now();
+
+            await assertSucceeds(applyTimerTransitionPlan(db, planTaskStart({
+                task: task('task-a'),
+                userId: USER_ID,
+                userData: userData(),
+                activeRecord: null,
+                commandId: 'cmd-anchored-start',
+                runId: 'run-anchored',
+                issuedAt: iso(anchoredNow - 30 * MIN),
+            })));
+
+            const active = await adminRead(`active_sessions/${USER_ID}`);
+            const runningTask = await adminRead('tasks/task-a');
+            await assertSucceeds(applyTimerTransitionPlan(db, planTaskPause({
+                task: { id: runningTask.id, ...runningTask.data() },
+                userId: USER_ID,
+                userData: userData({
+                    type: 'task', taskId: 'task-a', runId: 'run-anchored',
+                    startTime: iso(anchoredNow - 30 * MIN),
+                }),
+                activeRecord: active.data(),
+                commandId: 'cmd-anchored-pause',
+                issuedAt: iso(anchoredNow),
+            })));
+
+            const [activeAfter, ledgerAfter] = await Promise.all([
+                adminRead(`active_sessions/${USER_ID}`),
+                adminRead('work_sessions/sess_run_run-anchored'),
+            ]);
+            expect(activeAfter.data()).toMatchObject({ status: 'idle', revision: 2, run: null });
+            // 30 minutes — the same stretch the skewed device was trying (and failing) to bank.
+            expect(ledgerAfter.data()).toMatchObject({ runId: 'run-anchored', durationMinutes: 30 });
+        });
+    });
 });

@@ -6,6 +6,7 @@ import {
     planSecondaryEnd,
 } from '../utils/timerTransitionPlan';
 import { issueTimerCommand } from '../utils/timerCommandEngine';
+import { serverNowISO } from '../utils/serverClock';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 import { isAbandonedSession, resolvePreBootBeat } from './useOrphanedSessionRecovery';
@@ -63,7 +64,7 @@ export function useRevisionedSecondaryRecovery(currentUser, userData, enabled) {
         const beatMs = resolvePreBootBeat(
             startedAt, APP_LOAD_TIME, userData?.activeSessionLastHeartbeat
         );
-        const issuedAt = new Date().toISOString();
+        const issuedAt = serverNowISO();
         const creditUntil = beatMs != null ? new Date(beatMs).toISOString() : issuedAt;
         const type = base.run.type;
 
