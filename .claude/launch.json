@@ -18,6 +18,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5192", "--strictPort"],
       "port": 5192
+    },
+    {
+      "name": "workz-notif",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5195", "--strictPort"],
+      "port": 5195
     }
   ]
 }

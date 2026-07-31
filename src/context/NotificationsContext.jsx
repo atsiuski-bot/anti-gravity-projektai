@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from './AuthContext';
@@ -6,6 +6,7 @@ import { useToast } from './ToastContext';
 import { isManagerRole } from '../utils/formatters';
 import { registerFcmToken } from '../utils/messaging';
 import { notificationCopy, notificationSound } from '../notifications/registry';
+import { subscribePushIntent, takeUrlPushIntent } from '../notifications/pushIntent';
 import { SoundManager } from '../utils/soundUtils';
 
 /**
@@ -19,7 +20,13 @@ import { SoundManager } from '../utils/soundUtils';
  * adds the BACKGROUND case (handled by the SW). It also registers this device's FCM token once
  * notification permission is granted.
  */
-const NotificationsContext = createContext({ unreadCount: 0, requestCount: 0, calendarCount: 0 });
+const NotificationsContext = createContext({
+    unreadCount: 0,
+    requestCount: 0,
+    calendarCount: 0,
+    pushIntent: null,
+    clearPushIntent: () => {},
+});
 
 // eslint-disable-next-line react-refresh/only-export-components -- hook co-located with its provider; dev-HMR-only lint.
 export function useNotifications() {
@@ -49,6 +56,28 @@ export function NotificationsProvider({ children }) {
     const [calendarCount, setCalendarCount] = useState(0);
     // null until the first snapshot — so existing items on load do NOT toast.
     const seenRef = useRef(null);
+
+    // A tapped background notification (ADR 0024). This provider is the app-wide holding place for
+    // the intent, not its executor: it sits above the router, so it cannot navigate, and the
+    // handlers that own each decision live in the bell's feed. NotificationBell routes + opens the
+    // panel; ManagerNotifications runs the matching handler and clears the intent.
+    //
+    // Two sources, one state: a cold start carries the intent in the URL (taken once, at module
+    // load), and a running app receives it by postMessage from the FCM worker.
+    //
+    // The cold-start intent is claimed in an EFFECT, never as a useState lazy initializer. The
+    // initializer would look tidier, but React StrictMode calls initializers twice on mount and
+    // keeps only one result — and takeUrlPushIntent() is a once-only consumer, so the surviving
+    // render could easily be the one that got null. The decision would then be silently dropped in
+    // development. An effect's double-invoke is harmless here: the second pass reads null and the
+    // guard leaves the already-captured intent alone.
+    const [pushIntent, setPushIntent] = useState(null);
+    const clearPushIntent = useCallback(() => setPushIntent(null), []);
+    useEffect(() => {
+        const coldStart = takeUrlPushIntent();
+        if (coldStart) setPushIntent(coldStart);
+        return subscribePushIntent(setPushIntent);
+    }, []);
 
     const isManager = isManagerRole(userRole);
 
@@ -179,7 +208,7 @@ export function NotificationsProvider({ children }) {
     }, [currentUser, notificationsEnabled]);
 
     return (
-        <NotificationsContext.Provider value={{ unreadCount, requestCount, calendarCount }}>
+        <NotificationsContext.Provider value={{ unreadCount, requestCount, calendarCount, pushIntent, clearPushIntent }}>
             {children}
         </NotificationsContext.Provider>
     );

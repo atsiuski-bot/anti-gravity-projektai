@@ -19,8 +19,11 @@ the user along **four delivery dimensions**:
 | **Sound** | `SoundManager.playNotificationCue` via `NotificationsContext` | same moment as the toast |
 | **External push** | Cloud Function `notifyOnRequestNotification` → FCM → OS tray (with the OS sound) | app is closed / backgrounded |
 
+A background push may additionally carry up to **two decision buttons** — see
+[§ Decision buttons](#decision-buttons-on-the-background-push-adr-0024) below.
+
 The **type** of a notification — its tier, its Lithuanian copy, its in-app sound, its external-push
-intent and its deep link — is declared in **one place**:
+intent, its deep link and its push buttons — is declared in **one place**:
 
 > **[`src/notifications/registry.js`](../../src/notifications/registry.js)** — the single source of truth.
 
@@ -42,6 +45,7 @@ my_new_event: {
     sound: 'alert',              // 'alert' = decision arrived | 'info' = soft FYI | null = silent
     push: true,                  // fan out to an external OS/lockscreen notification?
     link: '/?tab=tasks',         // the in-app tab tapping it opens
+    // actions: [...],           // OPTIONAL — decision buttons on the push. Most types omit this.
     copy: (n) => ({ title: 'Trumpa antraštė', body: n.taskTitle || 'WORKZ' }),
 },
 ```
@@ -113,12 +117,54 @@ provenance, and gates read on `recipientId`. A new **type** needs **no rule chan
 rules if you introduce a brand-new collection — and then the consistency test's "rules coverage"
 section will remind you.
 
+## Decision buttons on the background push (ADR 0024)
+
+Most notifications need none — skip this section unless the new type carries a decision the recipient
+can settle in **one tap**.
+
+A button **never decides anything itself.** The service worker has no auth, no Firestore and none of
+the feed's guards (the deleted-task self-heal, the "another manager already decided" re-read, the undo
+window). It hands the app an *intent*, and the app runs **the same handler the in-app card's button
+runs** — so a lockscreen tap and a panel tap are the identical, equally-guarded action. Keeping the
+worker write-less is the whole safety argument; a test asserts it never imports Firestore.
+
+To add buttons to a type:
+
+1. **Declare them** in the registry entry, reusing an existing `ACTION_*` constant where possible:
+   ```js
+   actions: [ACTION_APPROVE, ACTION_OPEN],
+   ```
+2. **Mirror them** in `PUSH_ACTIONS_BY_TYPE` (`functions/index.js`) — same ids, same Lithuanian
+   titles, **same order**. The consistency gate compares all three.
+3. **Wire the handler** in `ManagerNotifications`' push-intent effect: map the action id to the
+   handler the card's button already calls, and pin it to this notification type.
+4. If the action id is new, add it to `ACTION_*` + `PUSH_ACTION_IDS` in the registry — the gate
+   rejects an id the app has no handler for.
+
+Rules that the test gate enforces, and the reasoning behind each:
+
+- **Two buttons maximum.** `Notification.maxActions` is 2 on Chrome; a third is dropped silently.
+- **Only `action`-category types.** An FYI has nothing to decide.
+- **Nothing destructive or privilege-granting.** Ištrinti, Grąžinti, Užblokuoti and account approval
+  stay in-app, where the confirm dialog and the full context live.
+- **No "mark as read" button.** Since acting opens the app, it would cost more than swiping the
+  notification away.
+- **`Atidaryti` writes nothing** — it just brings the decision card on screen. Do not point it at a
+  handler that dismisses the notification, or the decision is discarded by the act of looking at it.
+
+**iOS renders none of this.** Apple's web push has no `actions` at all, so buttons are an accelerator
+for Android/desktop — never the only way to reach a decision. The tap-on-the-body path must stay
+sufficient on its own.
+
 ## Done-checklist
 
 Before calling a new notification finished:
 
-- [ ] Registry entry added (`category`, `copy`, `sound`, `push`, `link`).
+- [ ] Registry entry added (`category`, `copy`, `sound`, `push`, `link`, and `actions` if it carries
+      decision buttons).
 - [ ] Server `copyForRequestNotification` mirror case added, identical output.
+- [ ] If it declares `actions`: `PUSH_ACTIONS_BY_TYPE` mirrored **and** the intent wired to the
+      matching in-app handler in `ManagerNotifications`.
 - [ ] `SAMPLES` payload added in `firebaseConsistency.test.js`.
 - [ ] The write goes through `notify()` / `notifyMany()` — no inline `addDoc`.
 - [ ] If server-fired: a Cloud Function writes the doc (no new push sender needed).
@@ -133,11 +179,11 @@ Before calling a new notification finished:
 
 Sound and external notification do not behave identically everywhere — design for graceful degradation:
 
-| Platform | Feed + toast | In-app sound cue | External push + OS sound |
-|---|---|---|---|
-| Desktop Chrome / Edge / Firefox | ✓ | ✓ (after the user's first interaction unlocks audio) | ✓ |
-| Android Chrome | ✓ | ✓ (+ vibration) | ✓ (needs notification permission) |
-| iPhone / iPad Safari | ✓ | ⚠️ unreliable (Web Audio restricted, `vibrate` is a no-op) | ✓ **only when installed to the home screen** (PWA, iOS 16.4+) |
+| Platform | Feed + toast | In-app sound cue | External push + OS sound | Decision buttons |
+|---|---|---|---|---|
+| Desktop Chrome / Edge / Firefox | ✓ | ✓ (after the user's first interaction unlocks audio) | ✓ | ✓ up to 2 |
+| Android Chrome | ✓ | ✓ (+ vibration) | ✓ (needs notification permission) | ✓ up to 2 |
+| iPhone / iPad Safari | ✓ | ⚠️ unreliable (Web Audio restricted, `vibrate` is a no-op) | ✓ **only when installed to the home screen** (PWA, iOS 16.4+) | ✗ not supported by Apple — tap only |
 
 Implications you can rely on:
 - The **feed row and the toast** reach every user on every platform.
@@ -151,7 +197,8 @@ Implications you can rely on:
 
 | Concern | File |
 |---|---|
-| The single source of truth (type → category/copy/sound/push/link) | `src/notifications/registry.js` |
+| The single source of truth (type → category/copy/sound/push/link/actions) | `src/notifications/registry.js` |
+| Push-intent capture (SW message + cold-start URL params) | `src/notifications/pushIntent.js` |
 | The write funnel (invariants + provenance) | `src/utils/notify.js` |
 | Toast + unread badge + sound trigger + FCM token registration | `src/context/NotificationsContext.jsx` |
 | The bell panel (feed cards + rows + decision buttons) | `src/components/ManagerNotifications.jsx` |
