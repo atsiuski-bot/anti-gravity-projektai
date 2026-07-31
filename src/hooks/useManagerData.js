@@ -67,9 +67,22 @@ export const useManagerData = (currentUser) => {
         // which is free to re-run on every users change.
     }, [usersLoading, scoped, uid]);
 
+    // A scoped overseer's team listener is array-contains(me) on teamManagerIds, which by design
+    // never matches their OWN rows (those carry the overseer's own managers). Left alone, a scoped
+    // coordinator's own tasks were missing from the shared team list — visible only in "Mano
+    // darbai" — while unscoped managers and admins saw theirs there all along. Fold the
+    // owner-scoped rows back in (deduped by id; the broad listener wins on overlap) so the team
+    // list means the same thing for every overseer.
+    const mergedRawTasks = useMemo(() => {
+        if (!scoped || ownTasks.length === 0) return rawTasks;
+        const seen = new Set(rawTasks.map(t => t.id));
+        const extra = ownTasks.filter(t => !seen.has(t.id));
+        return extra.length === 0 ? rawTasks : [...rawTasks, ...extra];
+    }, [scoped, rawTasks, ownTasks]);
+
     // Enrich tasks with worker names and colors. Pure derivation over the raw docs, so a users
     // change re-labels the list without touching the subscription.
-    const tasks = useMemo(() => rawTasks.map(task => ({
+    const tasks = useMemo(() => mergedRawTasks.map(task => ({
         ...task,
         assignedUserName: task.assignedUserId && usersMap[task.assignedUserId]
             ? (usersMap[task.assignedUserId].displayName || usersMap[task.assignedUserId].email)
@@ -80,7 +93,7 @@ export const useManagerData = (currentUser) => {
         creatorName: task.creatorName || (task.createdBy && usersMap[task.createdBy]
             ? (usersMap[task.createdBy].displayName || usersMap[task.createdBy].email)
             : null)
-    })), [rawTasks, usersMap]);
+    })), [mergedRawTasks, usersMap]);
 
     // The manager's OWN tasks (the "Mano" section). A scoped manager's team listener above is
     // array-contains(me), which by design does NOT include the manager's own rows (those carry
