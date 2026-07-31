@@ -314,21 +314,23 @@ export default function ManagerView() {
                 {/* The single-line quick-add bar was removed; its AI draft-fill now lives in the
                     "Nauja veikla" modal (TaskModal), beside the title. */}
                 <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
-                    <div>
+                    <div className="min-w-0 md:flex-1">
                         {/* Mobile: a horizontally scrollable strip (no-scrollbar) so all four
                             sub-tabs keep their natural width and full labels instead of being
                             squeezed equal with flex-1 — the row swipes sideways when it overflows
-                            the viewport, without growing taller. md+ keeps the fitted inline pill.
+                            the viewport, without growing taller. sm+ shrink-wraps the pill to its
+                            content (sm:w-fit) but keeps the same scroll overflow, so on desktop the
+                            strip yields width to the toolbar beside it instead of pushing it
+                            off-screen (the wrapper's min-w-0 is what lets it actually shrink).
                             `role="tablist"` sits on the STRIP, not on the wrapper: ARIA requires the
                             tabs to be the tablist's own children, and this scroll container sat
-                            between them and broke that ownership. (The wrapper stays — it is the
-                            flex item the md+ toolbar row lays out against.) */}
+                            between them and broke that ownership. */}
                         <div
                             role="tablist"
                             aria-label="Komandos veiklų rodinys"
                             ref={teamTasksTabs.ref}
                             onKeyDown={teamTasksTabs.onKeyDown}
-                            className="flex w-full overflow-x-auto no-scrollbar snap-x snap-mandatory sm:inline-flex sm:w-auto sm:overflow-hidden rounded-control border border-line bg-surface-sunken"
+                            className="flex w-full max-w-full overflow-x-auto no-scrollbar snap-x snap-mandatory sm:w-fit rounded-control border border-line bg-surface-sunken"
                         >
                             <button
                                 type="button"
@@ -457,7 +459,7 @@ export default function ManagerView() {
                         part of the tab switcher. md+ only; mobile keeps the full toolbar in-panel
                         below. Rendered only on the list sub-tab — Aktyvios veiklos has no filters. */}
                     {teamTasksSubTab === 'list' && (
-                        <div className="hidden items-center gap-2 md:ml-auto md:flex md:border-l md:border-line md:pl-4">
+                        <div className="hidden shrink-0 items-center gap-2 md:ml-auto md:flex md:border-l md:border-line md:pl-4">
                             <SearchPopover
                                 value={searchText}
                                 onChange={setSearchText}
