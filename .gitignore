@@ -123,6 +123,9 @@ dev-dist/
 dist-ssr
 *.local
 
+# Netlify (local CLI link/state)
+.netlify
+
 # OS metadata
 .DS_Store
 Thumbs.db
