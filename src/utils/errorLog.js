@@ -58,12 +58,17 @@ const writeToLocalStorage = (record) => {
     }
 };
 
-/** Fire-and-forget write to Firestore. A failed write must never cascade into another error. */
+/**
+ * Fire-and-forget write to Firestore. A failed write must never cascade into another error.
+ * Returns the write's promise (rejecting on failure) for the one caller that must know whether the
+ * record actually landed — see flushBootFailure. Every other caller ignores it, unchanged.
+ */
 const writeToFirestore = (record) => {
     try {
-        addDoc(collection(db, 'error_logs'), record).catch(() => { /* offline / rules / quota — ignore */ });
-    } catch {
+        return addDoc(collection(db, 'error_logs'), record);
+    } catch (err) {
         // collection()/addDoc() construction failure — ignore.
+        return Promise.reject(err);
     }
 };
 
@@ -104,7 +109,10 @@ export const logError = (error, context = {}) => {
         console.error(`[WORKZ:${record.source}]`, message, error);
 
         writeToLocalStorage(record);
-        writeToFirestore(record);
+        // The catch is mandatory, not decorative: an unhandled rejection here would be caught by
+        // this module's own 'unhandledrejection' listener and logged, which writes again — a
+        // self-feeding loop out of the very component meant to record failures quietly.
+        writeToFirestore(record).catch(() => { /* offline / rules / quota — ignore */ });
     } catch {
         // Absolutely never throw from the logger.
     }
@@ -125,6 +133,71 @@ export const clearStoredErrorLog = () => {
     try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ }
 };
 
+const BOOT_FAILURE_KEY = 'workz_boot_failure';
+// After this many boots without the remote write ever being accepted, stop carrying the record.
+// Five is enough to survive several signed-out launches without keeping a trace forever on a
+// device whose user never signs in again.
+const BOOT_FAILURE_MAX_FLUSH_ATTEMPTS = 5;
+
+/**
+ * Ship a previous WHITE-SCREEN boot to the durable sinks.
+ *
+ * The index.html watchdog can only write to localStorage: on the boot it is reporting, Firebase is
+ * part of what failed to load, so the device has no way to tell anyone. This is the hand-off — a
+ * later boot that DOES work forwards the trace (with the user agent, which is the whole point when
+ * the complaint is "blank on Safari / Opera") so the failure is diagnosable after the fact instead
+ * of being a report nobody can reproduce.
+ *
+ * The record is NOT dropped on a failed send. `error_logs` requires an authenticated user
+ * (firestore.rules), and this runs at module load — before sign-in — so the first attempt is
+ * normally DENIED. Deleting then would throw away the only copy of a trace nobody ever received.
+ * Instead the record is carried to the next boot, which for a returning user is a signed-in one.
+ */
+const flushBootFailure = () => {
+    let record;
+    try {
+        const raw = localStorage.getItem(BOOT_FAILURE_KEY);
+        if (!raw) return;
+        record = JSON.parse(raw);
+    } catch {
+        // Storage blocked, or a corrupt value that will never parse — clear it and move on.
+        try { localStorage.removeItem(BOOT_FAILURE_KEY); } catch { /* ignore */ }
+        return;
+    }
+
+    const attempts = Number(record?.flushAttempts) || 0;
+    const drop = () => { try { localStorage.removeItem(BOOT_FAILURE_KEY); } catch { /* ignore */ } };
+    if (attempts >= BOOT_FAILURE_MAX_FLUSH_ATTEMPTS) { drop(); return; }
+
+    const message = `Boot watchdog fired: ${record?.reason || 'unknown'} (${record?.error || 'no script error'})`;
+    const entry = {
+        message: message.slice(0, 2000),
+        stack: '',
+        componentStack: '',
+        source: 'boot.watchdog',
+        userId: null,
+        // The FAILING boot's context, not this one's — the recovered session would describe the
+        // browser that worked, which is the exact opposite of what a compat report needs.
+        url: String(record?.url || '').slice(0, 2000),
+        userAgent: String(record?.userAgent || '').slice(0, 1000),
+        online: typeof record?.online === 'boolean' ? record.online : null,
+        timestamp: String(record?.timestamp || new Date().toISOString()),
+    };
+
+    if (attempts === 0) {
+        // Local ring buffer once, immediately: the trace must survive even if the remote write is
+        // never permitted on this device.
+        console.error('[WORKZ:boot.watchdog]', message);
+        writeToLocalStorage(entry);
+    }
+
+    writeToFirestore(entry).then(drop, () => {
+        try {
+            localStorage.setItem(BOOT_FAILURE_KEY, JSON.stringify({ ...record, flushAttempts: attempts + 1 }));
+        } catch { /* ignore */ }
+    });
+};
+
 /**
  * Install global handlers for the async failures React boundaries cannot catch.
  * Call once, as early as possible (before React mounts).
@@ -133,6 +206,8 @@ export const installGlobalErrorLogging = () => {
     if (typeof window === 'undefined') return;
     if (window.__workzErrorLoggingInstalled) return;
     window.__workzErrorLoggingInstalled = true;
+
+    flushBootFailure();
 
     window.addEventListener('error', (event) => {
         // event.error holds the thrown value for script errors; fall back to the message.

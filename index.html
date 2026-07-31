@@ -90,6 +90,114 @@
       '<p style="line-height:1.6;margin:0">Gildija veikia naujesnėse naršyklėse. Atnaujinkite Chrome, Safari, Firefox arba Edge ir bandykite dar kartą.</p>' +
       '</div>';
   </script>
+  <!-- Boot watchdog — the last net under a WHITE SCREEN.
+       Every in-app recovery path (the ErrorBoundary, vite:preloadError -> forceAppUpdate) needs the
+       app's own JavaScript to be running already. When the entry module itself never executes — a
+       hashed chunk 404s because a device woke up with a stale precache after a deploy, a partially
+       evicted Cache Storage, an engine that refuses the bundle — nothing mounts, #root stays empty,
+       and there is no code left to notice. An installed iOS PWA makes that terminal: no address bar,
+       no reload, no way to clear site data. The user's only "fix" is deleting and reinstalling.
+       So this runs OUTSIDE the module graph: if #root is still empty after the grace period, the
+       app provably never booted, and we offer the one repair that fixes the cause — drop the
+       service worker and its precache, then re-fetch from the network.
+       Kept ES5 for the same reason as the nomodule block above: it must parse where the bundle did not. -->
+  <script>
+    (function () {
+      var GRACE_MS = 15000;
+      var root = document.getElementById('root');
+      if (!root) return;
+
+      var firstError = '';
+      window.addEventListener('error', function (e) {
+        if (!firstError) firstError = (e && (e.message || (e.error && e.error.message))) || 'script error';
+      }, true);
+
+      function booted() {
+        // React mounting ANYTHING (even the auth spinner) counts: a slow boot is not a dead boot,
+        // and the in-app error/update paths own every failure from that point on.
+        return window.__workzBooted === true || root.childElementCount > 0;
+      }
+
+      function recordFailure(reason) {
+        // Left for the next SUCCESSFUL boot to ship to error_logs (see utils/errorLog.js). A phone
+        // that shows this screen cannot report it — Firebase is part of what failed to load — and
+        // without a durable trace a field device's white screen is undiagnosable after the fact.
+        try {
+          localStorage.setItem('workz_boot_failure', JSON.stringify({
+            reason: reason,
+            error: firstError,
+            url: window.location.href,
+            userAgent: navigator.userAgent,
+            online: navigator.onLine,
+            timestamp: new Date().toISOString()
+          }));
+        } catch (e) { /* storage blocked — the on-screen recovery still works */ }
+      }
+
+      function repair() {
+        var btn = document.getElementById('wz-boot-repair');
+        if (btn) { btn.disabled = true; btn.textContent = 'Atkuriama…'; }
+
+        var jobs = [];
+        try {
+          if (navigator.serviceWorker && navigator.serviceWorker.getRegistrations) {
+            jobs.push(navigator.serviceWorker.getRegistrations().then(function (regs) {
+              return Promise.all(regs.map(function (r) { return r.unregister()['catch'](function () {}); }));
+            })['catch'](function () {}));
+          }
+          if (window.caches && caches.keys) {
+            jobs.push(caches.keys().then(function (keys) {
+              return Promise.all(keys.map(function (k) { return caches['delete'](k)['catch'](function () {}); }));
+            })['catch'](function () {}));
+          }
+        } catch (e) { /* fall through to the reload */ }
+
+        var done = function () {
+          // Cache-bust the navigation itself: the document may also be sitting in the HTTP cache.
+          window.location.replace(window.location.pathname + '?wzreset=' + Date.now());
+        };
+        if (jobs.length) { Promise.all(jobs).then(done, done); } else { done(); }
+        setTimeout(done, 4000);
+      }
+
+      function render() {
+        var offline = navigator.onLine === false;
+        recordFailure(offline ? 'boot-timeout-offline' : 'boot-timeout');
+        root.innerHTML =
+          '<div style="max-width:32rem;margin:12vh auto;padding:0 1.5rem;font-family:system-ui,-apple-system,sans-serif;text-align:center;color:#374151">' +
+          '<h1 style="font-size:1.25rem;line-height:1.4;margin:0 0 .75rem;color:#111827">Nepavyko įkelti programos</h1>' +
+          '<p style="font-size:1rem;line-height:1.6;margin:0 0 1.5rem">' +
+          (offline
+            ? 'Atrodo, kad nėra interneto ryšio. Prisijunkite prie tinklo ir bandykite dar kartą.'
+            : 'Įrenginyje liko sugadinta ankstesnė programos versija. Paspauskite „Atkurti programą“ — įrašytas darbo laikas neprarandamas.') +
+          '</p>' +
+          '<button id="wz-boot-repair" type="button" style="min-height:44px;width:100%;padding:0 1.25rem;border:0;border-radius:.75rem;background:#111827;color:#fff;font-size:1rem;font-weight:600;cursor:pointer">Atkurti programą</button>' +
+          '<p style="font-size:.875rem;line-height:1.6;margin:1.5rem 0 0;color:#6b7280">Jei kartojasi — praneškite administratoriui ir nurodykite savo naršyklę.</p>' +
+          '</div>';
+        var btn = document.getElementById('wz-boot-repair');
+        if (btn) btn.addEventListener('click', repair);
+      }
+
+      function check() {
+        if (booted()) return;
+        // A backgrounded tab is throttled — iOS in particular suspends timers the moment the phone
+        // is pocketed — so an empty root here says nothing about whether the app can boot. Wait for
+        // the page to come back and give it a fresh grace period rather than accusing a working app.
+        if (document.visibilityState === 'hidden') {
+          document.addEventListener('visibilitychange', function again() {
+            if (document.visibilityState !== 'hidden') {
+              document.removeEventListener('visibilitychange', again);
+              setTimeout(check, GRACE_MS);
+            }
+          });
+          return;
+        }
+        render();
+      }
+
+      setTimeout(check, GRACE_MS);
+    })();
+  </script>
 </body>
 
 </html>
