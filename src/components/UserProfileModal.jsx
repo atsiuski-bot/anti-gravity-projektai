@@ -24,6 +24,7 @@ import { PeriodPicker } from './reports/PeriodPicker';
 import { PERIOD_PRESETS, resolvePresetRange } from './reports/periodPresets';
 import { getLithuanianDateString } from '../utils/timeUtils';
 import { ROLE_GLYPHS } from './icons/roleInsigniaMap';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 
 // ── Bulk reassign (sick / away) — pure eligibility core ──────────────────────────────────────
 // When a worker is out, an overseer can move their UNFINISHABLE open work onto someone present.
@@ -142,12 +143,12 @@ const ROLE_META = {
 function ReassignTaskRow({ task, checked, onToggle }) {
     const deadlineDay = taskDeadlineDay(task);
     return (
-        <label className="flex min-h-touch cursor-pointer items-start gap-3 rounded-control border border-line bg-surface-card p-3 hover:bg-surface-sunken/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand">
+        <label className="flex min-h-touch cursor-pointer items-start gap-3 rounded-control border border-line bg-surface-card p-3 hover:bg-surface-sunken/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand-ring">
             <input
                 type="checkbox"
                 checked={checked}
                 onChange={() => onToggle(task.id)}
-                className="mt-0.5 h-5 w-5 shrink-0 rounded border-line text-brand focus:ring-brand"
+                className="mt-0.5 h-5 w-5 shrink-0 rounded border-line text-brand focus:ring-brand-ring"
             />
             <span className="min-w-0 flex-1">
                 <span className="block truncate text-body font-medium text-ink-strong">
@@ -388,7 +389,7 @@ function BulkReassignModal({ worker, viewerUser, viewerData, viewerUid, roster, 
                             <button
                                 type="button"
                                 onClick={toggleAll}
-                                className="inline-flex min-h-touch items-center rounded-control px-2 text-body font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                className="inline-flex min-h-touch items-center rounded-control px-2 text-body font-medium text-brand hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                             >
                                 {allSelected ? 'Nuimti visus' : 'Pažymėti visus'}
                             </button>
@@ -433,6 +434,8 @@ export default function UserProfileModal({ userId, onClose }) {
     const { currentUser, userData, userRole } = useAuth();
     const { achievements } = useAchievements(userId);
     const [tab, setTab] = useState('achievements');
+    // Arrow-key + single-Tab-stop behaviour for the Pasiekimai/Statistika/Suvestinė tablist (APG).
+    const profileTabs = useRovingFocus();
     // Bulk "Perskirti veiklas" flow — opens a self-contained modal that loads this worker's open
     // tasks + absence window and reassigns the unfinishable ones onto someone present.
     const [reassignOpen, setReassignOpen] = useState(false);
@@ -498,12 +501,16 @@ export default function UserProfileModal({ userId, onClose }) {
             {/* Tab switch — sits ABOVE the identity block. Only a manager who oversees this member
                 gets the statistics view. */}
             {canViewStats && (
-                <div
-                    className="mb-5 flex justify-center"
-                    role="tablist"
-                    aria-label="Profilio rodinys"
-                >
-                    <div className="flex overflow-hidden rounded-control border border-line bg-surface-sunken">
+                <div className="mb-5 flex justify-center">
+                    {/* role on the strip, not the centring wrapper: ARIA requires the tabs to be
+                        the tablist's own children. */}
+                    <div
+                        role="tablist"
+                        aria-label="Profilio rodinys"
+                        ref={profileTabs.ref}
+                        onKeyDown={profileTabs.onKeyDown}
+                        className="flex overflow-hidden rounded-control border border-line bg-surface-sunken"
+                    >
                         <button
                             type="button"
                             role="tab"
@@ -511,8 +518,8 @@ export default function UserProfileModal({ userId, onClose }) {
                             onClick={() => setTab('achievements')}
                             className={clsx(
                                 'flex items-center gap-1.5 px-3 py-2 text-caption font-semibold transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                tab === 'achievements' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                tab === 'achievements' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                             )}
                         >
                             <Trophy className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />
@@ -526,8 +533,8 @@ export default function UserProfileModal({ userId, onClose }) {
                             onClick={() => setTab('stats')}
                             className={clsx(
                                 'flex items-center gap-1.5 px-3 py-2 text-caption font-semibold transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                tab === 'stats' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                tab === 'stats' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                             )}
                         >
                             <BarChart3 className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />
@@ -541,8 +548,8 @@ export default function UserProfileModal({ userId, onClose }) {
                             onClick={() => setTab('summary')}
                             className={clsx(
                                 'flex items-center gap-1.5 px-3 py-2 text-caption font-semibold transition-colors',
-                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                                tab === 'summary' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                                tab === 'summary' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                             )}
                         >
                             <TrendingUp className="hidden h-3.5 w-3.5 shrink-0 sm:block" aria-hidden="true" />

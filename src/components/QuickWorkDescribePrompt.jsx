@@ -18,6 +18,7 @@ import Modal from './ui/Modal';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import PersonSelect from './ui/PersonSelect';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 
 // Recorded clock time of an auto-stopped entry, e.g. "14:32". Empty string if unparseable.
 function formatCompletedTime(iso) {
@@ -39,6 +40,8 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
     // Which quick-work TEMPLATE (category) is chosen — its label becomes the title and the textarea
     // turns into an optional comment. null = free-write mode (textarea IS the title).
     const [selectedTemplateId, setSelectedTemplateId] = useState(null);
+    // Arrow-key + single-Tab-stop behaviour for the radio group(s) below (WAI-ARIA APG).
+    const templateRadios = useRovingFocus({ itemRole: 'radio', orientation: 'both' });
     const [helpUserId, setHelpUserId] = useState('');
     // Track only WHETHER the textarea has text (cheap), keeping the field uncontrolled so the
     // dictation hook can write el.value directly (its dispatched 'input' event keeps this in sync).
@@ -87,7 +90,7 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
                     <span id="describeTemplateLabel" className="block text-caption font-bold text-ink mb-2 uppercase tracking-wide">
                         Greito darbo šablonas
                     </span>
-                    <div role="radiogroup" aria-labelledby="describeTemplateLabel" className="grid grid-cols-2 gap-2">
+                    <div role="radiogroup" aria-labelledby="describeTemplateLabel" ref={templateRadios.ref} onKeyDown={templateRadios.onKeyDown} className="grid grid-cols-2 gap-2">
                         {templateOptions.map((opt) => {
                             const selected = opt.id === selectedTemplateId;
                             return (
@@ -99,7 +102,7 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
                                     onClick={() => setSelectedTemplateId(selected ? null : opt.id)}
                                     className={clsx(
                                         'flex min-h-touch flex-col items-start justify-center gap-0.5 rounded-card border px-3 py-2 text-left transition-colors',
-                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                         selected
                                             ? 'border-brand bg-brand-soft text-ink-strong'
                                             : 'border-line bg-surface-card text-ink hover:bg-surface-sunken'
@@ -144,7 +147,7 @@ const DescribeModal = React.memo(function DescribeModal({ task, onSubmit, onClos
                             onInput={(e) => setHasText(e.currentTarget.value.trim().length > 0)}
                             placeholder={textIsComment ? 'Papildoma informacija (nebūtina)...' : 'Trumpai aprašykite atliktą veiklą...'}
                             rows={textIsComment ? 2 : 4}
-                            className="w-full text-body-lg text-left border-2 border-line rounded-card bg-surface-card text-ink-strong resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                            className="w-full text-body-lg text-left border-2 border-line rounded-card bg-surface-card text-ink-strong resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                             style={{ padding: dictationSupported ? '12px 12px 52px 12px' : '12px' }}
                         />
                         {/* Voice dictation — feature-detected; hidden where the Web Speech API is

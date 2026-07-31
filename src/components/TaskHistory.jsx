@@ -34,7 +34,7 @@ import TaskDetailModal from './task/TaskDetailModal';
 const FILTER_LABEL_CLASS = 'text-caption uppercase font-bold text-ink-muted';
 const SELECT_CLASS =
     'bg-surface-card border border-line text-ink text-body rounded-input block w-full px-2.5 py-1.5 ' +
-    'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
+    'focus:border-brand focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring';
 
 // Firestore caps an `in` filter at 30 values, so the AI export groups its session lookups into
 // chunks of that size instead of issuing one query per exported task.
@@ -672,7 +672,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                         aria-expanded={historyOpen}
                         // min-h-touch: the header was only 24px tall — the sole control for
                         // opening the history list, and the hardest to hit on a phone (§7).
-                        className="flex min-h-touch items-center gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                        className="flex min-h-touch items-center gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                     >
                         {historyOpen
                             ? <ChevronUp className="w-5 h-5 text-ink-muted shrink-0" aria-hidden="true" />
@@ -695,14 +695,14 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     <div className="flex items-center gap-2">
                         <button
                             onClick={handleExportCSV}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                         >
                             <FileText className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti (CSV)
                         </button>
                         <button
                             onClick={handleExport}
-                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2 bg-feedback-success text-white rounded-control hover:bg-feedback-success-hover transition-colors text-body font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                         >
                             <Download className="w-4 h-4" aria-hidden="true" />
                             Atsisiųsti AI analizei (JSON)
@@ -720,7 +720,7 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                     <p className="text-body text-feedback-danger">{error}</p>
                     <button
                         onClick={() => setError('')}
-                        className="ml-auto text-body font-medium text-feedback-danger underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                        className="ml-auto text-body font-medium text-feedback-danger underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring rounded"
                     >
                         Uždaryti
                     </button>
@@ -871,8 +871,8 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             aria-pressed={sortBy === 'date'}
                             className={clsx(
                                 "px-3 py-1.5 text-body font-semibold transition-colors",
-                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                                sortBy === 'date' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                                sortBy === 'date' ? "bg-brand text-white focus-visible:ring-white" : "text-ink hover:bg-surface-sunken focus-visible:ring-brand-ring"
                             )}
                         >
                             Pagal datą
@@ -884,8 +884,8 @@ export default function TaskHistory({ userId, users = [], canExport = false, app
                             aria-pressed={sortBy === 'status'}
                             className={clsx(
                                 "px-3 py-1.5 text-body font-semibold transition-colors",
-                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                                sortBy === 'status' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                                sortBy === 'status' ? "bg-brand text-white focus-visible:ring-white" : "text-ink hover:bg-surface-sunken focus-visible:ring-brand-ring"
                             )}
                         >
                             Pagal būseną

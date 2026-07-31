@@ -11,6 +11,7 @@ import { getLithuanianDateString, addDaysToDateString } from '../utils/timeUtils
 import { gatherReportData, reportFilename } from '../utils/reportData';
 import { buildReport, renderReportMarkdown, renderReportJSON, renderTimesheetCSV } from '../utils/reportAggregate';
 import { downloadTextFile } from '../utils/download';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 
 // Calendar-style presets (familiar from the report tab). Each resolves a [start, end] ending today.
 const PERIOD_PRESETS = [
@@ -86,6 +87,8 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
     const defEnd = defaultRange?.end;
 
     const [format, setFormat] = useState('md');
+    // Arrow-key + single-Tab-stop behaviour for the radio group(s) below (WAI-ARIA APG).
+    const formatRadios = useRovingFocus({ itemRole: 'radio', orientation: 'vertical' });
     const [range, setRange] = useState(() => defaultRange || resolvePresetRange('month'));
     const [activePreset, setActivePreset] = useState(() => detectPreset(defaultRange));
     const [search, setSearch] = useState('');
@@ -256,7 +259,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                 {/* FORMAT */}
                 <div>
                     <p className={`${sectionLabel} mb-2`}>Formatas</p>
-                    <div role="radiogroup" aria-label="Formatas" className="space-y-2">
+                    <div role="radiogroup" aria-label="Formatas" ref={formatRadios.ref} onKeyDown={formatRadios.onKeyDown} className="space-y-2">
                         {FORMATS.map((f) => {
                             const Icon = f.icon;
                             const selected = format === f.id;
@@ -267,7 +270,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                     role="radio"
                                     aria-checked={selected}
                                     onClick={() => setFormat(f.id)}
-                                    className={`flex w-full items-center gap-3 rounded-control border p-3 text-left min-h-touch transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 ${
+                                    className={`flex w-full items-center gap-3 rounded-control border p-3 text-left min-h-touch transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1 ${
                                         selected ? 'border-brand bg-brand-soft' : 'border-line hover:bg-surface-sunken'
                                     }`}
                                 >
@@ -324,7 +327,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                 {selectedCount} pasirinkti
                             </span>
                         </div>
-                        <div className="mb-2 flex items-center gap-2 rounded-input border border-line bg-surface-card px-3 min-h-touch focus-within:ring-2 focus-within:ring-brand">
+                        <div className="mb-2 flex items-center gap-2 rounded-input border border-line bg-surface-card px-3 min-h-touch focus-within:ring-2 focus-within:ring-brand-ring">
                             <Search className="h-4 w-4 shrink-0 text-ink-muted" aria-hidden="true" />
                             <input
                                 type="text"
@@ -342,7 +345,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                     checked={allVisibleSelected}
                                     onChange={toggleAllVisible}
                                     aria-label="Pažymėti visus matomus meistrus"
-                                    className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                    className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                                 />
                                 <span className="text-body font-semibold text-ink">Visi (matomi)</span>
                             </label>
@@ -353,7 +356,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                         checked={selectedIds.has(c.id)}
                                         onChange={() => toggleOne(c.id)}
                                         aria-label={`Pasirinkti ${c.name}`}
-                                        className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                        className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                                     />
                                     <span className="text-body text-ink">{c.name}</span>
                                     {c.isTest && <span className="text-caption text-ink-muted">(bandomasis)</span>}
@@ -376,7 +379,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                             type="checkbox"
                             checked={includeEarnings}
                             onChange={(e) => setIncludeEarnings(e.target.checked)}
-                            className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                            className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                         />
                         <span className="text-body text-ink">Įtraukti uždarbį</span>
                     </label>
@@ -386,7 +389,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                                 type="checkbox"
                                 checked={includeDaily}
                                 onChange={(e) => setIncludeDaily(e.target.checked)}
-                                className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                                className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                             />
                             <span className="text-body text-ink">Įtraukti dienų išklotinę</span>
                         </label>
@@ -396,7 +399,7 @@ export default function ReportExportModal({ open, onClose, users = [], scope, de
                             type="checkbox"
                             checked={includeTest}
                             onChange={(e) => setIncludeTest(e.target.checked)}
-                            className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                            className="h-5 w-5 rounded border-line text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                         />
                         <span className="text-body text-ink">Įtraukti bandomuosius</span>
                     </label>

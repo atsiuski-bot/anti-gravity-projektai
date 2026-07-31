@@ -26,6 +26,7 @@ import Modal from './ui/Modal';
 import Button from './ui/Button';
 import IconButton from './ui/IconButton';
 import SessionToggleButton from './ui/SessionToggleButton';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 
 const idFor = (prefix) => {
     const random = globalThis.crypto?.randomUUID?.()
@@ -52,6 +53,8 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
     // Who was on the call — required (single-select). The call cannot be saved until one is
     // chosen, so reports can always group calls by audience. Notes are free-text and optional.
     const [contactType, setContactType] = useState(null);
+    // Arrow-key + single-Tab-stop behaviour for the radio group(s) below (WAI-ARIA APG).
+    const contactRadios = useRovingFocus({ itemRole: 'radio', orientation: 'both' });
     // Annul ("Anuliuoti") throws the whole call away — its time is logged nowhere — so it is
     // guarded by one explicit inline confirm (kept INSIDE this modal, never a second stacked
     // dialog) rather than firing on the first tap.
@@ -85,7 +88,7 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                     <legend className="block text-caption font-bold text-ink-strong mb-2 uppercase tracking-wide">
                         Su kuo kalbėjote?
                     </legend>
-                    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Su kuo kalbėjote">
+                    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Su kuo kalbėjote" ref={contactRadios.ref} onKeyDown={contactRadios.onKeyDown}>
                         {CALL_CONTACT_TYPES.map(({ id, chip, Icon }) => {
                             const selected = contactType === id;
                             return (
@@ -97,7 +100,7 @@ const CallModalComponent = React.memo(function CallModalComponent({ onSubmit, on
                                     onClick={() => setContactType(id)}
                                     className={clsx(
                                         'inline-flex items-center gap-2 min-h-touch px-3 py-2 rounded-control border-2 text-left transition active:scale-95',
-                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                         selected
                                             ? 'bg-session-call-surface border-session-call-accent text-session-call-accent font-semibold'
                                             : 'bg-surface-card border-line text-ink hover:bg-surface-sunken'
@@ -570,7 +573,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
                 aria-label={isCalling ? "Baigti skambutį" : (isDisabled ? blockedReason : "Pradėti skambutį")}
                 className={clsx(
                     "flex-1 flex items-center justify-between min-h-touch px-4 py-3 rounded-card transition shadow-sm active:scale-95 border min-w-[140px]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2",
                     isDisabled ? "bg-surface-sunken text-ink-muted cursor-not-allowed border-line" :
                         isCalling
                             ? clsx('bg-session-call-surface border-line ring-1 ring-line', getSessionColors('call').accent)

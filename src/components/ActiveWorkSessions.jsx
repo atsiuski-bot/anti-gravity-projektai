@@ -374,7 +374,7 @@ export default function ActiveWorkSessions({ embedded = false }) {
                 onClick={() => setIsCollapsed(!isCollapsed)}
                 aria-expanded={!isCollapsed}
                 aria-controls="active-work-sessions-panel"
-                className="w-full flex items-center justify-between p-4 bg-surface-sunken hover:bg-surface-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                className="w-full flex items-center justify-between p-4 bg-surface-sunken hover:bg-surface-base transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
             >
                 <div className="flex items-center gap-2">
                     <Activity className="w-5 h-5 text-brand" />

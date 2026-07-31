@@ -273,7 +273,7 @@ export default function CalendarChangeHistory({ users = [] }) {
                         type="button"
                         onClick={() => setError('')}
                         aria-label="Uždaryti pranešimą"
-                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                     >
                         Uždaryti
                     </button>
@@ -293,7 +293,7 @@ export default function CalendarChangeHistory({ users = [] }) {
                         type="button"
                         onClick={() => setActionError('')}
                         aria-label="Uždaryti pranešimą"
-                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                        className="ml-auto text-caption font-semibold text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                     >
                         Uždaryti
                     </button>

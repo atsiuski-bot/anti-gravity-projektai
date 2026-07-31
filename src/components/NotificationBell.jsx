@@ -42,7 +42,7 @@ export default function NotificationBell() {
                 aria-haspopup="dialog"
                 aria-expanded={open}
                 aria-controls={open ? PANEL_ID : undefined}
-                className={`relative inline-flex min-h-touch min-w-touch items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 ${open ? 'bg-surface-sunken text-ink' : 'text-ink-muted hover:bg-surface-sunken hover:text-ink'}`}
+                className={`relative inline-flex min-h-touch min-w-touch items-center justify-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2 ${open ? 'bg-surface-sunken text-ink' : 'text-ink-muted hover:bg-surface-sunken hover:text-ink'}`}
             >
                 <Bell className="h-5 w-5" aria-hidden="true" />
                 {unreadCount > 0 && (

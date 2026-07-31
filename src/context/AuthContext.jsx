@@ -590,7 +590,7 @@ export function AuthProvider({ children }) {
                                 <p className="text-feedback-danger text-body mb-3">Jungimasis užtrunka ilgiau nei įprastai.</p>
                                 <button
                                     onClick={() => window.location.reload()}
-                                    className="px-4 py-2 bg-surface-card border border-line rounded-control shadow-sm text-body font-medium text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
+                                    className="px-4 py-2 bg-surface-card border border-line rounded-control shadow-sm text-body font-medium text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-ring"
                                 >
                                     Perkrauti puslapį
                                 </button>
@@ -599,7 +599,7 @@ export function AuthProvider({ children }) {
                                 {import.meta.env.DEV && (
                                     <button
                                         onClick={() => setLoading(false)}
-                                        className="ml-2 px-4 py-2 bg-surface-card border border-line rounded-control shadow-sm text-body font-medium text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand"
+                                        className="ml-2 px-4 py-2 bg-surface-card border border-line rounded-control shadow-sm text-body font-medium text-ink hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-brand-ring"
                                     >
                                         Skip Loading (Debug)
                                     </button>

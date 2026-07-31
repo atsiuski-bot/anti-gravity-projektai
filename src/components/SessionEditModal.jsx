@@ -199,7 +199,7 @@ export default function SessionEditModal({
 
     const inputClass =
         'min-h-touch w-full rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg ' +
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring';
 
     return (
         <>

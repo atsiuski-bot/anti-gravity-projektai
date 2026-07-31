@@ -48,7 +48,7 @@ function SortableHeaderButton({ label, mode, sort }) {
             aria-pressed={active}
             className={clsx(
                 'inline-flex min-h-touch items-center gap-1 rounded px-1 py-1.5 text-caption font-medium uppercase tracking-wider',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1',
                 active ? 'text-brand' : 'text-ink-muted hover:text-ink'
             )}
         >
@@ -88,7 +88,7 @@ function ColumnFilter({ filter, label }) {
                     title={name}
                     className={clsx(
                         'inline-flex min-h-touch min-w-touch shrink-0 items-center justify-center rounded p-1 transition-colors',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1',
                         active ? 'bg-brand text-white' : 'text-ink-muted hover:bg-surface-sunken hover:text-ink'
                     )}
                 >
@@ -431,7 +431,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                         type="button"
                         onClick={() => setError('')}
                         aria-label="Uždaryti pranešimą"
-                        className="ml-auto text-body font-medium text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand rounded"
+                        className="ml-auto text-body font-medium text-feedback-danger-text underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring rounded"
                     >
                         Uždaryti
                     </button>
@@ -461,7 +461,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                         type="button"
                                         onClick={(e) => { e.stopPropagation(); openDetail(task); }}
                                         className={clsx(
-                                            'block w-full text-left text-body font-semibold break-words rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                                            'block w-full text-left text-body font-semibold break-words rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
                                             task.isDeleted ? 'text-ink-muted line-through' : task.completed ? 'text-ink' : 'text-ink-strong'
                                         )}
                                     >
@@ -482,7 +482,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                             {task.description && (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'description', taskId: task.id }); }}
-                                    className="mt-2 flex items-start gap-1 w-full text-left text-caption text-ink hover:text-brand-hover line-clamp-3 whitespace-pre-wrap rounded-input p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                    className="mt-2 flex items-start gap-1 w-full text-left text-caption text-ink hover:text-brand-hover line-clamp-3 whitespace-pre-wrap rounded-input p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                                 >
                                     <SessionTypeIcon
                                         type={task.isSystemTask ? 'call' : (task.isQuickWork ? 'quickWork' : 'task')}
@@ -543,7 +543,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                             title={link.trim()}
                                             aria-label={`Nuoroda: ${link.trim()}`}
                                             onClick={(e) => e.stopPropagation()}
-                                            className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control text-brand hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                            className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control text-brand hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                                         >
                                             <LinkIcon className="w-5 h-5" aria-hidden="true" />
                                         </a>
@@ -567,7 +567,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                     <button
                                         onClick={(e) => { e.stopPropagation(); setActiveModal({ type: 'checklist', taskId: task.id }); }}
                                         className={clsx(
-                                            'mt-3 inline-flex items-center gap-1.5 rounded-control border border-line px-2 py-1.5 min-h-touch text-caption font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                            'mt-3 inline-flex items-center gap-1.5 rounded-control border border-line px-2 py-1.5 min-h-touch text-caption font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                             allDone ? 'text-feedback-success' : 'text-ink-muted'
                                         )}
                                         aria-label={`Kontrolinis sąrašas: atlikta ${done} iš ${total}`}
@@ -679,7 +679,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                                                 // glyph drift to the block's vertical centre); the small top
                                                 // nudge on the glyph optically centres it on that line. Replaces
                                                 // the old inline align-[-0.2em] that let it sink below the row.
-                                                "flex w-full items-start gap-1.5 rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                                "flex w-full items-start gap-1.5 rounded text-left text-body font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring",
                                                 task.isDeleted ? "text-ink-muted line-through" : task.completed ? "text-ink" : "text-ink-strong"
                                             )}
                                         >

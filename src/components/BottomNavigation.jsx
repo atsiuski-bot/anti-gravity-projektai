@@ -12,7 +12,7 @@ import Modal from './ui/Modal';
 import { cn } from '../utils/cn';
 
 const navItemBase =
-    'flex flex-col items-center justify-center rounded-control transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset';
+    'flex flex-col items-center justify-center rounded-control transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-inset';
 
 const BottomNavigation = () => {
     const { userRole, currentUser } = useAuth();
@@ -57,7 +57,7 @@ const BottomNavigation = () => {
             <button
                 onClick={() => window.dispatchEvent(new CustomEvent('open-task-modal'))}
                 aria-label="Sukurti užduotį"
-                className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control bg-brand text-white transition-all hover:bg-brand-hover active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                className="inline-flex items-center justify-center min-h-touch min-w-touch rounded-control bg-brand text-white transition-all hover:bg-brand-hover active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
             >
                 <Plus className="w-5 h-5" aria-hidden="true" />
             </button>
@@ -215,7 +215,7 @@ const BottomNavigation = () => {
                                     aria-label={badge > 0 ? `${tab.label}, ${badge} laukia patvirtinimo` : undefined}
                                     className={cn(
                                         'flex min-h-touch items-center gap-3 rounded-control px-3 text-body font-medium transition-colors',
-                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand',
+                                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring',
                                         active ? 'bg-brand-soft text-brand-hover' : 'text-ink hover:bg-surface-sunken'
                                     )}
                                 >

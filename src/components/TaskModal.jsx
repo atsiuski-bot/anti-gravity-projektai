@@ -164,6 +164,11 @@ function OneLineChips({ items, more, signature }) {
     );
 }
 
+// Stable ids so the title's <label>, its `aria-describedby`, and the focus-on-error call can all
+// refer to the same nodes. Only one TaskModal is ever mounted, so fixed strings are safe here.
+const TITLE_INPUT_ID = 'task-title';
+const FORM_ERROR_ID = 'task-form-error';
+
 export default function TaskModal({ isOpen, onClose, task, role, editTemplate = null }) {
     const { currentUser, userRole, userData } = useAuth();
     const { activeUsers } = useUsers();
@@ -172,6 +177,9 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
 
     // Inline accessible error region (replaces banned window.alert popups).
     const [formError, setFormError] = useState('');
+    // Set when the title guard in handleSubmit rejects: drives `aria-invalid` + `aria-describedby`
+    // on the title field so the error is attached to the control it is about, not only announced.
+    const [titleInvalid, setTitleInvalid] = useState(false);
     // AI draft-fill: "✨ AI" beside the title turns the typed natural-language line into the
     // structured fields (server callable → OpenRouter/gemini-2.5-flash returns a DRAFT only; it
     // never creates the task). aiMsg is the inline status/result note.
@@ -931,8 +939,14 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
         // also doubles as the template name in the "create as template" path below.
         if (!formData.title.trim()) {
             setFormError('Įveskite pavadinimą.');
+            // Mark the FIELD, not just the form: the alert alone left the offending input
+            // unmarked and unfocused, so a screen-reader or keyboard user heard the message but
+            // had to hunt for what to fix (WCAG 3.3.1).
+            setTitleInvalid(true);
+            document.getElementById(TITLE_INPUT_ID)?.focus();
             return;
         }
+        setTitleInvalid(false);
 
         // TEMPLATE-EDIT mode: this dialog is editing a template's content, not creating/updating a
         // task. Write the edited spine fields back to the template (preserving any extra stored keys
@@ -1510,6 +1524,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                 <div className="flex-1 min-h-0 overflow-y-auto p-4">
                     {formError && (
                         <div
+                            id={FORM_ERROR_ID}
                             role="alert"
                             aria-live="assertive"
                             className="mb-4 rounded-control bg-feedback-danger/10 border border-feedback-danger/30 p-3 text-body text-feedback-danger"
@@ -1537,7 +1552,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     onChange={(e) => setTemplateName(e.target.value)}
                                     placeholder="Šablono pavadinimas"
                                     aria-label="Šablono pavadinimas"
-                                    className="w-full px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand"
+                                    className="w-full px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand-ring"
                                 />
                             </div>
                             <div>
@@ -1563,7 +1578,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                 type="button"
                                                 onClick={() => setTemplateScope('personal')}
                                                 aria-pressed={templateScope === 'personal'}
-                                                className={`min-h-touch flex-1 rounded-md px-3 py-2 text-body transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${templateScope === 'personal' ? 'bg-brand/10 font-semibold text-brand ring-2 ring-brand' : 'text-ink ring-1 ring-line'}`}
+                                                className={`min-h-touch flex-1 rounded-md px-3 py-2 text-body transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring ${templateScope === 'personal' ? 'bg-brand/10 font-semibold text-brand ring-2 ring-brand' : 'text-ink ring-1 ring-line'}`}
                                             >
                                                 Tik man
                                             </button>
@@ -1571,7 +1586,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                 type="button"
                                                 onClick={() => setTemplateScope('team')}
                                                 aria-pressed={templateScope === 'team'}
-                                                className={`min-h-touch flex-1 rounded-md px-3 py-2 text-body transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand ${templateScope === 'team' ? 'bg-brand/10 font-semibold text-brand ring-2 ring-brand' : 'text-ink ring-1 ring-line'}`}
+                                                className={`min-h-touch flex-1 rounded-md px-3 py-2 text-body transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring ${templateScope === 'team' ? 'bg-brand/10 font-semibold text-brand ring-2 ring-brand' : 'text-ink ring-1 ring-line'}`}
                                             >
                                                 Visai komandai
                                             </button>
@@ -1618,19 +1633,26 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                     ) : (
                         <form id="task-form" onSubmit={handleSubmit} onKeyDown={preventEnterSubmit} className="space-y-4">
                             {/* ─────────────── Spine: the few fields set on every task ─────────────── */}
-                            {/* Title — the placeholder carries the prompt (no separate label above); the
-                                ✨ AI parse button shares the title's own row. Type-ahead over the creator's
-                                own past titles + templates; free text is always allowed. */}
+                            {/* Title — a PERSISTENT label names the field and the placeholder keeps the
+                                prompt. The placeholder used to do both, which meant the field lost its
+                                label the moment anything was typed (WCAG 3.3.2); the ✨ AI parse button
+                                shares the title's own row. Type-ahead over the creator's own past titles
+                                + templates; free text is always allowed. */}
                             <div>
+                                <label htmlFor={TITLE_INPUT_ID} className="mb-1 block text-caption font-medium text-ink-muted">
+                                    Pavadinimas
+                                </label>
                                 <div className="flex items-stretch gap-2">
                                     <TitleSuggestInput
+                                        id={TITLE_INPUT_ID}
                                         value={formData.title}
-                                        onChange={(val) => setFormData((prev) => ({ ...prev, title: val }))}
+                                        onChange={(val) => { setFormData((prev) => ({ ...prev, title: val })); setTitleInvalid(false); }}
                                         onSelect={handleSuggestionSelect}
                                         suggestions={titleSuggestions}
                                         disabled={fieldsLocked}
                                         placeholder="Ką reikia padaryti?"
-                                        ariaLabel="Ką reikia padaryti?"
+                                        ariaInvalid={titleInvalid}
+                                        ariaDescribedby={titleInvalid ? FORM_ERROR_ID : undefined}
                                         className="flex-1"
                                     />
                                     {!task && !editTemplate && (
@@ -1678,7 +1700,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                 title={p.label}
                                                 // min-h-touch, not h-9 (36px): these are the primary priority control
                                                 // and must carry a full 44px target (§7).
-                                                className={`flex min-h-touch items-center justify-center gap-1 rounded-md px-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'flex-[2] ring-2 ring-brand' : 'flex-1 ring-1 ring-line'}`}
+                                                className={`flex min-h-touch items-center justify-center gap-1 rounded-md px-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1 disabled:opacity-50 ${active ? 'flex-[2] ring-2 ring-brand' : 'flex-1 ring-1 ring-line'}`}
                                                 style={{ backgroundColor: getPriorityColor(p.id) }}
                                             >
                                                 {active && (
@@ -1745,7 +1767,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                 key={s.id}
                                                 type="button"
                                                 onClick={() => setAssignee(s.id)}
-                                                className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                                className="inline-flex min-h-touch items-center rounded-full border border-line bg-surface-card px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                                             >
                                                 {s.name}
                                             </button>
@@ -1829,7 +1851,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                     onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: suggestedTime })); setTimePickerOpen(false); }}
                                                     disabled={fieldsLocked}
                                                     aria-label={`Siūloma trukmė: ${suggestedTime}`}
-                                                    className="inline-flex items-center gap-1 min-h-touch whitespace-nowrap rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                                    className="inline-flex items-center gap-1 min-h-touch whitespace-nowrap rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring disabled:opacity-50"
                                                 >
                                                     <Sparkles className="h-4 w-4" aria-hidden="true" />
                                                     Siūloma {suggestedTime}
@@ -1849,7 +1871,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                         onClick={() => { setFormData((prev) => ({ ...prev, estimatedTime: t })); setTimePickerOpen(false); }}
                                                         disabled={fieldsLocked}
                                                         aria-pressed={active}
-                                                        className={`min-h-touch whitespace-nowrap rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50 ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
+                                                        className={`min-h-touch whitespace-nowrap rounded-full border px-4 text-base transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring disabled:opacity-50 ${active ? 'border-brand bg-brand/10 font-medium text-brand' : 'border-line text-ink hover:bg-surface-sunken'}`}
                                                     >
                                                         {t}
                                                     </button>
@@ -1869,7 +1891,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                     onClick={() => setTimePickerOpen(true)}
                                                     disabled={fieldsLocked}
                                                     aria-pressed="true"
-                                                    className="min-h-touch whitespace-nowrap rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                                    className="min-h-touch whitespace-nowrap rounded-full border border-brand bg-brand/10 px-4 text-base font-medium text-brand transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring disabled:opacity-50"
                                                 >
                                                     {v}
                                                 </button>
@@ -1887,7 +1909,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                     disabled={fieldsLocked}
                                                     aria-label="Pasirinkti kitą planuojamą laiką"
                                                     title="Daugiau…"
-                                                    className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border border-line text-ink-muted transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand disabled:opacity-50"
+                                                    className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border border-line text-ink-muted transition hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring disabled:opacity-50"
                                                 >
                                                     <Plus className="h-5 w-5" aria-hidden="true" />
                                                 </button>
@@ -1905,17 +1927,21 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                             />
 
                             {/* Description — always shown and auto-growing: the field extends downward as
-                                more lines are typed instead of scrolling inside a fixed box. The placeholder
-                                carries the label (no separate caption). */}
+                                more lines are typed instead of scrolling inside a fixed box. A persistent
+                                caption names the field; the placeholder only prompts (it used to do both,
+                                and vanished the moment anything was typed — WCAG 3.3.2). */}
                             <div>
+                                <label htmlFor="task-description" className="mb-1 block text-caption font-medium text-ink-muted">
+                                    Aprašymas
+                                </label>
                                 <textarea
+                                    id="task-description"
                                     ref={descriptionRef}
                                     value={formData.description}
                                     onChange={(e) => { setFormData({ ...formData, description: e.target.value }); autoGrowTextarea(e.target); }}
                                     disabled={fieldsLocked}
                                     placeholder="Užduoties aprašymas..."
-                                    aria-label="Aprašymas"
-                                    className="w-full min-h-[6rem] resize-none overflow-hidden px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand disabled:bg-surface-sunken text-base"
+                                    className="w-full min-h-[6rem] resize-none overflow-hidden px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand-ring disabled:bg-surface-sunken text-base"
                                 />
                             </div>
 
@@ -1928,7 +1954,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                     <p className="mb-2 text-caption text-ink-muted">Maksimaliai 8 nuotraukos.</p>
                                 )}
                                 <div className="grid grid-cols-2 gap-2">
-                                    <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand">
+                                    <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand-ring">
                                         <Camera className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                                         <span className="text-base text-ink-muted">Fotografuoti</span>
                                         <input
@@ -1940,7 +1966,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             className="hidden"
                                         />
                                     </label>
-                                    <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand">
+                                    <label className="flex items-center justify-center gap-2 px-3 py-3 border border-line border-dashed rounded-lg text-center cursor-pointer hover:bg-surface-sunken text-ink-muted focus-within:ring-2 focus-within:ring-brand-ring">
                                         <Plus className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                                         <span className="text-base text-ink-muted">Iš galerijos</span>
                                         <input
@@ -1971,7 +1997,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                     type="button"
                                                     onClick={() => removeExistingAttachment(index)}
                                                     aria-label="Pašalinti nuotrauką"
-                                                    className="absolute top-1 right-1 inline-flex items-center justify-center min-h-touch min-w-touch bg-surface-card rounded-full text-feedback-danger shadow transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                    className="absolute top-1 right-1 inline-flex items-center justify-center min-h-touch min-w-touch bg-surface-card rounded-full text-feedback-danger shadow transition-colors hover:bg-feedback-danger-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                                                 >
                                                     <Trash2 className="w-4 h-4" aria-hidden="true" />
                                                 </button>
@@ -1994,7 +2020,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                         type="button"
                                                         onClick={() => removeSelectedFile(index)}
                                                         aria-label={`Pašalinti ${file.name}`}
-                                                        className="inline-flex items-center justify-center min-h-touch min-w-touch shrink-0 text-ink-muted hover:text-feedback-danger rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                        className="inline-flex items-center justify-center min-h-touch min-w-touch shrink-0 text-ink-muted hover:text-feedback-danger rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                                                     >
                                                         <X className="w-4 h-4" aria-hidden="true" />
                                                     </button>
@@ -2041,7 +2067,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             // the user types, so a screen reader announced this field as an
                                             // unlabelled "edit text, blank" (WCAG 3.3.2 / 4.1.2).
                                             aria-label="Naujas eigos sąrašo punktas"
-                                            className="flex-1 px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-base"
+                                            className="flex-1 px-3 py-3 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand-ring text-base"
                                         />
                                         <IconButton icon={Plus} label="Pridėti punktą" variant="primary" onClick={addChecklistItemLocal} />
                                     </div>
@@ -2097,7 +2123,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                             type="checkbox"
                                             checked={createAsTemplate}
                                             onChange={(e) => setCreateAsTemplate(e.target.checked)}
-                                            className="h-5 w-5 rounded text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                            className="h-5 w-5 rounded text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                                         />
                                         <span className="text-base text-ink">Kurti kaip šabloną</span>
                                     </label>
@@ -2183,7 +2209,7 @@ export default function TaskModal({ isOpen, onClose, task, role, editTemplate = 
                                                     <button
                                                         type="button"
                                                         onClick={() => { handleApplyTemplate(t); setIsPickingTemplate(false); }}
-                                                        className="min-h-touch flex-1 truncate rounded px-3 py-2.5 text-left text-body text-ink hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                                                        className="min-h-touch flex-1 truncate rounded px-3 py-2.5 text-left text-body text-ink hover:text-brand focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                                                         title={`Užkrauti šabloną „${t.templateName}“`}
                                                     >
                                                         {t.templateName}

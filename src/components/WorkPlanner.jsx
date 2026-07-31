@@ -106,8 +106,8 @@ const CustomToolbar = (toolbar) => {
                 aria-pressed={toolbar.view === 'week'}
                 className={clsx(
                     "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                    toolbar.view === 'week' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                    toolbar.view === 'week' ? "bg-brand text-white focus-visible:ring-white" : "text-ink hover:bg-surface-sunken focus-visible:ring-brand-ring"
                 )}
             >
                 Savaitė
@@ -118,8 +118,8 @@ const CustomToolbar = (toolbar) => {
                 aria-pressed={toolbar.view === 'day'}
                 className={clsx(
                     "w-[84px] sm:w-[100px] min-h-touch text-body font-semibold transition-colors flex items-center justify-center",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset",
-                    toolbar.view === 'day' ? "bg-brand text-white" : "text-ink hover:bg-surface-sunken"
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset",
+                    toolbar.view === 'day' ? "bg-brand text-white focus-visible:ring-white" : "text-ink hover:bg-surface-sunken focus-visible:ring-brand-ring"
                 )}
             >
                 Diena
@@ -1150,7 +1150,7 @@ export default function WorkPlanner() {
                     }}
                     className={clsx(
                         'flex h-full flex-wrap items-center gap-x-2 gap-y-0.5 overflow-hidden px-1.5 py-0.5 leading-tight rounded-input',
-                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                         // Vacation = calm indigo "free" state (brand, not a session colour);
                         // work events keep the calendar's own (blue) fill, so white text reads.
                         // text-brand (not -hover) so the dark-theme foreground-decoupling in
@@ -1279,7 +1279,7 @@ export default function WorkPlanner() {
                                         type="time"
                                         value={manualStart}
                                         onChange={(e) => setManualStart(e.target.value)}
-                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand outline-none transition-all"
+                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand-ring outline-none transition-all"
                                     />
                                 </div>
                                 <div>
@@ -1289,7 +1289,7 @@ export default function WorkPlanner() {
                                         type="time"
                                         value={manualEnd}
                                         onChange={(e) => setManualEnd(e.target.value)}
-                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand outline-none transition-all"
+                                        className="w-full px-2 py-2 text-body-lg border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand-ring outline-none transition-all"
                                     />
                                 </div>
                             </>
@@ -1304,7 +1304,7 @@ export default function WorkPlanner() {
                                     setManualIsWorkFromHome(e.target.checked);
                                     if (e.target.checked) setManualIsVacation(false);
                                 }}
-                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
+                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand-ring"
                             />
                             <span className="text-body font-medium text-ink">Veikla namuose</span>
                         </label>
@@ -1318,7 +1318,7 @@ export default function WorkPlanner() {
                                     setManualIsVacation(e.target.checked);
                                     if (e.target.checked) setManualIsWorkFromHome(false);
                                 }}
-                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
+                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand-ring"
                             />
                             <span className="text-body font-medium text-ink">Pažymėti, kad nedirbu</span>
                         </label>
@@ -1330,7 +1330,7 @@ export default function WorkPlanner() {
                                     type="checkbox"
                                     checked={manualAllDay}
                                     onChange={(e) => setManualAllDay(e.target.checked)}
-                                    className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
+                                    className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand-ring"
                                 />
                                 <span className="text-body font-medium text-ink">Visą dieną</span>
                             </label>
@@ -1474,7 +1474,7 @@ export default function WorkPlanner() {
                                                 isWorkFromHome: e.target.checked,
                                                 isVacation: e.target.checked ? false : editingEvent.isVacation
                                             })}
-                                            className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
+                                            className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand-ring"
                                         />
                                         <span className="text-body font-medium text-ink">Veikla namuose</span>
                                     </label>
@@ -1491,7 +1491,7 @@ export default function WorkPlanner() {
                                                 isVacation: e.target.checked,
                                                 isWorkFromHome: e.target.checked ? false : editingEvent.isWorkFromHome
                                             })}
-                                            className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
+                                            className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand-ring"
                                         />
                                         <span className="text-body font-medium text-ink">Nedirbu</span>
                                     </label>
@@ -1509,7 +1509,7 @@ export default function WorkPlanner() {
                                                 type="checkbox"
                                                 checked={Boolean(editingEvent.isAllDay)}
                                                 onChange={(e) => setEditingEvent({ ...editingEvent, isAllDay: e.target.checked })}
-                                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand"
+                                                className="w-5 h-5 text-brand rounded border-line focus-visible:ring-2 focus-visible:ring-brand-ring"
                                             />
                                             <span className="text-body font-medium text-ink">Visą dieną</span>
                                         </label>
@@ -1623,7 +1623,7 @@ export default function WorkPlanner() {
                             value={reasonValue}
                             onChange={(e) => setReasonValue(e.target.value)}
                             placeholder="Pvz.: Keičiamas veiklos laikas dėl vizito pas gydytoją..."
-                            className="w-full h-32 px-4 py-3 border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand outline-none resize-none text-body-lg transition-all"
+                            className="w-full h-32 px-4 py-3 border border-line rounded-input focus-visible:ring-2 focus-visible:ring-brand-ring outline-none resize-none text-body-lg transition-all"
                             autoFocus
                         />
 

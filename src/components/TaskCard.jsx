@@ -395,7 +395,7 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                                     // keyboard/switch user actually lands on, and §2 does not trade target
                                     // size for density. `items-center` on the row keeps the glyph aligned
                                     // to the now-taller title instead of floating at the top.
-                                    "flex min-h-touch flex-1 min-w-0 items-center rounded text-left text-body font-bold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand",
+                                    "flex min-h-touch flex-1 min-w-0 items-center rounded text-left text-body font-bold leading-tight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring",
                                     task.isDeleted ? "line-through text-ink-muted" : task.completed ? "text-ink" : "text-ink-strong",
                                     taskStatus === 'unapproved' ? "bg-surface-sunken px-2 py-1 text-ink" : ""
                                 )}

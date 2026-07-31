@@ -39,13 +39,23 @@ const OFFLINE_DOCUMENT = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Gildija</title>
 <style>
-  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+  body { margin:0; min-height:100dvh; display:flex; align-items:center; justify-content:center;
          background:#ffffff; color:#1f2937; font-family:system-ui,-apple-system,sans-serif; padding:24px; }
   main { max-width:22rem; text-align:center; }
   h1 { font-size:1.25rem; margin:0 0 .5rem; }
   p { font-size:.95rem; line-height:1.5; color:#4b5563; margin:0 0 1.5rem; }
   button { min-height:44px; width:100%; padding:0 1.25rem; border:0; border-radius:.75rem;
            background:#1f2937; color:#fff; font-size:1rem; font-weight:600; cursor:pointer; }
+  /* This page cannot read the saved theme (no app, no storage contract here), so it follows the
+     OS preference — which is what the boot script in index.html falls back to anyway. Without it a
+     dark-mode user gets a full-white flash at the exact moment the app failed to load. Contrast is
+     held on both sides (>=9:1 body text, >=8:1 button label). */
+  @media (prefers-color-scheme: dark) {
+    body { background:#0e1117; color:#f3f5f7; }
+    p { color:#c8ced7; }
+    button { background:#4f46e5; color:#fff; }
+    button:focus-visible { outline:2px solid #a5b4fc; outline-offset:2px; }
+  }
 </style>
 </head>
 <body>

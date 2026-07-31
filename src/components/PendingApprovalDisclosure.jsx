@@ -25,7 +25,7 @@ export default function PendingApprovalDisclosure({ tasks, onEdit, role = 'worke
                     onClick={() => setExpanded((v) => !v)}
                     aria-expanded={expanded}
                     aria-controls="pending-approval-panel"
-                    className="flex min-h-[44px] w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-feedback-warning-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card"
+                    className="flex min-h-[44px] w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-feedback-warning-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface-card"
                 >
                     <Clock className="h-5 w-5 shrink-0 text-feedback-warning" aria-hidden="true" />
                     <span className="flex-1 text-body font-semibold text-ink-strong">

@@ -18,6 +18,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Trash2, CheckSquare, Square } from 'lucide-react';
 import clsx from 'clsx';
 import IconButton from '../ui/IconButton';
+import { dndAnnouncements, dndScreenReaderInstructions } from '../../utils/dndA11y';
 
 /**
  * ChecklistEditorList — the drag-to-reorder editor for a task's "Eigos sąrašas" (progress list),
@@ -34,7 +35,7 @@ import IconButton from '../ui/IconButton';
 
 function SortableChecklistRow({ item, onRemove }) {
     const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
-        useSortable({ id: item.id });
+        useSortable({ id: item.id, data: { a11yName: item.text } });
     const style = {
         transform: CSS.Translate.toString(transform),
         transition,
@@ -52,7 +53,7 @@ function SortableChecklistRow({ item, onRemove }) {
             <button
                 type="button"
                 ref={setActivatorNodeRef}
-                className="-my-2 -ml-2 flex w-8 shrink-0 cursor-grab touch-none items-center justify-center self-stretch rounded-l-lg text-ink-muted/50 transition-colors hover:bg-surface-card hover:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand active:cursor-grabbing"
+                className="-my-2 -ml-2 flex w-8 shrink-0 cursor-grab touch-none items-center justify-center self-stretch rounded-l-lg text-ink-muted/50 transition-colors hover:bg-surface-card hover:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring active:cursor-grabbing"
                 aria-label={`Tempti „${item.text}“ — keisti tvarką`}
                 {...attributes}
                 {...listeners}
@@ -92,7 +93,12 @@ export default function ChecklistEditorList({ items, onReorder, onRemove }) {
     };
 
     return (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <DndContext
+            accessibility={{ announcements: dndAnnouncements, screenReaderInstructions: dndScreenReaderInstructions }}
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+        >
             <SortableContext items={ids} strategy={verticalListSortingStrategy}>
                 <ul className="mt-2 space-y-2">
                     {items.map((item) => (

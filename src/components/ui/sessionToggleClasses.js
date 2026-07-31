@@ -15,10 +15,10 @@ import { cn } from '../../utils/cn';
 const BASE = {
     compact:
         'inline-flex items-center justify-center min-h-touch min-w-touch rounded-control transition-all active:scale-95 ' +
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
     labeled:
         'inline-flex items-center justify-center gap-2 min-h-touch px-4 py-2.5 rounded-control text-body font-medium transition-colors shadow-sm ' +
-        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+        'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
 };
 
 const DISABLED = {

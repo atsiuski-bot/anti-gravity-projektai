@@ -1438,7 +1438,7 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                                     aria-label={`Peržiūrėti ${summary.name} dienos užduotis`}
                                     onClick={() => setWorkerDetail({ userId, name: summary.name })}
                                     onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setWorkerDetail({ userId, name: summary.name }); } }}
-                                    className="p-4 cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                    className="p-4 cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
                                 >
                                     <p className="flex items-center gap-1.5 text-body font-semibold text-ink-strong">
                                         <UserChip userId={userId} name={summary.name} linkToProfile={false} />
@@ -1505,20 +1505,28 @@ export default function DailyStatistics({ currentUser, userRole, users = [], can
                             </thead>
                             <tbody className="divide-y divide-line">
                                 {workerList.map(([userId, summary]) => (
+                                    // `role="button"` used to sit on the <tr> itself, which REPLACED
+                                    // the row's `row` role and collapsed the table's grid semantics
+                                    // for a screen reader (no row/column relationships, no header
+                                    // association). The row keeps its click affordance for the
+                                    // mouse; the name cell now carries a real <button>, which is
+                                    // what keyboard and AT users operate. (The mobile <li> variant
+                                    // above is a list item, where role="button" is fine.)
                                     <tr
                                         key={userId}
-                                        role="button"
-                                        tabIndex={0}
-                                        aria-label={`Peržiūrėti ${summary.name} dienos užduotis`}
                                         onClick={() => setWorkerDetail({ userId, name: summary.name })}
-                                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setWorkerDetail({ userId, name: summary.name }); } }}
-                                        className="cursor-pointer hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                        className="cursor-pointer hover:bg-surface-sunken"
                                     >
                                         <td className="px-4 py-3 text-ink-strong font-medium">
-                                            <span className="inline-flex items-center gap-1.5">
+                                            <button
+                                                type="button"
+                                                aria-label={`Peržiūrėti ${summary.name} dienos užduotis`}
+                                                onClick={(e) => { e.stopPropagation(); setWorkerDetail({ userId, name: summary.name }); }}
+                                                className="inline-flex items-center gap-1.5 rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
+                                            >
                                                 <UserChip userId={userId} name={summary.name} linkToProfile={false} />
                                                 <ChevronRight className="w-3.5 h-3.5 text-ink-muted" aria-hidden="true" />
-                                            </span>
+                                            </button>
                                         </td>
                                         <td className="px-4 py-3 text-center text-ink-muted font-mono text-sm">
                                             {formatTime(summary.earliestStart)}
@@ -2030,7 +2038,7 @@ function SessionErrorReportModal({ item, storedSession, canRequest, canEditStart
 
     const inputClass =
         'min-h-touch w-full rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg ' +
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand';
+        'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring';
 
     return (
         <Modal
@@ -2281,7 +2289,7 @@ function WorkerDayDetailModal({ worker, isRange = false, rangeStart, rangeEnd, d
                                 type="button"
                                 onClick={() => onOpenTask?.(task)}
                                 aria-label={`Atidaryti užduotį: ${item.title || 'Veikla'}`}
-                                className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                className="flex w-full items-start justify-between gap-3 rounded-control border border-line p-3 text-left transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
                             >
                                 {body}
                             </button>
@@ -2378,7 +2386,7 @@ function TaskListTable({ tasks, title, viewMode, onToggleConfirm, onAddComment: 
                             aria-expanded={open}
                             className={clsx(
                                 "w-full min-h-touch flex items-center justify-between gap-2 text-left rounded focus-visible:outline-none focus-visible:ring-2",
-                                highlight ? "focus-visible:ring-white" : "focus-visible:ring-brand"
+                                highlight ? "focus-visible:ring-white" : "focus-visible:ring-brand-ring"
                             )}
                         >
                             <h3 className={clsx("font-bold transition-all", highlight ? "text-h3 md:text-h2" : "text-body")}>{title} ({tasks.length})</h3>

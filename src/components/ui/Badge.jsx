@@ -13,6 +13,12 @@ import bunnyBadgeAtlas from '../../assets/badges/zivile-bunny-badges-atlas.webp'
  * Tier class strings are written as full literals (not interpolated) so Tailwind's content
  * scanner keeps them.
  *
+ * `medallion` and `tierText` deliberately use DIFFERENT colour tokens. The medallion's `accent` is
+ * tuned against the tier's own (theme-invariant) `surface` and is AA there in both themes. The tier
+ * caption, though, rides on the THEMED card — where that same fill-tuned accent measured 1.65-3.20:1
+ * in dark mode. `label` is the theme-reactive foreground token for exactly that position
+ * (src/index.css); do not collapse the two back into one.
+ *
  * A `locked` badge is one the user has not earned yet: it drops all metal color to a neutral
  * grey so the earned tiles read as "loud" against it, but it keeps its name + icon so the owner
  * can see what is still available to earn (own-profile ladder only — guardrail W4).
@@ -27,25 +33,25 @@ const TIERS = {
     bronze: {
         order: 1, label: 'Bronza',
         medallion: 'bg-tier-bronze-surface text-tier-bronze-accent ring-tier-bronze-ring',
-        tierText: 'text-tier-bronze-accent',
+        tierText: 'text-tier-bronze-label',
         pip: 'bg-tier-bronze-ring',
     },
     silver: {
         order: 2, label: 'Sidabras',
         medallion: 'bg-tier-silver-surface text-tier-silver-accent ring-tier-silver-ring',
-        tierText: 'text-tier-silver-accent',
+        tierText: 'text-tier-silver-label',
         pip: 'bg-tier-silver-ring',
     },
     gold: {
         order: 3, label: 'Auksas',
         medallion: 'bg-tier-gold-surface text-tier-gold-accent ring-tier-gold-ring',
-        tierText: 'text-tier-gold-accent',
+        tierText: 'text-tier-gold-label',
         pip: 'bg-tier-gold-ring',
     },
     platinum: {
         order: 4, label: 'Platina',
         medallion: 'bg-tier-platinum-surface text-tier-platinum-accent ring-tier-platinum-ring',
-        tierText: 'text-tier-platinum-accent',
+        tierText: 'text-tier-platinum-label',
         pip: 'bg-tier-platinum-ring',
     },
 };

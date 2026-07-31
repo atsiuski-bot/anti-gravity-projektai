@@ -180,7 +180,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                                                 onChange={(e) => setEditText(e.target.value)}
                                                 rows={2}
                                                 aria-label="Redaguoti komentarą"
-                                                className="w-full px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-body-lg resize-y"
+                                                className="w-full px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand-ring text-body-lg resize-y"
                                                 autoFocus
                                             />
                                             <div className="mt-2 flex justify-end gap-2">
@@ -206,7 +206,7 @@ export function CommentsModal({ isOpen, onClose, comments, onAddComment, current
                         placeholder="Rašyti komentarą..."
                         aria-label="Rašyti komentarą"
                         rows={2}
-                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand text-body-lg resize-y"
+                        className="flex-1 min-h-touch px-3 py-2 border border-line rounded-lg focus-visible:ring-2 focus-visible:ring-brand-ring text-body-lg resize-y"
                         disabled={isSubmitting}
                     />
                     <Button
@@ -285,7 +285,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, ca
                                     onClick={() => canToggle && onToggle?.(item.id)}
                                     disabled={!canToggle}
                                     aria-pressed={!!item.done}
-                                    className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-surface-sunken disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                    className="flex min-h-touch flex-1 items-start gap-3 rounded-lg bg-surface-sunken p-3 text-left transition-colors hover:bg-surface-sunken disabled:cursor-default disabled:hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                                 >
                                     {item.done
                                         ? <CheckSquare className="mt-0.5 h-5 w-5 flex-shrink-0 text-brand" aria-hidden="true" />
@@ -326,7 +326,7 @@ export function ChecklistModal({ isOpen, onClose, checklist, canEdit = false, ca
                             placeholder="Pridėti punktą..."
                             // Accessible name, not just a placeholder (WCAG 3.3.2) — see TaskModal.
                             aria-label="Naujas eigos sąrašo punktas"
-                            className="flex-1 rounded-lg border border-line px-3 py-2 text-body-lg focus-visible:ring-2 focus-visible:ring-brand"
+                            className="flex-1 rounded-lg border border-line px-3 py-2 text-body-lg focus-visible:ring-2 focus-visible:ring-brand-ring"
                             disabled={isSubmitting}
                         />
                         <IconButton icon={Plus} label="Pridėti punktą" variant="primary" type="submit" disabled={!newItem.trim() || isSubmitting} />
@@ -646,7 +646,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                     // Inset by the safe area so the close control never hides under the notch /
                     // status bar in the edge-to-edge (viewport-fit=cover) standalone viewer.
                     style={{ top: 'calc(env(safe-area-inset-top) + 1rem)', right: 'calc(env(safe-area-inset-right) + 1rem)' }}
-                    className="absolute inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    className="absolute inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                 >
                     <X className="w-8 h-8" aria-hidden="true" />
                 </button>
@@ -658,7 +658,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                     aria-label={zoom > 1 ? 'Sumažinti nuotrauką' : 'Padidinti nuotrauką'}
                     aria-pressed={zoom > 1}
                     style={{ top: 'calc(env(safe-area-inset-top) + 1rem)', left: 'calc(env(safe-area-inset-left) + 1rem)' }}
-                    className="absolute inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    className="absolute inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:text-gray-300 transition-colors z-top bg-black/20 rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                 >
                     {zoom > 1 ? <ZoomOut className="w-7 h-7" aria-hidden="true" /> : <ZoomIn className="w-7 h-7" aria-hidden="true" />}
                 </button>
@@ -669,7 +669,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                             type="button"
                             onClick={handlePrev}
                             aria-label="Ankstesnė nuotrauka"
-                            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-top bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="absolute left-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-top bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                         >
                             <ChevronLeft className="w-8 h-8" aria-hidden="true" />
                         </button>
@@ -677,7 +677,7 @@ export function ImageModal({ isOpen, onClose, imageUrls, initialIndex = 0 }) {
                             type="button"
                             onClick={handleNext}
                             aria-label="Kita nuotrauka"
-                            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-top bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="absolute right-4 top-1/2 -translate-y-1/2 inline-flex items-center justify-center min-h-touch min-w-touch text-white hover:bg-white/10 rounded-full transition-colors z-top bg-black/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                         >
                             <ChevronRight className="w-8 h-8" aria-hidden="true" />
                         </button>
@@ -776,7 +776,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                     <div className="flex flex-col gap-3">
                         <button
                             onClick={onClose}
-                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-surface-sunken rounded-lg transition-colors text-left text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="w-full px-4 py-3 text-sm font-medium text-ink bg-surface-sunken hover:bg-surface-sunken rounded-lg transition-colors text-left text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                         >
                             Atšaukti{isTask ? ' trynimą' : ''}
                         </button>
@@ -786,7 +786,7 @@ export function DeleteConfirmationModal({ isOpen, onClose, onConfirm, taskTitle,
                                 onClick={() => {
                                     onConfirm({ keepWorkHours: true });
                                 }}
-                                className="w-full px-4 py-3 bg-feedback-warning-soft text-feedback-warning-text border border-feedback-warning-border text-sm font-medium rounded-lg hover:bg-feedback-warning-soft transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                className="w-full px-4 py-3 bg-feedback-warning-soft text-feedback-warning-text border border-feedback-warning-border text-sm font-medium rounded-lg hover:bg-feedback-warning-soft transition-colors text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                             >
                                 Palikti veiklos valandas, perbraukti užduotį ir ją užbaigti
                             </button>

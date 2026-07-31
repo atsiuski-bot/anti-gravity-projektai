@@ -18,6 +18,7 @@ import TaskActionRow from './task/TaskActionRow';
 import { deleteTask, extendTaskTime } from '../utils/taskActions';
 import { approveTask, unapproveTask, confirmTask, unconfirmTask, humanActor, MODES } from '../domain';
 import { useUndoableAction } from '../hooks/useUndoableAction';
+import { useRovingFocus } from '../hooks/useRovingFocus';
 import { approveCalendarRequest, declineCalendarRequest } from '../utils/calendarApproval';
 import { getLithuanianWeekId } from '../utils/timeUtils';
 import { applyRequestedSessionEnd } from '../utils/sessionEditActions';
@@ -164,6 +165,8 @@ export default function ManagerNotifications({ onClose }) {
     const isManager = isManagerRole(userRole);
     const runUndoable = useUndoableAction();
     const [view, setView] = useState('active'); // 'active' (live feed) | 'history' (read/past notices)
+    // Arrow-key + single-Tab-stop behaviour for the Aktyvūs/Istorija `role="tablist"` (APG).
+    const viewTabs = useRovingFocus();
     const [calendarNotifications, setCalendarNotifications] = useState([]);
     const [calendarRequests, setCalendarRequests] = useState([]);
     const [taskNotifications, setTaskNotifications] = useState([]);
@@ -922,8 +925,16 @@ export default function ManagerNotifications({ onClose }) {
             {/* The tab bar is the panel's header — pinned to the top of the scroll area (sticky) so it
                 stays put while the feed below scrolls, on both the phone top-sheet and the desktop
                 popover. The solid background + top padding keep scrolling cards from showing through. */}
-            <div role="tablist" aria-label="Pranešimų rodinys" className="sticky -top-3 z-10 -mt-3 bg-surface-card pt-3 pb-1">
-                <div className="flex w-full overflow-hidden rounded-control border border-line bg-surface-sunken">
+            <div className="sticky -top-3 z-10 -mt-3 bg-surface-card pt-3 pb-1">
+                {/* role on the strip, not the sticky wrapper: ARIA requires the tabs to be the
+                    tablist's own children. */}
+                <div
+                    role="tablist"
+                    aria-label="Pranešimų rodinys"
+                    ref={viewTabs.ref}
+                    onKeyDown={viewTabs.onKeyDown}
+                    className="flex w-full overflow-hidden rounded-control border border-line bg-surface-sunken"
+                >
                     <button
                         type="button"
                         role="tab"
@@ -931,8 +942,8 @@ export default function ManagerNotifications({ onClose }) {
                         onClick={() => setView('active')}
                         className={cn(
                             'flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 min-h-touch text-body font-semibold leading-tight transition-colors',
-                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                            view === 'active' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                            view === 'active' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                         )}
                     >
                         Aktyvūs
@@ -957,8 +968,8 @@ export default function ManagerNotifications({ onClose }) {
                         onClick={() => setView('history')}
                         className={cn(
                             'flex-1 inline-flex items-center justify-center px-3 py-2.5 min-h-touch text-body font-semibold leading-tight transition-colors',
-                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand',
-                            view === 'history' ? 'bg-brand text-white' : 'text-ink hover:bg-surface-card'
+                            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset',
+                            view === 'history' ? 'bg-brand text-white focus-visible:ring-white' : 'text-ink hover:bg-surface-card focus-visible:ring-brand-ring'
                         )}
                     >
                         Istorija
@@ -1539,7 +1550,7 @@ export default function ManagerNotifications({ onClose }) {
                                                     rel="noopener noreferrer"
                                                     // object-contain + sunken canvas so a tall photo isn't cropped to
                                                     // its middle; ZoomIn badge signals it opens full-size in a new tab.
-                                                    className="relative block h-20 w-20 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                                                    className="relative block h-20 w-20 overflow-hidden rounded-control border border-line bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                                                 >
                                                     <img src={url} alt={`Priedas ${idx + 1}`} className="h-full w-full object-contain" loading="lazy" decoding="async" />
                                                     <span className="pointer-events-none absolute bottom-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">

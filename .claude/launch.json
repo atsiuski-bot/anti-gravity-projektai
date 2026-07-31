@@ -18,6 +18,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5192", "--strictPort"],
       "port": 5192
+    },
+    {
+      "name": "workz-a11y",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5194", "--strictPort"],
+      "port": 5194
     }
   ]
 }

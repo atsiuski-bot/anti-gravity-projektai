@@ -203,7 +203,7 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                     type="button"
                     onClick={() => onEdit?.(template)}
                     title="Redaguoti šabloną"
-                    className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-control p-1 text-left hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    className="-m-1 flex min-w-0 flex-1 items-center gap-3 rounded-control p-1 text-left hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                 >
                     <Repeat className={cn('h-5 w-5 shrink-0', isRecurring ? 'text-brand' : 'text-ink-muted')} aria-hidden="true" />
                     <span className="min-w-0 flex-1">
@@ -234,7 +234,7 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                     onClick={openEditor}
                     aria-expanded={expanded}
                     aria-label="Tvarkyti"
-                    className="inline-flex min-h-touch min-w-touch shrink-0 items-center justify-center gap-1 rounded-control px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand"
+                    className="inline-flex min-h-touch min-w-touch shrink-0 items-center justify-center gap-1 rounded-control px-3 text-body text-ink-muted hover:bg-surface-sunken hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring"
                 >
                     <span className="hidden sm:inline">Tvarkyti</span>
                     <ChevronDown className={cn('h-4 w-4 transition-transform', expanded && 'rotate-180')} aria-hidden="true" />
@@ -299,7 +299,7 @@ function RecurringTemplateRow({ template, assignableUsers, currentUser, onChange
                                                 onClick={() => toggleWeekday(w.iso)}
                                                 className={cn(
                                                     'inline-flex min-h-touch min-w-touch items-center justify-center rounded-full border px-3 text-body font-medium transition-colors',
-                                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2',
+                                                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2',
                                                     on ? 'border-brand bg-brand/10 text-ink-strong' : 'border-line bg-surface-card text-ink-muted hover:bg-surface-sunken'
                                                 )}
                                             >
@@ -482,7 +482,7 @@ export default function RecurringTasksPanel({ embedded = false }) {
                 type="button"
                 onClick={() => setCollapsed((c) => !c)}
                 aria-expanded={!collapsed}
-                className="flex w-full min-h-touch items-center gap-3 rounded-card px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                className="flex w-full min-h-touch items-center gap-3 rounded-card px-4 py-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
             >
                 <Repeat className="h-5 w-5 shrink-0 text-brand" aria-hidden="true" />
                 <span className="flex-1 text-body-lg font-bold text-ink-strong">Pasikartojančios veiklos</span>

@@ -183,7 +183,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                             maxLength={2000}
                             rows={3}
                             placeholder="Pvz.: reikia dar valandos, nes atsirado papildomų darbų."
-                            className="w-full resize-none rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg text-ink placeholder:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                            className="w-full resize-none rounded-input border border-line bg-surface-card px-3 py-2 text-body-lg text-ink placeholder:text-ink-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                         />
 
                         {/* Photo attachments */}
@@ -203,7 +203,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                                             type="button"
                                             onClick={() => removePhoto(idx)}
                                             aria-label="Pašalinti nuotrauką"
-                                            className="absolute right-0 top-0 inline-flex min-h-touch min-w-touch items-start justify-end p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand"
+                                            className="absolute right-0 top-0 inline-flex min-h-touch min-w-touch items-start justify-end p-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-ring"
                                         >
                                             <span className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white">
                                                 <X className="h-3 w-3" aria-hidden="true" />
@@ -274,7 +274,7 @@ export default function TaskTimeLimitPopup({ task, estimatedTime, actualMinutes,
                             type="button"
                             onClick={handleMute}
                             disabled={muted}
-                            className="inline-flex min-h-touch items-center gap-1.5 px-3 text-body text-ink-muted hover:text-ink-strong disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                            className="inline-flex min-h-touch items-center gap-1.5 px-3 text-body text-ink-muted hover:text-ink-strong disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                         >
                             <BellOff className="h-4 w-4" aria-hidden="true" />
                             {muted ? 'Nutildyta' : 'Nutildyti garsą'}

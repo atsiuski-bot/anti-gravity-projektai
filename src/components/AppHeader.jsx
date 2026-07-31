@@ -105,7 +105,7 @@ export default function AppHeader({ sessionType, session }) {
                         onClick={() => setShowActiveWork(true)}
                         aria-label="Atidaryti vykstančią veiklą"
                         aria-haspopup="dialog"
-                        className="flex h-12 min-w-0 items-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-1"
+                        className="flex h-12 min-w-0 items-center rounded-control focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-1"
                     >
                         <SessionPill
                             sessionType={sessionType}
@@ -143,7 +143,7 @@ export default function AppHeader({ sessionType, session }) {
                     onClick={() => setActiveTab('profile')}
                     aria-label="Atidaryti profilį"
                     aria-current={activeTab === 'profile' ? 'page' : undefined}
-                    className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2"
+                    className="inline-flex min-h-touch min-w-touch items-center justify-center rounded-full transition-colors hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-ring focus-visible:ring-offset-2"
                 >
                     <Avatar
                         src={userData?.photoURL || currentUser?.photoURL}

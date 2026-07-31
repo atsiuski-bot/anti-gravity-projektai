@@ -5,6 +5,7 @@ import { GripVertical } from 'lucide-react';
 import clsx from 'clsx';
 import TaskCard from '../TaskCard';
 import useReorderableTasks from '../../hooks/useReorderableTasks';
+import { dndAnnouncements, dndScreenReaderInstructions } from '../../utils/dndA11y';
 
 /**
  * SortableTaskCardList — the mobile team list with drag-to-reorder. The WHOLE card is the drag
@@ -29,7 +30,7 @@ function SortableCard({ task, onEdit, role, draggable }) {
         transform,
         transition,
         isDragging,
-    } = useSortable({ id: task.id, disabled: !draggable });
+    } = useSortable({ id: task.id, data: { a11yName: task.title }, disabled: !draggable });
 
     // Drop the `role: 'button'` dnd-kit puts on the activator: the activator here is the whole card,
     // which itself contains buttons, and a button-around-buttons is a nested-interactive a11y fault.
@@ -55,7 +56,7 @@ function SortableCard({ task, onEdit, role, draggable }) {
             aria-label={draggable ? `Tempti „${task.title}“ — palaikykite, kad pertvarkytumėte` : undefined}
             className={clsx(
                 'relative rounded-card outline-none',
-                draggable && 'cursor-grab select-none focus-visible:ring-2 focus-visible:ring-brand',
+                draggable && 'cursor-grab select-none focus-visible:ring-2 focus-visible:ring-brand-ring',
                 isDragging && 'z-10 opacity-70 shadow-xl ring-2 ring-brand/50'
             )}
         >
@@ -100,6 +101,7 @@ export default function SortableTaskCardList({ tasks, onEditTask, role, dragEnab
                 Palaikykite užduotį, kad pertvarkytumėte. Pernešus virš kito prioriteto, prioritetas pasikeis.
             </p>
             <DndContext
+                accessibility={{ announcements: dndAnnouncements, screenReaderInstructions: dndScreenReaderInstructions }}
                 sensors={reorder.sensors}
                 collisionDetection={reorder.collisionDetection}
                 onDragStart={reorder.onDragStart}
