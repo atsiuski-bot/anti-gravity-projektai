@@ -1,0 +1,41 @@
+name: CI
+
+# Minimal verify gate for WORKZ / Gildija: a live work-time-tracking PWA with real payroll-
+# relevant data. Runs the existing test suites that, until now, only ran on developer machines.
+# Deploys stay human-only (Cloudflare Pages auto-deploys main; Firebase rules/functions are
+# deployed by hand from the audrius@medievalclub.org account) - this workflow only VERIFIES.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  # The security-critical job: runs the Firestore rules against the emulator (the R-01..R-06
+  # oracles live here). Java is preinstalled on ubuntu-latest; firebase-tools is not a repo dep,
+  # so install it for the emulator runner.
+  firestore-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+      - run: npm run test:firestore
