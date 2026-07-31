@@ -7,6 +7,7 @@ import { evaluateSecondaryStart } from '../utils/sessionNesting';
 import { useTimerState } from '../hooks/useTimerState';
 import { Coffee, Play, ShieldAlert } from 'lucide-react';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
+import { serverNowISO } from '../utils/serverClock';
 import { SoundManager } from '../utils/soundUtils';
 import { startSession, endSession } from '../utils/sessionActions';
 import { useRevisionedTimerSession } from '../hooks/useRevisionedTimerSession';
@@ -124,7 +125,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             }
             const currentTaskMissing = switchingFromTask && !currentTask;
 
-            const now = new Date().toISOString();
+            const now = serverNowISO();
             const plan = planBreakStart({
                 userId: currentUser.uid,
                 userData,
@@ -162,7 +163,7 @@ export default function BreakTimer({ currentUser: _propUser, compact = false, hi
             }
         }
 
-        const now = new Date().toISOString();
+        const now = serverNowISO();
         const plan = planBreakEnd({
             userId: currentUser.uid,
             userData,

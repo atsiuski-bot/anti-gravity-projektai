@@ -6,6 +6,7 @@ import {
     formatMinutesToTimeString,
     parseTimeStringToMinutes,
 } from '../utils/timeUtils';
+import { serverNowISO } from '../utils/serverClock';
 import { pauseTask, requestTimeExtension, completeTaskAtLimit } from '../utils/taskActions';
 import { SoundManager } from '../utils/soundUtils';
 import { useAuth } from '../context/AuthContext';
@@ -297,7 +298,7 @@ export function useTaskTimeMonitor(tasks) {
                 // legacy mode it keeps the old direct write path.
                 if (timerEngineEnabledRef.current) {
                     try {
-                        const issued = await issueRevisionedLimitPause(task, new Date().toISOString());
+                        const issued = await issueRevisionedLimitPause(task, serverNowISO());
                         if (!issued) {
                             limitReachedRef.current.delete(taskId);
                             return;
@@ -451,7 +452,7 @@ export function useTaskTimeMonitor(tasks) {
                 });
             }
 
-            const issuedAt = new Date().toISOString();
+            const issuedAt = serverNowISO();
             const finishStatus = userRole === 'admin' ? 'confirmed' : 'completed';
             const plan = planTaskEnd({
                 task: finishedTask,

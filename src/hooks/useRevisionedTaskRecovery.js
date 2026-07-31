@@ -7,6 +7,7 @@ import {
     planTaskRecover,
 } from '../utils/timerTransitionPlan';
 import { issueTimerCommand } from '../utils/timerCommandEngine';
+import { serverNowISO } from '../utils/serverClock';
 import { addRecoveryNotice } from '../utils/recoveryNotice';
 import { logError } from '../utils/errorLog';
 import { APP_LOAD_TIME } from './useOrphanedTaskRecovery';
@@ -83,7 +84,7 @@ export function useRevisionedTaskRecovery(
         // …and it must still be THE SAME run, not a newer one started meanwhile.
         if (fresh.timerRunId && fresh.timerRunId !== base.run.runId) return;
 
-        const recoveredAt = new Date().toISOString();
+        const recoveredAt = serverNowISO();
         let plan;
         try {
             plan = planTaskRecover({

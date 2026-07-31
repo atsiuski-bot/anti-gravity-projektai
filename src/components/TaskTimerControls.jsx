@@ -3,6 +3,7 @@ import { Play, Pause, Square, Clock, CheckCircle2, RefreshCw, AlertTriangle, Wif
 import { doc, updateDoc, setDoc, getDoc, getDocFromCache } from 'firebase/firestore';
 import { db } from '../firebase';
 import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStringToMinutes, getLithuanianNow, getLithuanianDateString, clampSessionMinutes } from '../utils/timeUtils';
+import { serverNowISO } from '../utils/serverClock';
 import { startTask, pauseTask, resumeTask, taskSessionDocId } from '../utils/taskActions';
 import { resolveCompletionStatus } from '../utils/formatters';
 import { hasPayRate } from '../utils/payRate';
@@ -289,7 +290,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             previousTaskMissing: previous.missing,
             commandId: idFor('timer_cmd'),
             runId: idFor('timer_run'),
-            issuedAt: new Date().toISOString(),
+            issuedAt: serverNowISO(),
         });
         return trackRevisionedOutcome(
             plan,
@@ -310,7 +311,7 @@ export default function TaskTimerControls({ task, onShowModal: _onShowModal, rol
             userData,
             activeRecord: revisionedSession.record,
             commandId: idFor('timer_cmd'),
-            issuedAt: new Date().toISOString(),
+            issuedAt: serverNowISO(),
         });
         return trackRevisionedOutcome(plan, 'Sustabdyta. Išsaugota šiame telefone.');
     };

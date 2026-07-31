@@ -7,6 +7,7 @@ import { notify, categoryOf } from './notify';
 import { createTask, reopenTask, deleteTask as deleteTaskCommand, completeTask, humanActor, MODES } from '../domain';
 import { withUserLock, LOCK_MAX_HOLD_MS } from './sessionLock';
 import { APP_INSTANCE_ID } from './appInstance';
+import { serverNowISO } from './serverClock';
 
 /**
  * Updates the user's work status in Firestore.
@@ -85,7 +86,10 @@ const startTaskImpl = async (task, userId) => {
         // pauseOtherTasks skips the current task, so nothing else covers this document.
         if (!(await closeRunningStretchOnTarget(task, userId, 'startTask'))) return false;
 
-        const now = new Date().toISOString();
+        // Server-anchored: this stamp becomes timerStartedAt, and the matching pause credits
+        // (endMoment - timerStartedAt). Both ends must come from the SAME clock or a skewed device
+        // would mis-credit the difference — see serverClock.js.
+        const now = serverNowISO();
 
         // 2. Update Task + User Status + activeSession in PARALLEL
         await Promise.all([
@@ -431,7 +435,10 @@ const resumeTaskImpl = async (task, userId) => {
         // re-anchor over a stretch that is still running on the server and discard it silently.
         if (!(await closeRunningStretchOnTarget(task, userId, 'resumeTask'))) return;
 
-        const now = new Date().toISOString();
+        // Server-anchored: this stamp becomes timerStartedAt, and the matching pause credits
+        // (endMoment - timerStartedAt). Both ends must come from the SAME clock or a skewed device
+        // would mis-credit the difference — see serverClock.js.
+        const now = serverNowISO();
 
         // 2. Update Task + User Status + activeSession in PARALLEL
         await Promise.all([

@@ -7,6 +7,7 @@ import { useTimerState } from '../hooks/useTimerState';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
 import { Phone, Square, Check, ShieldAlert, Mic } from 'lucide-react';
 import { formatMinutesToTimeString } from '../utils/timeUtils';
+import { serverNowISO } from '../utils/serverClock';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { SoundManager } from '../utils/soundUtils';
@@ -301,7 +302,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             currentTaskMissing,
             commandId: idFor('timer_cmd'),
             runId: idFor('timer_run'),
-            issuedAt: new Date().toISOString(),
+            issuedAt: serverNowISO(),
         });
         await trackRevisionedCall(plan);
         SoundManager.playCallSound();
@@ -354,7 +355,7 @@ export default function CallTimer({ compact = false, hideLabel = false }) {
             restoreTask,
             commandId: idFor('timer_cmd'),
             runId: base.run.pausedSession?.type ? idFor('timer_run') : null,
-            issuedAt: new Date().toISOString(),
+            issuedAt: serverNowISO(),
             discard,
             contactType,
             callNotes: (notes || '').trim(),

@@ -33,6 +33,33 @@ Chronological index of major decisions (ADRs) and notable inline decisions.
 
 ## Notable inline decisions
 
+- **2026-07-31** — **Session timestamps are anchored to SERVER time, not the device clock**
+  (`src/utils/serverClock.js`). A worker reported that every stop and every break taken over a
+  running task was refused from one desktop machine (`timerCommandEngine.settle: Missing or
+  insufficient permissions`) while the same account worked from their phone. Cause: `endTime` is
+  stamped by the DEVICE, and `firestore.rules` refuses a session ending more than 2 min in the
+  server's future (`endTimeNotInServerFuture`, tightened from 1h on 2026-07-28) — so a machine whose
+  clock simply runs fast has its close denied, and because a transition commits as ONE atomic batch
+  the denial takes the revision bump and the task projection with it. The worker stays canonically
+  live and the stretch is never credited. Ruled out first: the two devices ran the same bundle
+  generation, and desktop/mobile render the identical timer components — `request.time` appears
+  exactly ONCE in the whole ruleset, so the device clock is the only input that can differ.
+  **Decision: fix the client, not the tolerance.** Loosening the rule only moves the cliff (a clock
+  is trusted or it is not); the app instead stops asserting a time it cannot know. One probe reads
+  the `Date` header of a same-origin `HEAD` on a never-before-requested URL (unique query string, so
+  no service-worker precache entry and no HTTP cache can answer it with a stale header), and the
+  measured offset re-frames every session stamp — `getLithuanianNow()`, the engine's `issuedAt` at
+  all 11 call sites, and the legacy `timerStartedAt`. Durations are untouched because both ends move
+  together. A 5 s trust band snaps a healthy device to exactly zero offset, so nothing changes for
+  anyone whose clock is fine; the anchor only re-seats when the device's error genuinely changes, so
+  measurement noise can never step the clock backwards mid-session. This does NOT make client time
+  trustworthy — a rolled clock still shifts both ends — so the rule's 2 min stays where it is, and
+  ADR 0021's server-anchored-start rework remains the answer to forged durations. Gate: lint +
+  build + 1212 unit + 102 emulator (2 new cases pin both halves against the real ruleset: a
+  fast-device stop is refused and credits nothing; the same stop in the server frame succeeds with
+  the same 30 credited minutes). Probe verified in a real browser (200 + `Date` header, live offset
+  0 ms on a synced machine).
+
 - **2026-07-28** — **Server-span credit check + one-tap approval of a time-correction request**
   (follow-ups to [ADR 0023](./adr/0023-worker-self-service-time-reduction.md)). Two pieces.
   **(1) Server-span detection** (`functions/integrityScans.js` `findImpossibleSpanSessions`, wired

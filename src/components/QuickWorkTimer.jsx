@@ -7,6 +7,7 @@ import { useTimerState } from '../hooks/useTimerState';
 import { useSpeechDictation } from '../hooks/useSpeechDictation';
 import { Zap, Square, Check, ShieldAlert, Mic, Clock } from 'lucide-react';
 import { formatMinutesToTimeString, getLithuanianNow, clampSessionMinutes, MIN_LOGGED_SESSION_MINUTES } from '../utils/timeUtils';
+import { serverNowISO } from '../utils/serverClock';
 import { formatDisplayName, isManagerRole } from '../utils/formatters';
 import {
     buildTemplateOptions,
@@ -448,7 +449,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             currentTaskMissing,
             commandId: idFor('timer_cmd'),
             runId: idFor('timer_run'),
-            issuedAt: new Date().toISOString(),
+            issuedAt: serverNowISO(),
         });
         await trackRevisionedQuickWork(plan);
         SoundManager.playQuickTaskSound();
@@ -506,7 +507,7 @@ export default function QuickWorkTimer({ compact = false, hideLabel = false }) {
             restoreTask,
             commandId: idFor('timer_cmd'),
             runId: base.run.pausedSession?.type ? idFor('timer_run') : null,
-            issuedAt: new Date().toISOString(),
+            issuedAt: serverNowISO(),
             discard,
             customTitle: taskTitle,
             customComment: comment,

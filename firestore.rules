@@ -276,9 +276,13 @@ service cloud.firestore {
     // The error modes remain asymmetric — wrongly DENYING an honest write loses a worker's pay (and
     // offline it fails late and quietly), while wrongly ALLOWING one costs at most the tolerance. 2min
     // is still ~60x the drift of an auto-synced phone (which is seconds), so it stays clear of the
-    // honest population. The residual exposure it does NOT address is a phone whose clock was set by
-    // hand and runs more than 2 minutes fast: that worker's stop is rejected. Raise this number first
-    // if such a rejection is ever reported — it is one edit and a rules deploy.
+    // honest population. The residual exposure it does NOT address is a device whose clock runs more
+    // than 2 minutes fast: that worker's stop is rejected — and it WAS reported, from a desktop
+    // machine, days after this was tightened. It is fixed on the CLIENT (src/utils/serverClock.js),
+    // which now stamps every session in the SERVER's frame rather than the device's, so this number
+    // did not have to move and should not be the first thing reached for: raising it only moves the
+    // cliff. If such a rejection is seen again, check whether that device's clock anchor is landing
+    // (an offline device never gets a probe, and then stamps with its own clock as before).
     //
     // What this check CANNOT do, at any tolerance: bound a duration asserted entirely in the past. A
     // fabricated session with plausible past times is untouched by it. Closing that needs the duration

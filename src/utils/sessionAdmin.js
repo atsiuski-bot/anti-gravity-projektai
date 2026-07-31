@@ -4,6 +4,7 @@ import { pauseTask } from './taskActions';
 import { logError } from './errorLog';
 import { notify } from './notify';
 import { getLithuanianDateString } from './timeUtils';
+import { serverNowISO } from './serverClock';
 import { SESSION_COLORS } from './sessionColors';
 import { pausedSessionStack } from './sessionNesting';
 import { applyTimerTransitionPlan } from './timerTransitionExecutor';
@@ -103,7 +104,7 @@ export const endSessionForUser = async (user, { actorId = null, notifyWorker = t
                 // an orphaned run from the run's own data and still writes the credited ledger row.
                 activeTask = taskSnap.exists() ? { id: taskSnap.id, ...taskSnap.data() } : null;
             }
-            const issuedAt = new Date().toISOString();
+            const issuedAt = serverNowISO();
             const plan = planManagerForceEnd({
                 targetUser: target,
                 actorId,

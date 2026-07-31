@@ -8,12 +8,17 @@ import PwaUpdatePrompt from './components/PwaUpdatePrompt.jsx'
 import { runDatabaseMigration, diagnoseTasks } from './utils/migrateDB.js'
 import { installGlobalErrorLogging } from './utils/errorLog.js'
 import { installStaleChunkRecovery } from './utils/appUpdate.js'
+import { installServerClockSync } from './utils/serverClock.js'
 
 // Capture async failures React error boundaries cannot see (timer/interval throws,
 // unhandled promise rejections, Firestore listener errors) into the durable crash log.
 // Installed before createRoot so even module-load/pre-mount errors are recorded.
 installGlobalErrorLogging();
 installStaleChunkRecovery();
+// Learn how far this device's clock is from the server's BEFORE any timer can be stamped. The probe
+// is fire-and-forget: until it lands the app stamps with the device clock exactly as it always has,
+// so nothing waits on the network to start working.
+installServerClockSync();
 
 // Console handles for the one-off DB migration + task diagnostic — DEV ONLY.
 //

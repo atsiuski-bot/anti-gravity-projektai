@@ -1,3 +1,5 @@
+import { serverNow } from './serverClock';
+
 export const parseTimeStringToMinutes = (str) => {
     // Add safety checks
     if (!str || typeof str !== 'string') return 0;
@@ -201,7 +203,10 @@ export const calculateCurrentTotalMinutes = (task) => {
             try {
                 const start = new Date(task.timerStartedAt);
                 if (!isNaN(start.getTime())) {
-                    const now = new Date();
+                    // Server-anchored, like the stamp this is measured against: the running total on
+                    // screen and the minutes eventually credited must come from ONE clock, or a
+                    // skewed device would display an elapsed time its own stop then contradicts.
+                    const now = serverNow();
                     total += clampSessionMinutes((now - start) / (1000 * 60));
                 }
             } catch (dateError) {
@@ -250,9 +255,15 @@ export const isTaskTimerAnomalous = (task) => {
 /**
  * Returns a Date object representing the current moment,
  * but ensures operations can be performed in Lithuanian context.
+ *
+ * Anchored to SERVER time, not the device clock (serverClock.js). This is the app's single answer
+ * to "what time is it", and it feeds the legacy session closers' start/end moments — so a machine
+ * whose clock runs fast no longer writes a session that ends in the server's future, which
+ * firestore.rules refuses outright. On a device inside the trust band the offset is exactly zero,
+ * so this is the same `new Date()` it has always been.
  */
 export const getLithuanianNow = () => {
-    return new Date();
+    return serverNow();
 };
 
 /**
