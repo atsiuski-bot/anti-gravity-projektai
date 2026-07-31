@@ -10,6 +10,7 @@ import UserManagement from '../components/UserManagement';
 import CombinedHoursSummary from '../components/CombinedHoursSummary';
 import ActiveWorkSessions from '../components/ActiveWorkSessions';
 import DailyWorkProgress from '../components/DailyWorkProgress';
+import CompletedTodayDisclosure from '../components/CompletedTodayDisclosure';
 import RecurringTasksPanel from '../components/RecurringTasksPanel';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { Spinner } from '../components/ui/Loading';
@@ -21,7 +22,7 @@ import { useAuth } from '../context/AuthContext';
 
 import { useNavigation } from '../context/NavigationContext';
 
-import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, TASK_TAGS } from '../utils/taskUtils';
+import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, scopeCompletedToday, TASK_TAGS } from '../utils/taskUtils';
 import { PRIORITIES, getPriorityLabel } from '../utils/priority';
 import { STATUS_LABELS } from '../utils/taskConstants';
 import { formatDisplayName } from '../utils/formatters';
@@ -685,13 +686,17 @@ export default function ManagerView() {
                     // "Mano darbai" is a PERSONAL list, so it keeps the same day window as the
                     // worker's "Mano užduotys": own finished work lingers for the rest of the work
                     // day, then clears (the shared team list instead hides finished items at once).
-                    const filteredMyTasks = scopePersonalDayWindow(ownTasks);
-                    const sortedMyTasks = sortWorkerTasks(filteredMyTasks);
+                    // Same split as the worker's Veiklos tab: the list holds only still-active
+                    // work, while today's finished tasks / greiti darbai / skambučiai move into the
+                    // collapsed "Padaryti darbai" section below it.
+                    const activeMyTasks = scopePersonalDayWindow(filterTasksByVisibility(ownTasks));
+                    const sortedMyTasks = sortWorkerTasks(activeMyTasks);
+                    const myCompletedToday = scopeCompletedToday(ownTasks);
 
                     return (
                         <>
                             <div className="mb-6">
-                                <DailyWorkProgress currentUser={currentUser} tasks={filterTasksByVisibility(filteredMyTasks)} />
+                                <DailyWorkProgress currentUser={currentUser} tasks={activeMyTasks} />
                             </div>
                             {!ownTasksLoaded ? (
                                 <div className="py-12 bg-surface-card rounded-card shadow-sm border border-line">
@@ -719,6 +724,7 @@ export default function ManagerView() {
                                     role="worker" // Mimic worker view columns/actions
                                 />
                             )}
+                            <CompletedTodayDisclosure tasks={myCompletedToday} />
                         </>
                     );
                 })()}

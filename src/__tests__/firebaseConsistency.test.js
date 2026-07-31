@@ -44,7 +44,16 @@ import { isManagerRole, isAdminRole } from '../utils/formatters.js';
 import { TIMER_ENGINE_VERSION } from '../utils/timerTransitionPlan.js';
 import { BADGE_CATALOG, TIER_KEYS } from '../utils/badgeCatalog.js';
 import { recurrenceFiresOn } from '../utils/recurrence.js';
-import { NOTIFICATIONS, notificationCopy, notificationCategory, notificationLink } from '../notifications/registry.js';
+import {
+  NOTIFICATIONS,
+  notificationCopy,
+  notificationCategory,
+  notificationLink,
+  notificationActions,
+  PUSH_ACTION_IDS,
+  MAX_PUSH_ACTIONS,
+} from '../notifications/registry.js';
+import { PUSH_INTENT_MESSAGE } from '../notifications/pushIntent.js';
 import { ON_TIME_GRACE_MIN } from '../utils/workerStats.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -697,6 +706,172 @@ describe('notification category lockstep (functions CATEGORY_BY_TYPE ↔ client 
       }
     }
     expect(disagreements, `notification category diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+});
+
+// =============================================================================================
+// 7c. PUSH ACTION-BUTTON LOCKSTEP — the decision buttons drawn on a BACKGROUND notification (ADR
+//     0024) are declared per type in the client registry and hand-copied into the Cloud Function's
+//     PUSH_ACTIONS_BY_TYPE, because the service worker cannot import client ESM. A drift here is
+//     worse than a wording bug: the button id is what the app dispatches on, so a rename on one
+//     side alone produces a button that looks right and silently does nothing.
+//
+//     Beyond the mirror, this locks the PLATFORM contract the buttons live under — at most 2 (Chrome
+//     drops the rest silently), ids drawn only from the set the app can execute, non-empty titles —
+//     and the PRODUCT rule that only an 'action'-category notification may carry a decision button.
+// =============================================================================================
+
+describe('notification push-action lockstep (functions PUSH_ACTIONS_BY_TYPE ↔ client registry)', () => {
+  // Same slicing trick as CATEGORY_BY_TYPE. The values are arrays of object literals, so the first
+  // '};' after the marker is still the map's own close ('}]' and '}, {' contain no '};').
+  const serverActions = (() => {
+    const marker = 'const PUSH_ACTIONS_BY_TYPE = {';
+    const start = FUNCTIONS_SRC.indexOf(marker);
+    if (start === -1) {
+      throw new Error('Could not find PUSH_ACTIONS_BY_TYPE in functions/index.js — marker moved; update this test.');
+    }
+    const end = FUNCTIONS_SRC.indexOf('};', start);
+    if (end === -1) {
+      throw new Error('Could not find the end of PUSH_ACTIONS_BY_TYPE in functions/index.js — update this test.');
+    }
+    const block = FUNCTIONS_SRC.slice(start, end + 2);
+    return new Function(`${block}\n;return PUSH_ACTIONS_BY_TYPE;`)();
+  })();
+
+  const typesWithActions = Object.keys(NOTIFICATIONS).filter((t) => notificationActions(t).length > 0);
+
+  it('the registry and the server map declare buttons for the same set of types', () => {
+    const serverKeys = new Set(Object.keys(serverActions));
+    const onlyRegistry = typesWithActions.filter((t) => !serverKeys.has(t));
+    const onlyServer = [...serverKeys].filter((t) => !typesWithActions.includes(t));
+    expect(onlyRegistry, `Registry declares push buttons the server never sends: ${onlyRegistry.join(', ')}`).toEqual([]);
+    expect(onlyServer, `Server sends push buttons the registry does not declare: ${onlyServer.join(', ')}`).toEqual([]);
+  });
+
+  it('server buttons === registry buttons for every type (ids, titles AND order)', () => {
+    const disagreements = [];
+    for (const type of typesWithActions) {
+      const client = notificationActions(type);
+      const server = serverActions[type] || [];
+      if (JSON.stringify(server) !== JSON.stringify(client)) {
+        disagreements.push(`${type}: server=${JSON.stringify(server)} client=${JSON.stringify(client)}`);
+      }
+    }
+    expect(disagreements, `push action buttons diverged:\n${disagreements.join('\n')}`).toEqual([]);
+  });
+
+  it('every declared button obeys the platform contract (<=2 per type, known id, real title)', () => {
+    const problems = [];
+    for (const type of typesWithActions) {
+      const actions = notificationActions(type);
+      if (actions.length > MAX_PUSH_ACTIONS) {
+        problems.push(`${type}: ${actions.length} buttons — the OS renders at most ${MAX_PUSH_ACTIONS}, the rest vanish silently`);
+      }
+      const ids = actions.map((a) => a.action);
+      if (new Set(ids).size !== ids.length) problems.push(`${type}: duplicate button ids (${ids.join(', ')})`);
+      for (const a of actions) {
+        if (!PUSH_ACTION_IDS.includes(a.action)) problems.push(`${type}: unknown button id "${a.action}" — the app has no handler for it`);
+        if (!a.title || !a.title.trim()) problems.push(`${type}: button "${a.action}" has no title`);
+      }
+    }
+    expect(problems, `push action buttons break their contract:\n${problems.join('\n')}`).toEqual([]);
+  });
+
+  it('only action-category notifications carry decision buttons', () => {
+    const wrong = typesWithActions.filter((t) => notificationCategory(t) !== 'action');
+    expect(wrong, `An 'info' notification must not offer a decision button: ${wrong.join(', ')}`).toEqual([]);
+  });
+
+  it('the push payload attaches actions only for the types that declare them', () => {
+    // The sender guards the JSON on PUSH_ACTIONS_BY_TYPE[n.type] — a spread with no guard would put
+    // an "actions: undefined" key in the FCM data map and throw at send time (all values must be
+    // strings), taking down the push for EVERY type rather than just the button-less ones.
+    expect(FUNCTIONS_SRC).toContain('const pushActions = PUSH_ACTIONS_BY_TYPE[n.type];');
+    expect(FUNCTIONS_SRC).toContain('...(pushActions ? { actions: JSON.stringify(pushActions) } : {}),');
+  });
+});
+
+// =============================================================================================
+// 7d. PUSH-INTENT CHANNEL LOCKSTEP — a tapped decision button travels from the service worker to
+//     the app either as a postMessage or as query params on a cold start. The worker is a plain
+//     file in public/ (it cannot import client ESM), so BOTH sides hand-copy the message name and
+//     the three param names. Drift is silent by construction: the app would simply never hear the
+//     intent, and the button would look like it does nothing at all.
+// =============================================================================================
+
+describe('push-intent channel lockstep (service worker ↔ client pushIntent)', () => {
+  const SW_SRC = read('public/firebase-messaging-sw.js');
+  const PUSH_INTENT_SRC = read('src/notifications/pushIntent.js');
+
+  // Both files declare these as plain string consts, so one regex reads either side.
+  const constOf = (src, name) => {
+    const m = src.match(new RegExp(`${name}\\s*=\\s*'([^']+)'`));
+    if (!m) throw new Error(`Could not read ${name} — declaration moved or reshaped; update this test.`);
+    return m[1];
+  };
+
+  it('the worker and the app agree on the intent message name', () => {
+    expect(constOf(SW_SRC, 'INTENT_MESSAGE')).toBe(PUSH_INTENT_MESSAGE);
+  });
+
+  it('the worker and the app agree on the cold-start query params', () => {
+    for (const name of ['PARAM_ACTION', 'PARAM_NOTIF', 'PARAM_TYPE']) {
+      expect(constOf(SW_SRC, name), `${name} diverged between the SW and pushIntent.js`)
+        .toBe(constOf(PUSH_INTENT_SRC, name));
+    }
+  });
+
+  it('the worker renders the buttons it is sent and reads the pressed one back', () => {
+    // The two halves of a decision button: showNotification must receive an `actions` array, and
+    // notificationclick must dispatch on event.action. Losing either one leaves a notification that
+    // either shows no buttons or shows buttons that all behave like a plain tap.
+    expect(SW_SRC).toContain('actions: parseActions(data.actions)');
+    expect(SW_SRC).toContain("const action = event.action || ''");
+  });
+
+  it('the worker never writes to Firestore — it only hands the intent to the app', () => {
+    // The safety argument for the whole feature (ADR 0024): the SW has no auth and none of the
+    // in-app card's guards, so it must stay write-less. Importing firestore here would silently
+    // create a second, unguarded implementation of every decision.
+    expect(SW_SRC).not.toContain('firebase-firestore');
+    expect(SW_SRC).not.toContain('firestore()');
+  });
+
+  // parseActions is the worker's only real logic, and it runs on a payload that arrived over the
+  // network — so it is exercised directly rather than trusted. It is self-contained (its one global,
+  // Notification, is guarded for absence), so slicing and evaluating it is enough. Under node
+  // `Notification` is undefined, which pins the clamp at the documented default of 2.
+  const parseActions = (() => {
+    const start = SW_SRC.indexOf('function parseActions');
+    const end = SW_SRC.indexOf('\ntry {', start);
+    if (start === -1 || end === -1) {
+      throw new Error('Could not slice parseActions out of the service worker — markers moved; update this test.');
+    }
+    return new Function(`${SW_SRC.slice(start, end)}\n;return parseActions;`)();
+  })();
+
+  it('a notification without buttons stays a plain tap-to-open one', () => {
+    expect(parseActions(undefined)).toEqual([]);
+    expect(parseActions('')).toEqual([]);
+  });
+
+  it('a malformed or wrongly-shaped payload degrades to no buttons, never to a broken notification', () => {
+    // showNotification REJECTS an invalid actions member, and a rejected render is a push that
+    // arrives silently — which is the failure Apple revokes the subscription over. Losing the
+    // buttons is the only acceptable way to fail here.
+    expect(parseActions('{not json')).toEqual([]);
+    expect(parseActions('{"action":"approve"}')).toEqual([]); // object, not an array
+    expect(parseActions('[{"action":"approve"},{"title":"Be id"},{"action":"","title":"Tuščias"},7,null]')).toEqual([]);
+  });
+
+  it('valid buttons pass through in order, stripped to the two members we declare', () => {
+    expect(parseActions('[{"action":"approve","title":"Patvirtinti","icon":"/x.png"},{"action":"open","title":"Atidaryti"}]'))
+      .toEqual([{ action: 'approve', title: 'Patvirtinti' }, { action: 'open', title: 'Atidaryti' }]);
+  });
+
+  it('a third button is clamped away rather than silently dropped by the OS', () => {
+    const three = '[{"action":"approve","title":"A"},{"action":"open","title":"B"},{"action":"confirm","title":"C"}]';
+    expect(parseActions(three)).toEqual([{ action: 'approve', title: 'A' }, { action: 'open', title: 'B' }]);
   });
 });
 

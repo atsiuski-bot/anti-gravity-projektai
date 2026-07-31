@@ -1,6 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bell } from 'lucide-react';
 import { useNotifications } from '../context/NotificationsContext';
+import { useNavigation } from '../context/NavigationContext';
+import { tabFromLink } from '../notifications/pushIntent';
 import { useMediaQuery } from '../hooks/useMediaQuery';
 import Modal from './ui/Modal';
 import Popover from './ui/Popover';
@@ -23,21 +25,50 @@ import ManagerNotifications from './ManagerNotifications';
 const PANEL_ID = 'notification-popover';
 
 export default function NotificationBell() {
-    const { unreadCount } = useNotifications();
+    const { unreadCount, pushIntent, clearPushIntent } = useNotifications();
+    const { setActiveTab } = useNavigation();
     const [open, setOpen] = useState(false);
     const isDesktop = useMediaQuery('(min-width: 768px)');
     const bellRef = useRef(null);
 
+    // A tapped background notification lands here (ADR 0024). The bell is the first component inside
+    // the router that can act on it, so it owns the two navigational halves of an intent:
+    //
+    //   • ROUTE to the tab the notification points at. This is the deep link finally working for an
+    //     already-open app — the FCM worker is registered at its own scope, so it never controlled
+    //     this page and WindowClient.navigate() always rejected; a tap could only ever focus.
+    //   • OPEN the panel when a decision button was pressed, because the handler that owns each
+    //     decision lives in the feed inside it (and so does the undo snackbar / error banner the
+    //     manager needs to see afterwards).
+    //
+    // A plain tap on the notification BODY routes and stops — same as before, no panel. The intent
+    // is then consumed by ManagerNotifications, which runs the decision and clears it.
+    useEffect(() => {
+        if (!pushIntent) return;
+        const tab = tabFromLink(pushIntent.link);
+        if (tab) setActiveTab(tab);
+        if (pushIntent.action) setOpen(true);
+        else clearPushIntent();
+        // eslint-disable-next-line react-hooks/exhaustive-deps -- react to a NEW intent only; setActiveTab is re-created every provider render and would re-fire this.
+    }, [pushIntent, clearPushIntent]);
+
     const label = unreadCount > 0 ? `Pranešimai, ${unreadCount} nauji` : 'Pranešimai';
     const badge = unreadCount > 99 ? '99+' : String(unreadCount);
-    const close = () => setOpen(false);
+    // Closing the panel CANCELS an intent that has not run yet. The feed executes an intent only
+    // once its listener has delivered a snapshot, so a user who dismisses the panel inside that
+    // window would otherwise leave a decision armed — and it would fire, unexplained, the next time
+    // they opened the bell. An intent that already ran cleared itself before any close could occur.
+    const close = () => {
+        setOpen(false);
+        if (pushIntent?.action) clearPushIntent();
+    };
 
     return (
         <>
             <button
                 ref={bellRef}
                 type="button"
-                onClick={() => setOpen((o) => !o)}
+                onClick={() => (open ? close() : setOpen(true))}
                 aria-label={label}
                 aria-haspopup="dialog"
                 aria-expanded={open}

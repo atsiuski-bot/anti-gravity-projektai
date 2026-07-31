@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Clock, Calendar, Undo2, CheckCircle2, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
+import { Clock, Calendar, Undo2, CheckCircle2, CheckCheck, AlignLeft, ListChecks, Paperclip } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
 import { ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
@@ -12,8 +12,8 @@ import { calculateCurrentTotalMinutes, formatMinutesToTimeString, parseTimeStrin
 import { getChecklistProgress } from '../utils/checklistActions';
 import { isManagerRole } from '../utils/formatters';
 import { canEditTask } from '../utils/taskPermissions';
-import { canApproveTask, canConfirmTask, canRevertTask } from '../utils/taskActionVisibility';
-import { canSeeWholeTeam } from '../utils/teamScope';
+import { canApproveTask, canConfirmTask, canRevertTask, canSignOffTask, canFinishForAssignee } from '../utils/taskActionVisibility';
+import { finishTaskForAssignee } from '../utils/managerFinishTask';
 import TaskActionRow from './task/TaskActionRow';
 import ConfirmDialog from './ui/ConfirmDialog';
 import PriorityBadge from './task/PriorityBadge';
@@ -66,6 +66,9 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
     const [spentMinutes, setSpentMinutes] = useState(0);
     const [confirmRevert, setConfirmRevert] = useState(false);
     const [revertError, setRevertError] = useState('');
+    const [confirmFinishForOther, setConfirmFinishForOther] = useState(false);
+    const [finishForOtherError, setFinishForOtherError] = useState('');
+    const [finishingForOther, setFinishingForOther] = useState(false);
     const [actionError, setActionError] = useState('');
     // One-shot completion celebration: fires only on a live not-done -> done transition while
     // the card is mounted, so already-finished cards (history) never replay it.
@@ -136,6 +139,24 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
             undoneMessage: 'Atšaukta — laukiama priėmimo.',
             errorMessage: 'Nepavyko priimti užduoties. Bandykite dar kartą.',
         });
+    };
+
+    // Close a Meistras's task for them: settles their still-running session first, then completes +
+    // accepts it in one audited step (see finishTaskForAssignee). Kept behind a confirm dialog — it
+    // ends someone else's live work, which is not a tap to make by accident.
+    const performFinishForOther = async () => {
+        setFinishingForOther(true);
+        try {
+            setFinishForOtherError('');
+            await finishTaskForAssignee(task, { currentUser, userRole });
+            setConfirmFinishForOther(false);
+            await onConfirmed?.(task);
+        } catch (err) {
+            logError(err, { source: 'TaskCard.performFinishForOther', taskId: task.id, code: err?.code });
+            setFinishForOtherError('Nepavyko užbaigti užduoties. Bandykite dar kartą.');
+        } finally {
+            setFinishingForOther(false);
+        }
     };
 
     const displayColor = task.assignedWorkerColor;
@@ -306,12 +327,12 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
     // scoped or SENIOR manager's OWN task, assigned to them by someone else, matches none of them, so
     // offering the button there produced a permission-denied and a generic "bandykite dar kartą"
     // toast, leaving the task stuck in "Laukia priėmimo" forever. Show it only when it can land.
-    const canSignOffTask = canSeeWholeTeam(userData)
-        || task.managerId === currentUser?.uid
-        || task.taskAuditor === currentUser?.uid
-        || (Array.isArray(task.teamManagerIds) && task.teamManagerIds.includes(currentUser?.uid));
-    const canConfirm = canConfirmTask({ task, role, userRole }) && canSignOffTask;
+    const maySignOff = canSignOffTask({ task, currentUser, userData });
+    const canConfirm = canConfirmTask({ task, role, userRole }) && maySignOff;
     const canApprove = canApproveTask({ task, role, userRole });
+    // The coordinator's closing door for a Meistras's still-open task (the timer's own "Užbaigti" is
+    // assignment-only, so without this the task had no way out of the active list but the worker's).
+    const canFinishForOther = canFinishForAssignee({ task, currentUser, userData, role, userRole });
     const canRevert = canRevertTask({ task, role, userRole });
 
     // Footer actions, data-driven so the SAME list feeds both the visible (adaptive) row and the
@@ -330,6 +351,11 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
     if (canConfirm) actions.push({
         key: 'confirm', label: 'Priimti', icon: CheckCircle2, variant: 'success',
         onClick: (e) => { e.stopPropagation(); performConfirm(); },
+    });
+    if (canFinishForOther) actions.push({
+        key: 'finish-for-other', label: 'Užbaigti ir priduoti', compactLabel: 'Užbaigti',
+        icon: CheckCheck, variant: 'primary',
+        onClick: (e) => { e.stopPropagation(); setFinishForOtherError(''); setConfirmFinishForOther(true); },
     });
     // Edit / comment / delete are NOT row actions — they live in the task detail sheet (open on tap),
     // so the footer carries only the lifecycle sign-off actions and fits one line.
@@ -354,7 +380,10 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
         onApprove: () => performApprove(),
         // Same gate as the footer's "Priimti" — otherwise the identical dead button just moves into
         // the preview sheet and fails there instead.
-        onConfirm: isManager && canSignOffTask ? () => performConfirm() : undefined,
+        onConfirm: isManager && maySignOff ? () => performConfirm() : undefined,
+        // Same door as the footer's "Užbaigti" — the preview must offer it too, since a coordinator
+        // reaching a Meistras's task usually opens it to read the detail before closing it.
+        onFinish: canFinishForOther ? () => { setShowDetail(false); setFinishForOtherError(''); setConfirmFinishForOther(true); } : undefined,
     };
 
     const openDetail = () => setShowDetail(true);
@@ -593,6 +622,7 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                 onRevert={detail.onRevert ? (t) => { setShowDetail(false); detail.onRevert(t); } : undefined}
                 onApprove={detail.onApprove ? (id) => { setShowDetail(false); detail.onApprove(id); } : undefined}
                 onConfirm={detail.onConfirm ? (id) => { setShowDetail(false); detail.onConfirm(id); } : undefined}
+                onFinish={detail.onFinish}
                 onOpenChecklist={() => { setShowDetail(false); setActiveModal('checklist'); }}
                 onOpenTimeAdjustments={isManager ? () => { setShowDetail(false); setActiveModal('timeAdjustments'); } : undefined}
             />
@@ -631,6 +661,20 @@ const TaskCard = ({ task, onEdit, role, onConfirmed, onReverted, onDeleted, sign
                     variant="primary"
                     onConfirm={performRevert}
                     onCancel={() => setConfirmRevert(false)}
+                />
+            )}
+
+            {confirmFinishForOther && (
+                <ConfirmDialog
+                    open
+                    title="Užbaigti Meistro veiklą?"
+                    message={`Veikla „${task.title || ''}“ (Meistras: ${task.assignedUserName || '—'}) bus užbaigta ir priduota. Jei laikmatis dar veikia, laikas bus užskaitytas iki šios akimirkos.`}
+                    warning={finishForOtherError || undefined}
+                    confirmLabel="Užbaigti ir priduoti"
+                    variant="primary"
+                    loading={finishingForOther}
+                    onConfirm={performFinishForOther}
+                    onCancel={() => setConfirmFinishForOther(false)}
                 />
             )}
 

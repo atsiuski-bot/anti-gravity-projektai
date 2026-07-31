@@ -1,5 +1,37 @@
 @tailwind base;
 @tailwind components;
+
+/* Dynamic-viewport (`dvh`) fallback for engines below Safari/iOS 15.4, Chrome 108 and Opera 94 —
+   all of them inside this app's declared support floor (package.json browserslist: iOS 14). Those
+   engines cannot parse `100dvh`, so they drop the WHOLE declaration: a modal's height cap simply
+   ceases to exist and a long dialog runs off the bottom of the screen with no internal scroll —
+   the exact failure dvh was introduced to prevent, just inverted. A `vh` twin restores a cap there.
+   `vh` measures the LARGEST viewport (URL bar hidden), so the fallback is slightly generous, which
+   is the right direction to be wrong: a cap that is a little too tall still scrolls; no cap does not.
+
+   THE POSITION IS THE MECHANISM. These sit between `@tailwind components` and `@tailwind utilities`
+   so they are emitted BEFORE the dvh utilities they back up. Both selectors carry the same
+   specificity (0,1,0), so on a modern phone the later dvh rule still wins and nothing changes; only
+   where dvh is unparseable — and the utility therefore contributes nothing — does the `vh` twin
+   apply. Moved below `@tailwind utilities` (where the rest of this file lives) they would override
+   dvh on EVERY browser and silently undo it. `@layer base` looks like the tidier home and is not:
+   Tailwind drops the nested `@media` blocks, which silently deletes the two responsive fallbacks.
+
+   The selectors mirror the arbitrary values used in the components;
+   src/__tests__/browserFloorFallbacks.test.js fails the gate if a component adds a dvh utility that
+   has no twin here. */
+.max-h-\[60dvh\] { max-height: 60vh; }
+.max-h-\[80dvh\] { max-height: 80vh; }
+.max-h-\[calc\(100dvh-9rem\)\] { max-height: calc(100vh - 9rem); }
+
+@media (min-width: 640px) {
+  .sm\:max-h-\[calc\(100dvh-10rem\)\] { max-height: calc(100vh - 10rem); }
+}
+
+@media (min-width: 1024px) {
+  .lg\:max-h-\[90dvh\] { max-height: 90vh; }
+}
+
 @tailwind utilities;
 
 /* iOS Safari force-zooms the viewport whenever a focused form control's text is < 16px, leaving
@@ -15,6 +47,24 @@
   :root textarea,
   :root select {
     font-size: 16px;
+  }
+}
+
+/* `:has()` fallback. The focus ring on the notification-preference rows (UserProfileModal) is drawn
+   with `has-[:focus-visible]:ring-*`, and `:has()` needs Safari 15.4 / Firefox 121 — below that the
+   rule is dropped and a keyboard user gets NO visible focus indicator, which DESIGN_SYSTEM §a11y
+   treats as mandatory, not decorative. `:focus-within` is supported everywhere in the floor and is
+   the closest equivalent; it also fires on pointer focus, so it is applied ONLY where `:has()` is
+   missing and modern engines keep the tighter focus-visible behaviour untouched. */
+@supports not selector(:has(*)) {
+  .has-\[\:focus-visible\]\:ring-2:focus-within {
+    --tw-ring-offset-shadow: var(--tw-ring-inset) 0 0 0 var(--tw-ring-offset-width) var(--tw-ring-offset-color);
+    --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
+    box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
+  }
+  .has-\[\:focus-visible\]\:ring-brand:focus-within {
+    --tw-ring-opacity: 1;
+    --tw-ring-color: rgb(var(--brand) / var(--tw-ring-opacity, 1));
   }
 }
 

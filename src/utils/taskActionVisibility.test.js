@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canApproveTask, canConfirmTask, canRevertTask, buildReviewActions } from './taskActionVisibility';
+import { canApproveTask, canConfirmTask, canRevertTask, canSignOffTask, canFinishForAssignee, buildReviewActions } from './taskActionVisibility';
 
 // These predicates are the single source of truth for WHICH manager sign-off actions a task
 // offers, shared by the mobile card, the desktop table and the detail modal. The contract:
@@ -100,6 +100,62 @@ describe('taskActionVisibility', () => {
             });
             expect(acts[0].key).toBe('confirm');
             expect(acts[0].disabled).toBe(true);
+        });
+    });
+
+    // The koordinatorius's closing door for a Meistras's still-open task. The timer's own "Užbaigti"
+    // is assignment-only, so this predicate decides whether the task can leave the active list
+    // without the worker — and it must never offer a button the rules would deny.
+    describe('canFinishForAssignee', () => {
+        const mgr = { uid: 'mgr' };
+        const scoped = { role: 'manager', scopedManager: true };
+        const open = { id: 't1', assignedUserId: 'w1', status: 'approved' };
+
+        it('offers the door to the task overseer on someone else\'s open task', () => {
+            expect(canFinishForAssignee({
+                task: { ...open, teamManagerIds: ['mgr'] }, currentUser: mgr, userData: scoped, userRole: 'manager',
+            })).toBe(true);
+            // ...and to the named vadovas even outside the team closure.
+            expect(canFinishForAssignee({
+                task: { ...open, managerId: 'mgr' }, currentUser: mgr, userData: scoped, userRole: 'manager',
+            })).toBe(true);
+        });
+
+        it('is withheld from a manager who does not oversee THIS task (the rules would deny it)', () => {
+            expect(canFinishForAssignee({
+                task: open, currentUser: mgr, userData: scoped, userRole: 'manager',
+            })).toBe(false);
+        });
+
+        it('is withheld from a worker, and from the assignee themselves', () => {
+            expect(canFinishForAssignee({
+                task: { ...open, teamManagerIds: ['mgr'] }, currentUser: mgr, userData: scoped, userRole: 'worker',
+            })).toBe(false);
+            // The assignee has their own timer door; this one is only for closing SOMEONE ELSE's work.
+            expect(canFinishForAssignee({
+                task: { ...open, assignedUserId: 'mgr', teamManagerIds: ['mgr'] }, currentUser: mgr,
+                userData: { role: 'admin' }, userRole: 'manager',
+            })).toBe(false);
+        });
+
+        it('is withheld once there is nothing left to close, or the pending decision is approval', () => {
+            const admin = { currentUser: mgr, userData: { role: 'admin' }, userRole: 'admin' };
+            expect(canFinishForAssignee({ task: { ...open, completed: true }, ...admin })).toBe(false);
+            expect(canFinishForAssignee({ task: { ...open, isDeleted: true }, ...admin })).toBe(false);
+            expect(canFinishForAssignee({ task: { ...open, isArchived: true }, ...admin })).toBe(false);
+            expect(canFinishForAssignee({ task: { ...open, status: 'unapproved' }, ...admin })).toBe(false);
+        });
+    });
+
+    describe('canSignOffTask', () => {
+        it('recognises every branch the rules grant, and nothing else', () => {
+            const me = { uid: 'm' };
+            const scoped = { role: 'manager', scopedManager: true };
+            expect(canSignOffTask({ task: { managerId: 'm' }, currentUser: me, userData: scoped })).toBe(true);
+            expect(canSignOffTask({ task: { taskAuditor: 'm' }, currentUser: me, userData: scoped })).toBe(true);
+            expect(canSignOffTask({ task: { teamManagerIds: ['m'] }, currentUser: me, userData: scoped })).toBe(true);
+            expect(canSignOffTask({ task: {}, currentUser: me, userData: { role: 'admin' } })).toBe(true);
+            expect(canSignOffTask({ task: {}, currentUser: me, userData: scoped })).toBe(false);
         });
     });
 });
