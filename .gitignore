@@ -136,3 +136,6 @@ Thumbs.db
 # .codex/ is machine-local Codex hook wiring whose commands carry absolute paths.
 .claude/projects/
 .codex/
+
+# Session handoff scratch (working notes, not project history)
+.handoffs/
