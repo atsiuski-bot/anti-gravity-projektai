@@ -11,6 +11,8 @@ import {
     notificationCopy,
     notificationLink,
     notificationActions,
+    DIRECT_PUSH_ACTIONS,
+    directNotificationActions,
 } from './registry.js';
 
 const CATEGORIES = new Set(['action', 'info']);
@@ -50,6 +52,22 @@ describe('notification registry completeness', () => {
         expect(body.length).toBeGreaterThan(0);
     });
 
+    // Pushes sent straight from their own collection trigger declare their buttons here instead —
+    // they have no registry entry, so nothing above covers them. The client↔server mirror is locked
+    // in firebaseConsistency.test.js; this only pins the shape the accessor promises its callers.
+    it.each(Object.keys(DIRECT_PUSH_ACTIONS))('direct push type "%s" declares a usable button array', (type) => {
+        const actions = DIRECT_PUSH_ACTIONS[type];
+        expect(Array.isArray(actions)).toBe(true);
+        expect(actions.length).toBeGreaterThan(0);
+        for (const a of actions) {
+            expect(typeof a.action).toBe('string');
+            expect(a.action.length).toBeGreaterThan(0);
+            expect(typeof a.title).toBe('string');
+            expect(a.title.length).toBeGreaterThan(0);
+        }
+        expect(directNotificationActions(type)).toEqual(actions);
+    });
+
     it('the helper accessors agree with the map', () => {
         for (const type of Object.keys(NOTIFICATIONS)) {
             expect(notificationCategory(type)).toBe(NOTIFICATIONS[type].category);
@@ -64,6 +82,7 @@ describe('notification registry completeness', () => {
         expect(notificationSound('made_up')).toBe(null);
         // An array, never undefined — a tap-only push, not a crash in the SW payload builder.
         expect(notificationActions('made_up')).toEqual([]);
+        expect(directNotificationActions('made_up')).toEqual([]);
         expect(notificationCopy({ type: 'made_up', taskTitle: 'X' })).toEqual({
             title: 'Naujas pranešimas',
             body: 'X',
