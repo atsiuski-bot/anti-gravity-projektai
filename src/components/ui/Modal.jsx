@@ -97,10 +97,14 @@ export default function Modal({
                     // viewport (URL bar hidden), so a `vh`-capped card can grow taller than the
                     // actually-visible area — centred, that pushes the sticky footer off-screen
                     // onto the bottom nav and the body stops scrolling. `dvh` tracks the real
-                    // visible viewport, so the cap always matches what the user can see. The tokens
-                    // also subtract `env(safe-area-inset-bottom)`, because the dock below grows by
-                    // exactly that on a home-indicator device (tailwind.config.js `maxHeight`).
-                    'max-h-modal-mobile sm:max-h-modal-tablet lg:max-h-[90dvh] focus:outline-none',
+                    // visible viewport, so the cap always matches what the user can see. The cap also
+                    // subtracts `env(safe-area-inset-bottom)`, because the dock below grows by exactly
+                    // that on a home-indicator device — the same reason `pb-navclear` carries it.
+                    // Kept as ARBITRARY values rather than named tokens on purpose: the browser-floor
+                    // gate (src/__tests__/browserFloorFallbacks.test.js) finds dvh utilities by their
+                    // `-[…dvh…]` shape, so a named token would silently escape the guard that makes
+                    // sure this cap has a `vh` twin for engines below Safari 15.4.
+                    'max-h-[calc(100dvh-9rem-env(safe-area-inset-bottom))] sm:max-h-[calc(100dvh-10rem-env(safe-area-inset-bottom))] lg:max-h-[90dvh] focus:outline-none',
                     // Card settles in (fade + slight zoom) as the scrim fades behind it.
                     'animate-in fade-in zoom-in-95',
                     SIZES[size] || SIZES.md,

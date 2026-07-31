@@ -22,10 +22,15 @@
    has no twin here. */
 .max-h-\[60dvh\] { max-height: 60vh; }
 .max-h-\[80dvh\] { max-height: 80vh; }
-.max-h-\[calc\(100dvh-9rem\)\] { max-height: calc(100vh - 9rem); }
+.h-\[70dvh\] { height: 70vh; }
+/* The modal cap now also subtracts the bottom safe-area inset (the dock it clears grows by exactly
+   that on a home-indicator device), so the twin has to carry the same `env()` term — otherwise the
+   fallback would reserve too little on precisely the phones that need the most. `env()` itself is
+   fine at the floor: it has shipped since iOS 11.2, unlike `dvh`. */
+.max-h-\[calc\(100dvh-9rem-env\(safe-area-inset-bottom\)\)\] { max-height: calc(100vh - 9rem - env(safe-area-inset-bottom)); }
 
 @media (min-width: 640px) {
-  .sm\:max-h-\[calc\(100dvh-10rem\)\] { max-height: calc(100vh - 10rem); }
+  .sm\:max-h-\[calc\(100dvh-10rem-env\(safe-area-inset-bottom\)\)\] { max-height: calc(100vh - 10rem - env(safe-area-inset-bottom)); }
 }
 
 @media (min-width: 1024px) {
@@ -62,9 +67,12 @@
     --tw-ring-shadow: var(--tw-ring-inset) 0 0 0 calc(2px + var(--tw-ring-offset-width)) var(--tw-ring-color);
     box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
   }
-  .has-\[\:focus-visible\]\:ring-brand:focus-within {
+  /* Tracks the utility the component actually uses. Focus rings moved from `--brand` (a FILL value
+     that measured 2.32-2.71:1 on the dark surfaces) to `--brand-ring`; leaving this twin on the old
+     name would have made the pre-15.4 fallback point at a colour nothing else uses any more. */
+  .has-\[\:focus-visible\]\:ring-brand-ring:focus-within {
     --tw-ring-opacity: 1;
-    --tw-ring-color: rgb(var(--brand) / var(--tw-ring-opacity, 1));
+    --tw-ring-color: rgb(var(--brand-ring) / var(--tw-ring-opacity, 1));
   }
 }
 

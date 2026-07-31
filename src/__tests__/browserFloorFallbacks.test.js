@@ -102,11 +102,17 @@ describe('browser-floor CSS fallbacks (index.css)', () => {
             return; // dist/ absent (fresh clone, CI without a build step)
         }
 
+        // These pairs DESCRIBE the expressions in index.css / Modal.jsx, so when one of those
+        // legitimately changes the description has to follow — the two modal rows gained an
+        // `env(safe-area-inset-bottom)` term when the cap started tracking the bottom dock's real
+        // height. Editing a row to match a NEW value is fine; deleting a row is not, because that
+        // is how a fallback goes missing without anything failing.
         for (const [fallback, real] of [
             ['.max-h-\\[60dvh\\]{max-height:60vh}', '.max-h-\\[60dvh\\]{max-height:60dvh}'],
             ['.max-h-\\[80dvh\\]{max-height:80vh}', '.max-h-\\[80dvh\\]{max-height:80dvh}'],
-            ['{max-height:calc(100vh - 9rem)}', '{max-height:calc(100dvh - 9rem)}'],
-            ['{max-height:calc(100vh - 10rem)}', '{max-height:calc(100dvh - 10rem)}'],
+            ['.h-\\[70dvh\\]{height:70vh}', '.h-\\[70dvh\\]{height:70dvh}'],
+            ['{max-height:calc(100vh - 9rem - env(safe-area-inset-bottom))}', '{max-height:calc(100dvh - 9rem - env(safe-area-inset-bottom))}'],
+            ['{max-height:calc(100vh - 10rem - env(safe-area-inset-bottom))}', '{max-height:calc(100dvh - 10rem - env(safe-area-inset-bottom))}'],
             ['.lg\\:max-h-\\[90dvh\\]{max-height:90vh}', '.lg\\:max-h-\\[90dvh\\]{max-height:90dvh}'],
         ]) {
             const i = built.indexOf(fallback);

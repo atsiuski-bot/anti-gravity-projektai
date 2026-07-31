@@ -161,15 +161,6 @@ export default {
             },
             minHeight: { touch: '44px' },
             minWidth: { touch: '44px' },
-            // The Modal card's height cap, as named tokens rather than arbitrary values: the
-            // expression has to carry `env()`, and Tailwind's arbitrary-value normaliser rewrites
-            // math operators inside `[...]`, which would mangle the hyphens in
-            // `safe-area-inset-bottom`. Config values are emitted verbatim, so they are safe.
-            // Mirrors the scrim's own `pb-navclear` reserve (see `spacing` above).
-            maxHeight: {
-                'modal-mobile': 'calc(100dvh - 9rem - env(safe-area-inset-bottom))',
-                'modal-tablet': 'calc(100dvh - 10rem - env(safe-area-inset-bottom))',
-            },
         },
     },
     plugins: [],

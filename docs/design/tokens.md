@@ -214,9 +214,10 @@ Banned for content: `text-[8px]`, `text-[9px]`, `text-[10px]`, `text-[11px]`.
 > `calc(64px + env(…))`. Measured at 360 px the dock occupies 150 px against a 160 px reserve
 > (`navclear` + `main`'s `pb-8`) — 10 px of slack; with a constant reserve an iPhone home indicator
 > (34 px) pushed the dock to 184 px and buried ~24 px of the last card. The Modal card's cap
-> (`max-h-modal-mobile` / `-tablet`) subtracts the same inset. Those live in `maxHeight` in the
-> config rather than as arbitrary `[...]` values because Tailwind's arbitrary-value normaliser
-> rewrites math operators and would mangle the hyphens in `safe-area-inset-bottom`.
+> subtracts the same inset and stays an **arbitrary** `max-h-[calc(100dvh-9rem-env(…))]` value, not
+> a named token: the browser-floor gate finds dvh utilities by their `-[…dvh…]` shape, so a token
+> would slip past the check that every dvh cap has a `vh` twin in `index.css`. (Tailwind's
+> normaliser handles `env()` inside `[...]` correctly — verified in the built stylesheet.)
 
 ---
 
@@ -372,6 +373,5 @@ extend: {
   transitionDuration: { fast: '150', base: '200', slow: '300' },
   minHeight: { touch: '44px' }, minWidth: { touch: '44px' },
   spacing: { navclear: 'calc(8rem + env(safe-area-inset-bottom))', 'navclear-lg': 'calc(9rem + env(…))' },
-  maxHeight: { 'modal-mobile': 'calc(100dvh - 9rem - env(…))', 'modal-tablet': 'calc(100dvh - 10rem - env(…))' },
 }
 ```

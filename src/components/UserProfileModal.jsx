@@ -491,8 +491,8 @@ export default function UserProfileModal({ userId, onClose }) {
             size="xl"
             // Fill the scrim's padded line (`h-full`) so the member card reads as a full surface,
             // and widen further when the day report is shown. Deliberately NO max-h here: a
-            // caller-side `max-h-[92vh]` is the same tailwind-merge group as Modal's
-            // `max-h-[calc(100dvh-9rem)]` and would DELETE that cap — and `vh` measures the
+            // caller-side `max-h-[92vh]` is the same tailwind-merge group as Modal's own dvh height
+            // cap and would DELETE that cap — and `vh` measures the
             // URL-bar-hidden viewport, so the card grew taller than the visible area and the
             // close button plus the Pasiekimai/Statistika/Suvestinė tabs were clipped off the top
             // of a phone screen with no way to scroll them back (Modal.jsx §height cap).
