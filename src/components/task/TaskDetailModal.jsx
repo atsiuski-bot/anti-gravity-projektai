@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useId, useMemo } from 'react';
 import clsx from 'clsx';
 import {
-    Pencil, Trash2, Undo2, CheckCircle2, Check, Clock, MessageSquare, ListChecks,
+    Pencil, Trash2, Undo2, CheckCircle2, CheckCheck, Check, Clock, MessageSquare, ListChecks,
     Link as LinkIcon, ImageIcon, ImagePlus, Camera, ZoomIn, Send, X, ChevronDown,
     Calendar, Timer, Hourglass, UserCog, Square, CheckSquare,
 } from 'lucide-react';
@@ -59,6 +59,9 @@ import { preventEnterSubmit } from '../../utils/formUtils';
  * @param {Function} [props.onDelete]
  * @param {Function} [props.onRevert]
  * @param {Function} [props.onConfirm]       confirm finished work (taskId)
+ * @param {Function} [props.onFinish]        present ⇒ render "Užbaigti ir priduoti": the overseeing
+ *        koordinatorius closes this Meistras's still-open task on their behalf. The caller owns the
+ *        permission gate (canFinishForAssignee), so this modal only renders what it is handed.
  * @param {Function} [props.onApprove]       approve an unapproved task (taskId)
  * @param {Function} [props.onOpenChecklist]
  * @param {Function} [props.onOpenTimeAdjustments]
@@ -89,6 +92,7 @@ export default function TaskDetailModal({
     onDelete,
     onRevert,
     onConfirm,
+    onFinish,
     onApprove,
     onOpenChecklist,
     onOpenTimeAdjustments,
@@ -208,7 +212,7 @@ export default function TaskDetailModal({
     const canConfirm = canManage && task.status === 'completed';
     const canApprove = canManage && task.status === 'unapproved';
     const canRevert = canManage && (task.completed || isDeleted);
-    const hasFooterActions = !!onEdit || canConfirm || canApprove || canRevert || canDelete;
+    const hasFooterActions = !!onEdit || canConfirm || canApprove || canRevert || canDelete || !!onFinish;
 
     // Footer actions, data-driven so the SAME adaptive one-line row the card uses backs the modal
     // too (revert → approve/confirm → edit → delete, destructive last per §8). They share the row
@@ -217,6 +221,7 @@ export default function TaskDetailModal({
     if (canRevert && onRevert) footerActions.push({ key: 'revert', label: 'Grąžinti', icon: Undo2, variant: 'secondary', onClick: () => onRevert(task) });
     if (canApprove && onApprove) footerActions.push({ key: 'approve', label: 'Patvirtinti', icon: CheckCircle2, variant: 'success', onClick: () => onApprove(task.id) });
     if (canConfirm && onConfirm) footerActions.push({ key: 'confirm', label: 'Priimti', icon: CheckCircle2, variant: 'success', onClick: () => onConfirm(task.id) });
+    if (onFinish) footerActions.push({ key: 'finish-for-other', label: 'Užbaigti ir priduoti', compactLabel: 'Užbaigti', icon: CheckCheck, variant: 'primary', onClick: () => onFinish(task) });
     if (onEdit) footerActions.push({ key: 'edit', label: 'Redaguoti', icon: Pencil, variant: 'primary', onClick: () => onEdit(task) });
     if (canDelete && onDelete) footerActions.push({ key: 'delete', label: 'Ištrinti', icon: Trash2, variant: 'danger', onClick: () => onDelete(task) });
 

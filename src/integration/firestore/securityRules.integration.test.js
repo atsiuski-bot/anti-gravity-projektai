@@ -143,6 +143,7 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                 role: 'worker',
                 isDisabled: true,
                 canBackdateTime: true,
+                canEditOwnStartTime: true,
             })
         );
     });
@@ -159,6 +160,7 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
                 isDisabled: true,
                 status: 'pending',
                 canBackdateTime: false,
+                canEditOwnStartTime: false,
             })
         );
     });
@@ -172,6 +174,11 @@ describeEmulator('firestore.rules — P0 authorization boundaries', () => {
         await assertSucceeds(
             updateDoc(doc(workerDb(), 'users', WORKER_ID), { displayName: 'Renamed' })
         );
+    });
+
+    // ---- canEditOwnStartTime is admin-only, exactly like canBackdateTime ----
+    it('a worker cannot self-grant the own-start-time-correction permission', async () => {
+        await assertFails(updateDoc(doc(workerDb(), 'users', WORKER_ID), { canEditOwnStartTime: true }));
     });
 
     // ---- R-05: the team-visibility stamp is immutable on a session update ----

@@ -14,6 +14,12 @@
       "port": 5191
     },
     {
+      "name": "workz-coordinator",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5193", "--strictPort"],
+      "port": 5193
+    },
+    {
       "name": "workz-murdock",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "--port", "5192", "--strictPort"],
