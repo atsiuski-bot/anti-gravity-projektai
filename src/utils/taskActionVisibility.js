@@ -1,5 +1,6 @@
 import { CheckCircle2, RefreshCw, RotateCcw } from 'lucide-react';
 import { isManagerRole } from './formatters';
+import { canSeeWholeTeam } from './teamScope';
 
 /**
  * Shared manager sign-off visibility predicates — the single source of truth for WHICH sign-off
@@ -22,6 +23,44 @@ export function canApproveTask({ task, role, userRole }) {
 // Finished work ("Laukia priėmimo") can be accepted (completed → confirmed).
 export function canConfirmTask({ task, role, userRole }) {
     return isManager({ role, userRole }) && (task.status || 'pending') === 'completed';
+}
+
+/**
+ * canSignOffTask — may THIS caller flip the manager-only approval fields on THIS task?
+ *
+ * A manager ROLE is not enough: firestore.rules grants the approval-field write to a whole-team
+ * viewer (admin / unscoped manager), the task's named vadovas or auditor, or an overseer inside
+ * whose closure the row sits (`teamManagerIds`) — and blocks the assignee branch outright
+ * (changesApprovalFields). Offering a sign-off button outside that set only produces a
+ * permission-denied and a task stuck in "Laukia priėmimo", so every surface gates on this.
+ */
+export function canSignOffTask({ task, currentUser, userData }) {
+    const uid = currentUser?.uid;
+    if (!task || !uid) return false;
+    return canSeeWholeTeam(userData)
+        || task.managerId === uid
+        || task.taskAuditor === uid
+        || (Array.isArray(task.teamManagerIds) && task.teamManagerIds.includes(uid));
+}
+
+/**
+ * canFinishForAssignee — may a koordinatorius close (and hand in) a task that belongs to a Meistras
+ * they oversee?
+ *
+ * The timer's own "Užbaigti" is assignment-only by design (only the person doing the work may drive
+ * their timer), which left the coordinator with no way to close a job the Meistras finished but never
+ * ended — the task sat in the active list forever and never reached Pridavimas. This is that missing
+ * door: it is offered only on SOMEONE ELSE's still-open task, and only where the caller's sign-off
+ * would actually land (canSignOffTask), so the button is never dead.
+ *
+ * An unapproved task is excluded: its pending decision is "Patvirtinti", not a completion.
+ */
+export function canFinishForAssignee({ task, currentUser, userData, role, userRole }) {
+    if (!task || !isManager({ role, userRole })) return false;
+    if (!task.assignedUserId || task.assignedUserId === currentUser?.uid) return false;
+    if (task.completed || task.isDeleted || task.isArchived) return false;
+    if ((task.status || 'pending') === 'unapproved') return false;
+    return canSignOffTask({ task, currentUser, userData });
 }
 
 // Any finished or deleted task can be sent back to the active list.
