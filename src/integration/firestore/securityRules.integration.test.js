@@ -1057,3 +1057,56 @@ describeEmulator('audit 2026-07-22 — notification forgery + audit-trail re-poi
         });
     });
 });
+
+// ---- error_logs: the enriched crash record ------------------------------------------------
+// errorLog.js now carries the caller's remaining keys (taskId/commandId/outcome/code) under a
+// nested `context` map — the fields that tell a manager reading the log whether a settle failure
+// was a `rejected` (nothing happened, the stretch is lost) or a `conflicted` (another device
+// already recorded it). A crash report that the rules refuse is a report nobody ever sees, so the
+// admitted shape is pinned here: the enriched append must SUCCEED, and the two boundaries that
+// protect the manager-visible log — the userId pin and the map bound — must still bite.
+describeEmulator('error_logs: the durable crash record admits its diagnostic context', () => {
+    const errorRecord = (overrides = {}) => ({
+        message: 'FirebaseError: Missing or insufficient permissions.',
+        stack: 'Error\n    at settle',
+        componentStack: '',
+        source: 'timerCommandEngine.settle',
+        userId: WORKER_ID,
+        url: 'https://workz.test/',
+        userAgent: 'vitest-UA',
+        online: true,
+        timestamp: new Date().toISOString(),
+        ...overrides,
+    });
+
+    it('accepts the enriched append (context map alongside the top-level fields)', async () => {
+        await assertSucceeds(addDoc(collection(workerDb(), 'error_logs'), errorRecord({
+            context: { commandId: 'cmd-7', commandKind: 'end', outcome: 'conflicted', taskId: 'task-a' },
+        })));
+    });
+
+    it('still accepts the pre-auth record (userId null, no context) — the earliest-crash case', async () => {
+        await assertSucceeds(addDoc(collection(workerDb(), 'error_logs'), errorRecord({ userId: null })));
+    });
+
+    it('the userId pin still holds: a record stamped for a colleague is denied', async () => {
+        // Nesting the caller's keys is what keeps this pin reachable — a context userId must not
+        // become the record's userId, or this denial would fire on an honest crash report.
+        await assertFails(addDoc(collection(workerDb(), 'error_logs'), errorRecord({
+            userId: OTHER_ID,
+            context: { userId: OTHER_ID },
+        })));
+    });
+
+    it('a context map past the 20-key bound is denied', async () => {
+        const context = {};
+        for (let i = 0; i < 21; i++) context[`k${i}`] = i;
+        await assertFails(addDoc(collection(workerDb(), 'error_logs'), errorRecord({ context })));
+    });
+
+    it('a context that is not a map is denied', async () => {
+        await assertFails(addDoc(collection(workerDb(), 'error_logs'), errorRecord({
+            context: 'not-a-map',
+        })));
+    });
+});

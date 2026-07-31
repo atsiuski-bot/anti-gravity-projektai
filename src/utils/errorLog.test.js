@@ -107,6 +107,97 @@ describe('logError — normalizeError shapes', () => {
     });
 });
 
+// Everything a call site passes beyond source/componentStack used to be discarded by BOTH sinks,
+// so a permission-denied reported from the field could not be classified: timerCommandEngine
+// .settle() passes `outcome`, and a `rejected` (nothing happened — the worker lost the stretch) is
+// a different incident from a `conflicted` (another device already recorded it). These pin that the
+// keys now survive, and the three bounds that keep them from breaking the record they ride on.
+describe('logError — caller context', () => {
+    it('carries the remaining keys under context, in both sinks', () => {
+        logError(new Error('settle-failed'), {
+            source: 'timerCommandEngine.settle',
+            commandId: 'cmd-7',
+            commandKind: 'end',
+            outcome: 'conflicted',
+        });
+
+        const local = getStoredErrorLog().at(-1);
+        expect(local.context).toEqual({ commandId: 'cmd-7', commandKind: 'end', outcome: 'conflicted' });
+        // The remote record is the same object — a manager reading error_logs sees the same keys.
+        expect(addDoc.mock.calls[0][1].context).toEqual(local.context);
+    });
+
+    it('keeps source and componentStack top-level, and out of context', () => {
+        logError(new Error('render-broke'), {
+            source: 'boundary:TaskCard',
+            componentStack: '\n  at TaskCard',
+            taskId: 't-1',
+        });
+        const rec = getStoredErrorLog().at(-1);
+        expect(rec.source).toBe('boundary:TaskCard');
+        expect(rec.componentStack).toBe('\n  at TaskCard');
+        expect(rec.context).toEqual({ taskId: 't-1' }); // not duplicated into the map
+    });
+
+    it('omits the context field entirely when only source is passed', () => {
+        // The ~190 source-only call sites must keep writing the exact record shape they write today.
+        logError(new Error('plain'), { source: 'onSnapshot:tasks' });
+        expect('context' in getStoredErrorLog().at(-1)).toBe(false);
+        expect('context' in addDoc.mock.calls[0][1]).toBe(false);
+    });
+
+    it('drops undefined values instead of stringifying them', () => {
+        // Call sites pass `taskId: task?.id`; Firestore refuses a document containing an undefined
+        // field value outright, so one absent id would cost the whole remote record.
+        logError(new Error('no-task'), { source: 'orphanRecovery', taskId: undefined, code: 'permission-denied' });
+        const rec = getStoredErrorLog().at(-1);
+        expect(rec.context).toEqual({ code: 'permission-denied' });
+        expect(Object.values(addDoc.mock.calls[0][1].context)).not.toContain(undefined);
+    });
+
+    it('never lets a caller overwrite the authenticated userId', () => {
+        // firestore.rules pins the record's userId to request.auth.uid (or null); a caller's id
+        // landing there would make the remote write permission-denied for that crash.
+        auth.currentUser = { uid: 'signed-in-uid' };
+        logError(new Error('other-user'), { source: 'BulkReassign', userId: 'some-other-uid' });
+        const rec = getStoredErrorLog().at(-1);
+        expect(rec.userId).toBe('signed-in-uid');
+        expect(rec.context.userId).toBe('some-other-uid'); // kept, but only as context
+    });
+
+    it('bounds the map: long values are clamped and the key count is capped', () => {
+        logError(new Error('huge-value'), { source: 'b1', blob: 'x'.repeat(5000) });
+        expect(getStoredErrorLog().at(-1).context.blob).toHaveLength(500);
+
+        const many = { source: 'b2' };
+        for (let i = 0; i < 40; i++) many[`k${i}`] = i;
+        logError(new Error('too-many-keys'), many);
+        expect(Object.keys(getStoredErrorLog().at(-1).context)).toHaveLength(20);
+    });
+
+    it('flattens non-scalar values without throwing (a circular value must not kill the record)', () => {
+        const circular = { a: 1 };
+        circular.self = circular;
+        expect(() => logError(new Error('exotic'), {
+            source: 'x1',
+            circular,
+            list: [1, 2],
+            when: null,
+            ok: false,
+            n: 42,
+        })).not.toThrow();
+
+        const ctx = getStoredErrorLog().at(-1).context;
+        expect(ctx.when).toBeNull();
+        expect(ctx.ok).toBe(false);
+        expect(ctx.n).toBe(42);
+        expect(ctx.list).toBe('[1,2]');
+        expect(typeof ctx.circular).toBe('string'); // String()-fallback, not a thrown TypeError
+        // The record still reached both sinks despite the unserializable value.
+        expect(addDoc).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('logError — dedupe window', () => {
     it('suppresses an identical rapid fault, then logs again after the window elapses', () => {
         vi.useFakeTimers();

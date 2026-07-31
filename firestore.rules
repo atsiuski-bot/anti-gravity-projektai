@@ -1038,6 +1038,14 @@ service cloud.firestore {
     // null branch is REQUIRED: errorLog.js writes userId=null when auth is not ready, which is the
     // earliest-crash case the durable log exists to capture, so pinning to uid alone would silently
     // drop the most important reports. Rules cannot rate-limit (no cross-write counting).
+    //
+    // `context` carries the per-call diagnostic keys (taskId/commandId/outcome/code) the logger used
+    // to discard — the fields that separate a genuine `rejected` from a `conflicted` on a report
+    // from the field. It is guarded by TYPE and KEY COUNT only: rules cannot iterate a map, and the
+    // clever alternatives (values().join() and friends) ERROR on a non-string value, and a rule
+    // evaluation error DENIES — which would silently kill the remote sink for exactly the enriched
+    // crashes this exists to capture. The client clamps each value to 500 chars and the map to 20
+    // keys; the bound below is that same ceiling, so every legitimate append passes unchanged.
     match /error_logs/{logId} {
       allow create: if isAuthenticated()
                     && (!('message' in request.resource.data) ||
@@ -1052,6 +1060,8 @@ service cloud.firestore {
                         (request.resource.data.userAgent is string && request.resource.data.userAgent.size() <= 1000))
                     && (!('source' in request.resource.data) ||
                         (request.resource.data.source is string && request.resource.data.source.size() <= 200))
+                    && (!('context' in request.resource.data) ||
+                        (request.resource.data.context is map && request.resource.data.context.keys().size() <= 20))
                     && (request.resource.data.get('userId', null) == null ||
                         request.resource.data.userId == request.auth.uid);
       allow read:   if isManagerOrAdmin();

@@ -44,6 +44,65 @@ const normalizeError = (error) => {
     }
 };
 
+// `source` and `componentStack` stay TOP-LEVEL fields of the record (every existing reader keys
+// on them there); every other key a caller passes is carried under a nested `context` map and is
+// never merged into the record's own fields. Merging would be the cheaper diff but it puts the
+// caller in a position to overwrite `userId`, which firestore.rules pins to the authenticated uid
+// (or null) — a call site logging someone else's id would then have its remote write DENIED, and
+// the crash that mattered most would exist only on the device. Nesting keeps both facts and keeps
+// the pin intact.
+const RECORD_OWN_CONTEXT_KEYS = ['source', 'componentStack'];
+const MAX_CONTEXT_KEYS = 20;
+const MAX_CONTEXT_KEY_CHARS = 64;
+const MAX_CONTEXT_VALUE_CHARS = 500;
+
+/** Clamp one context value to a flat, bounded scalar. Never throws. */
+const sanitizeContextValue = (value) => {
+    if (value === null) return null;
+    if (typeof value === 'string') return value.slice(0, MAX_CONTEXT_VALUE_CHARS);
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
+    // Objects, arrays, Errors, bigints, symbols — collapse to a short string. The stored shape
+    // stays flat and predictable, and a circular structure can never reach either sink.
+    try {
+        const json = JSON.stringify(value);
+        if (typeof json === 'string') return json.slice(0, MAX_CONTEXT_VALUE_CHARS);
+    } catch { /* circular, a throwing toJSON, or a bigint — fall through to String() */ }
+    try { return String(value).slice(0, MAX_CONTEXT_VALUE_CHARS); } catch { return '[unserializable]'; }
+};
+
+/**
+ * Copy the caller's remaining context keys into a bounded map.
+ *
+ * These keys used to be discarded by BOTH sinks, which is what made a field report
+ * unclassifiable: timerCommandEngine.settle() passes `outcome`, and a `rejected` (nothing
+ * happened — the worker lost the stretch) is a different incident from a `conflicted` (another
+ * device already recorded it), yet the log showed the same permission-denied for both. Same for
+ * the `taskId` / `code` / `commandId` that say WHICH work broke.
+ *
+ * Bounded on both axes (key count and value length) so an enriched record can never grow the
+ * manager-visible log the way the once-unbounded url/userAgent could.
+ */
+const sanitizeContext = (context) => {
+    const extra = {};
+    try {
+        if (!context || typeof context !== 'object') return extra;
+        for (const key of Object.keys(context)) {
+            if (!key || RECORD_OWN_CONTEXT_KEYS.includes(key)) continue;
+            const value = context[key];
+            // undefined is DROPPED, not stringified. Call sites overwhelmingly pass `taskId:
+            // task?.id`, and Firestore refuses a document containing an undefined field value
+            // outright — one absent id would cost the whole remote record, not just that key.
+            if (value === undefined || typeof value === 'function') continue;
+            extra[key.slice(0, MAX_CONTEXT_KEY_CHARS)] = sanitizeContextValue(value);
+            if (Object.keys(extra).length >= MAX_CONTEXT_KEYS) break;
+        }
+    } catch {
+        // A proxy or a throwing getter — keep what was already collected rather than lose the record.
+    }
+    return extra;
+};
+
 /** Append a record to the capped localStorage ring buffer. Silent on any storage failure. */
 const writeToLocalStorage = (record) => {
     try {
@@ -76,6 +135,8 @@ const writeToFirestore = (record) => {
  * Record an error to all durable sinks.
  * @param {*} error - Error, string, or event-like object.
  * @param {Object} [context] - Extra context, e.g. { source: 'onSnapshot', componentStack }.
+ *   `source` and `componentStack` become top-level fields; every other key (taskId, commandId,
+ *   outcome, code, …) is carried, sanitised and bounded, under the record's `context` map.
  */
 export const logError = (error, context = {}) => {
     try {
@@ -104,6 +165,11 @@ export const logError = (error, context = {}) => {
             online: (typeof navigator !== 'undefined' && navigator.onLine) ?? null,
             timestamp: new Date().toISOString(),
         };
+
+        // Attached only when there is something to say, so the ~190 source-only call sites keep
+        // writing byte-identical records and nothing downstream has to learn a new shape for them.
+        const extraContext = sanitizeContext(context);
+        if (Object.keys(extraContext).length > 0) record.context = extraContext;
 
         // Console first — cheapest, and useful when devtools are open.
         console.error(`[WORKZ:${record.source}]`, message, error);
