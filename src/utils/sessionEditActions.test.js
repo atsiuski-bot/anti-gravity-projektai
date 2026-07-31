@@ -52,6 +52,8 @@ import {
     reconcileTaskTimerFromSessions,
     validateSelfReduction,
     reduceOwnWorkSession,
+    validateOwnStartCorrection,
+    correctOwnSessionStart,
     applyRequestedSessionEnd,
     MIN_SELF_REDUCED_MINUTES,
 } from './sessionEditActions';
@@ -907,6 +909,106 @@ describe('reduceOwnWorkSession (worker shortens their own logged time)', () => {
         expect(payload.userId).toBe('u1');
         expect(payload.day).toBe('2026-07-28');
         expect(payload.summary).toBe('9h → 7h');
+    });
+});
+
+
+describe('validateOwnStartCorrection (either-direction gate — no direction constraint)', () => {
+    const session = {
+        id: 'ws-1',
+        startTime: '2026-07-28T06:00:00.000Z',
+        endTime: '2026-07-28T15:00:00.000Z',
+        durationMinutes: 540,
+    };
+
+    it('accepts an EARLIER start (raises the duration) and derives fields + a positive delta', () => {
+        const r = validateOwnStartCorrection(session, '2026-07-28T05:00:00.000Z');
+        expect(r).toEqual({ ok: true, error: null, durationMinutes: 600, date: '2026-07-28', deltaMinutes: 60 });
+    });
+
+    it('accepts a LATER start (lowers the duration) — unlike validateSelfReduction, no direction gate', () => {
+        const r = validateOwnStartCorrection(session, '2026-07-28T07:00:00.000Z');
+        expect(r).toEqual({ ok: true, error: null, durationMinutes: 480, date: '2026-07-28', deltaMinutes: -60 });
+    });
+
+    it('refuses an inverted pair and an over-long session', () => {
+        expect(validateOwnStartCorrection(session, '2026-07-28T16:00:00.000Z').error).toBe('order');
+        expect(validateOwnStartCorrection(session, '2026-07-27T22:00:00.000Z').error).toBe('tooLong');
+    });
+
+    it('refuses a still-running or already-deleted row', () => {
+        expect(validateOwnStartCorrection({ ...session, isActive: true }, '2026-07-28T05:00:00.000Z').error).toBe('running');
+        expect(validateOwnStartCorrection({ ...session, isDeleted: true }, '2026-07-28T05:00:00.000Z').error).toBe('deleted');
+    });
+});
+
+describe('correctOwnSessionStart (worker, admin-granted, corrects their own start — either direction)', () => {
+    const worker = { uid: 'u1', displayName: 'Simona' };
+    const session = {
+        id: 'ws-1',
+        taskId: 't-real',
+        taskTitle: 'Kostiumai',
+        userId: 'u1',
+        startTime: '2026-07-28T06:00:00.000Z',
+        endTime: '2026-07-28T15:00:00.000Z',
+        durationMinutes: 540,
+    };
+    const args = { session, worker, startTime: '2026-07-28T05:00:00.000Z', reason: '  Darbo laiko pradžios korekcija  ', adminUids: ['a1', 'a2'] };
+
+    it('writes the corrected start, clears selfAdjusted and snapshots the original once', async () => {
+        const res = await correctOwnSessionStart(args);
+        expect(res.ok).toBe(true);
+        expect(res.durationMinutes).toBe(600);
+
+        const updates = updateDoc.mock.calls[0][1];
+        expect(updates.startTime).toBe('2026-07-28T05:00:00.000Z');
+        expect(updates.durationMinutes).toBe(600);
+        expect(updates.date).toBe('2026-07-28');
+        // endTime is never rewritten by this path — only the start moves.
+        expect('endTime' in updates).toBe(false);
+        // Bidirectional by design — never left one-way-locked for a later admin/self edit.
+        expect(updates.selfAdjusted).toBe(false);
+        expect(updates.edited).toBe(true);
+        expect(updates.editedBy).toBe('u1');
+        expect(updates.editReason).toBe('Darbo laiko pradžios korekcija'); // trimmed
+        expect(updates.originalStartTime).toBe('2026-07-28T06:00:00.000Z');
+        expect(updates.originalDurationMinutes).toBe(540);
+    });
+
+    it('does NOT re-snapshot the original on an already-corrected row', async () => {
+        await correctOwnSessionStart({ ...args, session: { ...session, edited: true } });
+        expect('originalStartTime' in updateDoc.mock.calls[0][1]).toBe(false);
+    });
+
+    it('refuses an inverted pair, a foreign row, a blank reason and a missing worker — writing nothing', async () => {
+        expect((await correctOwnSessionStart({ ...args, startTime: '2026-07-28T16:00:00.000Z' })).error).toBe('order');
+        expect((await correctOwnSessionStart({ ...args, session: { ...session, userId: 'someone-else' } })).error).toBe('owner');
+        expect((await correctOwnSessionStart({ ...args, reason: '   ' })).error).toBe('reason');
+        expect((await correctOwnSessionStart({ ...args, worker: null })).error).toBe('user');
+        expect(updateDoc).not.toHaveBeenCalled();
+    });
+
+    it('moves the task counter by the (positive) delta', async () => {
+        const denied = Object.assign(new Error('denied'), { code: 'permission-denied' });
+        getDocs.mockRejectedValueOnce(denied);
+        getDocs.mockResolvedValueOnce({ forEach: () => {} });
+        getDoc.mockResolvedValueOnce({ exists: () => true, data: () => ({ timerMinutes: 540 }) });
+
+        const res = await correctOwnSessionStart(args);
+        expect(res.ok).toBe(true);
+        const taskCall = updateDoc.mock.calls.find((c) => c[0]._path === 'tasks/t-real');
+        expect(taskCall[1].timerMinutes).toEqual({ _increment: 60 });
+    });
+
+    it('tells the admins — informational, never an approval request', async () => {
+        await correctOwnSessionStart(args);
+        expect(notifyMany).toHaveBeenCalledTimes(1);
+        const [recipients, payload] = notifyMany.mock.calls[0];
+        expect(recipients).toEqual(['a1', 'a2']);
+        expect(payload.type).toBe('time_self_start_corrected');
+        expect(payload.userId).toBe('u1');
+        expect(payload.day).toBe('2026-07-28');
+        expect(payload.summary).toBe('9h → 10h');
     });
 });
 

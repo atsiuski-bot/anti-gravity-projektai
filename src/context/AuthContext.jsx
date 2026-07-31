@@ -157,7 +157,10 @@ export function AuthProvider({ children }) {
                     status: 'pending',
                     // Approval-free backdated time-logging is OFF by default — an admin grants it
                     // per-user in User Management (the flag is admin-only by firestore.rules).
-                    canBackdateTime: false
+                    canBackdateTime: false,
+                    // Same posture for the (also admin-only) permission to self-correct a logged
+                    // session's START time in either direction.
+                    canEditOwnStartTime: false
                 };
                 // Must persist BEFORE we sign out — and it now can, because the onSnapshot
                 // disabled-handler defers while isProvisioning is set (otherwise its signOut
