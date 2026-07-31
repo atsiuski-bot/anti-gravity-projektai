@@ -7,9 +7,10 @@ import TaskCard from '../components/TaskCard';
 import TaskTable from '../components/TaskTable';
 import TaskModal from '../components/TaskModal';
 import PendingApprovalDisclosure from '../components/PendingApprovalDisclosure';
+import CompletedTodayDisclosure from '../components/CompletedTodayDisclosure';
 
 import DailyWorkProgress from '../components/DailyWorkProgress';
-import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow } from '../utils/taskUtils';
+import { filterTasksByVisibility, sortWorkerTasks, scopePersonalDayWindow, scopeCompletedToday } from '../utils/taskUtils';
 import { Spinner } from '../components/ui/Loading';
 import SearchBox from '../components/ui/SearchBox';
 import SearchPopover from '../components/ui/SearchPopover';
@@ -90,8 +91,8 @@ export default function WorkerView() {
     // Enrichment + visibility. Pure derivation over the raw docs, so a roster change re-labels the
     // list without touching the subscription. Deliberately clock-free apart from the day window, and
     // its items keep a stable identity across the minute ticks below.
-    const visibleTasks = useMemo(() => {
-        const enriched = rawTasks.map(task => ({
+    const enrichedTasks = useMemo(() => {
+        return rawTasks.map(task => ({
             ...task,
             assignedUserName: task.assignedUserId && usersMap[task.assignedUserId]
                 ? usersMap[task.assignedUserId].displayName || usersMap[task.assignedUserId].email
@@ -103,11 +104,20 @@ export default function WorkerView() {
                 ? usersMap[task.createdBy].displayName || usersMap[task.createdBy].email
                 : null)
         }));
-        // Personal day window: keep done tasks only for the current "work day" (03:00–03:00
-        // Vilnius). Unapproved own tasks stay visible — the worker must see their own
-        // pending-approval item; only the SHARED team list hides those.
-        return scopePersonalDayWindow(filterTasksByVisibility(enriched));
     }, [rawTasks, usersMap]);
+
+    // Personal day window: keep done tasks only for the current "work day" (03:00–03:00
+    // Vilnius). Unapproved own tasks stay visible — the worker must see their own
+    // pending-approval item; only the SHARED team list hides those.
+    const visibleTasks = useMemo(
+        () => scopePersonalDayWindow(filterTasksByVisibility(enrichedTasks)),
+        [enrichedTasks]
+    );
+
+    // Today's finished work — regular tasks AND the quick work / calls the active list filters out.
+    // Derived from the same enriched docs BEFORE visibility filtering, since that filter is exactly
+    // what removes them; shown collapsed at the bottom of the tab.
+    const completedToday = useMemo(() => scopeCompletedToday(enrichedTasks), [enrichedTasks]);
 
     // Canonical order, re-derived on each minute tick because sort key 4 (completion fraction) grows
     // as a task runs — the order can change with no data change at all. The PREVIOUS array is
@@ -434,6 +444,10 @@ export default function WorkerView() {
                         </div>
                     </>
                 )}
+
+                {/* Today's finished work — tasks, greiti darbai and skambučiai — collapsed at the
+                    bottom, below the active list. */}
+                <CompletedTodayDisclosure tasks={completedToday} />
             </div>
 
             {/* Calendar Tab — rendered only while active. react-big-calendar measures its

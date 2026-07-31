@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import clsx from 'clsx';
 import { useAuth } from '../context/AuthContext';
-import { Link as LinkIcon, MessageCircle, CheckCircle2, MessageSquare, ImageIcon, Undo2, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp, Eye } from 'lucide-react';
+import { Link as LinkIcon, MessageCircle, CheckCircle2, CheckCheck, MessageSquare, ImageIcon, Undo2, Clock, AlertCircle, ListChecks, Calendar, Filter, ArrowDownUp, Eye } from 'lucide-react';
 import { LinksModal, CommentsModal, DescriptionModal, ImageModal, ChecklistModal, DeleteConfirmationModal, TimeAdjustmentsModal } from './TaskDetailsModals';
 import TaskTimerControls from './TaskTimerControls';
 import IconButton from './ui/IconButton';
@@ -30,6 +30,8 @@ import { toggleChecklistItem, addChecklistItem, deleteChecklistItem, getChecklis
 import { logError } from '../utils/errorLog';
 import SessionTypeIcon from './SessionTypeIcon';
 import { isSelfDirectedTask } from '../utils/selfDirectedTask';
+import { canFinishForAssignee } from '../utils/taskActionVisibility';
+import { finishTaskForAssignee } from '../utils/managerFinishTask';
 
 // ---------------------------------------------------------------------------------------------
 // Desktop data-grid header controls. Rendered only when the parent passes `gridControls`; without
@@ -137,6 +139,9 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
     // its own state so rapid clicks on different tasks can't race a single shared dialog.
     const [commentDeleteTarget, setCommentDeleteTarget] = useState(null); // { taskId, commentKey }
     const [revertTarget, setRevertTarget] = useState(null);            // task object
+    const [finishForOtherTarget, setFinishForOtherTarget] = useState(null); // task object
+    const [finishingForOther, setFinishingForOther] = useState(false);
+    const [finishForOtherError, setFinishForOtherError] = useState('');
     const [reverting, setReverting] = useState(false);
 
     // Friendly error banner (replaces banned window.alert — §8/§10). Never holds raw err.message;
@@ -369,6 +374,23 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
     const canManage = isManagerRole(userRole);
     const canDelete = canManage || !isWorker;
 
+    // Close a Meistras's task for them: settle their live session, then complete + accept it in one
+    // audited step. Confirmed through a dialog because it ends someone else's running work.
+    const confirmFinishForOther = async () => {
+        if (!finishForOtherTarget) return;
+        setFinishingForOther(true);
+        try {
+            setFinishForOtherError('');
+            await finishTaskForAssignee(finishForOtherTarget, { currentUser, userRole });
+            setFinishForOtherTarget(null);
+        } catch (err) {
+            logError(err, { source: 'TaskTable.confirmFinishForOther', taskId: finishForOtherTarget.id, code: err?.code });
+            setFinishForOtherError('Nepavyko užbaigti užduoties. Bandykite dar kartą.');
+        } finally {
+            setFinishingForOther(false);
+        }
+    };
+
     // The ONE lifecycle action set for an active-board task, fed to TaskActionRow so the mobile card
     // and the desktop row show the SAME buttons on a single adaptive line (labels, collapsing to
     // icon-only together when the cell is too tight). Order: revert → approve/confirm. Edit / comment /
@@ -388,6 +410,16 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
             acts.push(isSelfDirectedTask(task)
                 ? { key: 'confirm', label: 'Peržiūrėti savarankišką veiklą', icon: Eye, variant: 'secondary', className: 'border-feedback-warning-border bg-feedback-warning-soft text-feedback-warning-text hover:bg-feedback-warning-soft hover:brightness-95', onClick: (e) => { e?.stopPropagation?.(); handleConfirmTask(task.id); } }
                 : { key: 'confirm', label: 'Patvirtinti atlikimą', icon: CheckCircle2, variant: 'primary', onClick: (e) => { e?.stopPropagation?.(); handleConfirmTask(task.id); } });
+        }
+        if (canFinishForAssignee({ task, currentUser, userData, role, userRole })) {
+            // The coordinator's closing door for a Meistras's still-open task — the timer's own
+            // "Užbaigti" is assignment-only, so this is the only way the task leaves the active list
+            // without the worker. Settles their running session first (see finishTaskForAssignee).
+            acts.push({
+                key: 'finish-for-other', label: 'Užbaigti ir priduoti', compactLabel: 'Užbaigti',
+                icon: CheckCheck, variant: 'primary',
+                onClick: (e) => { e?.stopPropagation?.(); setFinishForOtherError(''); setFinishForOtherTarget(task); },
+            });
         }
         return acts;
     };
@@ -412,6 +444,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
     const deleteFromDetail = (task) => { closeDetail(); handleDeleteTask(task.id, task.title); };
     const revertFromDetail = (task) => { closeDetail(); setRevertTarget(task); };
     const confirmFromDetail = (taskId) => { closeDetail(); handleConfirmTask(taskId); };
+    const finishForOtherFromDetail = (task) => { closeDetail(); setFinishForOtherError(''); setFinishForOtherTarget(task); };
     const approveFromDetail = (taskId) => { closeDetail(); handleApproveTask(taskId); };
     const openSubModalFromDetail = (type) => (task) => { closeDetail(); setActiveModal({ type, taskId: task.id }); };
 
@@ -886,6 +919,7 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                 onDelete={deleteFromDetail}
                 onRevert={revertFromDetail}
                 onConfirm={confirmFromDetail}
+                onFinish={detailTask && canFinishForAssignee({ task: detailTask, currentUser, userData, role, userRole }) ? finishForOtherFromDetail : undefined}
                 onApprove={approveFromDetail}
                 onOpenChecklist={openSubModalFromDetail('checklist')}
                 onOpenTimeAdjustments={openSubModalFromDetail('timeAdjustments')}
@@ -913,6 +947,23 @@ const TaskTable = ({ tasks, onEdit, role, gridControls, reorderSlots = null }) =
                     loading={reverting}
                     onConfirm={confirmRevert}
                     onCancel={() => setRevertTarget(null)}
+                />
+            )}
+
+            {/* Confirm: the coordinator closes a Meistras's task on their behalf. The Meistras's name
+                is carried as a LABELLED nominative rather than bent into the sentence — Lithuanian
+                surnames decline by gender/ending and a template cannot get that right. */}
+            {finishForOtherTarget && (
+                <ConfirmDialog
+                    open
+                    title="Užbaigti Meistro veiklą?"
+                    message={`Veikla „${finishForOtherTarget.title || ''}“ (Meistras: ${finishForOtherTarget.assignedUserName || '—'}) bus užbaigta ir priduota. Jei laikmatis dar veikia, laikas bus užskaitytas iki šios akimirkos.`}
+                    warning={finishForOtherError || undefined}
+                    confirmLabel="Užbaigti ir priduoti"
+                    variant="primary"
+                    loading={finishingForOther}
+                    onConfirm={confirmFinishForOther}
+                    onCancel={() => setFinishForOtherTarget(null)}
                 />
             )}
 

@@ -31,6 +31,39 @@ export const scopePersonalDayWindow = (tasks, cutoff = getCurrentWorkDayCutoff()
     });
 };
 
+/**
+ * Everything this person FINISHED within the current work day — regular tasks, quick work
+ * (isQuickWork) and calls (isSystemTask) alike. This is the deliberate counterpart to
+ * filterTasksByVisibility: the active list stays clean of finished and system rows, and the same
+ * rows are re-surfaced under the collapsed "Padaryti darbai" section at the bottom of the tab, so
+ * the day's completed work is reviewable without leaving the Veiklos tab.
+ *
+ * Soft-deleted rows are excluded — a deleted task is not "work done today".
+ * Ordered newest-finished first.
+ *
+ * @param {Array} tasks - Task docs (already scoped to this person).
+ * @param {Date} [cutoff=getCurrentWorkDayCutoff()] - Work-day start (injectable for tests).
+ * @returns {Array} Today's finished items, newest first.
+ */
+export const scopeCompletedToday = (tasks, cutoff = getCurrentWorkDayCutoff()) => {
+    if (!tasks) return [];
+    return tasks
+        .filter(task => {
+            if (task.isDeleted || task.status === 'deleted') return false;
+            const isFinished = task.completed || task.status === 'completed' || task.status === 'confirmed';
+            if (!isFinished) return false;
+            const finishedAt = task.completedAt || task.confirmedAt || task.updatedAt;
+            if (!finishedAt) return false;
+            const at = new Date(finishedAt);
+            return !Number.isNaN(at.getTime()) && at >= cutoff;
+        })
+        .sort((a, b) => {
+            const at = new Date(a.completedAt || a.confirmedAt || a.updatedAt).getTime();
+            const bt = new Date(b.completedAt || b.confirmedAt || b.updatedAt).getTime();
+            return bt - at;
+        });
+};
+
 // Return only non-completed tasks AND non-system tasks (Call/QuickWork)
 export const filterTasksByVisibility = (tasks) => {
     if (!tasks) return [];
